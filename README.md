@@ -56,7 +56,15 @@ cd game
 /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://tests/test_runner.tscn
 ```
 
-26 項目（ロープが伸びない・UFO がロープ長を超えない・静止で発散しない・急停止で振り子になり減衰する・斜め移動で前後揺れが出る・Z 逆マッピング・投影でロープ端と UFO が一致・1 ステップの計算時間）を検証します。
+36 項目（ロープが伸びない・UFO がロープ長を超えない・静止で発散しない・急停止で振り子になり減衰する・斜め移動で前後揺れが出る・Z 逆マッピング・投影でロープ端と UFO が一致・1 ステップの計算時間・`game/assets` と `assets` の同期・スプライト metadata・表情とポーズのエフェクト表示）を検証します。
+
+### スプライトの再生成
+
+```bash
+python3 tools/build_ufo_assets.py assets/source/ufo_expression_master.png assets/source/ufo_action_character_master.png
+```
+
+`assets/` に書き出して `game/assets/` に同期します（Pillow が必要）。アクションポーズはキャラクターのみで、スピード線や汗は `assets/effects/ufo_action_effects.png` のオーバーレイとして重ねて描画します。
 
 ## Phase 2: 実機（バックエンド経由）
 

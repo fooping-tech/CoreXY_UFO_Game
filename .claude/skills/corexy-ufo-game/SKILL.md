@@ -72,8 +72,8 @@ description: >
 ### A. 「UFO の表情・リアクションを増やして」
 1. **まず既存フレームを使う。** 未使用のフレームがある: 表情 `happy` `sad` `wink` `sleepy` `excited`、ポーズ `resist_side` `release_stretch` `exhausted`、アニメ `swing` `release`。
 2. 状態を足すなら `GameState`（ゲームの状態）→ `main.gd::_mood()`（mood への対応付け）→ `ufo_character.gd::_tick_face / _on_mood_changed`（見た目）の順に配線する。物理から作る手がかり（加速度、張力など）は `update_motion()` の引数として渡す。
-3. 新しい絵が必要なら `tools/build_ufo_assets.py` を通し、`game/assets/` へのコピーを忘れない（[gameplay-and-animation.md](references/gameplay-and-animation.md) §3）。
-4. テスト: デバッグパネルの Character で固定表示して確認し、状態遷移は headless テストを追加する。
+3. 新しい絵が必要なら `tools/build_ufo_assets.py` を通す（`game/assets/` への同期まで自動）。ポーズの絵はキャラクターだけにし、スピード線や汗は `action_effects` のオーバーレイに描く（[gameplay-and-animation.md](references/gameplay-and-animation.md) §5）。
+4. テスト: デバッグパネルの Character で固定表示して確認し、状態遷移は `_test_ufo_faces_and_pose_effects` に追加する。
 
 ### B. 「ロープの揺れを改善して」
 1. 症状を物理（`rope_simulator.gd`）、入力の質（`interpolated_pose`、推定位置、teleport）、見た目（投影・`rope_view.gd`・UFO の傾き）のどれかに切り分ける。多くは物理ではなく入力か見た目が原因。
@@ -107,7 +107,8 @@ description: >
 | 表情が変わらない | `manual_expression` 固定、mood の優先順位（panic > mood）、`_last_expr_shown` | デバッグパネル Character を `(auto)` に戻す |
 | 実機モードで ERROR から戻らない | `GameState` は `error_cleared` でしか ERROR を抜けない | 既知の制約。[robot-protocol.md](references/robot-protocol.md) §5 |
 | `move_z` が NACK になる | `z_zero` を送っていない（意図的） | ログの `Z reference not set` |
-| 新しいスプライトが出ない | `assets/` だけ更新して `game/assets/` にコピーしていない、`.import` が古い | `diff -r assets/ufo game/assets/ufo` |
+| 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
+| ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
 | perf テストが 2 ms に近い | 初回起動のばらつき | 再実行する。安定して遅い場合のみ調べる |
 
 ## 5. 実機接続が必要かの判断
@@ -125,7 +126,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング（基準 26 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 36 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import

@@ -13,6 +13,7 @@
 流れ: `GameState.state` → `main.gd::_mood()` → `UfoCharacter.mood` → `_on_mood_changed()`（アニメの開始）と `_tick_face()`（毎フレーム）。
 
 優先順位: `manual_expression`（デバッグで固定）> **panic**（アンカーの画面加速度 > `panic_accel_threshold` 2600 px/s²、mood が IDLE/MOVING_* のときだけ、0.7 秒）> mood。
+`action_poses` のフレームを表示しているときは、同じインデックスの `action_effects` セル（スピード線、汗、矢印、泡）を子スプライト `PoseEffects` として重ねる（`show_pose_effects`）。ポーズの絵自体はキャラクターだけ。
 傾きは mood と関係なく常にロープ末端の接線に追従する（`tilt_follow`、`tilt_from_velocity`、`max_tilt_deg`）。投影スケールで奥のときは小さくなる。
 
 | GameState | mood | 見た目 |
@@ -76,9 +77,15 @@
 
 ## 5. アセットのパイプライン
 
-- 元画像: `assets/source/ufo_expression_master.png`（5×2 の 10 表情）、`ufo_action_master.png`（4×2 の 8 ポーズ）。Codex 製。画風を勝手に置き換えない。
-- 生成: `python3 tools/build_ufo_assets.py assets/source/ufo_expression_master.png assets/source/ufo_action_master.png`（Pillow が必要。backend の依存には入っていない）。出力先は `assets/ufo`、`assets/preview`、`assets/rope`、`assets/effects`。
-- **ゲームが読むのは `game/assets/`**。生成後に `assets/{ufo,rope,effects}` を `game/assets/` にコピーし、`godot --headless --path game --import` で取り込む。コピーを忘れるのが一番多いミス。作業前に `diff -r assets/ufo game/assets/ufo` で差分を確認する（2026-10-24 時点で、作業ツリーの `assets/` だけが新しくなっている）。
-- metadata（`ufo_metadata.json`）の約束: フレーム 64×64、`texture_filter: nearest`、既定の接続点 `rope_attachment_local` = (32,5)（ポーズはフレームごとに上書き可）。`UfoCharacter` が読むシートは `idle` / `expressions` / `actions`（`animations{name:{frames,fps,loop}}`）/ `action_poses`。`all_sprites` は生成されるがゲームは使っていない。
+- 元画像（Codex 製。画風を勝手に置き換えない）:
+  - `assets/source/ufo_expression_master.png` — 5×2 の 10 表情
+  - `assets/source/ufo_action_character_master.png` — 4×2 の 8 ポーズ、**キャラクターだけ**（現在のソース）
+  - `assets/source/ufo_action_master.png` — エフェクトが焼き込まれた旧版。今は使わない
+- 生成と同期: `python3 tools/build_ufo_assets.py assets/source/ufo_expression_master.png assets/source/ufo_action_character_master.png`（Pillow が必要。backend の依存には入っていない）。`assets/` に書き出したあと、`assets/{ufo,rope,effects}` の png/json を **`game/assets/` に自動でコピー**する（`--no-sync` で無効）。新しいファイルを足したときは `godot --headless --path game --import` で `.import` を作り、一緒にコミットする。
+- 同じソースから生成すると `assets/` はバイト単位で同じになる（再現性あり）。`assets/` を手で直接編集しない。
+- 同期漏れは headless テスト `assets: game/assets matches assets/` で検出される。
+- ポーズは生成時に本体の大きさを表情に揃える（`normalize_action_pose`、長辺 60px）。接続点は正規化後のフレームから測り直す（`top_attachment`）。
+- エフェクト: `action_effect_frames()` がコードで描き、`assets/effects/ufo_action_effects.png`（`action_effects` シート）に出す。**セルは `action_poses` と 1 対 1**。ポーズを足したり並べ替えたりするときは、エフェクトのセルも同じ順に揃える（テスト `metadata: action_effects aligned 1:1`）。エフェクトはパレット（`#28c9f1` / `#a7f5ff` / `#143f91`）の中で描く。
+- metadata（`ufo_metadata.json`）の約束: フレーム 64×64、`texture_filter: nearest`、既定の接続点 `rope_attachment_local` = (32,5)（ポーズはフレームごとに上書き可）。`UfoCharacter` が使うシートは `idle` / `expressions` / `actions`（`animations{name:{frames,fps,loop}}`）/ `action_poses` / `action_effects`。`all_sprites`（表情 + ポーズを 1 枚にしたアトラス）は生成されるが、ゲームは使っていない。
 - 接続点がずれると UFO がロープの端から浮く。新しいフレームを足したら、ロープの結び目（`rope_connector.png`、anchor (8,13)）と重なることをキャプチャで確認する。
 - 汎用のアセット制作手順は `create-game-assets` スキル。このプロジェクトでは上の画風・サイズ・接続点を優先する。
