@@ -1,16 +1,23 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
 ; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
 config/name="CoreXY UFO"
 config/description="Blue UFO on a rope that mirrors a real CoreXY crane. 3D Verlet rope physics projected to 2.5D pixel art."
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.4", "GL Compatibility")
-run/low_processor_mode=false
+config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [autoload]
 
@@ -23,16 +30,10 @@ GameState="*res://scripts/game/game_state.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
-window/vsync/vsync_mode=1
-
-[physics]
-
-common/physics_ticks_per_second=60
 
 [rendering]
 
+textures/canvas_textures/default_texture_filter=0
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-textures/canvas_textures/default_texture_filter=0
 environment/defaults/default_clear_color=Color(0.05, 0.08, 0.24, 1)
