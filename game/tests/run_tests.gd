@@ -24,6 +24,9 @@ func _ready() -> void:
 	_test_z_inverse_mapping(rs)
 	_test_projection_consistency()
 	_test_performance()
+	_test_game_assets_in_sync()
+	_test_ufo_metadata()
+	_test_ufo_faces_and_pose_effects()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -168,3 +171,60 @@ func _test_performance() -> void:
 	var per := (Time.get_ticks_usec() - t0) / 600.0
 	_ok(per < 2000.0, "perf: one 60Hz step well under 2 ms", "%.0f us/step" % per)
 	print("      (avg %.0f us per step, 16 segments x 8 iterations)" % per)
+
+## tools/build_ufo_assets.py writes to <repo>/assets; the game only reads
+## res://assets. Catch a forgotten sync.
+func _test_game_assets_in_sync() -> void:
+	var src_root := ProjectSettings.globalize_path("res://").path_join("../assets").simplify_path()
+	var stale: Array[String] = []
+	var checked := 0
+	for sub in ["ufo", "rope", "effects"]:
+		var dir := src_root.path_join(sub)
+		for f in DirAccess.get_files_at(dir):
+			if not (f.ends_with(".png") or f.ends_with(".json")):
+				continue
+			checked += 1
+			var game_path := "res://assets/%s/%s" % [sub, f]
+			if not FileAccess.file_exists(game_path) or FileAccess.get_file_as_bytes(game_path) != FileAccess.get_file_as_bytes(dir.path_join(f)):
+				stale.append(sub + "/" + f)
+	_ok(checked > 0 and stale.is_empty(), "assets: game/assets matches assets/ (run tools/build_ufo_assets.py)", "checked %d, stale %s" % [checked, str(stale)])
+
+func _test_ufo_metadata() -> void:
+	var meta = JSON.parse_string(FileAccess.get_file_as_string("res://assets/ufo/ufo_metadata.json"))
+	_ok(meta is Dictionary and meta.has("sheets"), "metadata: parses with sheets")
+	if not (meta is Dictionary):
+		return
+	var missing: Array[String] = []
+	for name in meta.sheets.keys():
+		if not ResourceLoader.exists(meta.sheets[name].file):
+			missing.append(name)
+	_ok(missing.is_empty(), "metadata: every sheet texture exists", str(missing))
+	var poses: Array = meta.sheets.get("action_poses", {}).get("frames", [])
+	var fx: Array = meta.sheets.get("action_effects", {}).get("frames", [])
+	_ok(poses.size() > 0 and poses.size() == fx.size(), "metadata: action_effects aligned 1:1 with action_poses", "%d poses, %d fx" % [poses.size(), fx.size()])
+
+func _test_ufo_faces_and_pose_effects() -> void:
+	var ufo: UfoCharacter = load("res://scenes/ufo.tscn").instantiate()
+	add_child(ufo)
+	var tick := func(): ufo.update_motion(0.0, 0.0, 0.0, Vector2.ZERO, 1.0, 1.0 / 60.0)
+	ufo.mood = "ERROR"
+	tick.call()
+	_ok(ufo.current_face() == "surprised", "face: ERROR -> surprised", ufo.current_face())
+	ufo.mood = "DISCONNECTED"
+	tick.call()
+	_ok(ufo.current_face() == "worried", "face: DISCONNECTED -> worried", ufo.current_face())
+	ufo.mood = "Z_LOWERING"
+	tick.call()
+	_ok(ufo.current_face() == "strain_up" and ufo.pose_effects_visible(), "face: Z_LOWERING -> strain_up pose with effect overlay", "%s fx=%s" % [ufo.current_face(), ufo.pose_effects_visible()])
+	var body: Sprite2D = ufo.get_node("Body")
+	var fx: Sprite2D = ufo.get_node("PoseEffects")
+	_ok(fx.position == body.position and fx.scale == body.scale and fx.region_rect.size == body.region_rect.size, "pose fx: overlay registered on the pose cell", "%s vs %s" % [fx.position, body.position])
+	ufo.mood = "ERROR"
+	tick.call()
+	_ok(not ufo.pose_effects_visible(), "pose fx: hidden for plain expressions")
+	ufo.show_pose_effects = false
+	ufo.mood = "Z_LOWERING"
+	tick.call()
+	_ok(not ufo.pose_effects_visible(), "pose fx: can be switched off")
+	remove_child(ufo)
+	ufo.free()

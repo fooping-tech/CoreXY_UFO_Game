@@ -30,12 +30,19 @@ var max_tilt_deg: float = 35.0
 ## Accelerations above this (screen px/s^2) trigger the panic pose.
 var panic_accel_threshold: float = 2600.0
 var manual_expression: String = "" # debug override, "" = automatic
+## Draw the `action_effects` overlay (speed lines, sweat...) on top of action
+## poses. The pose art itself is character-only.
+var show_pose_effects: bool = true:
+	set(v):
+		show_pose_effects = v
+		_apply_frame()
 
 var _meta: Dictionary = {}
 var _textures: Dictionary = {}  # sheet name -> Texture2D
 var _frame_size := Vector2i(64, 64)
 var _default_attach := Vector2(32, 5)
 var _sprite: Sprite2D
+var _fx_sprite: Sprite2D
 var _has_assets := false
 var _current_sheet := ""
 var _current_frame := 0
@@ -61,6 +68,13 @@ func _ready() -> void:
 	_sprite.centered = false
 	_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	add_child(_sprite)
+	_fx_sprite = Sprite2D.new()
+	_fx_sprite.name = "PoseEffects"
+	_fx_sprite.centered = false
+	_fx_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_fx_sprite.region_enabled = true
+	_fx_sprite.visible = false
+	add_child(_fx_sprite)
 	_load_meta()
 	_set_expression("normal")
 
@@ -121,6 +135,8 @@ func _show(sheet: String, index: int) -> void:
 
 func _apply_frame() -> void:
 	if not _has_assets or _current_sheet == "" or not _textures.has(_current_sheet):
+		if _fx_sprite != null:
+			_fx_sprite.visible = false
 		queue_redraw()
 		return
 	_sprite.texture = _textures[_current_sheet]
@@ -129,6 +145,15 @@ func _apply_frame() -> void:
 	_sprite.scale = Vector2.ONE * pixel_scale
 	var attach := _frame_attach(_current_sheet, _current_frame)
 	_sprite.position = -attach * pixel_scale
+	# action_effects cells line up 1:1 with action_poses cells, so the overlay
+	# reuses the pose's frame index and attachment offset.
+	var fx := show_pose_effects and _current_sheet == "action_poses" and _textures.has("action_effects")
+	_fx_sprite.visible = fx
+	if fx:
+		_fx_sprite.texture = _textures["action_effects"]
+		_fx_sprite.region_rect = _frame_rect("action_effects", _current_frame)
+		_fx_sprite.scale = _sprite.scale
+		_fx_sprite.position = _sprite.position
 
 ## Static expression from the `expressions` sheet (normal, blink, happy, ...).
 func _set_expression(name: String) -> void:
@@ -298,6 +323,9 @@ func available_expressions() -> Array[String]:
 
 func current_face() -> String:
 	return _last_expr_shown
+
+func pose_effects_visible() -> bool:
+	return _fx_sprite != null and _fx_sprite.visible
 
 # ------------------------------------------------------------ placeholder
 func _draw() -> void:
