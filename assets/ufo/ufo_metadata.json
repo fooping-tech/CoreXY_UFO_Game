@@ -1,0 +1,395 @@
+{
+  "format_version": 1,
+  "character": "CoreXY_UFO",
+  "pixel_art": true,
+  "texture_filter": "nearest",
+  "frame_size": {
+    "width": 64,
+    "height": 64
+  },
+  "rope_attachment_local": {
+    "x": 32,
+    "y": 5
+  },
+  "origin_local": {
+    "x": 32,
+    "y": 32
+  },
+  "sheets": {
+    "idle": {
+      "file": "res://assets/ufo/ufo_idle.png",
+      "columns": 4,
+      "rows": 1,
+      "frame_count": 4,
+      "fps": 3.0,
+      "loop": true,
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "expression": "normal"
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "expression": "normal_breathe"
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0,
+          "expression": "blink"
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0,
+          "expression": "normal_breathe"
+        }
+      ]
+    },
+    "expressions": {
+      "file": "res://assets/ufo/ufo_expressions.png",
+      "columns": 5,
+      "rows": 2,
+      "frame_count": 10,
+      "fps": 0.0,
+      "loop": false,
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "name": "normal"
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "name": "blink"
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0,
+          "name": "happy"
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0,
+          "name": "surprised"
+        },
+        {
+          "index": 4,
+          "x": 256,
+          "y": 0,
+          "name": "straining"
+        },
+        {
+          "index": 5,
+          "x": 0,
+          "y": 64,
+          "name": "worried"
+        },
+        {
+          "index": 6,
+          "x": 64,
+          "y": 64,
+          "name": "sad"
+        },
+        {
+          "index": 7,
+          "x": 128,
+          "y": 64,
+          "name": "wink"
+        },
+        {
+          "index": 8,
+          "x": 192,
+          "y": 64,
+          "name": "sleepy"
+        },
+        {
+          "index": 9,
+          "x": 256,
+          "y": 64,
+          "name": "excited"
+        }
+      ]
+    },
+    "actions": {
+      "file": "res://assets/ufo/ufo_actions.png",
+      "columns": 7,
+      "rows": 2,
+      "frame_count": 14,
+      "animations": {
+        "swing": {
+          "frames": [
+            0,
+            1
+          ],
+          "fps": 4.0,
+          "loop": true
+        },
+        "pull": {
+          "frames": [
+            2,
+            3
+          ],
+          "fps": 4.0,
+          "loop": true
+        },
+        "release": {
+          "frames": [
+            4,
+            5
+          ],
+          "fps": 4.0,
+          "loop": false
+        },
+        "move": {
+          "frames": [
+            6,
+            7
+          ],
+          "fps": 4.0,
+          "loop": true
+        },
+        "success": {
+          "frames": [
+            8,
+            9
+          ],
+          "fps": 6.0,
+          "loop": false
+        },
+        "failure": {
+          "frames": [
+            10,
+            11
+          ],
+          "fps": 6.0,
+          "loop": false
+        },
+        "recover": {
+          "frames": [
+            12,
+            13
+          ],
+          "fps": 4.0,
+          "loop": false
+        }
+      },
+      "layout": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0
+        },
+        {
+          "index": 4,
+          "x": 256,
+          "y": 0
+        },
+        {
+          "index": 5,
+          "x": 320,
+          "y": 0
+        },
+        {
+          "index": 6,
+          "x": 384,
+          "y": 0
+        },
+        {
+          "index": 7,
+          "x": 0,
+          "y": 64
+        },
+        {
+          "index": 8,
+          "x": 64,
+          "y": 64
+        },
+        {
+          "index": 9,
+          "x": 128,
+          "y": 64
+        },
+        {
+          "index": 10,
+          "x": 192,
+          "y": 64
+        },
+        {
+          "index": 11,
+          "x": 256,
+          "y": 64
+        },
+        {
+          "index": 12,
+          "x": 320,
+          "y": 64
+        },
+        {
+          "index": 13,
+          "x": 384,
+          "y": 64
+        }
+      ]
+    },
+    "action_poses": {
+      "file": "res://assets/ufo/ufo_action_poses.png",
+      "columns": 4,
+      "rows": 2,
+      "frame_count": 8,
+      "fps": 0.0,
+      "loop": false,
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "name": "move_right",
+          "rope_attachment_local": {
+            "x": 44,
+            "y": 12
+          }
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "name": "move_left",
+          "rope_attachment_local": {
+            "x": 22,
+            "y": 12
+          }
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0,
+          "name": "panic_right",
+          "rope_attachment_local": {
+            "x": 38,
+            "y": 14
+          }
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0,
+          "name": "panic_left",
+          "rope_attachment_local": {
+            "x": 21,
+            "y": 12
+          }
+        },
+        {
+          "index": 4,
+          "x": 0,
+          "y": 64,
+          "name": "strain_up",
+          "rope_attachment_local": {
+            "x": 34,
+            "y": 9
+          }
+        },
+        {
+          "index": 5,
+          "x": 64,
+          "y": 64,
+          "name": "resist_side",
+          "rope_attachment_local": {
+            "x": 49,
+            "y": 11
+          }
+        },
+        {
+          "index": 6,
+          "x": 128,
+          "y": 64,
+          "name": "release_stretch",
+          "rope_attachment_local": {
+            "x": 31,
+            "y": 1
+          }
+        },
+        {
+          "index": 7,
+          "x": 192,
+          "y": 64,
+          "name": "exhausted",
+          "rope_attachment_local": {
+            "x": 31,
+            "y": 15
+          }
+        }
+      ]
+    }
+  },
+  "effects": {
+    "sparkles": {
+      "file": "res://assets/effects/sparkles.png",
+      "frame_size": [
+        16,
+        16
+      ],
+      "frames": 4,
+      "fps": 10.0
+    },
+    "stars": {
+      "file": "res://assets/effects/stars.png",
+      "frame_size": [
+        16,
+        16
+      ],
+      "frames": 4,
+      "fps": 8.0
+    },
+    "motion_lines": {
+      "file": "res://assets/effects/motion_lines.png",
+      "frame_size": [
+        16,
+        16
+      ],
+      "frames": 4,
+      "fps": 12.0
+    }
+  },
+  "rope": {
+    "texture": "res://assets/rope/rope_texture.png",
+    "texture_size": [
+      8,
+      16
+    ],
+    "connector": "res://assets/rope/rope_connector.png",
+    "connector_size": [
+      16,
+      16
+    ],
+    "connector_anchor_local": [
+      8,
+      13
+    ]
+  }
+}

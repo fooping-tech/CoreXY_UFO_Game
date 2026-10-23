@@ -1,0 +1,56 @@
+{
+  "_comment": "Shared by the Godot game (game/) and the Python backend (backend/). Units: robot mm, world cm.",
+  "robot": {
+    "x_min_mm": 0.0,
+    "x_max_mm": 390.0,
+    "y_min_mm": 0.0,
+    "y_max_mm": 200.0,
+    "z_min_mm": 0.0,
+    "z_max_mm": 100.0,
+    "z_up_is_positive": true,
+    "_z_note": "Z is reported by the backend in abstract 'z units' (0..z_max) derived from the STS3020 ID1 drum servo count (SERVO_STATUS abs=). The firmware has no Z homing; the backend defines 0 at the position seen when 'z_zero' is sent. If a LARGER value means the arm is HIGHER set z_up_is_positive=true. The on-screen rope is longest when the arm is highest (inverse mapping)."
+  },
+  "world": {
+    "travel_x_cm": 52.0,
+    "travel_z_cm": 36.0,
+    "rope_min_cm": 16.0,
+    "rope_max_cm": 70.0
+  },
+  "physics": {
+    "segment_count": 16,
+    "iterations": 8,
+    "gravity": 980.0,
+    "damping": 0.45,
+    "ufo_drag": 0.25,
+    "ufo_mass": 25.0,
+    "rope_length_rate": 60.0,
+    "swing_gain": 1.0
+  },
+  "projection": {
+    "pitch_deg": 28.0,
+    "pixels_per_unit": 6.0,
+    "xy_display_scale": 1.0,
+    "perspective": 0.0045,
+    "depth_scale": 1.0
+  },
+  "render": {
+    "pixel_scale": 3.0,
+    "rope_width_px": 6.0
+  },
+  "network": {
+    "websocket_url": "ws://127.0.0.1:8765",
+    "state_timeout_ms": 1500,
+    "command_timeout_ms": 3000
+  },
+  "backend": {
+    "serial_port": "",
+    "baudrate": 115200,
+    "status_poll_hz": 10,
+    "host_timeout_s": 2.0,
+    "z_counts_per_unit": 122.88,
+    "z_sign": 1,
+    "arm_open_turns": 0.5,
+    "xy_feed_mm_min": 900,
+    "_note": "z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine)."
+  }
+}
