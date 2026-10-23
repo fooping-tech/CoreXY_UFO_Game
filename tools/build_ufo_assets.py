@@ -77,6 +77,47 @@ def top_attachment(frame: Image.Image) -> dict[str, int]:
     return {"x": round((min(xs) + max(xs)) / 2), "y": y}
 
 
+def largest_component_bbox(frame: Image.Image) -> tuple[int, int, int, int]:
+    """Measure the UFO body while ignoring detached motion/sweat pixels."""
+    alpha = frame.getchannel("A")
+    opaque = {(x, y) for y in range(CELL) for x in range(CELL) if alpha.getpixel((x, y))}
+    components: list[set[tuple[int, int]]] = []
+    while opaque:
+        seed = opaque.pop()
+        component = {seed}
+        stack = [seed]
+        while stack:
+            x, y = stack.pop()
+            for ny in range(max(0, y - 1), min(CELL, y + 2)):
+                for nx in range(max(0, x - 1), min(CELL, x + 2)):
+                    point = (nx, ny)
+                    if point in opaque:
+                        opaque.remove(point)
+                        component.add(point)
+                        stack.append(point)
+        components.append(component)
+    if not components:
+        return (0, 0, CELL, CELL)
+    body = max(components, key=len)
+    xs = [p[0] for p in body]
+    ys = [p[1] for p in body]
+    return (min(xs), min(ys), max(xs) + 1, max(ys) + 1)
+
+
+def normalize_action_pose(frame: Image.Image, target_long_edge: int = 60) -> Image.Image:
+    """Enlarge action art so its UFO body matches the expression sprites."""
+    x0, y0, x1, y1 = largest_component_bbox(frame)
+    body_w, body_h = x1 - x0, y1 - y0
+    scale = target_long_edge / max(body_w, body_h)
+    scaled_size = max(1, round(CELL * scale))
+    scaled = frame.resize((scaled_size, scaled_size), Image.Resampling.NEAREST)
+    body_cx = ((x0 + x1) / 2) * scale
+    body_cy = ((y0 + y1) / 2) * scale
+    out = Image.new("RGBA", (CELL, CELL), (0, 0, 0, 0))
+    out.alpha_composite(scaled, (round(CELL / 2 - body_cx), round(CELL / 2 - body_cy)))
+    return out
+
+
 def offset(frame: Image.Image, dx: int = 0, dy: int = 0) -> Image.Image:
     out = Image.new("RGBA", frame.size, (0, 0, 0, 0))
     out.alpha_composite(frame, (dx, dy))
@@ -138,6 +179,54 @@ def effect_assets() -> None:
     lines.save(effects / "motion_lines.png")
 
 
+def action_effect_frames() -> list[Image.Image]:
+    """Effects aligned 1:1 with the eight action-pose cells."""
+    frames = [Image.new("RGBA", (CELL, CELL), (0, 0, 0, 0)) for _ in range(8)]
+    cyan, light, navy = "#28c9f1", "#a7f5ff", "#143f91"
+
+    def speed(draw: ImageDraw.ImageDraw, side: str, frantic: bool = False) -> None:
+        spans = [(5, 19, 6), (1, 25, 10), (7, 31, 15), (2, 38, 11)]
+        if side == "right":
+            spans = [(CELL - 1 - b, y, CELL - 1 - a) for a, y, b in spans]
+        for i, (a, y, b) in enumerate(spans):
+            draw.line((a, y, b, y), fill=light if i % 2 == 0 else cyan, width=2)
+        if frantic:
+            draw.line((4 if side == "left" else 58, 44, 11 if side == "left" else 51, 44), fill=navy, width=2)
+
+    speed(ImageDraw.Draw(frames[0]), "left")
+    speed(ImageDraw.Draw(frames[1]), "right")
+    speed(ImageDraw.Draw(frames[2]), "left", True)
+    speed(ImageDraw.Draw(frames[3]), "right", True)
+
+    # Sweat drops are independent from the face and can be toggled separately.
+    for idx, x in ((2, 52), (3, 12)):
+        d = ImageDraw.Draw(frames[idx])
+        d.polygon([(x, 8), (x + 4, 15), (x, 18), (x - 4, 15)], fill=cyan, outline=navy)
+        d.point((x - 1, 13), fill=light)
+
+    d = ImageDraw.Draw(frames[4])
+    for x in (10, 54):
+        d.line((x, 11, x, 20), fill=light, width=2)
+        d.line((x - 3, 14, x - 6, 9), fill=cyan, width=2)
+        d.line((x + 3, 14, x + 6, 9), fill=cyan, width=2)
+
+    d = ImageDraw.Draw(frames[5])
+    d.line((3, 20, 12, 23), fill=cyan, width=2)
+    d.line((2, 31, 11, 31), fill=light, width=2)
+    d.line((52, 15, 61, 10), fill=cyan, width=2)
+    d.line((54, 24, 63, 22), fill=light, width=2)
+
+    d = ImageDraw.Draw(frames[6])
+    for x in (20, 32, 44):
+        d.line((x, 3, x, 12), fill=light, width=2)
+        d.line((x - 2, 7, x, 3, x + 2, 7), fill=cyan, width=1)
+
+    d = ImageDraw.Draw(frames[7])
+    for x, y, size in ((8, 20, 3), (55, 15, 4), (58, 34, 2)):
+        d.ellipse((x - size, y - size, x + size, y + size), fill=light, outline=navy)
+    return frames
+
+
 def build(source: Path, action_source: Path | None = None) -> None:
     master = Image.open(source).convert("RGBA")
     ufo_dir = ASSETS / "ufo"
@@ -179,10 +268,24 @@ def build(source: Path, action_source: Path | None = None) -> None:
             "move_right", "move_left", "panic_right", "panic_left",
             "strain_up", "resist_side", "release_stretch", "exhausted",
         ]
-        action_poses = [grid_tile(action_master, i % 4, i // 4, 4, 2) for i in range(8)]
+        raw_action_poses = [grid_tile(action_master, i % 4, i // 4, 4, 2) for i in range(8)]
+        action_poses = [normalize_action_pose(frame) for frame in raw_action_poses]
         action_pose_sheet = sheet(action_poses, 4)
         action_pose_sheet.save(ufo_dir / "ufo_action_poses.png")
         action_pose_sheet.resize((512, 256), Image.Resampling.NEAREST).save(preview_dir / "action_sheet.png")
+
+        action_fx = action_effect_frames()
+        action_fx_sheet = sheet(action_fx, 4)
+        (ASSETS / "effects").mkdir(parents=True, exist_ok=True)
+        action_fx_sheet.save(ASSETS / "effects" / "ufo_action_effects.png")
+        action_fx_sheet.resize((512, 256), Image.Resampling.NEAREST).save(preview_dir / "action_effects_sheet.png")
+
+        # One importable atlas containing all ten expressions followed by all
+        # eight normalized action poses. Empty cells stay transparent.
+        all_frames = expressions + action_poses
+        all_sheet = sheet(all_frames, 6)
+        all_sheet.save(ufo_dir / "ufo_all_sprites.png")
+        all_sheet.resize((768, 384), Image.Resampling.NEAREST).save(preview_dir / "all_sprites_sheet.png")
         action_pose_metadata = {
             "file": "res://assets/ufo/ufo_action_poses.png",
             "columns": 4,
@@ -258,6 +361,46 @@ def build(source: Path, action_source: Path | None = None) -> None:
     }
     if action_pose_metadata is not None:
         metadata["sheets"]["action_poses"] = action_pose_metadata
+        metadata["sheets"]["action_effects"] = {
+            "file": "res://assets/effects/ufo_action_effects.png",
+            "columns": 4,
+            "rows": 2,
+            "frame_count": 8,
+            "frame_size": {"width": CELL, "height": CELL},
+            "alignment": "overlay matching action_poses frame index",
+            "frames": [
+                {"index": i, "x": (i % 4) * CELL, "y": (i // 4) * CELL, "name": name}
+                for i, name in enumerate([
+                    "move_right_lines", "move_left_lines", "panic_right_fx", "panic_left_fx",
+                    "strain_up_lines", "resist_side_lines", "release_lines", "exhausted_bubbles",
+                ])
+            ],
+        }
+        unified_names = expression_names + [
+            "move_right", "move_left", "panic_right", "panic_left",
+            "strain_up", "resist_side", "release_stretch", "exhausted",
+        ]
+        unified_attachments = ([{"x": 32, "y": 5}] * len(expression_names)) + [
+            frame["rope_attachment_local"] for frame in action_pose_metadata["frames"]
+        ]
+        metadata["sheets"]["all_sprites"] = {
+            "file": "res://assets/ufo/ufo_all_sprites.png",
+            "columns": 6,
+            "rows": 3,
+            "frame_count": 18,
+            "frame_order": "expressions_then_actions",
+            "frames": [
+                {
+                    "index": i,
+                    "x": (i % 6) * CELL,
+                    "y": (i // 6) * CELL,
+                    "name": name,
+                    "category": "expression" if i < 10 else "action",
+                    "rope_attachment_local": unified_attachments[i],
+                }
+                for i, name in enumerate(unified_names)
+            ],
+        }
     (ufo_dir / "ufo_metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     rope_assets()
     effect_assets()
