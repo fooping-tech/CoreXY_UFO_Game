@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
+GAME_ASSETS = ROOT / "game" / "assets"
 CELL = 64
 
 
@@ -406,7 +408,25 @@ def build(source: Path, action_source: Path | None = None) -> None:
     effect_assets()
 
 
+def sync_game_assets() -> None:
+    """Copy the runtime sheets into the Godot project, which only reads game/assets."""
+    for sub in ("ufo", "rope", "effects"):
+        dst = GAME_ASSETS / sub
+        dst.mkdir(parents=True, exist_ok=True)
+        for src in sorted((ASSETS / sub).iterdir()):
+            if src.suffix in (".png", ".json"):
+                shutil.copy2(src, dst / src.name)
+    print(f"synced assets/{{ufo,rope,effects}} -> {GAME_ASSETS.relative_to(ROOT)} "
+          "(run `godot --headless --path game --import` for new files)")
+
+
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3):
-        raise SystemExit("usage: build_ufo_assets.py MASTER_SHEET.png [ACTION_MASTER.png]")
-    build(Path(sys.argv[1]), Path(sys.argv[2]) if len(sys.argv) == 3 else None)
+    args = [a for a in sys.argv[1:] if a != "--no-sync"]
+    if len(args) not in (1, 2):
+        raise SystemExit(
+            "usage: build_ufo_assets.py EXPRESSION_MASTER.png [ACTION_CHARACTER_MASTER.png] [--no-sync]\n"
+            "  current sources: assets/source/ufo_expression_master.png "
+            "assets/source/ufo_action_character_master.png")
+    build(Path(args[0]), Path(args[1]) if len(args) == 2 else None)
+    if "--no-sync" not in sys.argv:
+        sync_game_assets()
