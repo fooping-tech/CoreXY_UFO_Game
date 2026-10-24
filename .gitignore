@@ -20,3 +20,6 @@ backend/.pytest_cache/
 id_rsa*
 id_ed25519*
 .claude/settings.local.json
+
+# pinned security scanners (tools/security/install_tools.sh)
+tools/.bin/
