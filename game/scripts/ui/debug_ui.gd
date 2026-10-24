@@ -97,7 +97,7 @@ func _build() -> void:
 	_slider("ufo_drag", "UFO drag /s", 0.0, 3.0, main.sim.ufo_drag, 0.01, func(v): main.sim.ufo_drag = v)
 	_slider("ufo_mass", "UFO mass", 1.0, 200.0, main.sim.ufo_mass, 1.0, func(v): main.sim.set_ufo_mass(v))
 	_slider("segments", "Segments", 2.0, 48.0, main.sim.segment_count, 1.0, func(v): main.sim.segment_count = int(v))
-	_slider("iterations", "Constraint iterations", 1.0, 32.0, main.sim.iterations, 1.0, func(v): main.sim.iterations = int(v))
+	_slider("substeps", "Solver substeps", 1.0, 32.0, main.sim.substeps, 1.0, func(v): main.sim.substeps = int(v))
 	_slider("rope_rate", "Rope reel speed cm/s (0=snap)", 0.0, 400.0, main.sim.rope_length_rate, 5.0, func(v): main.sim.rope_length_rate = v)
 	_slider("rope_min", "Rope min cm", 2.0, 60.0, main.sim.min_rope_length, 1.0, func(v): main.sim.min_rope_length = v; GameConfig.data.world.rope_min_cm = v)
 	_slider("rope_max", "Rope max cm", 10.0, 120.0, main.sim.max_rope_length, 1.0, func(v): main.sim.max_rope_length = v; GameConfig.data.world.rope_max_cm = v)
@@ -226,9 +226,9 @@ func _process(_dt: float) -> void:
 		return
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
-	var pose := RobotState.interpolated_pose(Time.get_ticks_msec())
-	_status.text = "FPS %d | physics %d µs | pts %d iters %d\nrobot x=%.1f y=%.1f z=%.1f (%s)\nrope %.1f→%.1f cm  realised %.1f  anchor→ufo %.1f\nufo v=%.0f cm/s  face=%s" % [
-		fps, main.physics_usec, sim.points.size(), sim.iterations,
+	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)
+	_status.text = "FPS %d | physics %d µs | pts %d substeps %d\nrobot x=%.1f y=%.1f z=%.1f (%s)\nrope %.1f→%.1f cm  realised %.1f  anchor→ufo %.1f\nufo v=%.0f cm/s  face=%s" % [
+		fps, main.physics_usec, sim.points.size(), sim.substeps,
 		pose.x, pose.y, pose.z, "measured" if RobotState.position_is_measured else "estimated",
 		sim.rope_length, sim.target_rope_length, sim.realised_length(), sim.anchor_to_ufo_distance(),
 		sim.ufo_velocity().length(), main.ufo.current_face()]

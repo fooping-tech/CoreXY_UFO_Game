@@ -23,6 +23,9 @@ var target: Vector3 = Vector3.ZERO
 var grabbing: bool = false
 var connected: bool = true
 var _report_accum: float = 0.0
+## Sample clock (ms) advanced by the fixed physics dt, so samples are stamped
+## with the time they describe, not with when the frame happened to run.
+var _clock_ms: float = 1.0
 var _scenario: Array = []
 var _scenario_name: String = ""
 var _scenario_wait: float = 0.0
@@ -64,17 +67,22 @@ func _clamp_to_limits(p: Vector3) -> Vector3:
 func _physics_process(dt: float) -> void:
 	if not enabled:
 		return
+	_clock_ms += dt * 1000.0
 	_tick_scenario(dt)
 	for axis in range(3):
 		var vmax := max_speed_z if axis == 2 else max_speed_xy
 		var acc := accel_z if axis == 2 else accel_xy
 		var d := target[axis] - pos[axis]
 		var v := vel[axis]
-		# velocity needed to stop exactly at target
-		var stop_v := sqrt(2.0 * acc * absf(d)) * signf(d)
-		var desired := clampf(stop_v, -vmax, vmax)
+		# Fastest speed that can still stop at the target decelerating by acc*dt
+		# per step (discrete form of sqrt(2*a*d), which keeps the deceleration
+		# even right up to the stop), never more than what covers the remaining
+		# distance in this step. Without that cap the controller overshoots and
+		# hunts around the target forever.
+		var stop_v := acc * dt * (sqrt(0.25 + 2.0 * absf(d) / (acc * dt * dt)) - 0.5)
+		var desired := signf(d) * minf(minf(vmax, stop_v), absf(d) / dt)
 		v = move_toward(v, desired, acc * dt)
-		if absf(d) < 0.02 and absf(v) < 1.0:
+		if absf(d) < 1e-3 or (v * d > 0.0 and absf(v) * dt >= absf(d)):
 			v = 0.0
 			pos[axis] = target[axis]
 		else:
@@ -104,7 +112,7 @@ func _report(force: bool) -> void:
 	var p := pos
 	if jitter_mm > 0.0:
 		p += Vector3(randf_range(-jitter_mm, jitter_mm), randf_range(-jitter_mm, jitter_mm), 0.0)
-	RobotState.push_pose(p.x, p.y, p.z, _state_string(), 0, true)
+	RobotState.push_pose(p.x, p.y, p.z, _state_string(), _clock_ms, true)
 
 # ----------------------------------------------------------------- scenarios
 ## Each step: {"move": Vector3(axis targets; NAN = keep), "wait": sec,
