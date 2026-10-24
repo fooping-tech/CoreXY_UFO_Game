@@ -204,9 +204,51 @@ var _play_w := 1280.0
 ## enough below the top edge that the rearmost crane position (world -Z,
 ## which projects upward) is still on screen.
 func _update_origin() -> void:
-	var travel_z: float = GameConfig.data.world.travel_z_cm
+	var w: Dictionary = GameConfig.data.world
+	var travel_z: float = w.travel_z_cm
 	var lift := 0.5 * travel_z * proj.xy_display_scale * proj.depth_scale * sin(deg_to_rad(proj.pitch_deg)) * proj.pixels_per_unit
 	proj.origin_px = Vector2(_play_w * 0.5, 20.0 + lift)
+	# The robot's X range spans the play area (RobotState.anchor_for_xy reads it).
+	# Done in world units, not by stretching the projection, so the rope and the
+	# swing keep their shape. Recomputed every frame: cheap, and it follows window
+	# resizes, the debug panel and the projection sliders.
+	var ufo_half_px := 32.0 * float(GameConfig.get_value("render", "pixel_scale", 3.0))
+	var margin := float(GameConfig.get_value("projection", "edge_margin_px", 24.0))
+	w["travel_x_fit_cm"] = fit_travel_x_cm(proj, _play_w, travel_z, float(w.rope_min_cm), float(w.rope_max_cm), ufo_half_px, margin,
+		swing_per_travel(float(w.rope_max_cm), proj_swing_speed_mm_s()))
+
+## Fastest the real robot moves in X (mm/s): serial jog cap or the XY feed.
+func proj_swing_speed_mm_s() -> float:
+	var b: Dictionary = GameConfig.data.get("backend", {})
+	return maxf(float(b.get("jog_max_mm_s", 50.0)), float(b.get("xy_feed_mm_min", 900.0)) / 60.0)
+
+## How far the UFO swings past its anchor when the robot stops from `speed_mm_s`,
+## per cm of world travel: a pendulum hit by a velocity step dv swings about
+## dv * sqrt(L / g), and dv in world units grows with the travel.
+static func swing_per_travel(rope_cm: float, speed_mm_s: float) -> float:
+	var r := GameConfig.robot()
+	var range_mm := maxf(float(r.x_max_mm) - float(r.x_min_mm), 1.0)
+	return speed_mm_s / range_mm * sqrt(maxf(rope_cm, 0.0) / 980.0)
+
+## World X travel (cm) that brings the UFO to `margin_px` from both edges of a
+## play area `play_w` wide, wherever it is in depth and rope length (rope_min..max), leaving room
+## for the swing past the end (`swing_per_cm` of the travel): x projects linearly
+## for a given (y, z), so the tightest corner sets the travel.
+static func fit_travel_x_cm(p: Projection25D, play_w: float, travel_z: float, rope_min: float, rope_max: float,
+		ufo_half_px: float, margin_px: float, swing_per_cm: float = 0.0) -> float:
+	var px_per_cm := 0.0
+	var max_scale := 0.0
+	for z in [-0.5 * travel_z, 0.5 * travel_z]:
+		for y in [-rope_min, -rope_max]:  # where the UFO hangs (not the anchor plate)
+			var a := p.project(Vector3(0.0, y, z))
+			var b := p.project(Vector3(1.0, y, z))
+			px_per_cm = maxf(px_per_cm, absf(b.screen.x - a.screen.x))
+			max_scale = maxf(max_scale, a.scale)
+	var half_px := play_w * 0.5 - ufo_half_px * max_scale - margin_px
+	if px_per_cm <= 0.0 or half_px <= 0.0:
+		return 1.0
+	# anchor at travel/2 plus the swing past it (swing_per_cm * travel) fits half_px
+	return half_px / (px_per_cm * (0.5 + swing_per_cm))
 
 ## Select which robot source drives the rope.
 func use_source(src: String) -> void:
