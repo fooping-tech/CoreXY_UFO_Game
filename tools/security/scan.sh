@@ -60,8 +60,12 @@ mode_staged() {
 }
 mode_push() {
   need_tools
-  # every commit reachable from HEAD that no origin branch has yet = what this push sends
-  gitleaks_run --log-opts="HEAD --not --remotes=origin"
+  # Everything that can be sent and the remote does not have yet: the ref being pushed
+  # (pre-commit sets PRE_COMMIT_TO_REF / PRE_COMMIT_REMOTE_NAME for each pushed ref),
+  # plus every local branch and tag, so pushing another branch or a tag cannot slip past.
+  local remote="${PRE_COMMIT_REMOTE_NAME:-origin}" to="${PRE_COMMIT_TO_REF:-}"
+  git remote | grep -qx "$remote" || remote=origin
+  gitleaks_run --log-opts="${to:+$to }HEAD --branches --tags --not --remotes=$remote"
 }
 mode_history() { need_tools; gitleaks_run --log-opts="--all"; }
 mode_forbidden() { python3 "$GUARD" --scan-tracked; }
@@ -127,6 +131,21 @@ if gl == tv == gd:
 else:
     print("  FAIL  独自ルールの正規表現が一致しない: gitleaks=%s trivy=%s guard=%s" % (gl, tv, gd)); sys.exit(1)
 EOF
+  # push scan covers refs other than HEAD (a secret on another branch / a tag)
+  local p="$TMP/pushrepo"
+  git init -q --bare "$TMP/remote.git" && git clone -q "$TMP/remote.git" "$p" 2>/dev/null
+  git -C "$p" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+  git -C "$p" push -q origin HEAD:main 2>/dev/null
+  git -C "$p" switch -q -c other && printf 'K = "%s"\n' "$cx_tok" > "$p/k.py" && git -C "$p" add k.py \
+    && git -C "$p" -c user.name=t -c user.email=t@example.invalid commit -q -m secret && git -C "$p" tag -a v0 -m v0 \
+    && git -C "$p" switch -q main && git -C "$p" branch -q -D other
+  if (cd "$p" && "${GL[@]}" --report-path "$TMP/st_push.json" --exit-code 0 --log-opts="HEAD --branches --tags --not --remotes=origin" "$p" >/dev/null 2>&1) \
+      && ! python3 "$SEC/report.py" gitleaks "$TMP/st_push.json" >/dev/null; then
+    echo "  ok    push 前の検査: HEAD 以外（タグだけにあるコミット）の秘密情報も検出"
+  else
+    echo "  FAIL  push 前の検査: HEAD 以外の参照を検査していない"; fails=$((fails + 1))
+  fi
+  python3 "$SEC/report.py" selftest-exceptions | sed -e 's/^/  /' || fails=$((fails + 1))
   python3 "$GUARD" --self-test | sed -e 's/^/  /' || fails=$((fails + 1))
   [[ $fails -eq 0 ]] && echo "selftest: OK" || echo "selftest: $fails 件失敗"
   [[ $fails -eq 0 ]]
