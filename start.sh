@@ -36,22 +36,24 @@ require_uv() {
 }
 
 # Same rule as the backend (config.py::load_config, then --ws-host / --ws-port).
+# Plain shell on purpose: uv-only installations may have no python3 on PATH.
 resolve_ws_endpoint() {
-  local hostport
-  hostport="$(python3 - "$CONFIG_FILE" <<'PY'
-import json, sys
-try:
-    url = json.load(open(sys.argv[1])).get("network", {}).get("websocket_url", "ws://127.0.0.1:8765")
-except (OSError, ValueError):
-    url = "ws://127.0.0.1:8765"
-hp = url.split("://", 1)[-1].split("/", 1)[0]
-host, port = (hp.rsplit(":", 1) + ["8765"])[:2] if ":" in hp else (hp, "8765")
-print(host or "127.0.0.1", port)
-PY
-)"
-  WS_HOST="${hostport% *}"
-  WS_PORT="${hostport#* }"
-  local prev=""
+  local url=""
+  if [[ -f "$CONFIG_FILE" ]]; then
+    url="$(tr -d '\n' < "$CONFIG_FILE" | sed -n 's/.*"websocket_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  fi
+  [[ -n "$url" ]] || url="ws://127.0.0.1:8765"
+  local hostport="${url#*://}"
+  hostport="${hostport%%/*}"
+  if [[ "$hostport" == *:* ]]; then
+    WS_HOST="${hostport%:*}"
+    WS_PORT="${hostport##*:}"
+  else
+    WS_HOST="$hostport"
+    WS_PORT="8765"
+  fi
+  [[ -n "$WS_HOST" ]] || WS_HOST="127.0.0.1"
+  local prev="" a
   for a in "$@"; do
     case "$prev" in --ws-host) WS_HOST="$a" ;; --ws-port) WS_PORT="$a" ;; esac
     case "$a" in --ws-host=*) WS_HOST="${a#*=}" ;; --ws-port=*) WS_PORT="${a#*=}" ;; esac
@@ -121,7 +123,9 @@ trap cleanup EXIT INT TERM
 
 run_game() {
   if [[ "${START_SH_NO_GAME:-}" == "1" ]]; then
-    echo "[START_SH_NO_GAME] godot --path $GAME_DIR -- $*（バックエンド $WS_HOST:$WS_PORT は起動済み）"
+    local backend=""
+    [[ -n "${BACKEND_PID:-}" ]] && backend="（バックエンド ${WS_HOST:-?}:${WS_PORT:-?} は起動済み）"
+    echo "[START_SH_NO_GAME] godot --path $GAME_DIR -- $*$backend"
     return 0
   fi
   "$(find_godot)" --path "$GAME_DIR" -- "$@"
