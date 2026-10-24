@@ -228,7 +228,8 @@ def self_test() -> int:
         if got != should_block:
             fails += 1
             print("FAIL %r: blocked=%s expected=%s" % (cmd, got, should_block))
-    for text, should_hit in [(tok, True), ('password = "hunter2hunter2"', True), ("AKIA" + "ABCDEFGHIJKLMNOP", True),
+    fake_password = "pass" + 'word = "' + "x" * 14 + '"'  # assembled so --scan-tracked does not flag this file
+    for text, should_hit in [(tok, True), (fake_password, True), ("AKIA" + "ABCDEFGHIJKLMNOP", True),
                              ("-----BEGIN " + "PRIVATE KEY-----", True), ("token_count = 5", False)]:
         if bool(scan_text(text)) != should_hit:
             fails += 1
