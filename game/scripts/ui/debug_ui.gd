@@ -76,6 +76,7 @@ func _build() -> void:
 	_button(hb2, "Backend: enable motors", func(): main.ws.send_command("enable_motors", {"enable": true}))
 	_button(hb2, "home", func(): main.ws.send_command("home"))
 	_button(hb2, "z_zero", func(): main.ws.send_command("z_zero"))
+	_button(hb2, "clear_alarm", func(): main.ws.send_command("clear_alarm"))
 
 	_header("Virtual robot target (mm / z units)")
 	var r := GameConfig.robot()
@@ -234,5 +235,12 @@ func _process(_dt: float) -> void:
 		sim.rope_length, sim.target_rope_length, sim.realised_length(), sim.anchor_to_ufo_distance(),
 		sim.ufo_velocity().length(), main.ufo.current_face()]
 	var conn := "CONNECTED" if RobotState.connected else "DISCONNECTED"
-	_state_chip.text = "[%s] %s  machine=%s  game=%s  motors=%s" % [RobotState.source, conn, RobotState.machine_state, GameState.state, "ON" if RobotState.motors_enabled else "off"]
-	_state_chip.add_theme_color_override("font_color", Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4))
+	_state_chip.text = "[%s] %s  machine=%s  game=%s  motors=%s  homed=%s" % [RobotState.source, conn, RobotState.machine_state, GameState.state, "ON" if RobotState.motors_enabled else "off", "YES" if RobotState.homed else "no"]
+	# a refused arrow-key jog (or a firmware-side refusal) shows what to do next
+	var hint: String = main.jog_hint
+	if hint == "" and RobotState.source == "websocket" and RobotState.last_error.begins_with("jog rejected"):
+		hint = main.jog_hint_for(RobotState.last_error.trim_prefix("jog rejected: "))
+	if hint != "":
+		_state_chip.text += "\nJOG: " + hint
+	var ok_color := Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4)
+	_state_chip.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3) if hint != "" else ok_color)
