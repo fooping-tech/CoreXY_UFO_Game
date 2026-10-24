@@ -131,7 +131,9 @@ func _handle(msg: Dictionary) -> void:
 				rtt_ms = Time.get_ticks_msec() - _pending[rid].sent_ms
 				_pending.erase(rid)
 			ack.emit(rid, t == "ack", data)
-			log_line.emit("%s %s %s" % [t, rid, JSON.stringify(data)])
+			# jog is refreshed ~20 Hz while a key is held: only log its refusals
+			if t == "nack" or str(data.get("command", "")) != "jog":
+				log_line.emit("%s %s %s" % [t, rid, JSON.stringify(data)])
 		"error":
 			RobotState.report_error(str(data.get("message", "error")))
 			log_line.emit("ERROR " + str(data.get("message", "")))
