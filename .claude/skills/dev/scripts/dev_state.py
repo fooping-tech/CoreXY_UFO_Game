@@ -427,4 +427,9 @@ def main(argv: List[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except RuntimeError as e:
+        # gh/git failures (network timeout, auth): say so plainly, never guess a phase
+        sys.stderr.write("状態を取得できませんでした（GitHub への接続または認証を確認して再実行）:\n  %s\n" % e)
+        sys.exit(3)
