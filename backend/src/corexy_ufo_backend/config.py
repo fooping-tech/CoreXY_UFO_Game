@@ -41,6 +41,8 @@ class BackendConfig:
     z_sign: int = 1
     arm_open_turns: float = 0.5
     xy_feed_mm_min: float = 900.0
+    # serial JOG speed cap (firmware recommends <= 50 mm/s = 3000 mm/min, see REPLY_FIRMWARE_JOG.md)
+    jog_max_mm_s: float = 50.0
     websocket_host: str = "127.0.0.1"
     websocket_port: int = 8765
     limits: RobotLimits = field(default_factory=RobotLimits)
@@ -73,6 +75,7 @@ def load_config(path: Path | None = None) -> BackendConfig:
     cfg.z_sign = int(b.get("z_sign", 1))
     cfg.arm_open_turns = float(b.get("arm_open_turns", 0.5))
     cfg.xy_feed_mm_min = float(b.get("xy_feed_mm_min", 900.0))
+    cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))
     hostport = url.split("://", 1)[-1].rstrip("/")
     if ":" in hostport:

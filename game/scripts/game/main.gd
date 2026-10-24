@@ -36,6 +36,16 @@ var _depth_vel := 0.0
 var physics_usec: int = 0
 ## Keyboard jog speed for the mock robot (mm/s)
 var jog_speed_mm := 180.0
+## Keyboard jog speed for the real robot over WebSocket (mm/s; the backend caps it
+## at backend.jog_max_mm_s, the firmware recommends <= 50)
+var jog_speed_real_mm := 40.0
+## The real robot stops by itself ~250 ms after the last jog, so refresh at 20 Hz.
+const JOG_REFRESH_S := 0.05
+var _jog_refresh_left := 0.0
+var _jog_active := false
+## Set by Space (stop): arrow keys are ignored until all of them are released,
+## so a key still held after Space cannot restart the robot.
+var _jog_latched := false
 var jog_speed_z := 50.0
 
 func _ready() -> void:
@@ -312,10 +322,14 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 	if cur == "RESULT":
 		effects.burst("sparkles" if GameState.result_success else "motion_lines")
 
-func _handle_keys(dt: float) -> void:
-	if RobotState.source != "mock" or not mock.enabled:
-		return
-	var d := Vector3.ZERO
+## Velocity (mm/s, robot X/Y) for the arrow keys: diagonals keep the same speed.
+static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
+	return Vector2.ZERO if dir == Vector2.ZERO else dir.normalized() * speed
+
+func _arrow_dir() -> Vector2:
+	var d := Vector2.ZERO
+	if not get_window().has_focus():
+		return d  # keys of an unfocused window must not keep the robot moving
 	if Input.is_key_pressed(KEY_RIGHT):
 		d.x += 1
 	if Input.is_key_pressed(KEY_LEFT):
@@ -324,6 +338,48 @@ func _handle_keys(dt: float) -> void:
 		d.y += 1
 	if Input.is_key_pressed(KEY_DOWN):
 		d.y -= 1
+	return d
+
+## Arrow direction, or zero while stopped by Space and an arrow is still held.
+func _latched_arrow_dir() -> Vector2:
+	var d := _arrow_dir()
+	_jog_latched = jog_latch(_jog_latched, d)
+	return Vector2.ZERO if _jog_latched else d
+
+## Latch after a stop: stays set while any arrow is held, clears once all are released.
+static func jog_latch(latched: bool, dir: Vector2) -> bool:
+	return latched and dir != Vector2.ZERO
+
+## Real robot: dead-man jog. While an arrow key is held send `jog` every 50 ms;
+## on release send one `jog {0,0}` (stops at once). Never retried: if messages
+## stop, the firmware stops by itself.
+func _handle_real_jog(dt: float) -> void:
+	var v := jog_velocity(_latched_arrow_dir(), jog_speed_real_mm)
+	if not ws.enabled or not ws.is_open():
+		_jog_active = false
+		return
+	if v == Vector2.ZERO:
+		if _jog_active:
+			ws.send_command("jog", {"vx": 0.0, "vy": 0.0})
+			_jog_active = false
+		_jog_refresh_left = 0.0
+		return
+	_jog_refresh_left -= dt
+	if _jog_refresh_left <= 0.0:
+		_jog_refresh_left = JOG_REFRESH_S
+		ws.send_command("jog", {"vx": v.x, "vy": v.y})
+		_jog_active = true
+
+func _handle_keys(dt: float) -> void:
+	if RobotState.source == "websocket":
+		_handle_real_jog(dt)
+		return
+	if not mock.enabled:
+		return
+	var d := Vector3.ZERO
+	var arrows := _latched_arrow_dir()
+	d.x = arrows.x
+	d.y = arrows.y
 	var zsign := 1.0 if GameConfig.robot().z_up_is_positive else -1.0
 	if Input.is_key_pressed(KEY_W):
 		d.z += zsign
@@ -342,8 +398,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		match ev.keycode:
 			KEY_SPACE:
+				_jog_latched = _arrow_dir() != Vector2.ZERO
 				if mock.enabled:
 					mock.emergency_stop()
+				if ws.enabled and ws.is_open():
+					# decelerating stop, no alarm (the debug panel's E-STOP sends ABORT)
+					_jog_active = false
+					ws.send_command("soft_stop")
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
 				_layout()

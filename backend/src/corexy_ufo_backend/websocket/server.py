@@ -6,11 +6,18 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop,
-  clear_alarm, get_state, list_ports
+  home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop (ABORT, emergency),
+  soft_stop (decelerate, no alarm), jog {vx,vy} (mm/s, dead-man: resend ~20 Hz while
+  held, {0,0} on release; the firmware stops after 250 ms without one), clear_alarm,
+  get_state, list_ports
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
+
+Ordering: commands of one connection run one after another (so enable_motors
+-> move_xy keeps its order), EXCEPT the out-of-band commands in PRIORITY_COMMANDS
+(stop, soft_stop, jog, get_state), which run immediately even while a long move
+of the same connection is still waiting for the firmware.
 """
 
 from __future__ import annotations
@@ -29,8 +36,12 @@ from ..robot.interface import RobotCommandError, RobotInterface
 
 log = logging.getLogger(__name__)
 
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "clear_alarm", "get_state", "list_ports")
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
+            "clear_alarm", "get_state", "list_ports")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab")
+# Never queued behind another command of the same connection: a stop must reach
+# the robot while a move_xy of that connection is still running.
+PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state")
 
 
 def now_ms() -> int:
@@ -54,6 +65,7 @@ class GameServer:
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         self._server = await serve(self._handle_client, self.host, self.port, ping_interval=5, ping_timeout=5)
+        self._tasks.append(asyncio.create_task(self._poll_loop()))
         self._tasks.append(asyncio.create_task(self._state_loop()))
         if self.vision is not None:
             self.vision.on_event = self._on_vision_event
@@ -82,6 +94,16 @@ class GameServer:
         for c in dead:
             self.clients.discard(c)
 
+    async def _poll_loop(self) -> None:
+        # robot.tick() can wait on the serial line (POS round trip ~70-100 ms on the
+        # real robot); it runs here so the state broadcast never waits for it.
+        while True:
+            try:
+                await self.robot.tick()
+            except Exception:  # pragma: no cover
+                log.exception("poll loop")
+            await asyncio.sleep(0.01)
+
     async def _state_loop(self) -> None:
         # Fixed-rate schedule: sleep until the next slot instead of a fixed
         # interval after the work, so tick/broadcast time does not stretch the
@@ -93,7 +115,6 @@ class GameServer:
         next_t = loop.time()
         while True:
             try:
-                await self.robot.tick()
                 snap = self.robot.snapshot()
                 await self.broadcast(snap.to_message())
             except Exception:  # pragma: no cover
@@ -114,18 +135,45 @@ class GameServer:
         try:
             await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS)}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
-            async for raw in ws:
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    await ws.send(json.dumps({"type": "error", "timestamp": now_ms(), "data": {"message": "invalid json"}}))
-                    continue
-                await self._dispatch(ws, msg)
+            queue: asyncio.Queue = asyncio.Queue()
+            worker = asyncio.create_task(self._ordered_worker(ws, queue))
+            out_of_band: set[asyncio.Task] = set()
+            try:
+                async for raw in ws:
+                    try:
+                        msg = json.loads(raw)
+                    except json.JSONDecodeError:
+                        await ws.send(json.dumps({"type": "error", "timestamp": now_ms(), "data": {"message": "invalid json"}}))
+                        continue
+                    name = str((msg.get("data") or {}).get("name", "")) if msg.get("type") == "command" else ""
+                    if name in PRIORITY_COMMANDS:
+                        task = asyncio.create_task(self._dispatch(ws, msg))
+                        out_of_band.add(task)
+                        task.add_done_callback(out_of_band.discard)
+                    else:
+                        queue.put_nowait(msg)
+            finally:
+                # The client is gone: drop queued commands (no move should start for a
+                # client that left), let a running one finish (never cancel a move half-way).
+                while not queue.empty():
+                    queue.get_nowait()
+                queue.put_nowait(None)
+                await asyncio.gather(worker, *out_of_band, return_exceptions=True)
         except websockets.ConnectionClosed:
             pass
         finally:
             self.clients.discard(ws)
             log.info("client disconnected (%d)", len(self.clients))
+
+    async def _ordered_worker(self, ws: ServerConnection, queue: asyncio.Queue) -> None:
+        while True:
+            msg = await queue.get()
+            if msg is None:
+                return
+            try:
+                await self._dispatch(ws, msg)
+            except websockets.ConnectionClosed:
+                return
 
     async def _dispatch(self, ws: ServerConnection, msg: dict) -> None:
         t = msg.get("type")
@@ -172,6 +220,16 @@ class GameServer:
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 await self.robot.stop()
+            elif name == "soft_stop":
+                # outside the motion lock: it must reach a running move
+                await self.robot.soft_stop()
+            elif name == "jog":
+                # Dead-man refresh, sent ~20 Hz while a key is held; never retried. Outside
+                # the motion lock, but refused while a home/move/grab command is running.
+                vx, vy = float(params.get("vx", 0.0)), float(params.get("vy", 0.0))
+                if (vx or vy) and self._motion_lock.locked():
+                    return self._nack(name, "busy: another motion command is running")
+                await self.robot.jog(vx, vy)
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
             elif name == "z_zero":

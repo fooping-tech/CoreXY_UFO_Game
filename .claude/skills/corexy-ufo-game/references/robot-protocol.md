@@ -64,7 +64,6 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 
 | 項目 | 現状 | 影響 |
 |---|---|---|
-| Space キー | `main.gd` は `mock.enabled` のときだけ `mock.emergency_stop()` を呼ぶ。**WebSocket モードでは何も送らない** | 実機モードの E-STOP はデバッグパネルの `E-STOP` ボタン（mock 停止 + `stop` 送信）だけ |
 | GDScript Mock の E-STOP | ALARM にならず、`homed` も外れない | Mock で作った E-STOP 演出が実機の復帰手順と合わない |
 | `GameState` の ERROR | `error_cleared`（デバッグパネル Clear）でしか抜けない。`clear_alarm` → `home` 後も ERROR のまま | 実機モードで演出が戻らない |
 | `RELEASING` | `GameState._on_machine_state_changed` に対応がない | 放す動作のリアクションがない |

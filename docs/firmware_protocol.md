@@ -31,6 +31,10 @@
 | `TEST_MODE ON\|OFF` | `TEST_MODE result=ON (...)` / `result=OFF ...` / `result=REJECTED reason=..` |
 | `ABORT` | `ABORT complete`（アラーム発生 + HOMED解除） |
 | `ALARM_CLEAR` | `ALARM_CLEAR complete` |
+| `JOG vx vy [z arm]`（a49bc54〜） | 開始時に 1 回 `JOG start vx=.. vy=.. z=.. arm=.. src=SERIAL HOMED=..`、継続中は**応答なし**（`ACK QUEUED` もなし）、50 ms ごとに `JOG_POS X=.. Y=.. VX=.. VY=.. Z_ABS=.. ARM_ABS=..`、終了時 `JOG end reason=zero\|timeout\|command\|abort\|alarm\|limit_x\|limit_y X=.. Y=.. HOMED=..`、ソフトリミットでは `JOG soft_limit axis=X X=..`（終わらない）、拒否は `NACK_JOG reason=not_homed\|alarm\|homing\|job_active\|busy\|bad_args`（その押下の間は以後黙って無視） |
+| `STOP`（a49bc54〜） | `ACK QUEUED STOP` → （止めた XY）`NACK_XY target=(..) reason=stopped X=.. Y=..` → `STOP complete X=.. Y=.. HOMED=..`。減速停止、アラームにならず HOMED を保つ。`HOME` と `SERVO_*` は止めない |
+
+JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_JOG.md`（依頼は [HANDOFF_FIRMWARE_JOG.md](HANDOFF_FIRMWARE_JOG.md)）。最後の `JOG` から 250 ms 途絶えるとファームウェアが減速停止する（デッドマン）。ジョグ中も `POS` には即答する。ジョグ中の `XY` 等は `NACK_XY ... reason=jog_active`。
 
 **重要な制約**
 
@@ -66,7 +70,9 @@
 | `z_zero` | `SERVO_STATUS 1` | 現在の `abs=` を「アーム最上位」基準に設定 |
 | `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算 |
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |
-| `stop` | `ABORT` | ロック外で即送信。以後 `clear_alarm` と `home` が必要 |
+| `stop` | `ABORT` | 非常停止。ロック外で即送信。以後 `clear_alarm` と `home` が必要 |
+| `soft_stop` | `STOP` | 減速停止。ロック外で即送信し `STOP complete` を待つ。実行中の `move_xy` は `reason=stopped` で NACK になる |
+| `jog {vx,vy}` | `JOG vx vy` | mm/s。ゲームは押している間 20 Hz で送り、離したら `{0,0}`。再送しない（途絶えたらファームウェアが 250 ms で止める）。`enable_motors` と HOMED が必要、`move_xy` などの実行中は `busy`。速度は `backend.jog_max_mm_s`（既定 50）で制限 |
 | `clear_alarm` | `ALARM_CLEAR` | |
 
 ## 6. 既存ツールとの関係
