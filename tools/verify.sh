@@ -9,8 +9,13 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ONLY="${2:-}"
-[[ "${1:-}" == "--only" ]] || ONLY=""
+ONLY=""
+if [[ "${1:-}" == "--only" ]]; then
+  ONLY="${2:-}"
+  case "$ONLY" in secrets|tooling|backend|godot) ;; *) echo "usage: $0 [--only secrets|tooling|backend|godot]" >&2; exit 2 ;; esac
+elif [[ $# -gt 0 ]]; then
+  echo "usage: $0 [--only secrets|tooling|backend|godot]" >&2; exit 2
+fi
 FAILED=()
 PASSED=()
 
