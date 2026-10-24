@@ -141,7 +141,7 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 - 件数が基準より減っていないことと、終了コード 0 を確認する。機能を追加したらテストも追加する（どこに何を足すかは [testing.md](references/testing.md)）。
 - 見た目の変更は `--scenario <name> --capture <dir>` でフレームを保存して確認する。
 - 動きの不具合（チャタリング、ガタつき、表情のちらつき）は**推測で直さず**、まず実際にウィンドウで動かして `--log-motion <csv> --quit-after <秒>` でログを取る。ヘッドレスでは描画フレームが物理と同期してしまい、描画側の不具合が出ない。WebSocket 経路は `./start.sh mock` 相当でバックエンドを起動して取る。
-- WebSocket 経路の変更は `./start.sh mock` で end-to-end を確認する。
+- WebSocket 経路の変更は `./start.sh mock` で end-to-end を確認する。`start.sh` は WebSocket のポート（`network.websocket_url`、`--ws-port`）が使用中なら起動前に止まる（起動したままの実機用バックエンドにつながるのを防ぐため）。ゲームを起動せずに起動確認だけするなら `START_SH_NO_GAME=1 ./start.sh mock --ws-port 8799`。
 - 報告には、実行したコマンド、件数、未実行の項目（実機など）を書く。
 
 ## 7. 外部 Agent Skills との使い分け
