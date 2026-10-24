@@ -42,7 +42,7 @@ backend/                    Python（uv）
   src/corexy_ufo_backend/robot/            interface.py, mock_robot.py, real_robot.py, state.py
   src/corexy_ufo_backend/websocket/        server.py（JSON ブリッジ）
   src/corexy_ufo_backend/vision_service/   base.py, service.py, yolo_detector.py, mediapipe_hands.py, cloudflare_detector.py（抽象のみ）
-  tests/                                   32 件（conftest.py の FakeFirmware が実機応答を再現）
+  tests/                                   45 件（conftest.py の FakeFirmware が実機応答を再現）
 config/game_config.json     Godot と Python が共有する設定（可動範囲、物理初期値、投影、通信）
 docs/firmware_protocol.md   実機のシリアル仕様（ソースから確認した事実のみ）
 docs/test_report.md         検証済み / 未検証 / 既知課題
@@ -87,7 +87,7 @@ cd game
 - 「Test scenarios」の 1〜10 ボタン（X往復 / Y往復 / XY斜め / 急停止 / Z下降上昇 / XYZ同時 / 通信切断 / 再接続 / 上下限 / ロープ長急変）+ Grab cycle
 - 表情の固定（Character のドロップダウン）、Success / Failure / Error ボタン
 
-キー: ←→ X、↑↓ Y、W/S Z、Space 急停止、G/F 成功/失敗、F1 パネル非表示。
+キー: ←→ X、↑↓ Y、W/S Z、Space 停止、G/F 成功/失敗、F1 パネル非表示。実機接続中（WebSocket）は矢印キーが押している間だけ動く JOG、Space が減速停止（STOP）。非常停止はデバッグパネルの E-STOP（ABORT）。
 
 コマンドラインからシナリオ再生とフレーム保存:
 ```bash
@@ -100,7 +100,7 @@ Godot --path . -- --scenario xy_diagonal --log-motion /tmp/motion.csv --quit-aft
 
 ```bash
 cd game && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://tests/test_runner.tscn   # 26 件、終了コードで合否
-cd backend && uv sync && uv run pytest                                                                     # 32 件
+cd backend && uv sync && uv run pytest                                                                     # 45 件
 ```
 
 ### C. バックエンド込み（WebSocket 経路の確認）

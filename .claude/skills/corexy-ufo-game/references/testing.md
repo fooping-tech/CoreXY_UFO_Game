@@ -3,13 +3,13 @@
 ## 1. コマンド
 
 ```bash
-# Godot（リポジトリ直下から）。基準 46 件。終了コード 0 = 全件成功
+# Godot（リポジトリ直下から）。基準 49 件。終了コード 0 = 全件成功
 godot --headless --path game res://tests/test_runner.tscn
 # godot が PATH にない場合: /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 # クリーンなチェックアウト（game/.godot/ がない）では先に:
 godot --headless --path game --import
 
-# Python。基準 32 件（約 6 秒）
+# Python。基準 45 件（約 15 秒）
 cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 ```
 
