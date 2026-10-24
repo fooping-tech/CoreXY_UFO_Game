@@ -8,7 +8,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from dev_state import BRANCH_RE, infer_phase, issue_from_branch, summarize_checks  # noqa: E402
+from dev_state import BRANCH_RE, choose_pr, infer_phase, issue_from_branch, summarize_checks  # noqa: E402
 
 OPEN_ISSUE = {"number": 12, "state": "OPEN"}
 CLEAN = {"branch": "main", "dirty_files": []}
@@ -79,8 +79,24 @@ class InferPhase(unittest.TestCase):
     def test_merged_issue_closed(self):
         self.assertEqual(self.phase(issue={"number": 12, "state": "CLOSED"}, b=branch(), p=pr(state="MERGED")), "done")
 
+    def test_review_fetch_failure_is_not_ready(self):
+        self.assertEqual(self.phase(b=branch(), p=pr(threads=None)), "7")
+
     def test_closed_unmerged(self):
         self.assertEqual(self.phase(b=branch(), p=pr(state="CLOSED")), "attention")
+
+
+class ChoosePr(unittest.TestCase):
+    PRS = [{"number": 3, "state": "MERGED"}, {"number": 7, "state": "OPEN"}, {"number": 5, "state": "CLOSED"}]
+
+    def test_requested_pr_wins(self):
+        self.assertEqual(choose_pr(self.PRS, 3)["number"], 3)
+        self.assertEqual(choose_pr(self.PRS, 5)["number"], 5)
+
+    def test_default_prefers_open_then_merged(self):
+        self.assertEqual(choose_pr(self.PRS)["number"], 7)
+        self.assertEqual(choose_pr(self.PRS[:1] + self.PRS[2:])["number"], 3)
+        self.assertIsNone(choose_pr([]))
 
 
 class Helpers(unittest.TestCase):

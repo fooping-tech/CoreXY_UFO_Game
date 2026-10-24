@@ -162,7 +162,8 @@ def summarize_checks(rollup: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"overall": overall, "failing": failing, "pending": pending, "passing": passing}
 
 
-def unresolved_threads(number: int) -> List[Dict[str, Any]]:
+def unresolved_threads(number: int) -> Optional[List[Dict[str, Any]]]:
+    """Unresolved review threads, or None when they could not be fetched (unknown != none)."""
     owner, name = run(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]).split("/")
     query = """
 query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
@@ -170,11 +171,11 @@ query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$n
   comments(first:1){nodes{databaseId author{login} body url}}}}}}}"""
     data = gh_json(["api", "graphql", "-f", "query=" + query, "-f", "owner=" + owner,
                     "-f", "name=" + name, "-F", "number=%d" % number], allow_fail=True)
-    out = []
+    out = []  # type: List[Dict[str, Any]]
     try:
         nodes = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
     except (TypeError, KeyError):
-        return out
+        return None
     for t in nodes:
         if t["isResolved"]:
             continue
@@ -226,7 +227,10 @@ def infer_phase(issue: Optional[Dict[str, Any]], branch: Optional[Dict[str, Any]
         checks = pr.get("checks", {}).get("overall", "none")
         if checks == "failure":
             return {"phase": "8", "reason": "CI が失敗: " + ", ".join(pr["checks"]["failing"])}
-        blocking = [t for t in pr.get("threads", []) if not t.get("outdated")]
+        threads = pr.get("threads")
+        if threads is None:
+            return {"phase": "7", "reason": "レビュー指摘を取得できなかった（状態不明）。時間をおいて再実行する"}
+        blocking = [t for t in threads if not t.get("outdated")]
         if pr.get("reviewDecision") == "CHANGES_REQUESTED" or blocking:
             return {"phase": "8", "reason": "未解決のレビュー指摘が %d 件" % len(blocking)}
         if checks == "pending":
@@ -247,15 +251,28 @@ def infer_phase(issue: Optional[Dict[str, Any]], branch: Optional[Dict[str, Any]
 
 
 # --------------------------------------------------------------------- reports
-def report_issue(number: int, local: Dict[str, Any], default_branch: str) -> Dict[str, Any]:
+def choose_pr(prs: List[Dict[str, Any]], prefer: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """The PR to report: the one explicitly asked for, else open > merged > any."""
+    if prefer is not None:
+        for p in prs:
+            if p["number"] == prefer:
+                return p
+    open_prs = [p for p in prs if p["state"] == "OPEN"]
+    merged = [p for p in prs if p["state"] == "MERGED"]
+    return (open_prs or merged or prs or [None])[0]
+
+
+def report_issue(number: int, local: Dict[str, Any], default_branch: str,
+                 prefer_pr: Optional[int] = None) -> Dict[str, Any]:
     issue = issue_detail(number)
     if issue is None:
         return {"error": "Issue #%d が見つからない" % number}
     names = branches_for_issue(number)
     prs = prs_for_issue(number, names)
+    if prefer_pr is not None and prefer_pr not in [p["number"] for p in prs]:
+        prs.append(pr_detail(prefer_pr))
     open_prs = [p for p in prs if p["state"] == "OPEN"]
-    merged = [p for p in prs if p["state"] == "MERGED"]
-    pr = (open_prs or merged or prs or [None])[0]
+    pr = choose_pr(prs, prefer_pr)
     bname = pr["headRefName"] if pr else (names[0] if names else None)
     branch = None
     if bname:
@@ -341,7 +358,9 @@ def print_text(mode: str, data: Dict[str, Any]) -> None:
             print("    CI: %s %s | review: %s | mergeable: %s" % (
                 c["overall"], ("failing=" + ",".join(c["failing"])) if c["failing"] else "",
                 p.get("reviewDecision") or "-", p.get("mergeable")))
-            for t in p["threads"]:
+            if p["threads"] is None:
+                print("    ⚠ レビュー指摘を取得できなかった（状態不明）")
+            for t in p["threads"] or []:
                 print("    未解決 %s %s:%s %s%s" % (t["severity"], t["path"], t["line"], t["summary"],
                                               " (outdated)" if t["outdated"] else ""))
         else:
@@ -396,7 +415,7 @@ def main(argv: List[str]) -> int:
         if n is None:
             data = report_pr_only(pr["number"], local, info["default_branch"])
         else:
-            data = report_issue(n, local, info["default_branch"])
+            data = report_issue(n, local, info["default_branch"], prefer_pr=pr["number"])
     else:
         print(__doc__)
         return 2

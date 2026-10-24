@@ -144,15 +144,40 @@ def scan_text(text: str) -> List[str]:
     return found
 
 
-def check_commit(args: List[str], cwd: str) -> Optional[str]:
+# git subcommands that can change what the next commit contains
+INDEX_CHANGING = {"add", "rm", "mv", "apply", "stash", "restore", "reset", "checkout", "switch",
+                  "cherry-pick", "merge", "pull", "am", "revert"}
+
+
+def check_commit(args: List[str], cwd: str, index_changed: bool = False,
+                 add_paths: Optional[List[str]] = None) -> Optional[str]:
+    """Scan what the commit will contain.
+
+    The hook runs before the whole command line, so `git add x && git commit` would
+    otherwise be checked against the index *before* `git add`. When an earlier part of
+    the same command can change the index (index_changed), scan every tracked change
+    against HEAD plus the untracked files that `git add` may pick up (add_paths;
+    [] = all untracked files). That can over-block, which is the safe side.
+    """
     all_flag = any(a in ("-a", "--all") or (re.match(r"^-[a-zA-Z]+$", a) and "a" in a) for a in args)
-    diff_args = ["diff", "HEAD"] if all_flag else ["diff", "--cached"]
+    diff_args = ["diff", "HEAD"] if (all_flag or index_changed) else ["diff", "--cached"]
     names = git(diff_args + ["--name-only", "--diff-filter=AM"], cwd).split()
+    added = "\n".join(l[1:] for l in git(diff_args + ["-U0"], cwd).splitlines()
+                      if l.startswith("+") and not l.startswith("+++"))
+    if index_changed and add_paths is not None:
+        untracked = git(["ls-files", "--others", "--exclude-standard", "--"] + add_paths, cwd).splitlines()
+        names += untracked
+        for f in untracked:
+            try:
+                path = os.path.join(cwd, f)
+                if os.path.getsize(path) <= 2_000_000:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+                        added += "\n" + fh.read()
+            except OSError:
+                pass
     bad_files = [n for n in names if SECRET_FILES.search(n) and not SECRET_FILE_ALLOW.search(n)]
     if bad_files:
         return "秘密情報を含みうるファイルをコミットしようとしている: %s（.gitignore に追加する）" % ", ".join(bad_files)
-    added = "\n".join(l[1:] for l in git(diff_args + ["-U0"], cwd).splitlines()
-                      if l.startswith("+") and not l.startswith("+++"))
     hits = scan_text(added)
     if hits:
         return "コミットする差分に秘密情報らしき値がある: %s。値を取り除き、環境変数や .gitignore 済みのファイルに移す" % ", ".join(hits)
@@ -160,6 +185,8 @@ def check_commit(args: List[str], cwd: str) -> Optional[str]:
 
 
 def evaluate(command: str, cwd: str) -> Optional[str]:
+    index_changed = False
+    add_paths = None  # type: Optional[List[str]]
     for tokens in split_segments(command):
         if tokens[:3] == ["gh", "repo", "delete"]:
             return "gh repo delete は禁止"
@@ -175,11 +202,17 @@ def evaluate(command: str, cwd: str) -> Optional[str]:
         if sub == "push":
             reason = check_push(rest, where)
         elif sub == "commit":
-            reason = check_commit(rest, where)
+            reason = check_commit(rest, where, index_changed, add_paths)
         else:
             reason = check_destructive(sub, rest)
         if reason:
             return reason
+        if sub in INDEX_CHANGING:
+            index_changed = True
+            if sub == "add":
+                paths = [a for a in rest if not a.startswith("-")]
+                everything = not paths or any(a in ("-A", "--all", ".") for a in rest + paths)
+                add_paths = [] if everything else (add_paths or []) + paths
     return None
 
 
@@ -239,8 +272,37 @@ def self_test() -> int:
         if (bool(SECRET_FILES.search(name)) and not SECRET_FILE_ALLOW.search(name)) != bad:
             fails += 1
             print("FAIL file %r" % name)
+    fails += self_test_commits(tok)
     print("guard_git self-test: %s" % ("OK" if fails == 0 else "%d failure(s)" % fails))
     return 1 if fails else 0
+
+
+def self_test_commits(tok: str) -> int:
+    """Commit checks need a real repository: `git add <secret> && git commit` in one command."""
+    import tempfile
+    fails = 0
+    with tempfile.TemporaryDirectory() as d:
+        ident = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run(["git", "init", "-q", d], check=True)
+        subprocess.run(["git"] + ident + ["-C", d, "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+        with open(os.path.join(d, "creds.txt"), "w") as fh:
+            fh.write('t = "%s"\n' % tok)
+        with open(os.path.join(d, "ok.py"), "w") as fh:
+            fh.write("x = 1\n")
+        for cmd, should_block in [("git add creds.txt && git commit -m t", True),
+                                  ("git add -A && git commit -m t", True),
+                                  ("git add . ; git commit -m t", True),
+                                  ("git add ok.py && git commit -m ok", False),
+                                  ("git commit -m nothing-staged", False)]:
+            got = evaluate(cmd, d) is not None
+            if got != should_block:
+                fails += 1
+                print("FAIL %r: blocked=%s expected=%s" % (cmd, got, should_block))
+        subprocess.run(["git", "-C", d, "add", "creds.txt"], check=True)
+        if evaluate("git commit -m staged", d) is None:
+            fails += 1
+            print("FAIL staged secret not blocked")
+    return fails
 
 
 def main() -> int:
