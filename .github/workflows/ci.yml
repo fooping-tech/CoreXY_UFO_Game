@@ -15,6 +15,8 @@ concurrency:
 
 env:
   GODOT_VERSION: 4.7.2
+  # from the release's SHA512-SUMS.txt; update together with GODOT_VERSION
+  GODOT_SHA512: 9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65
 
 jobs:
   tooling:
@@ -46,13 +48,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/godot
-          key: godot-${{ env.GODOT_VERSION }}-linux
+          key: godot-${{ env.GODOT_VERSION }}-linux-${{ env.GODOT_SHA512 }}
       - name: Download Godot
         if: steps.cache-godot.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/godot && cd ~/godot
           curl -fsSL -o godot.zip \
             "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          echo "${GODOT_SHA512}  godot.zip" | sha512sum -c -
           unzip -q godot.zip && rm godot.zip
           mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 godot && chmod +x godot
       - run: GODOT=~/godot/godot tools/verify.sh --only godot
