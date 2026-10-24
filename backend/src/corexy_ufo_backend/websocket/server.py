@@ -83,6 +83,14 @@ class GameServer:
             self.clients.discard(c)
 
     async def _state_loop(self) -> None:
+        # Fixed-rate schedule: sleep until the next slot instead of a fixed
+        # interval after the work, so tick/broadcast time does not stretch the
+        # period (the game interpolates these samples; irregular gaps show up
+        # as stop-and-go on the rope). When late, restart the schedule one
+        # interval from now rather than bursting to catch up (back-to-back
+        # samples a few ms apart are useless for interpolation).
+        loop = asyncio.get_running_loop()
+        next_t = loop.time()
         while True:
             try:
                 await self.robot.tick()
@@ -90,7 +98,11 @@ class GameServer:
                 await self.broadcast(snap.to_message())
             except Exception:  # pragma: no cover
                 log.exception("state loop")
-            await asyncio.sleep(self.state_interval)
+            next_t += self.state_interval
+            now = loop.time()
+            if next_t < now:
+                next_t = now + self.state_interval
+            await asyncio.sleep(max(next_t - now, 0.0))
 
     def _on_vision_event(self, event: dict) -> None:
         asyncio.get_event_loop().create_task(self.broadcast({"type": "vision_event", "timestamp": now_ms(), "data": event}))
