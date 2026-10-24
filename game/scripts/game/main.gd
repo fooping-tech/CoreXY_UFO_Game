@@ -18,6 +18,8 @@ var debug_ui: CanvasLayer
 
 var _initialised := false
 var _last_anchor := Vector3.ZERO
+var _last_pose := Vector3.ZERO
+var _last_travel_x := 0.0
 ## Rope points of the previous and the latest physics tick. Rendering runs
 ## faster than 60 Hz, so frames draw a blend of the two instead of showing the
 ## same tick twice and then jumping.
@@ -269,6 +271,18 @@ func _physics_process(dt: float) -> void:
 	var pose := RobotState.playback_pose(dt)
 	var anchor := RobotState.anchor_for_xy(pose.x, pose.y)
 	sim.target_rope_length = RobotState.rope_length_for_z(pose.z)
+	var travel_x := RobotState.travel_x_cm()
+	if _initialised and not is_equal_approx(travel_x, _last_travel_x):
+		# The mm -> world mapping changed (window resize, debug panel, projection
+		# sliders), not the robot: move the rope with the anchor's new place for the
+		# last pose, without velocity, so a layout change does not kick it.
+		var shift := RobotState.anchor_for_xy(_last_pose.x, _last_pose.y) - _last_anchor
+		sim.translate_all(shift)
+		sim.anchor = _last_anchor + shift
+		_last_anchor += shift
+		_reset_render_history()
+	_last_travel_x = travel_x
+	_last_pose = pose
 	if not _initialised:
 		sim.anchor = anchor
 		sim.rope_length = sim.target_rope_length

@@ -312,6 +312,29 @@ func _test_fit_travel_to_screen(rs: Node) -> void:
 	w["fit_travel_x_to_screen"] = keep_fit
 	w["travel_x_fit_cm"] = keep_val
 	_ok(is_equal_approx(fitted.x, 75.0) and is_equal_approx(fixed.x, 0.5 * float(w.travel_x_cm)), "fit X: anchor uses the fitted travel, or the fixed one when off", "%s %s" % [fitted, fixed])
+	# A layout change (new fitted travel) must not kick the rope: the robot did not move.
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.mock.enabled = false
+	rs.clear_samples()
+	rs.push_pose(292.5, 100.0, float(r.z_max_mm), "", 1000.0)  # stationary, right of centre
+	w["fit_travel_x_to_screen"] = true
+	w["travel_x_fit_cm"] = 150.0
+	for i in range(240):
+		game._physics_process(1.0 / 60.0)
+	var before: Vector3 = game.sim.anchor
+	w["travel_x_fit_cm"] = 123.0  # e.g. the debug panel was shown
+	var worst_v := 0.0
+	for i in range(30):
+		game._physics_process(1.0 / 60.0)
+		worst_v = maxf(worst_v, game.sim.ufo_velocity().length())
+	_ok(not is_equal_approx(game.sim.anchor.x, before.x) and game.sim.anchor_velocity().length() < 1e-3 and worst_v < 1.0,
+		"fit X: a layout change moves the rope without kicking it", "anchor %.1f -> %.1f, max ufo v %.2f cm/s" % [before.x, game.sim.anchor.x, worst_v])
+	w["fit_travel_x_to_screen"] = keep_fit
+	w["travel_x_fit_cm"] = keep_val
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()
