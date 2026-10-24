@@ -47,6 +47,7 @@ cd CoreXY_UFO_Game/game
 ```bash
 Godot --path . -- --scenario sudden_stop          # x_sweep y_sweep xy_diagonal sudden_stop z_down_up xyz_together disconnect reconnect limits rope_snap grab_cycle
 Godot --path . -- --scenario xyz_together --capture /tmp/frames   # 0.5秒毎に PNG 保存して FPS を表示後に終了
+Godot --path . -- --scenario xy_diagonal --log-motion /tmp/motion.csv --quit-after 10   # 動きのログ（チャタリング調査用 CSV）
 ```
 
 ### 物理テスト（ヘッドレス）
@@ -115,7 +116,7 @@ Cloudflare API は仕様が既存リポジトリで確認できなかったた�
 
 ## 設計の要点
 
-- **ロープ物理**（`game/scripts/physics/rope_simulator.gd`）: 3D Verlet + 距離拘束（PBD）。上端は実機 XY から決まる可動アンカー、下端に UFO 質量。双方向スイープ + 最終厳密パスで伸びない。ロープ長変更時はアンカー中心に形状をスケーリング（巻き取り）。
+- **ロープ物理**（`game/scripts/physics/rope_simulator.gd`）: 3D Verlet + 距離拘束（PBD）。上端は実機 XY から決まる可動アンカー、下端に UFO 質量。1 tick を 16 サブステップに分け、各サブステップで全セグメントを三重対角の直接解法で一度に拘束し、長距離拘束（アンカーからの距離 ≤ 弧長）で伸びない。ロープ長変更時はアンカー中心に形状をスケーリング（巻き取り）。
 - **投影**（`projection.gd`）: 固定カメラを X 軸まわりに俯角回転 → ピンホール分割。ロープ全質点と UFO が同じ関数を通る。
 - **Z 逆マッピング**（`robot_state.gd: rope_length_for_z`）: アーム最上位 → ロープ最長 → UFO 最下位。
 - **状態分離**: `RobotState`（実機/モックの物理状態） と `GameState`（演出状態、イベント駆動）。物理演算結果は実機に送らない。

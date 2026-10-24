@@ -3,13 +3,13 @@
 ## 1. コマンド
 
 ```bash
-# Godot（リポジトリ直下から）。基準 36 件。終了コード 0 = 全件成功
+# Godot（リポジトリ直下から）。基準 46 件。終了コード 0 = 全件成功
 godot --headless --path game res://tests/test_runner.tscn
 # godot が PATH にない場合: /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 # クリーンなチェックアウト（game/.godot/ がない）では先に:
 godot --headless --path game --import
 
-# Python。基準 31 件（約 6 秒）
+# Python。基準 32 件（約 6 秒）
 cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 ```
 
@@ -27,6 +27,10 @@ cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 | `_test_inextensible_under_motion` | 高速 XZ 掃引で伸び < 5%、ロープ長を超えない、NaN なし |
 | `_test_sudden_stop_swing_and_decay` | 加速で遅れる、急停止で振り子、減衰、振幅 < ロープ長 |
 | `_test_xy_diagonal_3d` | X と奥行きの両方で遅れる、奥行き方向の揺れ |
+| `_test_pendulum_and_taut_rope` | 巡航中ロープがまっすぐ（折れ < 2°）、UFO が上下に跳ねない、急停止後の周期 ≈ 2π√(L/g)（±10%） |
+| `_test_playback_smoothing` | tick がまとめて実行されてもアンカーが等間隔で動く、最新サンプルを越えない、外挿しない |
+| `_test_playback_30hz_acceleration` | 30 Hz の加速中サンプルで加速度が脈打たない（直線補間だと失敗する） |
+| `_test_mock_robot_settles` | MockRobot が目標でぴたりと止まる、行き過ぎない、IDLE に戻る |
 | `_test_rope_length_change` | 巻き取りで目標長、UFO が上がる、伸びなし、急伸長で安定、最大長クランプ |
 | `_test_z_inverse_mapping` | アーム最上 → ロープ最長、単調、アンカー X+ → 右 / Y+ → 奥 |
 | `_test_projection_consistency` | ロープ端と UFO が同じ画面座標、奥ほど小さく上、原点の一致 |
@@ -75,6 +79,9 @@ Python テストの注意:
 cd game
 godot --path . -- --scenario sudden_stop
 godot --path . -- --scenario xyz_together --capture /tmp/frames   # 0.5 秒ごとに PNG を 16 枚、終了時に FPS と物理時間を表示
+godot --path . -- --scenario xy_diagonal --log-motion /tmp/motion.csv --quit-after 10
+#   P 行 = 物理 tick（生サンプル、再生位置、アンカー、加速度、再生時計 play_ms / newest_ms / delay_ms）
+#   R 行 = 描画フレーム（UFO の画面位置、画面速度、傾き、表情）
 godot --path . -- --source websocket --hide-debug
 ```
 
