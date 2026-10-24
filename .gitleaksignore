@@ -1,0 +1,3 @@
+# Gitleaks false-positive fingerprints, one per line:
+#   <fingerprint>  # reason: ... / expires: YYYY-MM-DD / owner: ...
+# Never add a real secret here — rotate it instead.

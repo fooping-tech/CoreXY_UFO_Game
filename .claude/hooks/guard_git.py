@@ -11,6 +11,9 @@ Blocks (exit 2, reason on stderr — Claude sees it and must ask the user):
   - git commit when what it will commit contains secrets (tokens, private keys, .env files)
   - gh repo delete, gh pr merge --admin, and gh api writes to refs / branch protection /
     rulesets / file contents (REST or GraphQL), which would bypass the PR flow
+  - skipping the local secret checks: --no-verify, commit -n, SKIP=..., core.hooksPath changes,
+    pre-commit uninstall, deleting .git/hooks; and committing / pushing while the pre-commit /
+    pre-push hooks are not installed (run tools/security/setup.sh)
 The command line is parsed like a shell would split it: heredoc bodies and quoted text are
 not commands, but `sh -c "..."`, `eval`, `$(...)`, backticks, `( ... )` and prefixes such as
 env/sudo/command/time/nohup are looked into.
@@ -21,6 +24,7 @@ If the hook itself fails on a command that mentions git/gh, it blocks (fails clo
 
 Also usable directly:
   guard_git.py --scan-tracked   # scan every tracked file for secrets (tools/verify.sh / CI)
+  guard_git.py --check-names    # file names on stdin: forbidden names (.env, keys, ...)
   guard_git.py --self-test      # built-in tests
 
 Python 3.9 compatible (macOS system python3).
@@ -46,6 +50,8 @@ SECRET_PATTERNS = [
     ("Anthropic API key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
     ("OpenAI API key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9]{32,}\b")),
     ("Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    # in-house key format; keep identical to .gitleaks.toml and tools/security/trivy-secret.yaml
+    ("CoreXY UFO API key", re.compile(r"\bcxufo_(?:live|test)_[A-Za-z0-9]{32}\b")),
     ("hard-coded credential", re.compile(
         r"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|auth[_-]?token|password|passwd)\b"
         r"\s*[:=]\s*['\"][^'\"\s]{12,}['\"]")),
@@ -313,30 +319,56 @@ def check_gh(args: List[str]) -> Optional[str]:
 
 
 # --------------------------------------------------------------------- evaluation
-def evaluate(command: str, cwd: str, depth: int = 0) -> Optional[str]:
+def missing_hooks(cwd: str) -> List[str]:
+    """pre-commit / pre-push hooks installed by pre-commit (tools/security/setup.sh)?"""
+    hooks_dir = git(["rev-parse", "--git-path", "hooks"], cwd).strip()
+    if not hooks_dir:
+        return []  # not inside a repository: git itself will fail
+    hooks_dir = os.path.join(cwd, hooks_dir) if not os.path.isabs(hooks_dir) else hooks_dir
+    out = []
+    for name in ("pre-commit", "pre-push"):
+        try:
+            with open(os.path.join(hooks_dir, name)) as fh:
+                if "pre-commit" in fh.read():
+                    continue
+        except OSError:
+            pass
+        out.append(name)
+    return out
+
+
+def evaluate(command: str, cwd: str, depth: int = 0, require_hooks: bool = True) -> Optional[str]:
     if depth > 4:
         return None
     body = strip_heredocs(command)
     for sub_cmd in substitutions(body):
-        reason = evaluate(sub_cmd, cwd, depth + 1)
+        reason = evaluate(sub_cmd, cwd, depth + 1, require_hooks)
         if reason:
             return reason
     index_changed = False
     add_paths = None  # type: Optional[List[str]]
     for raw in split_commands(body):
+        if any(re.match(r"^(?:SKIP|PRE_COMMIT_ALLOW_NO_CONFIG|GIT_HOOKS?|HUSKY)=", t) for t in raw):
+            return "検査フックの回避（SKIP= などの環境変数）は禁止"
+        if any("core.hookspath" in t.lower() for t in raw):
+            return "core.hooksPath の変更は禁止（検査フックを無効化できるため）"
         tokens = unwrap(raw)
         if not tokens:
             continue
+        if os.path.basename(tokens[0]) == "pre-commit" and tokens[1:2] == ["uninstall"]:
+            return "pre-commit uninstall は禁止（検査フックを外すため）"
+        if os.path.basename(tokens[0]) in ("rm", "mv", "chmod") and any(".git/hooks" in t for t in tokens[1:]):
+            return ".git/hooks の変更は禁止（検査フックを外すため）"
         head = os.path.basename(tokens[0])
         if head in SHELLS and "-c" in tokens:
             k = tokens.index("-c")
             if k + 1 < len(tokens):
-                reason = evaluate(tokens[k + 1], cwd, depth + 1)
+                reason = evaluate(tokens[k + 1], cwd, depth + 1, require_hooks)
                 if reason:
                     return reason
             continue
         if head == "eval":
-            reason = evaluate(" ".join(tokens[1:]), cwd, depth + 1)
+            reason = evaluate(" ".join(tokens[1:]), cwd, depth + 1, require_hooks)
             if reason:
                 return reason
             continue
@@ -356,6 +388,14 @@ def evaluate(command: str, cwd: str, depth: int = 0) -> Optional[str]:
         args, cdir = parsed
         where = os.path.join(cwd, cdir) if cdir else cwd
         sub, rest = args[0], args[1:]
+        if sub in ("commit", "push", "merge", "am", "rebase", "cherry-pick", "revert") and (
+                "--no-verify" in rest or (sub == "commit" and "n" in short_flags(rest))):
+            return "--no-verify / -n による検査の回避は禁止"
+        if sub in ("commit", "push") and require_hooks:
+            missing = missing_hooks(where)
+            if missing:
+                return ("秘密情報の検査フック（%s）が入っていない。先に `tools/security/setup.sh` を実行する"
+                        % ", ".join(missing))
         if sub == "push":
             reason = check_push(rest, where)
         elif sub == "commit":
@@ -374,10 +414,40 @@ def evaluate(command: str, cwd: str, depth: int = 0) -> Optional[str]:
 
 
 # --------------------------------------------------------------------- entry points
+def forbidden_name(name: str) -> bool:
+    return bool(SECRET_FILES.search(name)) and not SECRET_FILE_ALLOW.search(name)
+
+
+def check_names(names: List[str]) -> int:
+    bad = [n for n in names if n.strip() and forbidden_name(n.strip())]
+    for n in bad:
+        print("FORBIDDEN %s: 秘密情報を含みうるファイルは追跡しない（.gitignore に追加し、git rm --cached で外す）" % n.strip())
+    return 1 if bad else 0
+
+
+DUMMY_VALUE = re.compile(r"^(?:|[\"']{2}|<[^>]*>|changeme|change-me|dummy\S*|example\S*|your[-_]\S*|x{3,}|\*{3,}|0+)$", re.I)
+
+
+def check_env_example(path: str, rel: str) -> List[str]:
+    """.env.example may only hold placeholders, never a real-looking value."""
+    out = []
+    try:
+        lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
+    except OSError:
+        return out
+    for k, line in enumerate(lines, 1):
+        m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
+        if m and not line.lstrip().startswith("#") and not DUMMY_VALUE.match(m.group(2).strip("\"'") if len(m.group(2)) > 2 else m.group(2)):
+            out.append("%s:%d: %s にダミー以外の値がある（<...> や changeme にする）" % (rel, k, m.group(1)))
+    return out
+
+
 def scan_tracked(root: str) -> int:
     files = git(["ls-files"], root).splitlines()
     problems = []
     for f in files:
+        if SECRET_FILE_ALLOW.search(f):
+            problems += check_env_example(os.path.join(root, f), f)
         if SECRET_FILES.search(f) and not SECRET_FILE_ALLOW.search(f):
             problems.append("%s: 秘密情報を含みうるファイル名" % f)
             continue
@@ -405,6 +475,11 @@ SELF_TEST_COMMANDS = [
     ("git push --repo=origin main", True), ("git push -u origin feat/1-x", False),
     ("git push origin feat/x:MAIN", True), ("git push origin feat/x:main~0", True), ("rm -rf .git", True),
     ("rm -rf build/", False),
+    # skipping the local checks
+    ("git commit --no-verify -m x", True), ("git commit -nm x", True), ("git push --no-verify origin feat/1-x", True),
+    ("SKIP=gitleaks git commit -m x", True), ("git config core.hooksPath /dev/null", True),
+    ("git -c core.hooksPath=/dev/null commit -m x", True), ("pre-commit uninstall", True),
+    ("rm .git/hooks/pre-commit", True), ("git commit -m 'mention --no-verify in text'", False),
     ("git status && git push origin feat/2-y", False),
     # wrappers, subshells, substitutions
     ('sh -c "git push origin main"', True), ("bash -c 'git push origin main'", True),
@@ -460,6 +535,19 @@ def self_test() -> int:
         if (bool(SECRET_FILES.search(name)) and not SECRET_FILE_ALLOW.search(name)) != bad:
             fails += 1
             print("FAIL file %r" % name)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, ".env.example")
+        with open(p, "w") as fh:
+            fh.write("# comment\nAPI_KEY=<your-api-key>\nTOKEN=changeme\nEMPTY=\n")
+        if check_env_example(p, ".env.example"):
+            fails += 1
+            print("FAIL .env.example placeholders flagged")
+        with open(p, "a") as fh:
+            fh.write("REAL=s3cr3tvalue-1234\n")
+        if not check_env_example(p, ".env.example"):
+            fails += 1
+            print("FAIL .env.example real value not flagged")
     fails += self_test_commits(tok)
     print("guard_git self-test: %s (%d command cases)" % ("OK" if fails == 0 else "%d failure(s)" % fails,
                                                           len(SELF_TEST_COMMANDS)))
@@ -491,12 +579,15 @@ def self_test_commits(tok: str) -> int:
                                   ("git commit --include a.py -m x", True), ("git commit -am x", True),
                                   ("git add ok.py && git commit -m ok -- ok.py", False),
                                   ("git commit -m nothing-staged", False)]:
-            got = evaluate(cmd, d) is not None
+            got = evaluate(cmd, d, require_hooks=False) is not None
             if got != should_block:
                 fails += 1
                 print("FAIL %r: blocked=%s expected=%s" % (cmd, got, should_block))
+        if "pre-commit" not in (evaluate("git commit -m ok", d) or ""):
+            fails += 1
+            print("FAIL commit without installed hooks not blocked")
         run("add", "creds.txt")
-        if evaluate("git commit -m staged", d) is None:
+        if evaluate("git commit -m staged", d, require_hooks=False) is None:
             fails += 1
             print("FAIL staged secret not blocked")
     return fails
@@ -505,6 +596,8 @@ def self_test_commits(tok: str) -> int:
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
+    if "--check-names" in sys.argv:
+        return check_names(sys.stdin.read().splitlines())
     if "--scan-tracked" in sys.argv:
         root = git(["rev-parse", "--show-toplevel"], os.getcwd()).strip() or os.getcwd()
         return scan_tracked(root)

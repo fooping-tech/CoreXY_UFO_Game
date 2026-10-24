@@ -49,8 +49,8 @@ python3 .claude/skills/dev/scripts/dev_state.py next       # 誰も着手して�
 | 1 | Issue の取得と要件整理 | — | `gh issue view N`。受け入れ条件を箇条書きにする。なければ作り、曖昧な点はユーザーに確認 |
 | 2 | 調査 | — | `corexy-ufo-game` スキルの表で触るファイルを決める。実機が必要な変更かを判定する |
 | 3 | ブランチ作成 | `dev_state` に branch がある | `種類/<Issue番号>-<内容>`（例 `feat/12-keyboard-jog`）を最新の `origin/main` から作る |
-| 4 | 実装とテスト | — | 変更は Issue の範囲だけ。`tools/verify.sh` を通す。テストを足す |
-| 5 | コミットと push | 未 push が 0 | 意味のある単位でコミット。`git push -u origin <branch>` |
+| 4 | 実装とテスト | — | 変更は Issue の範囲だけ。`tools/verify.sh` を通す（セキュリティ検査を含む）。テストを足す |
+| 5 | コミットと push | 未 push が 0 | **コミット前に `tools/security/scan.sh staged`、push 前に `scan.sh push` を通す**（フックも自動で実行する）。意味のある単位でコミット。`git push -u origin <branch>` |
 | 6 | PR 作成 | PR がある | テンプレートに沿って本文を書き、`Closes #N` を入れる。base は `main` |
 | 7 | CI とレビューの確認 | — | `gh pr checks N --watch`、未解決のレビュー指摘（Codex の自動レビューを含む）を確認 |
 | 8 | 修正と再検証 | 失敗・指摘が 0 | 指摘を重要度別に整理して対応 → verify → push → 指摘に返信して解決済みにする |
@@ -64,7 +64,7 @@ python3 .claude/skills/dev/scripts/dev_state.py next       # 誰も着手して�
 全部を満たすときだけ。一つでも欠けたら、マージせずに理由と次の手を説明する。
 
 1. ユーザーが**この会話で、この PR について**マージを明示的に指示・承認した（以前の承認は引き継がない）
-2. CI がすべて成功（`checks: success`）。CI がない・実行中なら待つか、理由を説明する
+2. CI と **Security（`security.yml`）の必須チェック**がすべて成功（`checks: success`）。実行中なら待つ。秘密情報の検出は重大度にかかわらずマージ不可
 3. 未解決のレビュー指摘が 0、`CHANGES_REQUESTED` でない。**outdated（行が変わっただけ）の指摘も未解決として数える**。対応済みなら返信して解決済みにしてから数え直す
 4. `mergeable: MERGEABLE`（`UNKNOWN` は計算中なので待つ）、base が `main`、手元のブランチがリモートより古くない
 5. PR 本文に `Closes #N`、テスト結果、未解決事項がある
@@ -79,7 +79,9 @@ python3 .claude/skills/dev/scripts/dev_state.py next       # 誰も着手して�
 - PR 本文には変更概要、テスト結果、確認方法、未解決事項（実機未検証を含む）を書く。
 - push のたびに CI の結果を確認し、失敗を残したまま報告を終えない。
 - force push、履歴の書き換え、ブランチ削除、Issue・PR を閉じる操作は原則しない。必要なときはユーザーに確認する。
-- 認証情報・秘密鍵・トークン・`.env` をコミットしない。
+- 認証情報・秘密鍵・トークン・`.env` をコミットしない。秘密情報の検査（pre-commit / pre-push / CI）を**回避しない**: `--no-verify`、`commit -n`、`SKIP=`、`core.hooksPath` の変更、pre-commit のアンインストールは禁止（フックが止める）。検査フックが入っていなければ `tools/security/setup.sh` を実行してから続ける。
+- 秘密情報を検出したら、値を表示・引用せず（報告はファイル・ルール・行だけ）、`docs/SECURITY.md` §4 の手順で対処する。一度コミットした値はローテーションが必要であることをユーザーに伝える。
+- ブランチ保護・ルールセット・Actions の権限は変更しない。必要ならユーザー（管理者）に `tools/security/apply_ruleset.sh` などの実行を依頼する。
 - コミットの末尾には、システムが指定する Co-Authored-By 行を付ける。PR 本文の末尾にも、指定された署名行を付ける。
 - 同じ操作をやり直すときは、必ず状態を確認してからにする（冪等性）。例: PR 作成前に既存の PR を探す。コメントを重複して投稿しない。
 

@@ -65,7 +65,10 @@ tools/verify.sh --only godot      # 一部だけ
 
 ## 5. コミットと push
 
+初回だけ（フックが「検査フックが入っていない」と止めたとき）: `tools/security/setup.sh`。
+
 ```bash
+tools/security/scan.sh staged     # コミット前（pre-commit フックでも自動実行）
 git add <関係するファイルだけ>       # git add -A は使わない（無関係なファイルや秘密情報の混入を防ぐ）
 git commit -F - <<'EOF'
 <type>: <何をしたか（英語、命令形、50 文字程度）>
@@ -74,10 +77,12 @@ git commit -F - <<'EOF'
 
 Co-Authored-By: ...（システムが指定する行）
 EOF
+tools/security/scan.sh push       # push 前（pre-push フックでも自動実行）
 git push -u origin <branch>
 ```
 
-- フック（`guard_git.py`）がコミット・push を止めたら、理由を読んで直す。回避しない。
+- フック（`guard_git.py`）や pre-commit / pre-push がコミット・push を止めたら、理由を読んで直す。回避しない（`--no-verify` などは禁止）。
+- 秘密情報を検出したら、値をどこにも書かずに（ファイル・ルール・行だけ）ユーザーに報告し、`docs/SECURITY.md` §4 に従う。
 - 1 コミット = 1 つの意味のある変更。ゲーム演出と実機制御は分ける。
 
 ## 6. PR 作成
@@ -120,6 +125,7 @@ python3 .claude/skills/dev/scripts/dev_state.py pr <N>   # CI・未解決の指�
 ```
 
 - CI の失敗ログ: `gh run view <run-id> --log-failed`（run-id は `gh pr checks <N>` の URL から）。
+- **Security の必須チェック**（`security: …` の 6 つ）も CI と同じく全部成功が必要。脆弱性（HIGH 以上）で失敗したら依存を更新する。更新できない事情があれば `.trivyignore.yaml` に理由と期限を書いてユーザーに合意を取る（勝手に例外にしない）。
 - **自動レビュー**: このリポジトリでは Codex（`chatgpt-codex-connector[bot]`）が PR に行コメントを付ける。重要度バッジ `P0`〜`P3` が付く。`dev_state.py` の「未解決」に一覧が出る。
 - **自己レビュー**: PR を作ったら、組み込みの `code-review` スキルで差分をレビューする（`/code-review medium <N>` 相当）。
 - **受け入れ条件の独立確認**（変更が大きいとき）: サブエージェントに、自分の結論を渡さずに次を依頼する。
