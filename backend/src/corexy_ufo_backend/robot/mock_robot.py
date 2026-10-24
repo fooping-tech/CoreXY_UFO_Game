@@ -28,6 +28,10 @@ class MockRobot(RobotInterface):
         self.connected = False
         self.homed = False
         self.motors_enabled = False
+        # jog: per-axis speed caps while active, and when the last refresh expires
+        self.jog_max_mm_s = 50.0
+        self._jog_cap = [0.0, 0.0]
+        self._jog_until = 0.0
         self.alarm = False
         self.error = ""
         self._grabbing = False
@@ -85,7 +89,42 @@ class MockRobot(RobotInterface):
         self._require()
         self._grabbing = close
 
+    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
+        if vx_mm_s == 0 and vy_mm_s == 0:
+            self._end_jog()
+            return
+        self._require()
+        speed = math.hypot(vx_mm_s, vy_mm_s)
+        if speed > self.jog_max_mm_s > 0:
+            vx_mm_s, vy_mm_s = vx_mm_s * self.jog_max_mm_s / speed, vy_mm_s * self.jog_max_mm_s / speed
+        lim = self.limits
+        bounds = [(lim.x_min, lim.x_max), (lim.y_min, lim.y_max)]
+        for i, v in enumerate((vx_mm_s, vy_mm_s)):
+            # head for the soft limit in the jog direction at the jog speed; the
+            # bounded-acceleration controller slows down before the limit by itself
+            self._jog_cap[i] = abs(v)
+            self.target[i] = (bounds[i][1] if v > 0 else bounds[i][0]) if v else self.pos[i]
+        self._jog_until = time.monotonic() + 0.25  # firmware dead-man timeout
+
+    def _stopping_point(self, i: int) -> float:
+        v = self.vel[i]
+        lim = self.limits
+        lo, hi = [(lim.x_min, lim.x_max), (lim.y_min, lim.y_max), (lim.z_min, lim.z_max)][i]
+        return max(lo, min(hi, self.pos[i] + v * abs(v) / (2 * self.accel[i])))
+
+    def _end_jog(self) -> None:
+        if self._jog_until:
+            self._jog_until = 0.0
+            for i in range(2):
+                self.target[i] = self._stopping_point(i)
+
+    async def soft_stop(self) -> None:
+        self._jog_until = 0.0
+        for i in range(3):
+            self.target[i] = self._stopping_point(i)
+
     async def stop(self) -> None:
+        self._jog_until = 0.0
         self.vel = [0.0, 0.0, 0.0]
         self.target = list(self.pos)
         self.alarm = True
@@ -102,6 +141,9 @@ class MockRobot(RobotInterface):
         self._last = now
         if not self.connected:
             return
+        jogging = self._jog_until and now < self._jog_until
+        if self._jog_until and not jogging:
+            self._end_jog()  # refresh stopped: decelerate like the firmware
         for i in range(3):
             d = self.target[i] - self.pos[i]
             if dt <= 0.0:
@@ -112,7 +154,8 @@ class MockRobot(RobotInterface):
             # discrete controller overshoots and hunts around the target).
             a_dt = self.accel[i] * dt
             stop_v = a_dt * (math.sqrt(0.25 + 2 * abs(d) / (a_dt * dt)) - 0.5)
-            desired = math.copysign(min(self.speed[i], stop_v, abs(d) / dt), d)
+            vmax = min(self.speed[i], self._jog_cap[i]) if (jogging and i < 2) else self.speed[i]
+            desired = math.copysign(min(vmax, stop_v, abs(d) / dt), d)
             v = self.vel[i]
             step = self.accel[i] * dt
             v = v + max(-step, min(step, desired - v))

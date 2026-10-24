@@ -25,6 +25,10 @@ class FakeFirmware(SerialTransport):
         self.move_delay = 0.01
         self.queue_full_once = False
         self.reject_next_xy = False
+        self.jogging = False
+        self.jog_rejected = False  # firmware stays silent for the rest of a rejected press
+        self._xy_move: tuple[tuple[float, float], tuple[float, float]] | None = None
+        self._xy_task: asyncio.Task | None = None
         self._open = False
         self._tasks: list[asyncio.Task] = []
 
@@ -45,12 +49,19 @@ class FakeFirmware(SerialTransport):
     def _emit(self, line: str) -> None:
         self.lines.put_nowait(line)
 
-    def _later(self, delay: float, *lines: str) -> None:
+    def _later(self, delay: float, *lines: str, then=None) -> asyncio.Task:
         async def go() -> None:
             await asyncio.sleep(delay)
             for l in lines:
                 self._emit(l)
-        self._tasks.append(asyncio.get_running_loop().create_task(go()))
+            if then:
+                then()
+        task = asyncio.get_running_loop().create_task(go())
+        self._tasks.append(task)
+        return task
+
+    def _homed_s(self) -> str:
+        return "YES" if self.homed else "NO"
 
     def pos_line(self) -> str:
         return (f"POS X={self.x:.3f} Y={self.y:.3f} A=0 B=0 F=900.000 EN=HARDWIRED_ACTIVE "
@@ -79,7 +90,9 @@ class FakeFirmware(SerialTransport):
             self._emit("ACK QUEUED XY")
             parts = line.split()
             x, y = float(parts[1]), float(parts[2])
-            if self.alarm:
+            if self.jogging:
+                self._emit(f"NACK_XY target=({x:.3f},{y:.3f}) reason=jog_active")
+            elif self.alarm:
                 self._later(0.0, "REJECT: machine is alarmed reason=" + self.alarm_reason, f"NACK_XY target=({x:.3f},{y:.3f}) reason=alarm")
             elif not self.homed:
                 self._later(0.0, "REJECT: machine is not homed", f"NACK_XY target=({x:.3f},{y:.3f}) reason=rejected")
@@ -87,8 +100,49 @@ class FakeFirmware(SerialTransport):
                 self.reject_next_xy = False
                 self._later(0.0, f"REJECT: X {x:.3f} outside [0.000, 390.000]", f"NACK_XY target=({x:.3f},{y:.3f}) reason=rejected")
             else:
+                self._xy_move = ((self.x, self.y), (x, y))
                 self.x, self.y = x, y
-                self._later(self.move_delay, f"ACK_XY target=({x:.3f},{y:.3f}) A=0 B=0 F=900.000")
+
+                def done() -> None:
+                    self._xy_move = None
+                self._xy_task = self._later(self.move_delay, f"ACK_XY target=({x:.3f},{y:.3f}) A=0 B=0 F=900.000", then=done)
+        elif name == "JOG":
+            # REPLY_FIRMWARE_JOG.md: start once, silent refreshes, JOG_POS while moving
+            parts = line.split()
+            vx, vy = float(parts[1]), float(parts[2])
+            zero = all(float(p) == 0 for p in parts[1:])
+            if zero:
+                self.jog_rejected = False
+                if self.jogging:
+                    self.jogging = False
+                    self._emit(f"JOG end reason=zero X={self.x:.3f} Y={self.y:.3f} HOMED={self._homed_s()} src=SERIAL")
+            elif self.jogging:
+                self.x = min(max(self.x + vx * 0.05, 0.0), 390.0)
+                self.y = min(max(self.y + vy * 0.05, 0.0), 200.0)
+                self._emit(f"JOG_POS X={self.x:.3f} Y={self.y:.3f} VX={vx:.1f} VY={vy:.1f} Z_ABS=NA ARM_ABS=NA")
+            elif self.jog_rejected:
+                pass
+            else:
+                reason = ("alarm" if self.alarm else "busy" if self._xy_move else
+                          "not_homed" if (vx or vy) and not self.homed else None)
+                if reason:
+                    self.jog_rejected = True
+                    self._emit(f"NACK_JOG reason={reason}")
+                else:
+                    self.jogging = True
+                    self._emit(f"JOG start vx={vx:.1f} vy={vy:.1f} z=0 arm=0 src=SERIAL HOMED={self._homed_s()}")
+        elif name == "STOP":
+            self._emit("ACK QUEUED STOP")
+            if self._xy_move and self._xy_task and not self._xy_task.done():
+                self._xy_task.cancel()
+                (x0, y0), (x1, y1) = self._xy_move
+                self.x, self.y = (x0 + x1) / 2, (y0 + y1) / 2  # stopped half-way
+                self._xy_move = None
+                self._emit(f"NACK_XY target=({x1:.3f},{y1:.3f}) reason=stopped X={self.x:.3f} Y={self.y:.3f}")
+            if self.jogging:
+                self.jogging = False
+                self._emit(f"JOG end reason=command X={self.x:.3f} Y={self.y:.3f} HOMED={self._homed_s()} src=SERIAL")
+            self._emit(f"STOP complete X={self.x:.3f} Y={self.y:.3f} HOMED={self._homed_s()}")
         elif name == "TEST_MODE":
             self._emit("ACK QUEUED TEST_MODE")
             self.test_mode = line.endswith("ON")

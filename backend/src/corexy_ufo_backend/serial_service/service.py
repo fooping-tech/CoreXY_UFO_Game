@@ -226,6 +226,13 @@ class SerialService:
             raise SerialError("bad SERVO_STATUS line")
         return st
 
+    async def soft_stop(self, timeout: float = 10.0) -> str:
+        """Non-alarm decelerating STOP. Sent outside the lock (like ABORT) so it reaches
+        the firmware while an XY move holds the lock; returns the `STOP complete` line."""
+        fut = self._register(lambda l: l.startswith("STOP complete"))
+        self.write_raw("STOP")
+        return await self._await(fut, timeout)
+
     async def abort(self) -> None:
         """Emergency stop. Sent outside the lock so it can interrupt a move."""
         self.write_raw("ABORT")

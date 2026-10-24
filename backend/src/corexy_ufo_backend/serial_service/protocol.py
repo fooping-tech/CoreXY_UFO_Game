@@ -8,7 +8,14 @@ Everything here is taken from the firmware source (CoreXY_UFO repo):
                           `SERVO_TURN id=N value=V result=PASS|... <detail>`,
                           `SERVO_STATUS id=N result=OK ... abs=<counts> ...`
   * HomingController.cpp:163 - `HOME complete X=.. Y=..`
-There is NO JSON, NO periodic status and NO watchdog in the firmware.
+  * MotionTask.cpp (a49bc54) - serial velocity jog and non-alarm stop
+    (CoreXY_UFO docs/handoff/REPLY_FIRMWARE_JOG.md):
+      `JOG vx vy [z arm]` -> `JOG start ...` once, then nothing per refresh;
+      `JOG_POS X= Y= VX= VY= ...` every 50 ms; `JOG end reason=... X= Y= HOMED=`;
+      `JOG soft_limit axis=X X=..`; `NACK_JOG reason=not_homed|alarm|homing|job_active|busy|bad_args`.
+      A rejected press stays silent until `JOG 0 0` or a 250 ms gap.
+      `STOP` -> `ACK QUEUED STOP` -> (stopped XY: `NACK_XY ... reason=stopped X= Y=`) -> `STOP complete X= Y= HOMED=`
+There is NO JSON and NO watchdog for plain commands; JOG stops by itself after 250 ms without a refresh.
 """
 
 from __future__ import annotations
@@ -38,7 +45,10 @@ COMPLETION_PATTERNS: dict[str, re.Pattern[str]] = {
     "HOME_STATUS": re.compile(r"^HOME_STATUS\b"),
     "LIMIT_STATUS": re.compile(r"^LIMIT_STATUS\b"),
     "TEST_JOG": re.compile(r"^TEST_JOG result="),
+    "STOP": re.compile(r"^STOP complete\b"),
 }
+
+JOG_TIMEOUT_S = 0.25  # firmware ends a jog session this long after the last JOG line
 
 QUEUE_ACK_RE = re.compile(r"^ACK (QUEUED \S+|ABORT requested)")
 QUEUE_FULL = "ERROR: CommandQueue full"
@@ -59,6 +69,18 @@ def classify_line(line: str) -> str:
     """Coarse category for logging/state updates."""
     if line.startswith("POS "):
         return "pos"
+    if line.startswith("JOG_POS "):
+        return "jog_pos"
+    if line.startswith("JOG start"):
+        return "jog_start"
+    if line.startswith("JOG end"):
+        return "jog_end"
+    if line.startswith("JOG soft_limit"):
+        return "jog_soft_limit"
+    if line.startswith("NACK_JOG"):
+        return "jog_rejected"
+    if line.startswith("STOP complete"):
+        return "stop_done"
     if QUEUE_ACK_RE.match(line):
         return "queue_ack"
     if line == QUEUE_FULL:
@@ -270,3 +292,22 @@ def validate_line(cmd: str) -> None:
         raise ValueError(f"command longer than {LINE_MAX_CHARS} chars")
     if "\n" in cmd or "\r" in cmd:
         raise ValueError("command must be a single line")
+
+
+# --- JOG / STOP -----------------------------------------------------------------
+def cmd_jog(vx_mm_s: float, vy_mm_s: float) -> str:
+    return f"JOG {vx_mm_s:.1f} {vy_mm_s:.1f}"
+
+
+def parse_kv(line: str) -> dict[str, str]:
+    """KEY=VALUE fields of a status line (quotes stripped)."""
+    return {k: v.strip('"') for k, v in _KV_RE.findall(line)}
+
+
+def xy_from(line: str) -> tuple[float, float] | None:
+    """X= / Y= of JOG_POS, JOG end, STOP complete, NACK_XY ... reason=stopped."""
+    kv = parse_kv(line)
+    try:
+        return float(kv["X"]), float(kv["Y"])
+    except (KeyError, ValueError):
+        return None

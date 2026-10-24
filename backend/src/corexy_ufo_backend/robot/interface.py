@@ -43,6 +43,18 @@ class RobotInterface(ABC):
     async def grab(self, close: bool) -> None: ...
 
     @abstractmethod
+    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
+        """Velocity jog (dead-man): keep sending while a key is held; (0, 0) stops.
+
+        The robot stops by itself if refreshes stop for ~250 ms, so this is never
+        retried. Requires enable_motors and homing."""
+
+    @abstractmethod
+    async def soft_stop(self) -> None:
+        """Decelerate the current move / jog to a stop. No alarm, stays homed.
+        Unlike stop() this is not an emergency stop."""
+
+    @abstractmethod
     async def stop(self) -> None:
         """Safety stop. Must be usable at any time, even while moving."""
 

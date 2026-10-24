@@ -6,8 +6,10 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop,
-  clear_alarm, get_state, list_ports
+  home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop (ABORT, emergency),
+  soft_stop (decelerate, no alarm), jog {vx,vy} (mm/s, dead-man: resend ~20 Hz while
+  held, {0,0} on release; the firmware stops after 250 ms without one), clear_alarm,
+  get_state, list_ports
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
@@ -29,7 +31,8 @@ from ..robot.interface import RobotCommandError, RobotInterface
 
 log = logging.getLogger(__name__)
 
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "clear_alarm", "get_state", "list_ports")
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
+            "clear_alarm", "get_state", "list_ports")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab")
 
 
@@ -172,6 +175,16 @@ class GameServer:
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 await self.robot.stop()
+            elif name == "soft_stop":
+                # outside the motion lock: it must reach a running move
+                await self.robot.soft_stop()
+            elif name == "jog":
+                # Dead-man refresh, sent ~20 Hz while a key is held; never retried. Outside
+                # the motion lock, but refused while a home/move/grab command is running.
+                vx, vy = float(params.get("vx", 0.0)), float(params.get("vy", 0.0))
+                if (vx or vy) and self._motion_lock.locked():
+                    return self._nack(name, "busy: another motion command is running")
+                await self.robot.jog(vx, vy)
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
             elif name == "z_zero":

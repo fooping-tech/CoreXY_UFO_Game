@@ -9,11 +9,15 @@ Mapping of game commands onto the firmware (see docs/firmware_protocol.md):
   move_z         -> `SERVO_TURN 1 t`    (chunks of <= 3 turns) wait result=
   grab/release   -> `SERVO_TURN 2 ±t`   wait result=
   stop           -> `ABORT`             (firmware sets ALARM + clears HOMED)
+  soft_stop      -> `STOP`              wait `STOP complete` (decelerates, no alarm, stays homed)
+  jog vx vy      -> `JOG vx vy`         fire-and-forget, refreshed by the client at ~20 Hz;
+                                        `JOG start` / `JOG_POS` / `JOG end` update the state
   clear_alarm    -> `ALARM_CLEAR`
 
 Position: XY is read from `POS` when the machine is idle (measured). During
 an XY move the firmware does not answer POS, so the position is estimated by
-linear interpolation from start to target (measured=False). Z is tracked from
+linear interpolation from start to target (measured=False). During a jog the
+firmware reports `JOG_POS` every 50 ms (measured). Z is tracked from
 the drum servo's absolute count (`SERVO_STATUS 1 abs=`), relative to the
 count captured by `set_z_zero` (the firmware has no Z homing).
 """
@@ -56,6 +60,8 @@ class RealRobot(RobotInterface):
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
+        self._jogging = False
+        self._jog_requested = False  # a non-zero JOG was sent and not yet ended
         self._move_from: tuple[float, float] | None = None
         self._move_to: tuple[float, float] | None = None
         self._move_t0 = 0.0
@@ -87,6 +93,11 @@ class RealRobot(RobotInterface):
 
     async def disconnect(self) -> None:
         # Best effort: never leave the machine moving when the host goes away.
+        if self.serial.connected and (self._jogging or self._jog_requested):
+            try:
+                self.serial.write_raw(P.cmd_jog(0.0, 0.0))
+            except Exception:  # pragma: no cover
+                pass
         if self.serial.connected and self._busy:
             try:
                 self.serial.write_raw("ABORT")
@@ -106,7 +117,9 @@ class RealRobot(RobotInterface):
     # ---------------------------------------------------------------- parsing
     def _on_line(self, line: str) -> None:
         kind = P.classify_line(line)
-        if kind == "pos":
+        if kind in ("jog_pos", "jog_start", "jog_end", "jog_rejected", "stop_done"):
+            self._on_jog_line(kind, line)
+        elif kind == "pos":
             pos = P.parse_pos_line(line)
             if pos:
                 self._apply_pos(pos)
@@ -118,6 +131,33 @@ class RealRobot(RobotInterface):
             self.test_mode = False
             self._z_counts = None
             self.error = "firmware rebooted"
+
+    def _on_jog_line(self, kind: str, line: str) -> None:
+        xy = P.xy_from(line)
+        if xy and kind in ("jog_pos", "jog_end", "stop_done"):
+            self._pos_xy = [xy[0], xy[1]]
+            self._xy_measured = True
+        kv = P.parse_kv(line)
+        if kind == "jog_start":
+            self._jogging = True
+            self._state = MachineState.MOVING_XY
+            if self.error.startswith("jog rejected"):
+                self.error = ""
+        elif kind == "jog_end":
+            self._jogging = False
+            self._jog_requested = False
+            self.homed = kv.get("HOMED", "YES" if self.homed else "NO") == "YES"
+            if not self._busy:
+                self._state = MachineState.IDLE
+            if kv.get("reason") in ("abort", "alarm", "limit_x", "limit_y"):
+                self.error = "jog ended: " + kv["reason"]
+        elif kind == "jog_rejected":
+            self._jog_requested = False
+            self.error = "jog rejected: " + kv.get("reason", line)
+        elif kind == "stop_done":
+            self._jogging = False
+            self._jog_requested = False
+            self.homed = kv.get("HOMED", "YES" if self.homed else "NO") == "YES"
 
     def _apply_pos(self, pos: P.PosReport) -> None:
         self._pos_xy = [pos.x, pos.y]
@@ -157,6 +197,8 @@ class RealRobot(RobotInterface):
         if not self.serial.connected:
             raise RobotCommandError("not connected")
         self.motors_enabled = enable
+        if not enable and (self._jogging or self._jog_requested):
+            self.serial.write_raw(P.cmd_jog(0.0, 0.0))
         if not enable and self._busy:
             await self.stop()
 
@@ -289,6 +331,36 @@ class RealRobot(RobotInterface):
             raise RobotCommandError(str(e)) from e
         finally:
             self._busy = False
+            self._state = MachineState.IDLE
+
+    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
+        stopping = vx_mm_s == 0 and vy_mm_s == 0
+        if stopping:
+            # always allowed: ends the session (and re-arms after a rejected press)
+            if self.serial.connected:
+                self.serial.write_raw(P.cmd_jog(0.0, 0.0))
+            self._jog_requested = False
+            return
+        self._require()  # connected, motors enabled, no alarm, homed, no XY move running
+        speed = math.hypot(vx_mm_s, vy_mm_s)
+        cap = max(self.cfg.jog_max_mm_s, 0.0)
+        if speed > cap > 0:
+            vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
+        self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s))
+        self._jog_requested = True
+
+    async def soft_stop(self) -> None:
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        # Outside the serial lock (like ABORT) so it reaches the firmware while an XY
+        # move is waiting for ACK_XY; that move then fails with NACK_XY reason=stopped.
+        try:
+            done = await self.serial.soft_stop()
+        except CommandTimeout as e:
+            raise RobotCommandError("STOP not confirmed") from e
+        self._on_jog_line("stop_done", done)
+        self._move_from = self._move_to = None
+        if not self._busy:
             self._state = MachineState.IDLE
 
     async def stop(self) -> None:
