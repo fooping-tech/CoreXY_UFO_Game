@@ -51,6 +51,8 @@ func close() -> void:
 		_was_open = false
 		_on_closed()
 
+var _last_jog_nack := ""
+
 func is_open() -> bool:
 	return _peer.get_ready_state() == WebSocketPeer.STATE_OPEN
 
@@ -119,6 +121,7 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.motors_enabled = bool(data.get("motors_enabled", false))
 			var was := RobotState.connected
 			RobotState.connected = bool(data.get("connected", false))
+			RobotState.robot_error = str(data.get("error", ""))
 			if data.has("error") and str(data.error) != "":
 				RobotState.last_error = str(data.error)
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),
@@ -131,8 +134,13 @@ func _handle(msg: Dictionary) -> void:
 				rtt_ms = Time.get_ticks_msec() - _pending[rid].sent_ms
 				_pending.erase(rid)
 			ack.emit(rid, t == "ack", data)
-			# jog is refreshed ~20 Hz while a key is held: only log its refusals
-			if t == "nack" or str(data.get("command", "")) != "jog":
+			# jog is refreshed ~20 Hz while a key is held: log a refusal once per reason
+			if str(data.get("command", "")) == "jog":
+				var reason := str(data.get("reason", "")) if t == "nack" else ""
+				if reason != "" and reason != _last_jog_nack:
+					log_line.emit("%s %s %s" % [t, rid, JSON.stringify(data)])
+				_last_jog_nack = reason
+			else:
 				log_line.emit("%s %s %s" % [t, rid, JSON.stringify(data)])
 		"error":
 			RobotState.report_error(str(data.get("message", "error")))

@@ -46,6 +46,11 @@ var _jog_active := false
 ## Set by Space (stop): arrow keys are ignored until all of them are released,
 ## so a key still held after Space cannot restart the robot.
 var _jog_latched := false
+## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
+var jog_hint := ""
+## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
+## the {0,0} sent on key release is always accepted and says nothing about it.
+var _moving_jog_rids := {}
 var jog_speed_z := 50.0
 
 func _ready() -> void:
@@ -78,6 +83,7 @@ func _ready() -> void:
 	add_child(debug_ui)
 	debug_ui.setup(self)
 	GameState.state_changed.connect(_on_game_state_changed)
+	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_apply_cmdline()
@@ -322,6 +328,34 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 	if cur == "RESULT":
 		effects.burst("sparkles" if GameState.result_success else "motion_lines")
 
+func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if str(data.get("command", "")) != "jog":
+		return
+	var moving := _moving_jog_rids.has(rid)
+	_moving_jog_rids.erase(rid)
+	if not ok:
+		jog_hint = jog_hint_for(str(data.get("reason", "")))
+	elif moving:
+		jog_hint = ""
+
+## A refused jog, said as what to do next (the backend refuses before anything
+## reaches the serial line, so otherwise the keys just seem dead).
+static func jog_hint_for(reason: String) -> String:
+	var r := reason.to_lower()
+	if r.is_empty():
+		return ""
+	if r.contains("not connected"):
+		return "実機に未接続（バックエンドとシリアルを確認）"
+	if r.contains("motors not enabled"):
+		return "モーターが無効:「Backend: enable motors」を押す"
+	if r.contains("alarm"):
+		return "アラーム中:「clear_alarm」→「home」を押す"
+	if r.contains("not homed") or r.contains("not_homed"):
+		return "原点復帰が必要:「home」を押す"
+	if r.contains("busy"):
+		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
+	return "JOG が拒否された: " + reason
+
 ## Velocity (mm/s, robot X/Y) for the arrow keys: diagonals keep the same speed.
 static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
 	return Vector2.ZERO if dir == Vector2.ZERO else dir.normalized() * speed
@@ -367,7 +401,10 @@ func _handle_real_jog(dt: float) -> void:
 	_jog_refresh_left -= dt
 	if _jog_refresh_left <= 0.0:
 		_jog_refresh_left = JOG_REFRESH_S
-		ws.send_command("jog", {"vx": v.x, "vy": v.y})
+		var rid: String = ws.send_command("jog", {"vx": v.x, "vy": v.y})
+		_moving_jog_rids[rid] = true
+		if _moving_jog_rids.size() > 64:  # acks lost on a disconnect must not pile up
+			_moving_jog_rids.erase(_moving_jog_rids.keys()[0])
 		_jog_active = true
 
 func _handle_keys(dt: float) -> void:

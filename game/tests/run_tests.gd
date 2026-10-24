@@ -257,6 +257,21 @@ func _test_real_jog_velocity() -> void:
 	latched = main_script.jog_latch(latched, Vector2.ZERO)
 	_ok(not latched, "jog: releasing the arrows clears the stop latch")
 	_ok(not main_script.jog_latch(false, held), "jog: no latch without Space")
+	# a refused jog is explained as the next thing to press
+	var cases := {
+		"motors not enabled (send enable_motors first)": "enable motors",
+		"not homed": "home",
+		"not_homed": "home",
+		"alarm active: abort requested": "clear_alarm",
+		"busy: another motion command is running": "Space",
+		"not connected": "未接続",
+	}
+	var all_ok := true
+	for reason in cases:
+		if not str(main_script.jog_hint_for(reason)).contains(cases[reason]):
+			all_ok = false
+			print("      hint for %s: %s" % [reason, main_script.jog_hint_for(reason)])
+	_ok(all_ok and main_script.jog_hint_for("") == "", "jog: refusals are shown as the next step to take")
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()

@@ -35,6 +35,8 @@ var machine_state: String = "UNKNOWN":
 			machine_state = v
 			machine_state_changed.emit(v)
 var last_error: String = ""
+## The backend's current `error` field, mirrored as-is (empty once it clears).
+var robot_error: String = ""
 ## True when the position is the firmware's reported value, false when it is
 ## estimated by the host from commanded targets.
 var position_is_measured: bool = true

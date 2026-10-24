@@ -62,6 +62,7 @@ class RealRobot(RobotInterface):
         self._xy_measured = False
         self._jogging = False
         self._jog_requested = False  # a non-zero JOG was sent and not yet ended
+        self._last_jog_t = 0.0  # when the last non-zero JOG was written
         self._move_from: tuple[float, float] | None = None
         self._move_to: tuple[float, float] | None = None
         self._move_t0 = 0.0
@@ -212,6 +213,8 @@ class RealRobot(RobotInterface):
                 self.error = r.completion or "homing failed"
                 raise RobotCommandError(self.error)
             self.homed = True
+            if self.error.startswith(("jog rejected", "jog ended")):
+                self.error = ""  # homing fixed what the jog refusal was about
             self.alarm = False
             self._pos_xy = [0.0, 0.0]
             self._xy_measured = True
@@ -347,12 +350,18 @@ class RealRobot(RobotInterface):
             if self.serial.connected:
                 self.serial.write_raw(P.cmd_jog(0.0, 0.0))
             self._jog_requested = False
+            self._last_jog_t = 0.0  # the next non-zero JOG is a new press
             return
         self._require()  # connected, motors enabled, no alarm, homed, no XY move running
         speed = math.hypot(vx_mm_s, vy_mm_s)
         cap = max(self.cfg.jog_max_mm_s, 0.0)
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
+        now = time.monotonic()
+        new_press = now - self._last_jog_t > P.JOG_TIMEOUT_S  # firmware's notion of a press
+        self._last_jog_t = now
+        if new_press and self.error.startswith(("jog rejected", "jog ended")):
+            self.error = ""  # the firmware reports again if it still refuses this press
         self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s))
         self._jog_requested = True
 
