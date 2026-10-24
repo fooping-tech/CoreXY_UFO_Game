@@ -134,6 +134,7 @@ async def test_soft_stop_interrupts_xy_move_without_alarm(robot):
     s = robot.snapshot()
     assert (s.x, s.y) == (100.0, 50.0)  # where the firmware says it stopped
     assert s.homed and not s.alarm and s.state == MachineState.IDLE
+    assert "stopped" not in s.error  # stopping on purpose is not an error
     await robot.move_xy(10, 10)  # next move works right away
 
 
@@ -244,3 +245,91 @@ async def test_server_jog_and_soft_stop(server):
             assert (await _cmd(ws, "j3", "jog", vx=30, vy=0))["data"]["reason"].startswith("busy")
             assert (await _cmd(ws, "s1", "soft_stop"))["type"] == "ack"
             assert (await _cmd(ws, "j4", "jog", vx=0, vy=0))["type"] == "ack"  # release always allowed
+
+
+# ------------------------------------------------------------------ server ordering / responsiveness
+class SlowRobot(MockRobot):
+    """move_xy that takes a while (like the real robot waiting for ACK_XY) and a slow tick."""
+
+    def __init__(self, move_s: float = 1.0, tick_s: float = 0.0) -> None:
+        super().__init__()
+        self.move_s, self.tick_s = move_s, tick_s
+        self.stopped_during_move = None
+
+    async def move_xy(self, x, y, feed=None):
+        self._require()
+        self.moving = True
+        try:
+            await asyncio.sleep(self.move_s)
+        finally:
+            self.moving = False
+
+    async def soft_stop(self):
+        self.stopped_during_move = getattr(self, "moving", False)
+        await super().soft_stop()
+
+    async def tick(self):
+        if self.tick_s:
+            await asyncio.sleep(self.tick_s)  # a POS round trip on the real robot
+        await super().tick()
+
+
+async def _start(robot):
+    await robot.connect()
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
+    await srv.start()
+    return srv, next(iter(srv._server.sockets)).getsockname()[1]
+
+
+async def test_stop_is_not_queued_behind_a_running_move():
+    # The same connection sends move_xy and then stop: stop must not wait for the move.
+    robot = SlowRobot(move_s=1.5)
+    srv, port = await _start(robot)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await _cmd(ws, "e", "enable_motors", enable=True)
+            await _cmd(ws, "h", "home")
+            await ws.send(json.dumps({"type": "command", "request_id": "m", "data": {"name": "move_xy", "params": {"x": 10, "y": 10}}}))
+            await asyncio.sleep(0.1)
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+            assert (await _cmd(ws, "s", "soft_stop"))["type"] == "ack"
+            assert (await _cmd(ws, "j", "jog", vx=0, vy=0))["type"] == "ack"
+            assert (await _cmd(ws, "g", "get_state"))["type"] == "ack"
+            assert (await _cmd(ws, "x", "stop"))["type"] == "ack"
+            assert loop.time() - t0 < 0.5 and robot.stopped_during_move
+    finally:
+        await srv.stop()
+
+
+async def test_ordinary_commands_keep_their_order():
+    robot = SlowRobot(move_s=0.0)
+    srv, port = await _start(robot)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            # sent back to back: enable_motors must run before home and move_xy
+            for rid, name, params in [("e", "enable_motors", {"enable": True}), ("h", "home", {}), ("m", "move_xy", {"x": 5, "y": 5})]:
+                await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params}}))
+            got = {}
+            while len(got) < 3:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                if msg["type"] in ("ack", "nack"):
+                    got[msg["request_id"]] = msg["type"]
+            assert got == {"e": "ack", "h": "ack", "m": "ack"}
+    finally:
+        await srv.stop()
+
+
+async def test_state_stream_does_not_wait_for_slow_polls():
+    robot = SlowRobot(tick_s=0.1)  # 100 ms per poll would cap a coupled loop at 10 Hz
+    srv, port = await _start(robot)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            n, loop = 0, asyncio.get_running_loop()
+            end = loop.time() + 1.0
+            while loop.time() < end:
+                msg = json.loads(await asyncio.wait_for(ws.recv(), 1))
+                n += msg["type"] == "robot_state"
+            assert n >= 22, n  # ~30 Hz
+    finally:
+        await srv.stop()

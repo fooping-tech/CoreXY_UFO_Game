@@ -239,6 +239,13 @@ class RealRobot(RobotInterface):
             r = await self.serial.send(P.cmd_xy(x, y, feed), timeout=self._move_eta + 20.0)
             if r.completion and r.completion.startswith("ACK_XY"):
                 self._pos_xy = [x, y]
+            elif r.completion and "reason=stopped" in r.completion:
+                # interrupted on purpose by soft_stop: not an error; the firmware says where it stopped
+                xy = P.xy_from(r.completion)
+                if xy:
+                    self._pos_xy = [xy[0], xy[1]]
+                    self._xy_measured = True
+                raise RobotCommandError("stopped: " + r.completion)
             else:
                 self.error = r.completion or "XY failed"
                 raise RobotCommandError(self.error)
