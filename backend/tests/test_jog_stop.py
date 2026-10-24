@@ -99,6 +99,18 @@ async def test_firmware_rejection_is_reported_once(robot):
     assert robot.snapshot().error == "jog rejected: not_homed"
     lines = [l for l in fw(robot).sent if l.startswith("JOG")]
     assert lines == ["JOG 30.0 0.0", "JOG 30.0 0.0"]
+    # refreshes of the same press after the refusal arrived keep it visible
+    for _ in range(3):
+        await robot.jog(30, 0)
+        await asyncio.sleep(0.03)
+    assert robot.snapshot().error == "jog rejected: not_homed"
+    # recovery: homing clears the refusal, and the next press is accepted
+    await robot.jog(0, 0)
+    await robot.home()
+    assert robot.snapshot().error == ""
+    await robot.jog(30, 0)
+    await settle()
+    assert robot.snapshot().error == "" and robot.snapshot().state == MachineState.MOVING_XY
 
 
 async def test_jog_refused_while_xy_move_runs(robot):

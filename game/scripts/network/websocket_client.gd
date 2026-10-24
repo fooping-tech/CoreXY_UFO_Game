@@ -121,6 +121,7 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.motors_enabled = bool(data.get("motors_enabled", false))
 			var was := RobotState.connected
 			RobotState.connected = bool(data.get("connected", false))
+			RobotState.robot_error = str(data.get("error", ""))
 			if data.has("error") and str(data.error) != "":
 				RobotState.last_error = str(data.error)
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),

@@ -48,6 +48,9 @@ var _jog_active := false
 var _jog_latched := false
 ## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
 var jog_hint := ""
+## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
+## the {0,0} sent on key release is always accepted and says nothing about it.
+var _moving_jog_rids := {}
 var jog_speed_z := 50.0
 
 func _ready() -> void:
@@ -325,9 +328,15 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 	if cur == "RESULT":
 		effects.burst("sparkles" if GameState.result_success else "motion_lines")
 
-func _on_ws_ack(_rid: String, ok: bool, data: Dictionary) -> void:
-	if str(data.get("command", "")) == "jog":
-		jog_hint = "" if ok else jog_hint_for(str(data.get("reason", "")))
+func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if str(data.get("command", "")) != "jog":
+		return
+	var moving := _moving_jog_rids.has(rid)
+	_moving_jog_rids.erase(rid)
+	if not ok:
+		jog_hint = jog_hint_for(str(data.get("reason", "")))
+	elif moving:
+		jog_hint = ""
 
 ## A refused jog, said as what to do next (the backend refuses before anything
 ## reaches the serial line, so otherwise the keys just seem dead).
@@ -392,7 +401,10 @@ func _handle_real_jog(dt: float) -> void:
 	_jog_refresh_left -= dt
 	if _jog_refresh_left <= 0.0:
 		_jog_refresh_left = JOG_REFRESH_S
-		ws.send_command("jog", {"vx": v.x, "vy": v.y})
+		var rid: String = ws.send_command("jog", {"vx": v.x, "vy": v.y})
+		_moving_jog_rids[rid] = true
+		if _moving_jog_rids.size() > 64:  # acks lost on a disconnect must not pile up
+			_moving_jog_rids.erase(_moving_jog_rids.keys()[0])
 		_jog_active = true
 
 func _handle_keys(dt: float) -> void:

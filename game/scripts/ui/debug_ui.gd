@@ -238,8 +238,8 @@ func _process(_dt: float) -> void:
 	_state_chip.text = "[%s] %s  machine=%s  game=%s  motors=%s  homed=%s" % [RobotState.source, conn, RobotState.machine_state, GameState.state, "ON" if RobotState.motors_enabled else "off", "YES" if RobotState.homed else "no"]
 	# a refused arrow-key jog (or a firmware-side refusal) shows what to do next
 	var hint: String = main.jog_hint
-	if hint == "" and RobotState.source == "websocket" and RobotState.last_error.begins_with("jog rejected"):
-		hint = main.jog_hint_for(RobotState.last_error.trim_prefix("jog rejected: "))
+	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
+		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
 	var ok_color := Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4)
