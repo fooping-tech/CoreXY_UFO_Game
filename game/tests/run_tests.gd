@@ -250,6 +250,13 @@ func _test_real_jog_velocity() -> void:
 	_ok(right.is_equal_approx(Vector2(40, 0)), "jog: arrow key -> 40 mm/s along the axis", str(right))
 	_ok(absf(diag.length() - 40.0) < 1e-4 and diag.x > 0 and diag.y > 0, "jog: diagonal keeps the speed", str(diag))
 	_ok(none == Vector2.ZERO, "jog: released -> zero", str(none))
+	# Space with an arrow held latches; the arrow must be released before jogging again
+	var held := Vector2(1, 0)
+	var latched: bool = main_script.jog_latch(true, held)
+	_ok(latched, "jog: after Space a still-held arrow does not restart the robot")
+	latched = main_script.jog_latch(latched, Vector2.ZERO)
+	_ok(not latched, "jog: releasing the arrows clears the stop latch")
+	_ok(not main_script.jog_latch(false, held), "jog: no latch without Space")
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()
