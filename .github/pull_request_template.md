@@ -13,6 +13,8 @@ Closes #<!-- Issue 番号。マージすると Issue が自動で閉じる -->
 <!-- 実行したコマンドと件数。tools/verify.sh の summary を貼る -->
 
 - [ ] `tools/verify.sh`（secrets / tooling / backend / godot）
+- [ ] Security チェック（security.yml）がすべて成功。秘密情報なし（検出時は値を書かず、ファイル・ルールのみ）
+- [ ] 脆弱性の例外を追加した場合は `.trivyignore.yaml` に理由と期限を記載
 - Godot: 件 / pytest: 件
 
 ## 確認方法
