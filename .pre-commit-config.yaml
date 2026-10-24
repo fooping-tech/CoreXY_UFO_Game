@@ -1,0 +1,22 @@
+# Local secret checks (installed by tools/security/setup.sh).
+# Gitleaks runs before every commit (staged changes) and before every push
+# (commits not yet on origin). Skipping them (--no-verify, SKIP=...) is not allowed;
+# CI (.github/workflows/security.yml) runs the same checks and is required for merging.
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: local
+    hooks:
+      - id: gitleaks-staged
+        name: gitleaks (staged changes) + forbidden file names
+        entry: tools/security/scan.sh staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: gitleaks-push
+        name: gitleaks (commits to be pushed)
+        entry: tools/security/scan.sh push
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

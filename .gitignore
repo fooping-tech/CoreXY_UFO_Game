@@ -10,3 +10,16 @@ backend/.pytest_cache/
 # misc
 .DS_Store
 *.log
+# secrets (never commit; guard_git.py also blocks these)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+id_ed25519*
+.claude/settings.local.json
+
+# pinned security scanners (tools/security/install_tools.sh)
+tools/.bin/

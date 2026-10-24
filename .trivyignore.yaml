@@ -1,0 +1,13 @@
+# Trivy exceptions. Every entry MUST have `statement` (why it is acceptable,
+# who decided) and `expired_at` (review date, at most 90 days ahead). Expired
+# entries stop applying, so CI fails again until someone re-reviews them.
+# tools/security/scan.sh checks these rules. Secrets are never excepted here:
+# rotate the key and remove it from history instead.
+#
+# vulnerabilities:
+#   - id: CVE-2099-0001
+#     paths: ["backend/uv.lock"]
+#     statement: "Not reachable: only used by the optional vision extra. Decided by @owner"
+#     expired_at: 2027-01-31
+vulnerabilities: []
+misconfigurations: []

@@ -1,0 +1,21 @@
+# Gitleaks configuration (commit-time, push-time and CI history scans).
+# Default rules + project-specific rules. Keep the custom regexes identical to
+# tools/security/trivy-secret.yaml and .claude/hooks/guard_git.py
+# (tools/security/scan.sh selftest checks that they agree).
+title = "CoreXY_UFO_Game"
+
+[extend]
+useDefault = true
+
+# Project / in-house API key format. Example format for keys issued by our own
+# services: cxufo_live_<32 alnum> or cxufo_test_<32 alnum>. Add a new [[rules]]
+# block here (and in the other two files) for each new in-house key format.
+[[rules]]
+id = "cxufo-api-key"
+description = "CoreXY UFO in-house API key"
+regex = '''\bcxufo_(?:live|test)_[A-Za-z0-9]{32}\b'''
+keywords = ["cxufo_"]
+
+# Exceptions: never allow-list a real secret (rotate it instead). For a false
+# positive add its fingerprint to .gitleaksignore with a comment
+# "# reason: ... / expires: YYYY-MM-DD / owner: ..." and get it reviewed.
