@@ -30,8 +30,8 @@ find_godot() {
 }
 
 if want secrets; then
-  step "secret scan (tracked files)"
-  python3 "$ROOT/.claude/hooks/guard_git.py" --scan-tracked
+  step "security: secrets / history / vulnerabilities / config + scanner self-test (same as security.yml)"
+  "$ROOT/tools/security/scan.sh" all && "$ROOT/tools/security/scan.sh" selftest
   record $? "secrets"
 fi
 

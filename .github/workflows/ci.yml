@@ -20,12 +20,12 @@ env:
 
 jobs:
   tooling:
-    name: secrets + dev tooling
+    name: dev tooling
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - run: tools/verify.sh --only secrets
+      # secret / vulnerability scans run in security.yml
       - run: tools/verify.sh --only tooling
 
   backend:
