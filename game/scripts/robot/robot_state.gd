@@ -4,8 +4,9 @@ extends Node
 ## reads. Both MockRobot and WebSocketClient push samples into this node.
 ##
 ## Positions are kept in robot units (mm). Normalised helpers convert to the
-## rope world frame. A tiny two-sample buffer lets the renderer interpolate
-## between status updates that arrive slower than 60 Hz.
+## rope world frame. A short sample buffer and a playback clock
+## (`playback_pose`) turn irregular status updates into a smooth signal for
+## the 60 Hz rope physics.
 
 signal pose_updated(x: float, y: float, z: float, state: String)
 signal machine_state_changed(state: String)
@@ -38,47 +39,102 @@ var last_error: String = ""
 ## estimated by the host from commanded targets.
 var position_is_measured: bool = true
 
-# raw samples (mm, ms)
+## Playback runs behind the newest sample by a delay that covers the longest
+## recent gap between samples, so it always interpolates between two real
+## samples instead of running dry (hold, then jump = chatter) or
+## extrapolating (overshoots on every stop and the rope whips back).
+## delay = max(mean interval * DELAY_INTERVALS, recent peak gap * DELAY_PEAK_MARGIN)
+## A sample arrives up to one interval after the one before, so more than two
+## intervals keep one sample ahead of the playback point; the cubic needs it to
+## know the velocity there (30 Hz: ~73 ms, 60 Hz mock: ~37 ms).
+const PLAYBACK_DELAY_INTERVALS := 2.2
+const PLAYBACK_DELAY_PEAK_MARGIN := 1.3
+const PLAYBACK_DELAY_MIN_MS := 20.0
+const PLAYBACK_DELAY_MAX_MS := 200.0
+## Per-sample decay of the peak gap (0.995 at 30 Hz: half-life ~4.6 s).
+const GAP_PEAK_DECAY := 0.995
+## Sender clock - local clock is a slow average over samples (per-sample
+## weight). Single receive times jitter by a physics tick plus network delay;
+## the average does not, and a late sample only shortens the lead for a
+## moment. A sample further off than OFFSET_RESET_MS restarts the average.
+const OFFSET_SMOOTHING := 0.02
+const OFFSET_RESET_MS := 100.0
+## Playback slows down smoothly once it gets closer than this fraction of the
+## delay to the newest sample (a stalled sender), instead of hitting it.
+const PLAYBACK_SOFT_STOP := 0.15
+## Max speed-up / slow-down of the playback clock while it steers (fraction).
+const PLAYBACK_MAX_SKEW := 0.25
+## A gap longer than this (stall, reconnect, sender clock reset) restarts the
+## buffer: playback jumps to the new sample instead of gliding across the gap.
+const SAMPLE_GAP_RESET_MS := 500.0
+const BUFFER_SIZE := 16
+
+# latest raw sample (mm)
 var x_mm: float = 195.0
 var y_mm: float = 100.0
 var z_mm: float = 100.0
-var sample_time_ms: int = 0
-var _prev_x: float = 195.0
-var _prev_y: float = 100.0
-var _prev_z: float = 100.0
-var _prev_time_ms: int = 0
-var _time_offset_ms: int = 0 # remote clock -> local clock
+# sample buffer, times in the sender's clock (ms)
+var _buf_t := PackedFloat64Array()
+var _buf_p := PackedVector3Array()
+## Local clock (ms) advanced by the physics dt in playback_pose(). Receive
+## times and "now" are both read from it, so ticks that Godot batches after a
+## slow frame do not look like the sender speeding up or stalling.
+var _local_ms: float = 0.0
+var _last_recv_ms: float = 0.0
+var _offset_ms: float = 0.0 # sender clock - local clock
+var _offset_valid := false
+var _interval_ms: float = 1000.0 / 30.0
+var _gap_peak_ms: float = 1000.0 / 30.0
+var _play_ms: float = 0.0
+var _play_started := false
 
 func _ready() -> void:
 	var r := GameConfig.robot()
 	x_mm = (r.x_min_mm + r.x_max_mm) * 0.5
 	y_mm = (r.y_min_mm + r.y_max_mm) * 0.5
 	z_mm = r.z_max_mm if r.z_up_is_positive else r.z_min_mm
-	_prev_x = x_mm
-	_prev_y = y_mm
-	_prev_z = z_mm
-	sample_time_ms = Time.get_ticks_msec()
-	_prev_time_ms = sample_time_ms
 
-## Push a new sample. `timestamp_ms` is the sender's clock (0 = now).
-func push_pose(x: float, y: float, z: float, state: String = "", timestamp_ms: int = 0, measured: bool = true) -> void:
-	var now := Time.get_ticks_msec()
-	var t := now
-	if timestamp_ms > 0:
-		# Align remote clock to local clock on the first sample, then use it.
-		if _time_offset_ms == 0:
-			_time_offset_ms = now - timestamp_ms
-		t = timestamp_ms + _time_offset_ms
-		# Never let a sample land in the future beyond one frame.
-		t = mini(t, now + 16)
-	_prev_x = x_mm
-	_prev_y = y_mm
-	_prev_z = z_mm
-	_prev_time_ms = sample_time_ms
+## Push a new sample. `timestamp_ms` is the sender's clock in ms (0 = use the
+## local receive time). Only differences between timestamps are used, so the
+## sender clock may have any origin.
+func push_pose(x: float, y: float, z: float, state: String = "", timestamp_ms: float = 0.0, measured: bool = true) -> void:
+	var t := timestamp_ms if timestamp_ms > 0.0 else _local_ms
+	var p := Vector3(x, y, z)
+	var n := _buf_t.size()
+	if n > 0 and absf(t - _buf_t[n - 1]) > SAMPLE_GAP_RESET_MS:
+		clear_samples()
+		n = 0
+	if n > 0 and t <= _buf_t[n - 1]:
+		# Same (or older) timestamp: newest value wins, time stays monotonic.
+		_buf_p[n - 1] = p
+	elif n > 1 and t - _buf_t[n - 1] < 0.3 * _interval_ms:
+		# Burst after a stall (samples ms apart): a segment that short makes the
+		# cubic's slopes meaningless, so treat it as an update of the newest.
+		_buf_t[n - 1] = t
+		_buf_p[n - 1] = p
+	else:
+		if n > 0:
+			var gap := t - _buf_t[n - 1]
+			_interval_ms = lerpf(_interval_ms, gap, 0.1)
+			# The delay has to cover late arrival too, not only irregular
+			# sending, so the peak also looks at the local receive gap.
+			var recv_gap := _local_ms - _last_recv_ms
+			_gap_peak_ms = maxf(maxf(gap, recv_gap), _gap_peak_ms * GAP_PEAK_DECAY)
+		_buf_t.append(t)
+		_buf_p.append(p)
+		var off := t - _local_ms
+		if not _offset_valid or absf(off - _offset_ms) > OFFSET_RESET_MS:
+			_offset_ms = off
+			_offset_valid = true
+		else:
+			_offset_ms = lerpf(_offset_ms, off, OFFSET_SMOOTHING)
+		if _buf_t.size() > BUFFER_SIZE:
+			_buf_t.remove_at(0)
+			_buf_p.remove_at(0)
+	_last_recv_ms = _local_ms
 	x_mm = x
 	y_mm = y
 	z_mm = z
-	sample_time_ms = t
 	position_is_measured = measured
 	if state != "":
 		machine_state = state
@@ -88,19 +144,108 @@ func report_error(msg: String) -> void:
 	last_error = msg
 	error_reported.emit(msg)
 
-## Interpolated pose for rendering at local time `now_ms`. Extrapolates up to
-## `max_extrapolate_ms` so slow status polls still look continuous.
-func interpolated_pose(now_ms: int, max_extrapolate_ms: int = 120) -> Vector3:
-	var span := sample_time_ms - _prev_time_ms
-	if span <= 0:
+## Drop buffered samples (source switch): playback restarts at the next sample.
+func clear_samples() -> void:
+	_buf_t.clear()
+	_buf_p.clear()
+	_play_started = false
+	_offset_valid = false
+
+## Smoothed pose for the rope. Call exactly once per physics tick with the
+## fixed `dt`. The playback clock advances by `dt` and is only gently steered
+## towards "sender's current time - delay", so frame pacing jitter, batched
+## physics ticks and network jitter do not reach the anchor (the rope
+## differentiates the anchor twice, which turns tiny timing noise into large
+## accelerations). If the sender stalls, playback eases to a stop at the
+## newest sample rather than stopping dead and jumping when data resumes.
+func playback_pose(dt: float) -> Vector3:
+	var dt_ms := dt * 1000.0
+	_local_ms += dt_ms
+	var n := _buf_t.size()
+	if n == 0:
 		return Vector3(x_mm, y_mm, z_mm)
-	var t := float(now_ms - _prev_time_ms) / float(span)
-	var tmax := 1.0 + float(max_extrapolate_ms) / float(span)
-	t = clampf(t, 0.0, tmax)
-	return Vector3(
-		lerpf(_prev_x, x_mm, t),
-		lerpf(_prev_y, y_mm, t),
-		lerpf(_prev_z, z_mm, t))
+	var newest := _buf_t[n - 1]
+	var delay := playback_delay_ms()
+	var sender_now := maxf(_local_ms + _offset_ms, newest)
+	var target := sender_now - delay
+	if not _play_started or absf(target - _play_ms) > 250.0:
+		_play_ms = target
+		_play_started = true
+	else:
+		var skew := clampf((target - _play_ms) * 0.05, -PLAYBACK_MAX_SKEW * dt_ms, PLAYBACK_MAX_SKEW * dt_ms)
+		var advance := dt_ms + skew
+		var soft := PLAYBACK_SOFT_STOP * delay
+		var lead := newest - _play_ms
+		if lead < soft:
+			advance *= clampf(lead / soft, 0.0, 1.0)
+		_play_ms += advance
+	return sample_at(_play_ms)
+
+## For the motion log: playback clock, newest sample time, its local receive
+## time (all ms) and the current playback delay.
+func playback_debug() -> Array:
+	var newest := _buf_t[_buf_t.size() - 1] if not _buf_t.is_empty() else 0.0
+	return [_play_ms, newest, _last_recv_ms, playback_delay_ms()]
+
+## How far (ms) playback runs behind the newest sample.
+func playback_delay_ms() -> float:
+	var d := maxf(_interval_ms * PLAYBACK_DELAY_INTERVALS, _gap_peak_ms * PLAYBACK_DELAY_PEAK_MARGIN)
+	return clampf(d, PLAYBACK_DELAY_MIN_MS, PLAYBACK_DELAY_MAX_MS)
+
+## Pose at sender time `t_ms` from the buffer. Holds the oldest/newest sample
+## outside the buffered range (never extrapolates). Between samples it uses a
+## monotone cubic (per axis): velocity stays continuous across samples, so a
+## 30 Hz stream does not turn acceleration into 0 / 2x pulses the way linear
+## interpolation does, and it never overshoots a sample (a stop stays a stop).
+func sample_at(t_ms: float) -> Vector3:
+	var n := _buf_t.size()
+	if n == 0:
+		return Vector3(x_mm, y_mm, z_mm)
+	if t_ms >= _buf_t[n - 1]:
+		return _buf_p[n - 1]
+	if t_ms <= _buf_t[0]:
+		return _buf_p[0]
+	var i := n - 1
+	while i > 1 and t_ms < _buf_t[i - 1]:
+		i -= 1
+	var t0 := _buf_t[i - 1]
+	var t1 := _buf_t[i]
+	var h := t1 - t0
+	if h <= 0.0:
+		return _buf_p[i]
+	var p0 := _buf_p[i - 1]
+	var p1 := _buf_p[i]
+	var slope := (p1 - p0) / h
+	var slope_before := (p0 - _buf_p[i - 2]) / (t0 - _buf_t[i - 2]) if i >= 2 and t0 > _buf_t[i - 2] else slope
+	var has_after := i + 1 < n and _buf_t[i + 1] > t1
+	var slope_after := (_buf_p[i + 1] - p1) / (_buf_t[i + 1] - t1) if has_after else slope
+	var s := (t_ms - t0) / h
+	var s2 := s * s
+	var s3 := s2 * s
+	var out := Vector3.ZERO
+	for axis in range(3):
+		var m0 := _monotone_tangent(slope_before[axis], slope[axis])
+		var m1 := _monotone_tangent(slope[axis], slope_after[axis])
+		if not has_after:
+			# Newest segment (playback ran ahead of the delay): no sample after
+			# it yet, so continue the trend of the last two segments instead
+			# of falling back to the chord, limited so it cannot reverse or
+			# overshoot.
+			var trend := 1.5 * slope[axis] - 0.5 * slope_before[axis]
+			m1 = clampf(trend, minf(0.0, 3.0 * slope[axis]), maxf(0.0, 3.0 * slope[axis]))
+		out[axis] = (2.0 * s3 - 3.0 * s2 + 1.0) * p0[axis] + (s3 - 2.0 * s2 + s) * h * m0 \
+			+ (-2.0 * s3 + 3.0 * s2) * p1[axis] + (s3 - s2) * h * m1
+	return out
+
+## Tangent at a sample between two segment slopes (Fritsch-Carlson style):
+## zero at a turn or a stop, otherwise the mean, limited so the curve cannot
+## leave the range of its two samples.
+static func _monotone_tangent(a: float, b: float) -> float:
+	if a * b <= 0.0:
+		return 0.0
+	var m := 0.5 * (a + b)
+	var limit := 3.0 * minf(absf(a), absf(b))
+	return clampf(m, -limit, limit)
 
 ## Normalised 0..1 position along each robot axis.
 func normalized(pose_mm: Vector3) -> Vector3:

@@ -18,12 +18,20 @@ var debug_ui: CanvasLayer
 
 var _initialised := false
 var _last_anchor := Vector3.ZERO
-var _prev_ufo_screen := Vector2.ZERO
-var _prev_anchor_screen_vel := Vector2.ZERO
-var _prev_anchor_screen := Vector2.ZERO
+## Rope points of the previous and the latest physics tick. Rendering runs
+## faster than 60 Hz, so frames draw a blend of the two instead of showing the
+## same tick twice and then jumping.
+var _prev_points := PackedVector3Array()
+var _cur_points := PackedVector3Array()
+var _render_points := PackedVector3Array()
+## Character cues, measured once per physics tick with the fixed dt. Taking
+## differences per render frame instead gives 0 on frames without a new tick
+## and double on the next, which made the face and tilt chatter.
+var _cue_prev_ufo := Vector3.ZERO
+var _cue_prev_anchor := Vector3.ZERO
+var _anchor_screen_vel := Vector2.ZERO
 var _anchor_screen_accel := Vector2.ZERO
 var _ufo_screen_vel := Vector2.ZERO
-var _prev_depth := 0.0
 var _depth_vel := 0.0
 var physics_usec: int = 0
 ## Keyboard jog speed for the mock robot (mm/s)
@@ -83,6 +91,39 @@ func _apply_cmdline() -> void:
 				if i + 1 < args.size():
 					_capture_dir = args[i + 1]
 					_capture_left = 16
+			"--log-motion":
+				# CSV of every physics tick (P) and render frame (R) for debugging
+				# jitter: robot samples, playback pose, anchor, UFO, character cues.
+				if i + 1 < args.size():
+					_open_motion_log(args[i + 1])
+			"--quit-after":
+				if i + 1 < args.size():
+					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
+
+var _motion_log: FileAccess
+
+func _open_motion_log(path: String) -> void:
+	_motion_log = FileAccess.open(path, FileAccess.WRITE)
+	if _motion_log == null:
+		push_warning("cannot open motion log " + path)
+		return
+	_motion_log.store_line("kind,usec,dt,src,raw_x,raw_y,raw_z,pose_x,pose_y,pose_z,anchor_x,anchor_z,accel_x,accel_z,rope_target,rope_len,ufo_x,ufo_y,ufo_z,screen_x,screen_y,screen_vel_x,anchor_screen_accel,rotation_deg,face,game_state,play_ms,newest_ms,recv_ms,delay_ms")
+
+func _log_motion(kind: String, dt: float, pose: Vector3) -> void:
+	if _motion_log == null:
+		return
+	var u := sim.ufo_position()
+	var acc := sim.anchor_acceleration()
+	_motion_log.store_line("%s,%d,%.5f,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.2f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.1f,%.1f,%.1f" % ([
+		kind, Time.get_ticks_usec(), dt, RobotState.source,
+		RobotState.x_mm, RobotState.y_mm, RobotState.z_mm, pose.x, pose.y, pose.z,
+		sim.anchor.x, sim.anchor.z, acc.x, acc.z, sim.target_rope_length, sim.rope_length,
+		u.x, u.y, u.z, ufo.position.x, ufo.position.y, _ufo_screen_vel.x, _anchor_screen_accel.length(),
+		rad_to_deg(ufo.rotation), ufo.current_face(), GameState.state] + RobotState.playback_debug()))
+
+func _exit_tree() -> void:
+	if _motion_log != null:
+		_motion_log.close()
 
 var _capture_dir := ""
 var _capture_left := 0
@@ -114,7 +155,7 @@ func _capture_tick(dt: float) -> void:
 func _apply_config() -> void:
 	var p: Dictionary = GameConfig.data["physics"]
 	sim.segment_count = int(p.segment_count)
-	sim.iterations = int(p.iterations)
+	sim.substeps = int(p.substeps)
 	sim.gravity = float(p.gravity)
 	sim.damping = float(p.damping)
 	sim.ufo_drag = float(p.ufo_drag)
@@ -153,6 +194,7 @@ func _update_origin() -> void:
 
 ## Select which robot source drives the rope.
 func use_source(src: String) -> void:
+	RobotState.clear_samples()
 	if src == "websocket":
 		mock.enabled = false
 		ws.enabled = true
@@ -166,8 +208,7 @@ func use_source(src: String) -> void:
 
 func _physics_process(dt: float) -> void:
 	_handle_keys(dt)
-	var now := Time.get_ticks_msec()
-	var pose := RobotState.interpolated_pose(now)
+	var pose := RobotState.playback_pose(dt)
 	var anchor := RobotState.anchor_for_xy(pose.x, pose.y)
 	sim.target_rope_length = RobotState.rope_length_for_z(pose.z)
 	if not _initialised:
@@ -175,44 +216,75 @@ func _physics_process(dt: float) -> void:
 		sim.rope_length = sim.target_rope_length
 		sim.reset()
 		_initialised = true
+		_reset_render_history()
 	elif (anchor - _last_anchor).length() > 25.0:
 		# Teleport (first sample after reconnect etc): carry the rope along so it
 		# does not whip across the screen.
 		sim.translate_all(anchor - _last_anchor)
 		sim.anchor = anchor
+		_reset_render_history()
 	else:
 		sim.anchor = anchor
 	_last_anchor = anchor
 	sim.step(dt)
 	physics_usec = sim.last_step_usec
+	_store_tick(dt)
+	_log_motion("P", dt, pose)
+
+## Start the render/cue history from the current rope (no blend, no velocity).
+func _reset_render_history() -> void:
+	_cur_points.resize(sim.points.size())
+	for i in range(sim.points.size()):
+		_cur_points[i] = sim.points[i].position
+	_prev_points = _cur_points.duplicate()
+	_cue_prev_ufo = sim.ufo_position()
+	_cue_prev_anchor = sim.anchor
+	_anchor_screen_vel = Vector2.ZERO
+
+func _store_tick(dt: float) -> void:
+	_prev_points = _cur_points.duplicate()
+	if _cur_points.size() != sim.points.size():
+		_reset_render_history()
+	for i in range(sim.points.size()):
+		_cur_points[i] = sim.points[i].position
+	# Both ends of each difference go through the current projection, so a
+	# layout change (origin_px) does not read as motion.
+	var u := sim.ufo_position()
+	_ufo_screen_vel = (proj.project(u).screen - proj.project(_cue_prev_ufo).screen) / dt
+	var av := (proj.project(sim.anchor).screen - proj.project(_cue_prev_anchor).screen) / dt
+	_anchor_screen_accel = (av - _anchor_screen_vel) / dt
+	_anchor_screen_vel = av
+	_depth_vel = sim.anchor_velocity().z
+	_cue_prev_ufo = u
+	_cue_prev_anchor = sim.anchor
 
 func _process(dt: float) -> void:
 	_capture_tick(dt)
 	_update_origin()
-	rope_view.update_rope(sim, proj)
-	var r := proj.project(sim.ufo_position())
+	if _cur_points.is_empty():
+		return
+	# Blend the last two physics ticks; rope and UFO use the same points.
+	var alpha := Engine.get_physics_interpolation_fraction()
+	var n := _cur_points.size()
+	_render_points.resize(n)
+	for i in range(n):
+		_render_points[i] = _prev_points[i].lerp(_cur_points[i], alpha)
+	rope_view.update_rope(_render_points, proj)
+	var ufo_world := _render_points[n - 1]
+	var r := proj.project(ufo_world)
 	ufo.position = r.screen
-	# screen-space cues for the character
-	var tangent := sim.end_tangent()
-	var tip := proj.project(sim.ufo_position() - tangent * 3.0).screen
+	# screen-space rope angle at the UFO for the character's tilt
+	var tangent := (ufo_world - _render_points[n - 2]).normalized()
+	var tip := proj.project(ufo_world - tangent * 3.0).screen
 	var dir := (r.screen - tip)
 	var tangent_angle := 0.0
 	if dir.length_squared() > 1e-6:
 		tangent_angle = atan2(dir.x, dir.y) * -1.0 # 0 = straight down, + when leaning right
-	if dt > 0.0:
-		_ufo_screen_vel = (r.screen - _prev_ufo_screen) / dt
-		var anchor_screen := proj.project(sim.anchor).screen
-		var av := (anchor_screen - _prev_anchor_screen) / dt
-		_anchor_screen_accel = (av - _prev_anchor_screen_vel) / dt
-		_prev_anchor_screen_vel = av
-		_prev_anchor_screen = anchor_screen
-		_depth_vel = (sim.anchor.z - _prev_depth) / dt
-		_prev_depth = sim.anchor.z
-	_prev_ufo_screen = r.screen
 	ufo.mood = _mood()
 	ufo.update_motion(tangent_angle, _ufo_screen_vel.x, _depth_vel, _anchor_screen_accel, r.scale, dt)
 	effects.position = r.screen
 	effects.scale = Vector2.ONE * r.scale
+	_log_motion("R", dt, Vector3.ZERO)
 
 func _mood() -> String:
 	match GameState.state:

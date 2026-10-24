@@ -93,3 +93,28 @@ async def test_stop_always_allowed_and_limits(server):
         assert r["type"] == "ack" and r["data"]["alarm"]
         st = await _recv_type(ws, "robot_state")
         assert st["data"]["state"] == "ALARM"
+
+
+async def test_mock_robot_settles_on_target(monkeypatch):
+    # The discrete axis controller used to overshoot and hunt around the
+    # target forever (+-0.1 mm), so the position chattered and the state never
+    # went back to IDLE.
+    from corexy_ufo_backend.robot import mock_robot as mock_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(mock_module.time, "monotonic", lambda: clock[0])
+    robot = MockRobot()
+    await robot.connect()
+    await robot.enable_motors(True)
+    robot.homed = True
+    await robot.move_xy(40.0, 20.0)
+    trace = []
+    for _ in range(300):  # 10 s at 30 Hz
+        clock[0] += 1.0 / 30.0
+        await robot.tick()
+        trace.append(robot.pos[0])
+    assert robot.pos[0] == 40.0 and robot.pos[1] == 20.0
+    assert robot.vel[0] == 0.0 and robot.vel[1] == 0.0
+    # monotone approach: no overshoot past the target on the way in
+    assert min(trace) >= 40.0
+    assert robot.snapshot().state.value == "IDLE"

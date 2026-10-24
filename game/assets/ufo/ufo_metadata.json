@@ -270,8 +270,8 @@
           "y": 0,
           "name": "move_right",
           "rope_attachment_local": {
-            "x": 44,
-            "y": 12
+            "x": 32,
+            "y": 5
           }
         },
         {
@@ -280,8 +280,8 @@
           "y": 0,
           "name": "move_left",
           "rope_attachment_local": {
-            "x": 22,
-            "y": 12
+            "x": 30,
+            "y": 6
           }
         },
         {
@@ -290,8 +290,8 @@
           "y": 0,
           "name": "panic_right",
           "rope_attachment_local": {
-            "x": 38,
-            "y": 14
+            "x": 32,
+            "y": 5
           }
         },
         {
@@ -300,8 +300,8 @@
           "y": 0,
           "name": "panic_left",
           "rope_attachment_local": {
-            "x": 21,
-            "y": 12
+            "x": 30,
+            "y": 4
           }
         },
         {
@@ -310,8 +310,8 @@
           "y": 64,
           "name": "strain_up",
           "rope_attachment_local": {
-            "x": 34,
-            "y": 9
+            "x": 32,
+            "y": 4
           }
         },
         {
@@ -320,8 +320,8 @@
           "y": 64,
           "name": "resist_side",
           "rope_attachment_local": {
-            "x": 49,
-            "y": 11
+            "x": 31,
+            "y": 6
           }
         },
         {
@@ -330,8 +330,8 @@
           "y": 64,
           "name": "release_stretch",
           "rope_attachment_local": {
-            "x": 31,
-            "y": 1
+            "x": 38,
+            "y": 7
           }
         },
         {
@@ -340,8 +340,276 @@
           "y": 64,
           "name": "exhausted",
           "rope_attachment_local": {
+            "x": 30,
+            "y": 5
+          }
+        }
+      ]
+    },
+    "action_effects": {
+      "file": "res://assets/effects/ufo_action_effects.png",
+      "columns": 4,
+      "rows": 2,
+      "frame_count": 8,
+      "frame_size": {
+        "width": 64,
+        "height": 64
+      },
+      "alignment": "overlay matching action_poses frame index",
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "name": "move_right_lines"
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "name": "move_left_lines"
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0,
+          "name": "panic_right_fx"
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0,
+          "name": "panic_left_fx"
+        },
+        {
+          "index": 4,
+          "x": 0,
+          "y": 64,
+          "name": "strain_up_lines"
+        },
+        {
+          "index": 5,
+          "x": 64,
+          "y": 64,
+          "name": "resist_side_lines"
+        },
+        {
+          "index": 6,
+          "x": 128,
+          "y": 64,
+          "name": "release_lines"
+        },
+        {
+          "index": 7,
+          "x": 192,
+          "y": 64,
+          "name": "exhausted_bubbles"
+        }
+      ]
+    },
+    "all_sprites": {
+      "file": "res://assets/ufo/ufo_all_sprites.png",
+      "columns": 6,
+      "rows": 3,
+      "frame_count": 18,
+      "frame_order": "expressions_then_actions",
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "name": "normal",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "name": "blink",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 2,
+          "x": 128,
+          "y": 0,
+          "name": "happy",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 3,
+          "x": 192,
+          "y": 0,
+          "name": "surprised",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 4,
+          "x": 256,
+          "y": 0,
+          "name": "straining",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 5,
+          "x": 320,
+          "y": 0,
+          "name": "worried",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 6,
+          "x": 0,
+          "y": 64,
+          "name": "sad",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 7,
+          "x": 64,
+          "y": 64,
+          "name": "wink",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 8,
+          "x": 128,
+          "y": 64,
+          "name": "sleepy",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 9,
+          "x": 192,
+          "y": 64,
+          "name": "excited",
+          "category": "expression",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 10,
+          "x": 256,
+          "y": 64,
+          "name": "move_right",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 11,
+          "x": 320,
+          "y": 64,
+          "name": "move_left",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 30,
+            "y": 6
+          }
+        },
+        {
+          "index": 12,
+          "x": 0,
+          "y": 128,
+          "name": "panic_right",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 13,
+          "x": 64,
+          "y": 128,
+          "name": "panic_left",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 30,
+            "y": 4
+          }
+        },
+        {
+          "index": 14,
+          "x": 128,
+          "y": 128,
+          "name": "strain_up",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 4
+          }
+        },
+        {
+          "index": 15,
+          "x": 192,
+          "y": 128,
+          "name": "resist_side",
+          "category": "action",
+          "rope_attachment_local": {
             "x": 31,
-            "y": 15
+            "y": 6
+          }
+        },
+        {
+          "index": 16,
+          "x": 256,
+          "y": 128,
+          "name": "release_stretch",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 38,
+            "y": 7
+          }
+        },
+        {
+          "index": 17,
+          "x": 320,
+          "y": 128,
+          "name": "exhausted",
+          "category": "action",
+          "rope_attachment_local": {
+            "x": 30,
+            "y": 5
           }
         }
       ]

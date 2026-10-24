@@ -18,11 +18,13 @@ func _ready() -> void:
 	if ResourceLoader.exists("res://assets/rope/rope_connector.png"):
 		connector = load("res://assets/rope/rope_connector.png")
 
-func update_rope(sim: RopeSimulator, proj: Projection25D) -> void:
-	_points.resize(sim.points.size())
-	for i in range(sim.points.size()):
-		_points[i] = proj.project(sim.points[i].position).screen
-	var r := proj.project(sim.ufo_position())
+## `world_points` are the rope points to draw (anchor first, UFO last), already
+## blended between physics ticks by the caller.
+func update_rope(world_points: PackedVector3Array, proj: Projection25D) -> void:
+	_points.resize(world_points.size())
+	for i in range(world_points.size()):
+		_points[i] = proj.project(world_points[i]).screen
+	var r := proj.project(world_points[world_points.size() - 1])
 	_ufo_screen = r.screen
 	_ufo_scale = r.scale
 	queue_redraw()

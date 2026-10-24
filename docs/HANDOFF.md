@@ -42,7 +42,7 @@ backend/                    Python（uv）
   src/corexy_ufo_backend/robot/            interface.py, mock_robot.py, real_robot.py, state.py
   src/corexy_ufo_backend/websocket/        server.py（JSON ブリッジ）
   src/corexy_ufo_backend/vision_service/   base.py, service.py, yolo_detector.py, mediapipe_hands.py, cloudflare_detector.py（抽象のみ）
-  tests/                                   31 件（conftest.py の FakeFirmware が実機応答を再現）
+  tests/                                   32 件（conftest.py の FakeFirmware が実機応答を再現）
 config/game_config.json     Godot と Python が共有する設定（可動範囲、物理初期値、投影、通信）
 docs/firmware_protocol.md   実機のシリアル仕様（ソースから確認した事実のみ）
 docs/test_report.md         検証済み / 未検証 / 既知課題
@@ -56,7 +56,7 @@ MockRobot(Python) ────────────────────�
                                                               │ robot_state JSON 30Hz
                                                               ▼
 Godot WebSocketClient ──▶ RobotState(Autoload) ◀── MockRobot(GDScript, デフォルト)
-                              │ interpolated_pose()
+                              │ playback_pose(dt)
                               ▼
             anchor_for_xy(x,y) → sim.anchor      rope_length_for_z(z) → sim.target_rope_length
                               ▼
@@ -93,13 +93,14 @@ cd game
 ```bash
 Godot --path . -- --scenario sudden_stop
 Godot --path . -- --scenario xyz_together --capture /tmp/frames   # 0.5 秒毎に PNG、終了時に FPS 表示
+Godot --path . -- --scenario xy_diagonal --log-motion /tmp/motion.csv --quit-after 10   # 物理 tick / 描画フレームごとの値を CSV に記録
 ```
 
 ### B. 自動テスト
 
 ```bash
 cd game && /Applications/Godot.app/Contents/MacOS/Godot --headless --path . res://tests/test_runner.tscn   # 26 件、終了コードで合否
-cd backend && uv sync && uv run pytest                                                                     # 31 件
+cd backend && uv sync && uv run pytest                                                                     # 32 件
 ```
 
 ### C. バックエンド込み（WebSocket 経路の確認）

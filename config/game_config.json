@@ -18,7 +18,7 @@
   },
   "physics": {
     "segment_count": 16,
-    "iterations": 8,
+    "substeps": 16,
     "gravity": 980.0,
     "damping": 0.45,
     "ufo_drag": 0.25,

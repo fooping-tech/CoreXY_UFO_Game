@@ -7,7 +7,7 @@
 ```
 _physics_process(dt)  ← Godot の物理 tick（既定 60 Hz）
   _handle_keys        ← source == "mock" のときだけ MockRobot.target を動かす
-  pose   = RobotState.interpolated_pose(now)        # mm、最大 120 ms 外挿
+  pose   = RobotState.playback_pose(dt)            # mm。サンプル列を「最新 - 1.5 間隔」で補間（外挿しない）
   anchor = RobotState.anchor_for_xy(pose.x, pose.y) # ワールド cm
   sim.target_rope_length = RobotState.rope_length_for_z(pose.z)
   初回:     sim.reset()（真下に垂らす）

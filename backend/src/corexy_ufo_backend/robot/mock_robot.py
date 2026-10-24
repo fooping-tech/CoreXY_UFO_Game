@@ -104,12 +104,19 @@ class MockRobot(RobotInterface):
             return
         for i in range(3):
             d = self.target[i] - self.pos[i]
-            stop_v = math.copysign(math.sqrt(2 * self.accel[i] * abs(d)), d)
-            desired = max(-self.speed[i], min(self.speed[i], stop_v))
+            if dt <= 0.0:
+                continue
+            # Fastest speed that can still stop at the target decelerating by
+            # accel*dt per step (discrete form of sqrt(2*a*d)), capped to what
+            # covers the remaining distance in this step (otherwise the
+            # discrete controller overshoots and hunts around the target).
+            a_dt = self.accel[i] * dt
+            stop_v = a_dt * (math.sqrt(0.25 + 2 * abs(d) / (a_dt * dt)) - 0.5)
+            desired = math.copysign(min(self.speed[i], stop_v, abs(d) / dt), d)
             v = self.vel[i]
             step = self.accel[i] * dt
             v = v + max(-step, min(step, desired - v))
-            if abs(d) < 0.02 and abs(v) < 1.0:
+            if abs(d) < 1e-3 or (v * d > 0 and abs(v) * dt >= abs(d)):
                 v = 0.0
                 self.pos[i] = self.target[i]
             else:
