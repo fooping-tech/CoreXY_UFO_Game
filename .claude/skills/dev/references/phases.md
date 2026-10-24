@@ -41,7 +41,7 @@ EOF
 ```bash
 git fetch origin
 git status --porcelain            # 未コミットの変更があれば、どのブランチのものか確かめてから動く
-git switch -c <type>/<N>-<slug> origin/main
+git switch --no-track -c <type>/<N>-<slug> origin/main   # 上流を main にしない（push 先の取り違え防止）
 ```
 
 - `<type>`: `feat`（機能）、`fix`（不具合）、`docs`、`chore`（設定・ツール）、`refactor`、`test`。

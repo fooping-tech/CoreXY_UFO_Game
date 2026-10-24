@@ -65,14 +65,14 @@ python3 .claude/skills/dev/scripts/dev_state.py next       # 誰も着手して�
 
 1. ユーザーが**この会話で、この PR について**マージを明示的に指示・承認した（以前の承認は引き継がない）
 2. CI がすべて成功（`checks: success`）。CI がない・実行中なら待つか、理由を説明する
-3. 未解決のレビュー指摘が 0（outdated になったものを除く）、`CHANGES_REQUESTED` でない
-4. `mergeable: MERGEABLE`（main と競合していない）、base が `main`
+3. 未解決のレビュー指摘が 0、`CHANGES_REQUESTED` でない。**outdated（行が変わっただけ）の指摘も未解決として数える**。対応済みなら返信して解決済みにしてから数え直す
+4. `mergeable: MERGEABLE`（`UNKNOWN` は計算中なので待つ）、base が `main`、手元のブランチがリモートより古くない
 5. PR 本文に `Closes #N`、テスト結果、未解決事項がある
 6. 実機が必要な変更（`corexy-ufo-game` スキル §5）なら、「実機未検証」であることをユーザーが承知している
 
 ## 4. 運用ルール（必ず守る）
 
-- **main に直接 push しない。** 必ずブランチ → PR。フック `.claude/hooks/guard_git.py` が main への push、force push、`reset --hard` などの破壊的な操作、秘密情報を含むコミットを止める。止められたら回避しようとせず、理由をユーザーに説明する。
+- **main に直接 push しない。** 必ずブランチ → PR。フック `.claude/hooks/guard_git.py` が main への push、force push、`reset --hard` などの破壊的な操作、秘密情報を含むコミット、`gh api` による参照の書き換えを止める（`sh -c` やサブシェルの中も見る）。止められたら回避しようとせず、理由をユーザーに説明する。フックは補助で、main を実際に守るのは GitHub のブランチ保護。
 - **1 Issue = 1 PR。** 既存のブランチ・PR があればそれを使う（`dev_state.py` の結果に従う）。
 - Issue 番号を**ブランチ名と PR 本文**の両方に入れる（`Closes #N`）。
 - PR の base は `main`。別の PR のブランチに積み重ねない（必要なら先の PR のマージを待つ）。

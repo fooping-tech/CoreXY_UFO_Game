@@ -59,9 +59,47 @@ class InferPhase(unittest.TestCase):
         p = pr(threads=[{"severity": "P1", "outdated": False}])
         self.assertEqual(self.phase(b=branch(), p=p), "8")
 
-    def test_outdated_thread_does_not_block(self):
+    def test_outdated_but_unresolved_thread_still_blocks(self):
+        # outdated = the lines changed, not "addressed"; only resolving the thread clears it
         p = pr(threads=[{"severity": "P2", "outdated": True}])
-        self.assertEqual(self.phase(b=branch(), p=p), "9")
+        self.assertEqual(self.phase(b=branch(), p=p), "8")
+
+    def test_changes_requested(self):
+        self.assertEqual(self.phase(b=branch(), p=pr(reviewDecision="CHANGES_REQUESTED")), "8")
+
+    def test_review_required_is_not_ready(self):
+        self.assertEqual(self.phase(b=branch(), p=pr(reviewDecision="REVIEW_REQUIRED")), "7")
+
+    def test_mergeable_unknown_is_not_ready(self):
+        self.assertEqual(self.phase(b=branch(), p=pr(mergeable="UNKNOWN")), "7")
+
+    def test_draft_is_not_ready(self):
+        self.assertEqual(self.phase(b=branch(), p=pr(isDraft=True)), "7")
+
+    def test_dirty_pr_branch(self):
+        local = {"branch": "feat/12-jog", "dirty_files": [" M a.gd"]}
+        self.assertEqual(self.phase(b=branch(), p=pr(), local=local), "8")
+
+    def test_untracked_files_do_not_count_as_dirty(self):
+        local = {"branch": "feat/12-jog", "dirty_files": [], "untracked_files": ["capture/"]}
+        self.assertEqual(self.phase(b=branch(), p=pr(), local=local), "9")
+
+    def test_unpushed_with_pr(self):
+        self.assertEqual(self.phase(b=branch(unpushed=2), p=pr()), "5")
+
+    def test_local_behind_remote(self):
+        self.assertEqual(self.phase(b=branch(behind=1), p=pr()), "8")
+        self.assertEqual(self.phase(b=branch(behind=1)), "4")
+
+    def test_reopened_issue_with_merged_pr(self):
+        issue = {"number": 12, "state": "OPEN", "stateReason": "REOPENED"}
+        self.assertEqual(self.phase(issue=issue, b=branch(), p=pr(state="MERGED")), "attention")
+
+    def test_closed_issue_without_pr(self):
+        self.assertEqual(self.phase(issue={"number": 12, "state": "CLOSED"}), "attention")
+
+    def test_pr_without_issue_ready(self):
+        self.assertEqual(self.phase(issue=None, b=branch(), p=pr()), "9")
 
     def test_conflict(self):
         self.assertEqual(self.phase(b=branch(), p=pr(mergeable="CONFLICTING")), "8")

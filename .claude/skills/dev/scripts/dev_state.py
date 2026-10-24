@@ -12,7 +12,8 @@ Usage (from anywhere inside the repository):
   dev_state.py pr <N>          # state + next phase for PR N
   add --json for machine-readable output
 
-Only reads; never changes anything. Needs `git` and an authenticated `gh`.
+Never changes GitHub, branches or files; the only side effect is `git fetch --prune`
+(refreshes remote-tracking refs). Needs `git` and an authenticated `gh`.
 Compatible with Python 3.9 (macOS system python3).
 """
 
@@ -71,8 +72,10 @@ def repo_info() -> Dict[str, Any]:
 def local_state(default_branch: str) -> Dict[str, Any]:
     run(["git", "fetch", "--quiet", "--prune", "origin"], allow_fail=True)
     branch = run(["git", "branch", "--show-current"], allow_fail=True)
-    dirty = [l for l in run(["git", "status", "--porcelain"], allow_fail=True).splitlines() if l]
-    return {"branch": branch, "dirty_files": dirty, "default_branch": default_branch}
+    lines = [l for l in run(["git", "status", "--porcelain"], allow_fail=True).splitlines() if l]
+    dirty = [l for l in lines if not l.startswith("??")]
+    untracked = [l[3:] for l in lines if l.startswith("??")]
+    return {"branch": branch, "dirty_files": dirty, "untracked_files": untracked, "default_branch": default_branch}
 
 
 def branch_commits(branch: str, default_branch: str) -> Dict[str, Any]:
@@ -83,12 +86,14 @@ def branch_commits(branch: str, default_branch: str) -> Dict[str, Any]:
     ahead_main = 0
     if has_local or has_remote:
         ahead_main = int(run(["git", "rev-list", "--count", "origin/%s..%s" % (default_branch, ref)], allow_fail=True) or 0)
-    unpushed = 0
+    unpushed = behind = 0
     if has_local and has_remote:
         unpushed = int(run(["git", "rev-list", "--count", "origin/%s..%s" % (branch, branch)], allow_fail=True) or 0)
+        behind = int(run(["git", "rev-list", "--count", "%s..origin/%s" % (branch, branch)], allow_fail=True) or 0)
     elif has_local:
         unpushed = ahead_main
-    return {"local": has_local, "remote": has_remote, "ahead_of_default": ahead_main, "unpushed": unpushed}
+    return {"local": has_local, "remote": has_remote, "ahead_of_default": ahead_main,
+            "unpushed": unpushed, "behind": behind}
 
 
 def branches_for_issue(number: int) -> List[str]:
@@ -112,17 +117,20 @@ PR_FIELDS = ("number,title,state,isDraft,url,headRefName,baseRefName,mergeable,m
 
 
 def issue_detail(number: int) -> Optional[Dict[str, Any]]:
-    return gh_json(["issue", "view", str(number), "--json", "number,title,state,labels,url,body,assignees"], allow_fail=True)
+    return gh_json(["issue", "view", str(number), "--json",
+                    "number,title,state,stateReason,labels,url,body,closedByPullRequestsReferences"], allow_fail=True)
 
 
-def prs_for_issue(number: int, branches: List[str]) -> List[Dict[str, Any]]:
-    prs = gh_json(["pr", "list", "--state", "all", "--limit", "100", "--json",
-                   "number,state,headRefName,closingIssuesReferences"]) or []
-    hits = []
-    for p in prs:
-        closes = [c.get("number") for c in p.get("closingIssuesReferences") or []]
-        if number in closes or p["headRefName"] in branches or issue_from_branch(p["headRefName"]) == number:
-            hits.append(p["number"])
+def prs_for_issue(issue: Dict[str, Any], branches: List[str]) -> List[Dict[str, Any]]:
+    """PRs that close the issue (`Closes #N`) or whose head is one of the issue's branches.
+
+    Looked up directly (no capped `pr list`), so an existing PR is never missed and duplicated.
+    """
+    hits = [r["number"] for r in issue.get("closedByPullRequestsReferences") or []]
+    for b in branches:
+        for p in gh_json(["pr", "list", "--head", b, "--state", "all", "--json", "number"]) or []:
+            if p["number"] not in hits:
+                hits.append(p["number"])
     return [pr_detail(n) for n in hits]
 
 
@@ -205,9 +213,11 @@ def infer_phase(issue: Optional[Dict[str, Any]], branch: Optional[Dict[str, Any]
     """
     issue_open = issue is None or issue.get("state") == "OPEN"
     on_branch = branch is not None and local.get("branch") == branch.get("name")
-    dirty = on_branch and bool(local.get("dirty_files"))
+    dirty = on_branch and bool(local.get("dirty_files"))  # tracked changes only
 
     if pr is not None and pr.get("state") == "MERGED":
+        if issue_open and issue is not None and issue.get("stateReason") == "REOPENED":
+            return {"phase": "attention", "reason": "PR #%d はマージ済みだが Issue が再オープンされている。理由を確認する（勝手に閉じない）" % pr["number"]}
         if issue_open and issue is not None:
             return {"phase": "10", "reason": "PR #%d はマージ済みだが Issue がまだ開いている" % pr["number"]}
         return {"phase": "done", "reason": "PR #%d はマージ済み%s" % (
@@ -216,6 +226,10 @@ def infer_phase(issue: Optional[Dict[str, Any]], branch: Optional[Dict[str, Any]
         return {"phase": "attention", "reason": "PR #%d はマージされずに閉じられている。再開するか新しい PR にするかユーザーに確認" % pr["number"]}
     if not issue_open and pr is None:
         return {"phase": "attention", "reason": "Issue は PR なしで閉じられている"}
+
+    if branch is not None and branch.get("behind", 0) > 0:
+        return {"phase": "4" if pr is None else "8",
+                "reason": "手元のブランチがリモートより %d コミット古い。先に `git pull --ff-only` する（force push はしない）" % branch["behind"]}
 
     if pr is not None:  # open PR
         if dirty:
@@ -230,15 +244,22 @@ def infer_phase(issue: Optional[Dict[str, Any]], branch: Optional[Dict[str, Any]
         threads = pr.get("threads")
         if threads is None:
             return {"phase": "7", "reason": "レビュー指摘を取得できなかった（状態不明）。時間をおいて再実行する"}
-        blocking = [t for t in threads if not t.get("outdated")]
-        if pr.get("reviewDecision") == "CHANGES_REQUESTED" or blocking:
-            return {"phase": "8", "reason": "未解決のレビュー指摘が %d 件" % len(blocking)}
+        # "outdated" only means the lines changed, not that the point was addressed:
+        # every unresolved thread blocks until it is answered and resolved.
+        if pr.get("reviewDecision") == "CHANGES_REQUESTED" or threads:
+            outdated = len([t for t in threads if t.get("outdated")])
+            return {"phase": "8", "reason": "未解決のレビュー指摘が %d 件（うち outdated %d 件。対応済みなら返信して解決済みにする）"
+                    % (len(threads), outdated)}
         if checks == "pending":
             return {"phase": "7", "reason": "CI 実行中: " + ", ".join(pr["checks"]["pending"])}
         if pr.get("isDraft"):
             return {"phase": "7", "reason": "下書き PR。検証が済んだら Ready for review にする"}
         if checks == "none":
             return {"phase": "7", "reason": "CI の結果がまだない（CI 未設定か、起動待ち）"}
+        if pr.get("mergeable") != "MERGEABLE":
+            return {"phase": "7", "reason": "マージ可否を GitHub が計算中（mergeable=%s）。少し待って再実行する" % pr.get("mergeable")}
+        if pr.get("reviewDecision") == "REVIEW_REQUIRED":
+            return {"phase": "7", "reason": "必須のレビュー承認がまだない"}
         return {"phase": "9", "reason": "CI 成功、未解決の指摘なし。マージにはユーザーの承認が必要"}
 
     if branch is None:
@@ -267,8 +288,10 @@ def report_issue(number: int, local: Dict[str, Any], default_branch: str,
     issue = issue_detail(number)
     if issue is None:
         return {"error": "Issue #%d が見つからない" % number}
+    if "/pull/" in issue.get("url", ""):
+        return {"error": "#%d は Issue ではなく PR。`dev_state.py pr %d` を使う" % (number, number)}
     names = branches_for_issue(number)
-    prs = prs_for_issue(number, names)
+    prs = prs_for_issue(issue, names)
     if prefer_pr is not None and prefer_pr not in [p["number"] for p in prs]:
         prs.append(pr_detail(prefer_pr))
     open_prs = [p for p in prs if p["state"] == "OPEN"]
@@ -283,10 +306,10 @@ def report_issue(number: int, local: Dict[str, Any], default_branch: str,
         warnings.append("この Issue に開いている PR が複数ある: " + ", ".join("#%d" % p["number"] for p in open_prs))
     if len(names) > 1:
         warnings.append("この Issue のブランチが複数ある: " + ", ".join(names))
-    return {"issue": {k: issue[k] for k in ("number", "title", "state", "url")},
+    return {"issue": {k: issue.get(k) for k in ("number", "title", "state", "stateReason", "url")},
             "labels": [l["name"] for l in issue.get("labels", [])],
             "branch": branch, "pr": pr, "next": result, "warnings": warnings,
-            "local": {"branch": local["branch"], "dirty_files": local["dirty_files"]}}
+            "local": {k: local.get(k) for k in ("branch", "dirty_files", "untracked_files")}}
 
 
 def report_pr_only(number: int, local: Dict[str, Any], default_branch: str) -> Dict[str, Any]:
@@ -296,7 +319,7 @@ def report_pr_only(number: int, local: Dict[str, Any], default_branch: str) -> D
     return {"issue": None, "labels": [], "branch": branch, "pr": pr,
             "next": infer_phase(None, branch, pr, local),
             "warnings": ["PR #%d は Issue に結び付いていない（本文に Closes #N がない）" % number],
-            "local": {"branch": local["branch"], "dirty_files": local["dirty_files"]}}
+            "local": {k: local.get(k) for k in ("branch", "dirty_files", "untracked_files")}}
 
 
 def report_status(local: Dict[str, Any]) -> Dict[str, Any]:
@@ -365,6 +388,8 @@ def print_text(mode: str, data: Dict[str, Any]) -> None:
                                               " (outdated)" if t["outdated"] else ""))
         else:
             print("  PR: なし")
+        if data["local"].get("untracked_files"):
+            print("  未追跡ファイル: %d（判定には使わない）" % len(data["local"]["untracked_files"]))
         if data["local"]["dirty_files"]:
             print("  未コミット (%s): %d ファイル" % (data["local"]["branch"], len(data["local"]["dirty_files"])))
         for w in data["warnings"]:
