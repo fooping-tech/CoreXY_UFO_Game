@@ -35,6 +35,7 @@ description: >
 | UFO 表情・演出 | `character/ufo_character.gd`, `main.gd::_mood`, `game/scripts/game/game_state.gd`, `assets/ufo/ufo_metadata.json` | [references/gameplay-and-animation.md](references/gameplay-and-animation.md) |
 | 実機・通信・安全 | `backend/src/corexy_ufo_backend/robot/real_robot.py`, `serial_service/`, `websocket/server.py`, `network/websocket_client.gd` | [references/robot-protocol.md](references/robot-protocol.md), `docs/firmware_protocol.md` |
 | Z 軸・座標変換 | `robot/robot_state.gd`, `config/game_config.json`, `real_robot.py::move_z` | [references/architecture.md](references/architecture.md) §3, [robot-protocol.md](references/robot-protocol.md) §3 |
+| USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
 | テスト | `game/tests/run_tests.gd`, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
 
 パスの省略: ゲーム側は `game/scripts/`、バックエンド側（`serial_service/` など）は `backend/src/corexy_ufo_backend/` からの相対。
@@ -129,7 +130,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 64 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 73 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import

@@ -19,6 +19,10 @@ const DEFAULTS := {
 	"render": {"pixel_scale": 3.0, "rope_width_px": 6.0, "particles": true, "screen_shake": true, "shake_max_px": 22.0},
 	"audio": {"enabled": true, "volume_db": -8.0, "dir": "res://assets/audio",
 		"move": "wizard-flight1.mp3", "up": "magic-statusup1.mp3", "down": "hyun1.mp3"},
+	"camera": {"enabled": true,
+		"overview": {"match": "C270", "flip_h": false, "flip_v": false},
+		"focus": {"match": "", "flip_h": false, "flip_v": false},
+		"scope": {"enabled": true, "settle_s": 0.7, "hold_s": 10.0, "zoom": 1.0}},
 	"network": {"websocket_url": "ws://127.0.0.1:8765", "state_timeout_ms": 1500, "command_timeout_ms": 3000},
 }
 

@@ -16,6 +16,8 @@ var _expr_option: OptionButton
 var _source_option: OptionButton
 var _state_chip: Label
 var _log_lines: PackedStringArray = PackedStringArray()
+## role -> {"option": OptionButton, "view": TextureRect, "info": Label}
+var _cam_ui: Dictionary = {}
 
 func panel_width() -> float:
 	return PANEL_W if visible else 0.0
@@ -77,6 +79,8 @@ func _build() -> void:
 	_button(hb2, "home", func(): main.ws.send_command("home"))
 	_button(hb2, "z_zero", func(): main.ws.send_command("z_zero"))
 	_button(hb2, "clear_alarm", func(): main.ws.send_command("clear_alarm"))
+
+	_build_cameras()
 
 	_header("Virtual robot target (mm / z units)")
 	var r := GameConfig.robot()
@@ -156,10 +160,67 @@ func _build() -> void:
 	_log.add_theme_font_size_override("normal_font_size", 11)
 	_vbox.add_child(_log)
 	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  G/F=result  F1=hide panel"
+	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  G/F=result  F1=hide panel"
 	help.add_theme_font_size_override("font_size", 11)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_vbox.add_child(help)
+
+## Both USB cameras at their full field of view (no crop, real aspect), each
+## with a picker for which camera plays that role.
+func _build_cameras() -> void:
+	var hub: CameraHub = main.cameras
+	_header("Cameras (full frame)")
+	for role in CameraHub.ROLES:
+		var row := HBoxContainer.new()
+		_vbox.add_child(row)
+		var l := Label.new()
+		l.text = "Overview (desk / gesture)" if role == "overview" else "Focus (arm tip)"
+		l.custom_minimum_size.x = 150
+		l.add_theme_font_size_override("font_size", 11)
+		row.add_child(l)
+		var opt := OptionButton.new()
+		opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		opt.add_theme_font_size_override("font_size", 11)
+		opt.item_selected.connect(func(i): hub.assign(role, opt.get_item_id(i)))
+		row.add_child(opt)
+		var view := TextureRect.new()
+		view.texture = hub.texture(role)
+		view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		view.custom_minimum_size = Vector2(PANEL_W - 24, (PANEL_W - 24) * 0.75)
+		_vbox.add_child(view)
+		var info := Label.new()
+		info.add_theme_font_size_override("font_size", 10)
+		_vbox.add_child(info)
+		_cam_ui[role] = {"option": opt, "view": view, "info": info}
+	var hb := HBoxContainer.new()
+	_vbox.add_child(hb)
+	_button(hb, "Scope open/close (V)", func(): main.scope_trigger.toggle())
+	_button(hb, "Scope: ON/OFF", func(): main.scope_enabled = not main.scope_enabled)
+	_slider("scope_zoom", "Scope zoom", 1.0, 4.0, main.scope.zoom, 0.1, func(v): main.scope.zoom = v)
+	hub.feeds_changed.connect(_refresh_camera_options)
+	_refresh_camera_options()
+
+func _refresh_camera_options() -> void:
+	var hub: CameraHub = main.cameras
+	var feeds := hub.feed_list()
+	for role in _cam_ui.keys():
+		var opt: OptionButton = _cam_ui[role].option
+		opt.clear()
+		opt.add_item("(none)", -1)
+		for f in feeds:
+			opt.add_item(str(f.name), int(f.id))
+		opt.select(maxi(opt.get_item_index(hub.feed_id(role)), 0))
+
+func _update_cameras() -> void:
+	var hub: CameraHub = main.cameras
+	for role in _cam_ui.keys():
+		var ui: Dictionary = _cam_ui[role]
+		var w := PANEL_W - 24
+		ui.view.custom_minimum_size = Vector2(w, w / hub.feed_aspect(role))
+		var s := hub.feed_size(role)
+		ui.info.text = ("%s  %dx%d" % [hub.feed_name(role), s.x, s.y]) if hub.has_feed(role) else "NO SIGNAL (pick a camera above, or set camera.%s.match)" % role
 
 func _header(t: String) -> void:
 	var l := Label.new()
@@ -233,6 +294,7 @@ func _append_log(t: String) -> void:
 func _process(_dt: float) -> void:
 	if main == null:
 		return
+	_update_cameras()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)

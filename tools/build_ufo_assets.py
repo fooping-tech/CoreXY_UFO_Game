@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -229,6 +229,39 @@ def action_effect_frames() -> list[Image.Image]:
     return frames
 
 
+def telescope_frames(expressions: list[Image.Image]) -> list[Image.Image]:
+    """Peering through a spyglass: left eye squeezed shut, gold spyglass held to
+    the right eye and pointing right (toward the scope view on screen). Frame 1
+    adds a glint on the lens. Drawn over the registered `normal` frame, so the
+    rope attachment stays at (32, 5)."""
+    normal, wink = expressions[0], expressions[7]
+    base = normal.copy()
+    # the wink's closed eye, mirrored over to the left side
+    base.paste(ImageOps.mirror(wink).crop((14, 24, 31, 37)), (14, 24))
+    outline, gold, gold_dk, gold_lt = (2, 20, 78, 255), (255, 196, 54, 255), (196, 122, 24, 255), (255, 236, 150, 255)
+    lens, lens_lt = (24, 96, 176, 255), (150, 236, 255, 255)
+    frames = []
+    for glint in (False, True):
+        f = base.copy()
+        d = ImageDraw.Draw(f)
+        d.polygon([(36, 26), (44, 25), (44, 35), (36, 34)], fill=gold, outline=outline)  # eyepiece
+        d.polygon([(44, 24), (53, 23), (53, 37), (44, 36)], fill=gold, outline=outline)  # tube
+        d.polygon([(53, 21), (61, 20), (61, 40), (53, 39)], fill=gold, outline=outline)  # objective
+        for x0, x1, y in ((37, 43, 33), (45, 52, 35), (54, 60, 38)):
+            d.line((x0, y, x1, y), fill=gold_dk)
+        for x0, x1, y in ((37, 43, 27), (45, 52, 25), (54, 60, 22)):
+            d.line((x0, y, x1, y), fill=gold_lt)
+        d.line((44, 24, 44, 36), fill=outline)
+        d.line((53, 21, 53, 39), fill=outline)
+        d.rectangle((61, 21, 62, 39), fill=lens_lt if glint else lens, outline=outline)
+        d.point((61, 24), fill=lens_lt if not glint else (255, 255, 255, 255))
+        if glint:
+            d.line((62, 19, 62, 17), fill=lens_lt)
+            d.line((62, 41, 62, 43), fill=lens_lt)
+        frames.append(f)
+    return frames
+
+
 def build(source: Path, action_source: Path | None = None) -> None:
     master = Image.open(source).convert("RGBA")
     ufo_dir = ASSETS / "ufo"
@@ -249,6 +282,9 @@ def build(source: Path, action_source: Path | None = None) -> None:
     # the blink uses the same registered master character.
     idle_frames = [expressions[0], expressions[0], expressions[1], expressions[0]]
     sheet(idle_frames, 4).save(ufo_dir / "ufo_idle.png")
+
+    telescope = telescope_frames(expressions)
+    sheet(telescope, 2).save(ufo_dir / "ufo_telescope.png")
 
     # Two image frames per action. Rotation and translation remain Godot-side.
     action_defs = [
@@ -333,6 +369,14 @@ def build(source: Path, action_source: Path | None = None) -> None:
                 "frames": [
                     {"index": i, "x": (i % 5) * CELL, "y": (i // 5) * CELL, "name": name}
                     for i, name in enumerate(expression_names)
+                ],
+            },
+            "telescope": {
+                "file": "res://assets/ufo/ufo_telescope.png", "columns": 2, "rows": 1,
+                "frame_count": 2, "fps": 2.5, "loop": True,
+                "frames": [
+                    {"index": i, "x": i * CELL, "y": 0, "name": name, "rope_attachment_local": {"x": 32, "y": 5}}
+                    for i, name in enumerate(["telescope", "telescope_glint"])
                 ],
             },
             "actions": {
