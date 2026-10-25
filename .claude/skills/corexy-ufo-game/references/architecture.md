@@ -45,7 +45,7 @@ _process(dt)          ← 描画フレーム
 | 画面 | px | `Projection25D` が俯角回転 + ピンホールで変換。奥（−Z）ほど上に小さく映る |
 
 変換（`robot_state.gd`）:
-- `anchor_for_xy`: 正規化した X → `(nx-0.5)*travel_x_cm`、Y → `-(ny-0.5)*travel_z_cm`（**実機 Y+ はワールド −Z = 奥**）。
+- `anchor_for_xy`: 正規化した X → `(nx-0.5)*travel_x_cm()`、Y → `-(ny-0.5)*travel_z_cm`（**実機 Y+ はワールド −Z = 奥**）。`travel_x_cm()` は `world.fit_travel_x_to_screen` が true なら画面に合わせた `world.travel_x_fit_cm`（`main.gd::_update_origin` が毎フレーム `fit_travel_x_cm()` で計算して書く実行時の値）、false なら固定の `world.travel_x_cm`。
 - `arm_height_normalized`: 0 = アーム最下、1 = 最上（`z_up_is_positive` を吸収）。
 - `rope_length_for_z`: `lerp(rope_min_cm, rope_max_cm, arm_height)`。**アーム最上 → ロープ最長 → UFO 最下**。
 

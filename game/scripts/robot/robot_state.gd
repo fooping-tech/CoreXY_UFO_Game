@@ -271,6 +271,16 @@ func rope_length_for_z(z_value_mm: float) -> float:
 	var h := arm_height_normalized(z_value_mm)
 	return lerpf(w.rope_min_cm, w.rope_max_cm, h)
 
+## World X travel (cm) the robot's full X range maps to: the screen-fitted value
+## (world.travel_x_fit_cm, written by the main scene from the play area) when
+## world.fit_travel_x_to_screen is on, else the fixed world.travel_x_cm.
+func travel_x_cm() -> float:
+	var w: Dictionary = GameConfig.data["world"]
+	var fitted := float(w.get("travel_x_fit_cm", 0.0))
+	if bool(w.get("fit_travel_x_to_screen", false)) and fitted > 0.0:
+		return fitted
+	return float(w.travel_x_cm)
+
 ## Anchor position in the rope world frame for a robot XY (mm).
 ## Robot X+ = screen right. Robot Y+ = away from the player (into the screen).
 func anchor_for_xy(x_value_mm: float, y_value_mm: float) -> Vector3:
@@ -278,7 +288,7 @@ func anchor_for_xy(x_value_mm: float, y_value_mm: float) -> Vector3:
 	var w: Dictionary = GameConfig.data["world"]
 	var nx := _norm(x_value_mm, r.x_min_mm, r.x_max_mm)
 	var ny := _norm(y_value_mm, r.y_min_mm, r.y_max_mm)
-	return Vector3((nx - 0.5) * w.travel_x_cm, 0.0, -(ny - 0.5) * w.travel_z_cm)
+	return Vector3((nx - 0.5) * travel_x_cm(), 0.0, -(ny - 0.5) * w.travel_z_cm)
 
 static func _norm(v: float, lo: float, hi: float) -> float:
 	if hi - lo == 0.0:

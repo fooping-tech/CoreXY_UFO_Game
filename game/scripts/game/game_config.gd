@@ -9,12 +9,13 @@ const DEFAULTS := {
 		"z_min_mm": 0.0, "z_max_mm": 100.0,
 		"z_up_is_positive": true,
 	},
-	"world": {"travel_x_cm": 52.0, "travel_z_cm": 36.0, "rope_min_cm": 16.0, "rope_max_cm": 70.0},
+	"world": {"travel_x_cm": 52.0, "travel_z_cm": 36.0, "rope_min_cm": 16.0, "rope_max_cm": 70.0,
+		"fit_travel_x_to_screen": true},
 	"physics": {
 		"segment_count": 16, "substeps": 16, "gravity": 980.0, "damping": 0.45,
 		"ufo_drag": 0.25, "ufo_mass": 25.0, "rope_length_rate": 60.0, "swing_gain": 1.0,
 	},
-	"projection": {"pitch_deg": 28.0, "pixels_per_unit": 6.0, "xy_display_scale": 1.0, "perspective": 0.0045, "depth_scale": 1.0},
+	"projection": {"pitch_deg": 28.0, "pixels_per_unit": 6.0, "xy_display_scale": 1.0, "perspective": 0.0045, "depth_scale": 1.0, "edge_margin_px": 24.0},
 	"render": {"pixel_scale": 3.0, "rope_width_px": 6.0},
 	"network": {"websocket_url": "ws://127.0.0.1:8765", "state_timeout_ms": 1500, "command_timeout_ms": 3000},
 }

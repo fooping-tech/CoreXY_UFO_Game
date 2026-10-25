@@ -26,6 +26,7 @@ func _ready() -> void:
 	_test_playback_30hz_acceleration(rs)
 	_test_mock_robot_settles(rs)
 	_test_real_jog_velocity()
+	_test_fit_travel_to_screen(rs)
 	_test_z_inverse_mapping(rs)
 	_test_projection_consistency()
 	_test_performance()
@@ -271,6 +272,68 @@ func _test_real_jog_velocity() -> void:
 			all_ok = false
 			print("      hint for %s: %s" % [reason, main_script.jog_hint_for(reason)])
 	_ok(all_ok and main_script.jog_hint_for("") == "", "jog: refusals are shown as the next step to take")
+
+## The robot's X range spans the play area: the UFO sprite reaches the margin at
+## the tightest corner and never leaves the play area at any depth / rope length.
+func _test_fit_travel_to_screen(rs: Node) -> void:
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	var p := Projection25D.new()
+	var w: Dictionary = GameConfig.data.world
+	var tz: float = w.travel_z_cm
+	var rope_max: float = w.rope_max_cm
+	var half_sprite := 96.0
+	var margin := 24.0
+	var all_inside := true
+	var closest := INF
+	for play_w in [1280.0, 900.0]:
+		p.origin_px = Vector2(play_w * 0.5, 172.0)
+		var swing_k: float = main_script.swing_per_travel(rope_max, 50.0)
+		var travel: float = main_script.fit_travel_x_cm(p, play_w, tz, float(w.rope_min_cm), rope_max, half_sprite, margin, swing_k)
+		var reach := 0.5 * travel + swing_k * travel  # anchor end + swing past it
+		for z in [-0.5 * tz, 0.0, 0.5 * tz]:
+			for y in [-float(w.rope_min_cm), -0.5 * (float(w.rope_min_cm) + rope_max), -rope_max]:
+				for sx in [-1.0, 1.0]:
+					var r := p.project(Vector3(sx * reach, y, z))
+					var left := r.screen.x - half_sprite * r.scale
+					var right := r.screen.x + half_sprite * r.scale
+					all_inside = all_inside and left >= margin - 0.01 and right <= play_w - margin + 0.01
+					closest = minf(closest, minf(left - margin, play_w - margin - right))
+	_ok(all_inside, "fit X: UFO (incl. the swing at a stop) stays inside the play area at every depth and rope length")
+	_ok(closest < 1.0, "fit X: the tightest corner reaches the edge margin", "gap %.2f px" % closest)
+	var keep_fit = w.get("fit_travel_x_to_screen", false)
+	var keep_val = w.get("travel_x_fit_cm", 0.0)
+	var r: Dictionary = GameConfig.robot()
+	w["travel_x_fit_cm"] = 150.0
+	w["fit_travel_x_to_screen"] = true
+	var fitted: Vector3 = rs.anchor_for_xy(r.x_max_mm, r.y_min_mm)
+	w["fit_travel_x_to_screen"] = false
+	var fixed: Vector3 = rs.anchor_for_xy(r.x_max_mm, r.y_min_mm)
+	w["fit_travel_x_to_screen"] = keep_fit
+	w["travel_x_fit_cm"] = keep_val
+	_ok(is_equal_approx(fitted.x, 75.0) and is_equal_approx(fixed.x, 0.5 * float(w.travel_x_cm)), "fit X: anchor uses the fitted travel, or the fixed one when off", "%s %s" % [fitted, fixed])
+	# A layout change (new fitted travel) must not kick the rope: the robot did not move.
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.mock.enabled = false
+	rs.clear_samples()
+	rs.push_pose(292.5, 100.0, float(r.z_max_mm), "", 1000.0)  # stationary, right of centre
+	w["fit_travel_x_to_screen"] = true
+	w["travel_x_fit_cm"] = 150.0
+	for i in range(240):
+		game._physics_process(1.0 / 60.0)
+	var before: Vector3 = game.sim.anchor
+	w["travel_x_fit_cm"] = 123.0  # e.g. the debug panel was shown
+	var worst_v := 0.0
+	for i in range(30):
+		game._physics_process(1.0 / 60.0)
+		worst_v = maxf(worst_v, game.sim.ufo_velocity().length())
+	_ok(not is_equal_approx(game.sim.anchor.x, before.x) and game.sim.anchor_velocity().length() < 1e-3 and worst_v < 1.0,
+		"fit X: a layout change moves the rope without kicking it", "anchor %.1f -> %.1f, max ufo v %.2f cm/s" % [before.x, game.sim.anchor.x, worst_v])
+	w["fit_travel_x_to_screen"] = keep_fit
+	w["travel_x_fit_cm"] = keep_val
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()
