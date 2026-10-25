@@ -154,3 +154,86 @@ async def test_server_passes_vz():
             assert (await cmd("z0", "jog", vx=0, vy=0, vz=0))["type"] == "ack"
     finally:
         await srv.stop()
+
+
+# ------------------------------------------------------------------ release ramp
+def z_rates(robot):
+    """Z counts/s of every JOG line sent so far (0 for `JOG vx vy` and plain stops)."""
+    out = []
+    for line in robot.serial.transport.sent:
+        if line.startswith("JOG "):
+            parts = line.split()
+            out.append(int(parts[3]) if len(parts) > 3 else 0)
+    return out
+
+
+async def test_release_ramps_z_down_before_stopping():
+    # The firmware holds the last READ servo position when the rate drops to 0; at
+    # speed that read lags and the drum swings back. Ramp down instead.
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.jog(0, 0, -15)  # -1843 counts/s
+        await robot.jog(0, 0, 0)    # all keys released
+        await asyncio.sleep(0.4)
+        rates = z_rates(robot)
+        ramp = rates[1:]
+        assert rates[0] == -1843 and ramp[-1] == 0 and len(ramp) >= 4
+        assert all(-1843 <= r < 0 for r in ramp[:-1]) and ramp[-2] > -500, ramp  # slow at the end
+        assert all(abs(a) >= abs(b) for a, b in zip(ramp, ramp[1:])), ramp  # never speeds up
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
+    finally:
+        await robot.disconnect()
+
+
+async def test_new_press_or_stop_cancels_the_ramp():
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.jog(0, 0, -15)
+        await robot.jog(0, 0, 0)
+        await robot.jog(0, 0, 15)  # pressed again (W) during the ramp
+        n = len(robot.serial.transport.sent)
+        await asyncio.sleep(0.15)
+        assert len(robot.serial.transport.sent) == n  # the old ramp wrote nothing more
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 1843 0"
+        await robot.jog(0, 0, 0)
+        await robot.soft_stop()  # Space during the ramp
+        n = len(robot.serial.transport.sent)
+        await asyncio.sleep(0.4)
+        assert len(robot.serial.transport.sent) == n and robot.serial.transport.sent[-1] == "STOP"
+    finally:
+        await robot.disconnect()
+
+
+async def test_no_ramp_at_the_end_of_the_range():
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.set_z_zero()  # z = 100
+        robot._z_units_est = 99.0
+        await robot.jog(0, 0, 15)
+        robot._z_units_est = 100.0  # reached the top
+        await robot.jog(0, 0, 15)   # still held: stop at once, no coasting past the end
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
+        await asyncio.sleep(0.15)
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
+    finally:
+        await robot.disconnect()
+
+
+async def test_releasing_only_w_s_ramps_z_within_the_refreshes():
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.home()
+        await robot.jog(20, 0, -15)
+        for _ in range(7):  # arrow still held, W/S released
+            await asyncio.sleep(0.05)
+            await robot.jog(20, 0, 0)
+        rates = z_rates(robot)
+        assert rates[0] == -1843 and rates[-1] == 0 and any(-1843 < r < 0 for r in rates), rates
+        assert all(abs(a) >= abs(b) for a, b in zip(rates, rates[1:])), rates
+        await robot.jog(0, 0, 0)
+    finally:
+        await robot.disconnect()

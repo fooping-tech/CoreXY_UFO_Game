@@ -42,6 +42,12 @@ MAX_TURNS_PER_COMMAND = 3.0
 Z_SERVO_ID = 1
 ARM_SERVO_ID = 2
 SERVO_SPEED_COUNTS_PER_S = 2400.0
+# Z jog release ramp. The firmware's servo jog holds the position it last READ when
+# the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
+# swings back ("reverses for a moment" on W/S release; the joystick's analog stick
+# never drops the rate at once). Ramping the rate down first lets it stop cleanly.
+Z_RAMP_S = 0.25
+Z_RAMP_STEP_S = 0.04
 
 
 class RealRobot(RobotInterface):
@@ -63,6 +69,10 @@ class RealRobot(RobotInterface):
         self._jogging = False
         self._jog_requested = False  # a non-zero JOG was sent and not yet ended
         self._last_jog_t = 0.0  # when the last non-zero JOG was written
+        self._z_rate = 0  # Z counts/s last sent
+        self._z_ramp_from = 0  # Z rate being ramped down to 0 (0 = no ramp)
+        self._z_ramp_t0 = 0.0
+        self._z_ramp_task: asyncio.Task | None = None
         self._move_from: tuple[float, float] | None = None
         self._move_to: tuple[float, float] | None = None
         self._move_t0 = 0.0
@@ -96,6 +106,7 @@ class RealRobot(RobotInterface):
 
     async def disconnect(self) -> None:
         # Best effort: never leave the machine moving when the host goes away.
+        self._cancel_z_ramp()
         if self.serial.connected and (self._jogging or self._jog_requested):
             try:
                 self.serial.write_raw(P.cmd_jog(0.0, 0.0))
@@ -216,6 +227,8 @@ class RealRobot(RobotInterface):
         if not self.serial.connected:
             raise RobotCommandError("not connected")
         self.motors_enabled = enable
+        if not enable:
+            self._cancel_z_ramp()
         if not enable and (self._jogging or self._jog_requested):
             self.serial.write_raw(P.cmd_jog(0.0, 0.0))
         if not enable and self._busy:
@@ -361,22 +374,76 @@ class RealRobot(RobotInterface):
             self._busy = False
             self._state = MachineState.IDLE
 
+    def _ramped_z(self, requested: int, now: float) -> int:
+        """Z rate to send: the request, or (after a release) a linear ramp down to 0."""
+        if requested:
+            self._z_ramp_from = 0
+            return requested
+        if not self._z_ramp_from and self._z_rate:
+            self._z_ramp_from, self._z_ramp_t0 = self._z_rate, now  # just released
+        if self._z_ramp_from:
+            f = 1.0 - (now - self._z_ramp_t0) / Z_RAMP_S
+            if f > 0.0:
+                return int(self._z_ramp_from * f)
+            self._z_ramp_from = 0
+        return 0
+
+    def _cancel_z_ramp(self) -> None:
+        if self._z_ramp_task and not self._z_ramp_task.done():
+            self._z_ramp_task.cancel()
+        self._z_ramp_task = None
+        self._z_ramp_from = 0
+        self._z_rate = 0
+
+    def _end_jog_session(self) -> None:
+        if self.serial.connected:
+            self.serial.write_raw(P.cmd_jog(0.0, 0.0))
+        self._z_rate = 0
+        self._z_ramp_from = 0
+        self._jog_requested = False
+        self._last_jog_t = 0.0  # the next non-zero JOG is a new press
+
+    async def _ramp_z_to_stop(self) -> None:
+        """All keys released while Z was moving: keep ramping Z down, then end the jog."""
+        try:
+            while self.serial.connected:
+                await asyncio.sleep(Z_RAMP_STEP_S)
+                z = self._ramped_z(0, time.monotonic())
+                if not z:
+                    break
+                self.serial.write_raw(P.cmd_jog(0.0, 0.0, z))
+                self._z_rate = z
+            self._end_jog_session()
+        except asyncio.CancelledError:
+            pass
+
     async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+        at_z_limit = False
         if vz_units_s and self._z_zero_counts is not None:
             # with a Z reference, never jog out of the 0..100 range
             z = self._z_units_est
             if (vz_units_s > 0 and z >= self.limits.z_max) or (vz_units_s < 0 and z <= self.limits.z_min):
-                vz_units_s = 0.0
+                vz_units_s, at_z_limit = 0.0, True
         z_counts_s = int(round(vz_units_s * self._z_counts_per_unit_signed()))
         zcap = max(int(self.cfg.jog_z_max_counts_s), 0)
         z_counts_s = max(-zcap, min(zcap, z_counts_s))
         stopping = vx_mm_s == 0 and vy_mm_s == 0 and z_counts_s == 0
+        if stopping or vx_mm_s or vy_mm_s or z_counts_s:
+            if self._z_ramp_task and not self._z_ramp_task.done():
+                self._z_ramp_task.cancel()  # a new request takes over from a running ramp
+                self._z_ramp_task = None
+        if at_z_limit:
+            self._z_ramp_from = self._z_rate = 0  # at the end of the range: stop at once
+        now = time.monotonic()
+        z_send = self._ramped_z(z_counts_s, now)
         if stopping:
             # always allowed: ends the session (and re-arms after a rejected press)
-            if self.serial.connected:
-                self.serial.write_raw(P.cmd_jog(0.0, 0.0))
-            self._jog_requested = False
-            self._last_jog_t = 0.0  # the next non-zero JOG is a new press
+            if z_send and self.serial.connected and self.motors_enabled:
+                self.serial.write_raw(P.cmd_jog(0.0, 0.0, z_send))
+                self._z_rate = z_send
+                self._z_ramp_task = asyncio.get_running_loop().create_task(self._ramp_z_to_stop())
+            else:
+                self._end_jog_session()
             return
         # connected, motors enabled, no alarm, no move running; XY also needs homing
         self._require(homed=bool(vx_mm_s or vy_mm_s))
@@ -384,12 +451,12 @@ class RealRobot(RobotInterface):
         cap = max(self.cfg.jog_max_mm_s, 0.0)
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
-        now = time.monotonic()
         new_press = now - self._last_jog_t > P.JOG_TIMEOUT_S  # firmware's notion of a press
         self._last_jog_t = now
         if new_press and self.error.startswith(("jog rejected", "jog ended")):
             self.error = ""  # the firmware reports again if it still refuses this press
-        self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s, z_counts_s))
+        self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s, z_send))
+        self._z_rate = z_send
         self._jog_requested = True
 
     async def soft_stop(self) -> None:
@@ -397,6 +464,7 @@ class RealRobot(RobotInterface):
             raise RobotCommandError("not connected")
         # Outside the serial lock (like ABORT) so it reaches the firmware while an XY
         # move is waiting for ACK_XY; that move then fails with NACK_XY reason=stopped.
+        self._cancel_z_ramp()
         try:
             done = await self.serial.soft_stop()
         except CommandTimeout as e:
@@ -409,6 +477,7 @@ class RealRobot(RobotInterface):
     async def stop(self) -> None:
         if not self.serial.connected:
             raise RobotCommandError("not connected")
+        self._cancel_z_ramp()
         self._state = MachineState.ESTOP
         await self.serial.abort()
         # Firmware semantics: ABORT raises the alarm and clears HOMED.
