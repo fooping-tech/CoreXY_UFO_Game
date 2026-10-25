@@ -165,7 +165,8 @@ case "$MODE" in
     run_game --source websocket
     ;;
   gesture)
-    start_backend --mock --gesture "$@"
+    # landmarks too: the debug panel draws the hand skeleton over the camera view
+    start_backend --mock --gesture --gesture-landmarks "$@"
     run_game --source websocket --gesture
     ;;
   backend)

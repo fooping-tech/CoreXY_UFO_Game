@@ -19,6 +19,7 @@ var _log_lines: PackedStringArray = PackedStringArray()
 ## role -> {"option": OptionButton, "view": TextureRect, "info": Label}
 var _cam_ui: Dictionary = {}
 var _gesture_status: Label
+var _gesture_overlay: GestureCameraOverlay
 
 func panel_width() -> float:
 	return PANEL_W if visible else 0.0
@@ -198,6 +199,8 @@ func _build_gesture() -> void:
 	_slider("g_roi_y1", "ROI y1", 0.0, 1.0, g.roi.end.y, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(g.roi.size.x, v - g.roi.position.y)))
 
 func _update_gesture_status() -> void:
+	if _gesture_overlay != null:
+		_gesture_overlay.simulated = main.gesture_sim or main._gesture_demo_t >= 0.0
 	if _gesture_status == null:
 		return
 	var g: GestureControl = main.gesture
@@ -240,6 +243,16 @@ func _build_cameras() -> void:
 		view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		view.custom_minimum_size = Vector2(PANEL_W - 24, (PANEL_W - 24) * 0.75)
 		_vbox.add_child(view)
+		if role == "overview":
+			# the gesture camera: what the hand joystick detects, drawn over the frame
+			var overlay := GestureCameraOverlay.new()
+			overlay.gesture = main.gesture
+			var c = GameConfig.get_value("camera", role, {})
+			if c is Dictionary:
+				overlay.flip_h = bool(c.get("flip_h", false))
+				overlay.flip_v = bool(c.get("flip_v", false))
+			view.add_child(overlay)
+			_gesture_overlay = overlay
 		var info := Label.new()
 		info.add_theme_font_size_override("font_size", 10)
 		_vbox.add_child(info)

@@ -835,6 +835,9 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 	game.set_gesture_enabled(true)
 	game.gesture.joystick.smoothing_ms = 0.0
 	game.gesture.arm_delay_ms = 0.0  # real-time delays: this loop runs in a few ms
+	game.gesture.joystick.invert_x = false  # the config holds the real camera's calibration
+	game.gesture.joystick.invert_y = false
+	game.gesture.joystick.swap_xy = false
 	var start: Vector3 = game.mock.target
 	var dt := 1.0 / 60.0
 	var seq := [0]  # lambdas capture ints by value
@@ -851,12 +854,29 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 		feed.call(_hev(0, true, true, 0.65, 0.5))
 	var moved: Vector3 = game.mock.target - start
 	var src: String = game.control_source
+	var pinch_cue: String = game.sfx.last_cue
 	feed.call(_hev(0, true, false, 0.65, 0.5))
 	var after_release: Vector3 = game.mock.target
+	var release_cue: String = game.sfx.last_cue  # a plain release is quiet
 	for i in range(10):
 		feed.call(_hev(0, true, false, 0.65, 0.5))
 	_ok(moved.x > 5.0 and absf(moved.y) < 1e-3 and src == "gesture" and game.mock.target == after_release,
 		"gesture + MockRobot: steering right moves the mock target +X; releasing stops it", "%s %s" % [moved, src])
+	for i in range(15):
+		feed.call(_hev(0, true, true, 0.5, 0.5))
+	feed.call(_hev(0, false, false))  # the hand vanishes while steering
+	var lost_cue: String = game.sfx.last_cue
+	var blips: AudioStreamWAV = game.sfx.cue_stream("pinch")
+	_ok(pinch_cue == "pinch" and release_cue == "pinch" and lost_cue == "lost" and blips != null and blips.data.size() > 4000,
+		"gesture sound: a blip when the pinch is caught, another when control is cut (not on a plain release)",
+		"%s %s %s" % [pinch_cue, release_cue, lost_cue])
+	var ov := GestureCameraOverlay.new()
+	ov.size = Vector2(320, 240)
+	var straight := ov.to_px(Vector2(0.25, 0.5))
+	ov.flip_h = true
+	var mirrored := ov.to_px(Vector2(0.25, 0.5))
+	ov.free()
+	_ok(straight == Vector2(80, 120) and mirrored == Vector2(240, 120), "gesture overlay: image coords map onto the camera view (mirrored with it)")
 	remove_child(game)
 	game.free()
 	rs.clear_samples()

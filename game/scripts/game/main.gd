@@ -776,12 +776,16 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 	match to:
 		GestureControl.State.ARMED:
 			ufo.flash("excited", 0.7)  # eyes light up on the pinch
+			sfx.play_cue("pinch")
 			gesture_hud.flash("操縦開始！", 0.6)
 		GestureControl.State.ACTIVE:
 			ufo.flash("straining", 0.35)  # psyched up
 		GestureControl.State.HAND_DETECTED:
 			if was_live and why == "released":
 				gesture_hud.flash("停止", 0.8)
+	# control was cut (not a plain release, not a stop asked for by hand)
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled"]:
+		sfx.play_cue("lost")
 	# lost track / stale / camera gone while driving the real robot: besides the
 	# zero jog, a decelerating STOP (no alarm)
 	if was_live and to == GestureControl.State.WAITING_RELEASE and why in ["stale", "camera_lost", "no_events", GATE_FOCUS] \

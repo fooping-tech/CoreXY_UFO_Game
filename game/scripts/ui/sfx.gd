@@ -58,6 +58,64 @@ func loaded_count() -> int:
 			n += 1
 	return n
 
+# ------------------------------------------------------------ one-shot cues
+## Hand joystick cues: "pinch" (the pinch is caught) and "lost" (control was
+## cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
+## square wave with a short envelope), so they need no file; a file named in
+## audio.cue_<name> (in audio.dir, mp3) replaces one.
+const CUE_RATE := 22050
+const CUE_NOTES := {
+	"pinch": [[988.0, 0.05], [1480.0, 0.11]],          # "pi-pon!" up
+	"lost": [[523.0, 0.08], [392.0, 0.08], [262.0, 0.16]],  # "bu-bu-buu" down
+}
+var _cue_player: AudioStreamPlayer
+var _cues: Dictionary = {}
+## Name of the cue played last (tests / debug).
+var last_cue := ""
+
+func _enter_tree() -> void:
+	_cue_player = AudioStreamPlayer.new()
+	_cue_player.name = "Sfx_cue"
+	add_child(_cue_player)
+	var dir := str(GameConfig.get_value("audio", "dir", "res://assets/audio"))
+	for cue in CUE_NOTES.keys():
+		var file := str(GameConfig.get_value("audio", "cue_" + cue, ""))
+		var s: AudioStream = load_mp3(dir.path_join(file)) if file != "" else null
+		if s is AudioStreamMP3:
+			s.loop = false
+		_cues[cue] = s if s != null else synth_blips(CUE_NOTES[cue])
+
+func play_cue(cue: String) -> void:
+	last_cue = cue
+	if not enabled or not _cues.has(cue):
+		return
+	_cue_player.stream = _cues[cue]
+	_cue_player.volume_db = volume_db
+	_cue_player.play()
+
+func cue_stream(cue: String) -> AudioStream:
+	return _cues.get(cue)
+
+## [[frequency Hz, seconds], ...] -> a 16-bit mono square-wave AudioStreamWAV.
+static func synth_blips(notes: Array) -> AudioStreamWAV:
+	var data := PackedByteArray()
+	for n in notes:
+		var freq: float = n[0]
+		var count := int(float(n[1]) * CUE_RATE)
+		for i in range(count):
+			var t := float(i) / CUE_RATE
+			var env := minf(t / 0.004, 1.0) * (1.0 - float(i) / count) ** 0.6  # click-free attack, fading tail
+			var sq := 1.0 if fmod(t * freq, 1.0) < 0.5 else -1.0
+			var v := int(clampf(sq * env * 0.45, -1.0, 1.0) * 32767.0)
+			data.append(v & 0xFF)
+			data.append((v >> 8) & 0xFF)
+	var w := AudioStreamWAV.new()
+	w.format = AudioStreamWAV.FORMAT_16_BITS
+	w.mix_rate = CUE_RATE
+	w.stereo = false
+	w.data = data
+	return w
+
 func level(voice: String) -> float:
 	return float(_level.get(voice, 0.0))
 
