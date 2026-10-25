@@ -40,6 +40,7 @@ class HandResult:
     detected: bool = False
     landmarks: list[list[tuple[float, float, float]]] = field(default_factory=list)  # per hand, 21 x (x,y,z)
     handedness: list[str] = field(default_factory=list)
+    scores: list[float] = field(default_factory=list)  # per hand: handedness confidence 0..1
     gesture: str = "none"  # open / fist / point / none
     latency_ms: float = 0.0
 

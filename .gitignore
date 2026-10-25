@@ -24,3 +24,6 @@ id_ed25519*
 # pinned security scanners (tools/security/install_tools.sh)
 tools/.bin/
 
+
+# MediaPipe hand landmarker model (downloaded on first use by the backend)
+backend/models/
