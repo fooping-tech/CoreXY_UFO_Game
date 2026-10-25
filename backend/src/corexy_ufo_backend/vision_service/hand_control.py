@@ -6,7 +6,12 @@ Rules (all thresholds from config `gesture.*`):
     measured in pixels so the image aspect does not skew it, and independent of
     how big the hand looks
   - hysteresis: a pinch starts at ratio <= pinch_start and ends at >= pinch_release
-  - a starting pinch must hold for pinch_confirm_ms before it is reported
+  - a starting pinch must hold for pinch_confirm_ms before it is reported, and
+    an ending one for release_confirm_ms (a fingertip jittering past the release
+    threshold for a frame while the hand moves is not a release)
+  - MediaPipe drops a moving hand for a frame or two now and then: a loss
+    (no hand / ambiguous / two hands) shorter than lost_grace_ms repeats the
+    last good frame (marked `held`); a longer one is reported as lost
   - the hand position is the palm centre (wrist + the four MCPs), not the
     fingertips, so opening / closing the fingers does not move the "stick"
   - no control (detected false, pinch false) with two or more hands, a low
@@ -32,7 +37,12 @@ class HandControlConfig:
     pinch_start: float = 0.35
     pinch_release: float = 0.55
     pinch_confirm_ms: float = 100.0
-    min_confidence: float = 0.6
+    release_confirm_ms: float = 60.0
+    lost_grace_ms: float = 150.0
+    # MediaPipe already drops hands below its presence threshold; the per-hand
+    # score left is the left/right (handedness) score, which drops for a hand
+    # seen from above, so it does not gate control by default
+    min_confidence: float = 0.0
     # operating region in normalised image coords (x0, y0, x1, y1); the whole frame by default
     roi: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
     roi_enabled: bool = False
@@ -44,6 +54,8 @@ class HandControlConfig:
         c.pinch_start = float(d.get("pinch_start", c.pinch_start))
         c.pinch_release = float(d.get("pinch_release", c.pinch_release))
         c.pinch_confirm_ms = float(d.get("pinch_confirm_ms", c.pinch_confirm_ms))
+        c.release_confirm_ms = float(d.get("release_confirm_ms", c.release_confirm_ms))
+        c.lost_grace_ms = float(d.get("lost_grace_ms", c.lost_grace_ms))
         c.min_confidence = float(d.get("min_confidence", c.min_confidence))
         roi = d.get("roi")
         if isinstance(roi, (list, tuple)) and len(roi) == 4:
@@ -83,10 +95,16 @@ class HandControl:
     sequence: int = 0
     _pinched: bool = False
     _pinch_since_ms: float | None = None
+    _release_since_ms: float | None = None
+    _last_good: dict[str, Any] | None = None  # the last frame with exactly one usable hand
+    _lost_since_ms: float | None = None
 
     def reset(self) -> None:
         self._pinched = False
         self._pinch_since_ms = None
+        self._release_since_ms = None
+        self._last_good = None
+        self._lost_since_ms = None
 
     def _in_roi(self, x: float, y: float) -> bool:
         if not self.cfg.roi_enabled:
@@ -104,17 +122,17 @@ class HandControl:
             "in_roi": False, "reason": "", "frame_w": frame_w, "frame_h": frame_h,
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
         }
+        conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
+        lost = ""
         if len(hands) != 1:
-            self.reset()
-            ev["reason"] = "no_hand" if not hands else "multiple_hands"
-            return ev
+            lost = "no_hand" if not hands else "multiple_hands"
+        elif len(hands[0]) != 21 or conf < self.cfg.min_confidence:
+            lost = "ambiguous"
+        if lost:
+            return self._lost(ev, lost, now_ms)
+        self._lost_since_ms = None
         lm = hands[0]
-        conf = float(confidences[0]) if confidences else 0.0
         ev["confidence"] = round(conf, 3)
-        if len(lm) != 21 or conf < self.cfg.min_confidence:
-            self.reset()
-            ev["reason"] = "ambiguous"
-            return ev
         cx, cy = palm_center(lm)
         ratio = pinch_ratio(lm, frame_w, frame_h)
         ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3))
@@ -126,7 +144,14 @@ class HandControl:
         ev["in_roi"] = True
         if self._pinched:
             if ratio >= self.cfg.pinch_release:
-                self.reset()
+                if self._release_since_ms is None:
+                    self._release_since_ms = now_ms
+                if now_ms - self._release_since_ms >= self.cfg.release_confirm_ms:
+                    self._pinched = False
+                    self._pinch_since_ms = None
+                    self._release_since_ms = None
+            else:
+                self._release_since_ms = None
         elif ratio <= self.cfg.pinch_start:
             if self._pinch_since_ms is None:
                 self._pinch_since_ms = now_ms
@@ -135,6 +160,21 @@ class HandControl:
         else:
             self._pinch_since_ms = None  # the closing pinch opened again before it was confirmed
         ev["pinch"] = self._pinched
+        self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi")}
+        return ev
+
+    def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:
+        """No usable hand this frame: hold the last good frame for a moment, then report it."""
+        if self._last_good is not None:
+            if self._lost_since_ms is None:
+                self._lost_since_ms = now_ms
+            if now_ms - self._lost_since_ms < self.cfg.lost_grace_ms:
+                ev.update(self._last_good)
+                ev["held"] = True
+                ev["reason"] = "held_" + reason
+                return ev
+        self.reset()
+        ev["reason"] = reason
         return ev
 
     def camera_lost(self, frame_w: int = 0, frame_h: int = 0, *, timestamp_ms: int = 0) -> dict[str, Any]:

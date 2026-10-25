@@ -64,11 +64,18 @@ def test_pinch_needs_confirmation_and_has_hysteresis():
     assert [e["pinch"] for e in ev] == [False, False, False]
     ev = frames(c, [hand(gap=0.2)] * 2, t0=99)  # 99, 132 ms
     assert ev[-1]["pinch"]
-    # between the thresholds: stays pinched; at release: lets go
+    # between the thresholds: stays pinched; open for release_confirm_ms: lets go
     assert frames(c, [hand(gap=0.45)], t0=200)[0]["pinch"]
-    assert not frames(c, [hand(gap=0.6)], t0=240)[0]["pinch"]
+    assert frames(c, [hand(gap=0.6)], t0=240)[0]["pinch"]      # opened 0 ms ago
+    assert not frames(c, [hand(gap=0.6)], t0=300)[0]["pinch"]  # 60 ms open
     # back between the thresholds from open: not pinched (no re-trigger)
-    assert not frames(c, [hand(gap=0.45)], t0=280)[0]["pinch"]
+    assert not frames(c, [hand(gap=0.45)], t0=340)[0]["pinch"]
+
+
+def test_a_one_frame_jitter_past_release_is_not_a_release():
+    c = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=60))
+    ev = frames(c, [hand(gap=0.1), hand(gap=0.7), hand(gap=0.1), hand(gap=0.7), hand(gap=0.2)])
+    assert all(e["pinch"] for e in ev)
 
 
 def test_a_flicker_does_not_confirm_a_pinch():
@@ -95,18 +102,43 @@ def test_position_is_the_palm_not_the_fingertips():
 
 
 def test_two_hands_lost_hand_low_confidence_and_roi_give_no_control():
-    c = HandControl(HandControlConfig(pinch_confirm_ms=0))
+    c = HandControl(HandControlConfig(pinch_confirm_ms=0, lost_grace_ms=0))
     assert frames(c, [hand(gap=0.1)])[0]["pinch"]
     two = frames(c, [[hand(gap=0.1), hand(cx=0.2, gap=0.1)]])[0]
     assert not two["detected"] and not two["pinch"] and two["hand_count"] == 2 and two["reason"] == "multiple_hands"
     gone = frames(c, [None])[0]
     assert not gone["detected"] and not gone["pinch"] and gone["reason"] == "no_hand"
-    vague = c.update([hand(gap=0.1)], [0.3], W, H, 1000.0)
+    strict = HandControl(HandControlConfig(pinch_confirm_ms=0, lost_grace_ms=0, min_confidence=0.6))
+    vague = strict.update([hand(gap=0.1)], [0.3], W, H, 1000.0)
     assert not vague["detected"] and not vague["pinch"] and vague["reason"] == "ambiguous"
+    # by default the left/right score does not gate a hand (it drops for a hand seen from above)
+    assert HandControl(HandControlConfig(pinch_confirm_ms=0)).update([hand(gap=0.1)], [0.3], W, H, 0.0)["pinch"]
     roi = HandControl(HandControlConfig(pinch_confirm_ms=0, roi=(0.0, 0.0, 0.5, 1.0), roi_enabled=True))
     assert frames(roi, [hand(cx=0.3, gap=0.1)])[0]["pinch"]
     out = frames(roi, [hand(cx=0.8, gap=0.1)])[0]
     assert not out["detected"] and not out["pinch"] and out["reason"] == "outside_roi"
+
+
+def test_a_short_dropout_holds_the_last_frame_a_long_one_is_a_loss():
+    c = HandControl(HandControlConfig(pinch_confirm_ms=0, lost_grace_ms=150))
+    first = c.update([hand(cx=0.4, gap=0.1)], [0.9], W, H, 0.0)
+    held = c.update([], [], W, H, 66.0)          # 2 frames without the hand
+    held2 = c.update([hand(), hand(cx=0.2)], [0.9, 0.9], W, H, 100.0)  # a phantom second hand
+    back = c.update([hand(cx=0.41, gap=0.1)], [0.9], W, H, 133.0)
+    assert held["held"] and held["detected"] and held["pinch"] and held["hand_x"] == first["hand_x"]
+    assert held["reason"] == "held_no_hand" and held2["held"] and held2["reason"] == "held_multiple_hands"
+    assert back["pinch"] and "held" not in back
+    c.update([], [], W, H, 200.0)
+    still = c.update([], [], W, H, 340.0)        # 140 ms: still held
+    lost = c.update([], [], W, H, 360.0)         # 160 ms: lost
+    assert still["held"] and not lost["detected"] and not lost["pinch"] and lost["reason"] == "no_hand"
+    # coming back after a loss starts over: the pinch must be confirmed again
+    again = HandControl(HandControlConfig(pinch_confirm_ms=100, lost_grace_ms=150))
+    again.update([hand(gap=0.1)], [0.9], W, H, 0.0)
+    assert again.update([hand(gap=0.1)], [0.9], W, H, 120.0)["pinch"]
+    again.update([], [], W, H, 140.0)
+    assert not again.update([], [], W, H, 300.0)["pinch"]
+    assert not again.update([hand(gap=0.1)], [0.9], W, H, 330.0)["pinch"]
 
 
 def test_events_are_numbered_and_carry_both_clocks_apart():

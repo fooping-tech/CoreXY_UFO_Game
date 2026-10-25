@@ -770,9 +770,15 @@ static func real_gesture_gate(ws_open: bool, connected: bool, server_robot: Stri
 
 func _on_gesture_state(from: int, to: int, why: String) -> void:
 	var S := GestureControl.STATE_NAMES
+	var line := "gesture: %s -> %s%s" % [S[from], S[to], (" (%s)" % why) if why != "" else ""]
 	if debug_ui != null:
-		debug_ui._append_log("gesture: %s -> %s%s" % [S[from], S[to], (" (%s)" % why) if why != "" else ""])
+		debug_ui._append_log(line)
 	var was_live := from in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
+	if was_live:
+		# also in the terminal: why a steer ended, with the hand's last numbers
+		var ev := gesture.last_event
+		print("[%d ms] %s  hands %d pinch_ratio %.2f reason %s latency %.0f ms" % [Time.get_ticks_msec(), line,
+			int(ev.get("hand_count", 0)), float(ev.get("pinch_ratio", 0.0)), str(ev.get("reason", "")), float(ev.get("latency_ms", 0.0))])
 	match to:
 		GestureControl.State.ARMED:
 			ufo.flash("excited", 0.7)  # eyes light up on the pinch

@@ -63,7 +63,9 @@
     "pinch_start": 0.35,
     "pinch_release": 0.55,
     "pinch_confirm_ms": 100.0,
-    "min_confidence": 0.6,
+    "release_confirm_ms": 60.0,
+    "lost_grace_ms": 150.0,
+    "min_confidence": 0.0,
     "delegate": "gpu",
     "stale_ms": 250.0,
     "arm_delay_ms": 120.0,
@@ -85,7 +87,7 @@
       "invert_y": false,
       "swap_xy": false
     },
-    "_note": "Pinch hand joystick (backend: --gesture). delegate = gpu (Metal, falls back to cpu). stale_ms = an event older than this stops the stick (150 stopped every few seconds on an M4 MacBook Air: MediaPipe frames occasionally take 200-400 ms). camera = part of the gesture camera's name (or an index). Pinch = |thumb tip - index tip| / |index MCP - pinky MCP|: starts <= pinch_start held pinch_confirm_ms, ends >= pinch_release. roi = operating region [x0, y0, x1, y1] in normalised image coords (keep it outside the crane's reach). joystick: radius = fraction of the image short side, deadzone / full = fractions of the radius, speed = ((r - deadzone)/(full - deadzone))^curve * max_speed_mm_s. allow_real_robot stays false until the gesture has been checked with the mock (H toggles the mode; the robot must be connected, motors on, homed, no alarm)."
+    "_note": "Pinch hand joystick (backend: --gesture). delegate = gpu (Metal, falls back to cpu). stale_ms = an event older than this stops the stick (150 stopped every few seconds on an M4 MacBook Air: MediaPipe frames occasionally take 200-400 ms). camera = part of the gesture camera's name (or an index). Pinch = |thumb tip - index tip| / |index MCP - pinky MCP|: starts <= pinch_start held pinch_confirm_ms, ends >= pinch_release held release_confirm_ms. A hand lost (or a second hand / ambiguous) for less than lost_grace_ms keeps the last good frame (MediaPipe drops a moving hand for a frame or two). min_confidence gates the left/right score (0 = off: it drops for a hand seen from above). roi = operating region [x0, y0, x1, y1] in normalised image coords (keep it outside the crane's reach). joystick: radius = fraction of the image short side, deadzone / full = fractions of the radius, speed = ((r - deadzone)/(full - deadzone))^curve * max_speed_mm_s. allow_real_robot stays false until the gesture has been checked with the mock (H toggles the mode; the robot must be connected, motors on, homed, no alarm)."
   },
   "camera": {
     "enabled": true,

@@ -119,8 +119,9 @@ func _draw() -> void:
 	draw_arc(c0, RING_R * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
 	var dot := c0
 	if g.joystick.has_anchor and g.detected:
-		var off := (g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6)
-		dot = c0 + off.limit_length(1.15) * RING_R
+		# the offset in robot axes (after invert / swap, like the arrow), robot +Y up on screen
+		var off := g.joystick.to_robot((g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6))
+		dot = c0 + Vector2(off.x, -off.y).limit_length(1.15) * RING_R
 	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5:
 		var dir := Vector2(g.velocity.x, -g.velocity.y).normalized()  # robot Y up = screen up
 		var tip := c0 + dir * RING_R * 0.85
