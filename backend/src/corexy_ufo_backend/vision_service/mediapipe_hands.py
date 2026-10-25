@@ -37,7 +37,7 @@ class MediaPipeHandTracker(HandTracker):
     name = "mediapipe"
 
     def __init__(self, max_hands: int = 2, min_confidence: float = 0.5, model_path: Path | None = None,
-                 delegate: str = "gpu") -> None:
+                 delegate: str = "gpu", tracking_confidence: float = 0.3) -> None:
         try:
             import mediapipe as mp  # type: ignore
             from mediapipe.tasks.python import vision  # type: ignore
@@ -54,8 +54,10 @@ class MediaPipeHandTracker(HandTracker):
                 running_mode=vision.RunningMode.VIDEO,
                 num_hands=max_hands,
                 min_hand_detection_confidence=min_confidence,
-                min_hand_presence_confidence=min_confidence,
-                min_tracking_confidence=min_confidence,
+                # a fast-moving (blurred) hand scores low: keep tracking it rather than
+                # dropping it and searching the whole frame again
+                min_hand_presence_confidence=tracking_confidence,
+                min_tracking_confidence=tracking_confidence,
             )
             return vision.HandLandmarker.create_from_options(opts)
 

@@ -20,7 +20,7 @@ const DEFAULTS := {
 	"audio": {"enabled": true, "volume_db": -8.0, "dir": "res://assets/audio",
 		"move": "wizard-flight1.mp3", "up": "magic-statusup1.mp3", "down": "hyun1.mp3"},
 	"gesture": {"enabled": false, "allow_real_robot": false, "camera": "C270", "stale_ms": 250.0, "arm_delay_ms": 120.0,
-		"roi": [0.0, 0.0, 1.0, 1.0], "roi_enabled": false, "pinch_start": 0.45, "pinch_release": 0.65, "pinch_confirm_ms": 80.0,
+		"roi": [0.0, 0.0, 1.0, 1.0], "roi_enabled": false, "pinch_start": 1.0, "pinch_release": 1.5, "pinch_confirm_ms": 0.0, "lost_grace_ms": 300.0,
 		"joystick": {"radius": 0.15, "deadzone": 0.12, "full": 0.8, "max_speed_mm_s": 30.0, "curve": 1.5, "smoothing_ms": 80.0,
 			"invert_x": false, "invert_y": false, "swap_xy": false}},
 	"camera": {"enabled": true,
