@@ -134,7 +134,7 @@ godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import
 
-# Python バックエンド（基準 48 件）
+# Python バックエンド（基準 57 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 
