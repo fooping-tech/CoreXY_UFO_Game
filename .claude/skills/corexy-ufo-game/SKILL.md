@@ -110,7 +110,7 @@ description: >
 | 停止後の揺れが実物と合わない | 移動中 XY は推定（`measured:false`、smoothstep） | `RobotState.position_is_measured` を表示する。物理ではなく入力の問題 |
 | 再接続でロープが鞭のように振れる | 25 cm 超の teleport 判定（`main.gd`） | `--scenario reconnect` |
 | 表情が変わらない | `manual_expression` 固定、mood の優先順位（panic > mood）、`_last_expr_shown` | デバッグパネル Character を `(auto)` に戻す |
-| 実機モードで ERROR から戻らない | `GameState` は `error_cleared` でしか ERROR を抜けない | 既知の制約。[robot-protocol.md](references/robot-protocol.md) §5 |
+| 実機モードで ERROR から戻らない（驚き顔のまま、望遠鏡が出ない） | `GameState` は実機が正常な状態を報告したときか `error_cleared` で ERROR を抜ける。実機の状態が変わらないと残る | デバッグパネルの game= を見る。[robot-protocol.md](references/robot-protocol.md) §5 |
 | `move_z` が NACK になる | `z_zero` を送っていない（意図的） | ログの `Z reference not set` |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
@@ -131,7 +131,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 94 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 95 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import
