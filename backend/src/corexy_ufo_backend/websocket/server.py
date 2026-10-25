@@ -11,7 +11,8 @@ Command names and safety rules:
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than
   jog_expiry_s), clear_alarm,
-  get_state, list_ports
+  get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
+  (hand joystick thresholds at run time; vision only)
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
@@ -39,7 +40,7 @@ from ..robot.interface import RobotCommandError, RobotInterface
 log = logging.getLogger(__name__)
 
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
-            "clear_alarm", "get_state", "list_ports")
+            "clear_alarm", "get_state", "list_ports", "gesture_config")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
@@ -242,6 +243,12 @@ class GameServer:
                 return self._nack(name, "busy: another motion command is running")
             if name == "get_state":
                 return self._ack(name, self.robot.snapshot().to_message()["data"])
+            if name == "gesture_config":
+                # pinch thresholds of the hand joystick (vision only, never moves the robot)
+                cfg = self.vision.configure_hands(params) if self.vision is not None else None
+                if cfg is None:
+                    return self._nack(name, "no hand joystick camera (start the backend with --gesture)")
+                return self._ack(name, cfg)
             if name == "list_ports":
                 from ..serial_service.transport import list_serial_ports
                 return self._ack(name, {"ports": list_serial_ports()})

@@ -171,6 +171,15 @@ class VisionService:
         if self.hands:
             self.hands.close()
 
+    def configure_hands(self, params: dict[str, Any]) -> dict[str, float] | None:
+        """Update the pinch thresholds of every hand-joystick camera; returns them (None = none)."""
+        out = None
+        for cam in self.cameras:
+            if cam.control is not None:
+                cam.control.cfg.update(params)
+                out = cam.control.cfg.to_dict()
+        return out
+
     def status(self) -> list[dict[str, Any]]:
         return [{"camera": w.cfg.name, "index": w.cfg.index, "frames": w.frames, "error": w.error,
                  "objects": w.last_objects.to_dict() if w.last_objects else None,

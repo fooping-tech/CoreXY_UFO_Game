@@ -2,9 +2,11 @@
 `hand_control` event for the game (no landmarks on the wire).
 
 Rules (all thresholds from config `gesture.*`):
-  - pinch ratio = |thumb tip (4) - index tip (8)| / |index MCP (5) - pinky MCP (17)|,
-    measured in pixels so the image aspect does not skew it, and independent of
-    how big the hand looks
+  - pinch ratio = |thumb tip (4) - index tip (8)| / hand size, the hand size
+    being the larger of the hand width |index MCP (5) - pinky MCP (17)| and
+    PALM_TO_WIDTH x the palm length |wrist (0) - middle MCP (9)| (a hand turned
+    on its side looks narrow but not short); in pixels so the image aspect does
+    not skew it, and independent of how big the hand looks
   - hysteresis: a pinch starts at ratio <= pinch_start and ends at >= pinch_release
   - a starting pinch must hold for pinch_confirm_ms before it is reported, and
     an ending one for release_confirm_ms (a fingertip jittering past the release
@@ -29,14 +31,18 @@ from typing import Any
 Landmark = tuple[float, float, float]
 
 THUMB_TIP, INDEX_TIP, INDEX_MCP, PINKY_MCP = 4, 8, 5, 17
+WRIST, MIDDLE_MCP = 0, 9
+# palm length -> width: a flat adult hand is about 1.1-1.3 widths long, so this
+# only takes over when the width is foreshortened
+PALM_TO_WIDTH = 0.75
 PALM_POINTS = (0, 5, 9, 13, 17)
 
 
 @dataclass
 class HandControlConfig:
-    pinch_start: float = 0.35
-    pinch_release: float = 0.55
-    pinch_confirm_ms: float = 100.0
+    pinch_start: float = 0.45
+    pinch_release: float = 0.65
+    pinch_confirm_ms: float = 80.0
     release_confirm_ms: float = 60.0
     lost_grace_ms: float = 150.0
     # MediaPipe already drops hands below its presence threshold; the per-hand
@@ -46,6 +52,21 @@ class HandControlConfig:
     # operating region in normalised image coords (x0, y0, x1, y1); the whole frame by default
     roi: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
     roi_enabled: bool = False
+
+    def update(self, d: dict[str, Any]) -> None:
+        """Change thresholds at run time (debug panel); the release stays above the start."""
+        for k in ("pinch_start", "pinch_release", "pinch_confirm_ms", "release_confirm_ms", "lost_grace_ms"):
+            if k in d:
+                setattr(self, k, float(d[k]))
+        self.pinch_start = min(max(self.pinch_start, 0.05), 1.5)
+        self.pinch_release = min(max(self.pinch_release, self.pinch_start + 0.05), 2.0)
+        for k in ("pinch_confirm_ms", "release_confirm_ms", "lost_grace_ms"):
+            setattr(self, k, min(max(getattr(self, k), 0.0), 1000.0))
+
+    def to_dict(self) -> dict[str, float]:
+        return {"pinch_start": self.pinch_start, "pinch_release": self.pinch_release,
+                "pinch_confirm_ms": self.pinch_confirm_ms, "release_confirm_ms": self.release_confirm_ms,
+                "lost_grace_ms": self.lost_grace_ms}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> HandControlConfig:
@@ -69,12 +90,14 @@ def _px(p: Landmark, w: int, h: int) -> tuple[float, float]:
 
 
 def pinch_ratio(lm: list[Landmark], w: int, h: int) -> float:
-    """Fingertip distance over the hand width (index MCP - pinky MCP), in pixels."""
+    """Fingertip distance over the hand size (see the module doc), in pixels."""
     tx, ty = _px(lm[THUMB_TIP], w, h)
     ix, iy = _px(lm[INDEX_TIP], w, h)
     ax, ay = _px(lm[INDEX_MCP], w, h)
     bx, by = _px(lm[PINKY_MCP], w, h)
-    scale = math.hypot(ax - bx, ay - by)
+    wx, wy = _px(lm[WRIST], w, h)
+    mx, my = _px(lm[MIDDLE_MCP], w, h)
+    scale = max(math.hypot(ax - bx, ay - by), PALM_TO_WIDTH * math.hypot(wx - mx, wy - my))
     if scale <= 1e-6:
         return math.inf
     return math.hypot(tx - ix, ty - iy) / scale

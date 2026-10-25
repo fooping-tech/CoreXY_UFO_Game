@@ -739,6 +739,18 @@ static func gesture_demo_event(t: float) -> Dictionary:
 		"pinch": pinch and seen, "hand_x": p.x, "hand_y": p.y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
 		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
 
+## Pinch thresholds to the backend at run time (they are applied where the
+## landmarks are, in the backend). Returns false when no link is open.
+func send_gesture_config(params: Dictionary) -> bool:
+	var link := ws if RobotState.source == "websocket" else vision_ws
+	if not link.is_open():
+		return false
+	link.send_command("gesture_config", params)
+	var g: Dictionary = GameConfig.data.get("gesture", {})
+	for k in params.keys():
+		g[k] = params[k]
+	return true
+
 func set_gesture_sim(on: bool) -> void:
 	gesture_sim = on
 	gesture.reset_stream("source_changed")

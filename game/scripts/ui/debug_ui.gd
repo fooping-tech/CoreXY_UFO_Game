@@ -187,6 +187,10 @@ func _build_gesture() -> void:
 	_gesture_status = Label.new()
 	_gesture_status.add_theme_font_size_override("font_size", 11)
 	_vbox.add_child(_gesture_status)
+	var gc: Dictionary = GameConfig.data.get("gesture", {})
+	_slider("g_pinch_on", "Pinch start (ratio <=)", 0.1, 1.0, float(gc.get("pinch_start", 0.45)), 0.01, func(v): main.send_gesture_config({"pinch_start": v}))
+	_slider("g_pinch_off", "Pinch release (ratio >=)", 0.15, 1.5, float(gc.get("pinch_release", 0.65)), 0.01, func(v): main.send_gesture_config({"pinch_release": v}))
+	_slider("g_pinch_ms", "Pinch confirm ms", 0.0, 300.0, float(gc.get("pinch_confirm_ms", 80.0)), 5.0, func(v): main.send_gesture_config({"pinch_confirm_ms": v}))
 	_slider("g_speed", "Max speed mm/s", 5.0, 50.0, j.max_speed, 1.0, func(v): j.max_speed = v)
 	_slider("g_radius", "Stick radius (short side)", 0.05, 0.4, j.radius, 0.01, func(v): j.radius = v)
 	_slider("g_dead", "Dead zone (of radius)", 0.0, 0.5, j.deadzone, 0.01, func(v): j.deadzone = v)
@@ -208,10 +212,10 @@ func _update_gesture_status() -> void:
 	var now := float(Time.get_ticks_msec())
 	var ev: Dictionary = g.last_event
 	var src := "mouse (sim)" if main.gesture_sim else ("backend camera %s %dx%d" % [GameConfig.get_value("gesture", "camera", "?"), int(ev.get("frame_w", 0)), int(ev.get("frame_h", 0))])
-	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s swap %s  ROI %s %s\ngate: %s" % [
+	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f (on <=%.2f off >=%.2f) conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s swap %s  ROI %s %s\ngate: %s" % [
 		"ON" if g.enabled else "off", g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
 		src, main.control_source,
-		"yes" if g.detected else "no", "YES" if g.pinch else "no", g.pinch_ratio, float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
+		"yes" if g.detected else "no", "YES" if g.pinch else "no", g.pinch_ratio, float(GameConfig.get_value("gesture", "pinch_start", 0.45)), float(GameConfig.get_value("gesture", "pinch_release", 0.65)), float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
 		j.stick.x, j.stick.y, g.velocity.x, g.velocity.y,
 		g.latency_ms, ("%.0f ms" % g.age_ms(now)) if g.age_ms(now) >= 0.0 else "-", g.events, g.dropped,
 		j.invert_x, j.invert_y, j.swap_xy, "ON" if g.roi_enabled else "off",

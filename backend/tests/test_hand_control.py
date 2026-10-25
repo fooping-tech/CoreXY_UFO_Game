@@ -246,3 +246,43 @@ def test_config_reads_gesture_thresholds():
     assert (c.pinch_start, c.pinch_release, c.pinch_confirm_ms) == (0.3, 0.6, 80.0)
     assert c.roi == (0.1, 0.2, 0.9, 0.8) and c.roi_enabled
     assert math.isinf(pinch_ratio([(0.5, 0.5, 0.0)] * 21, W, H))
+
+
+def test_a_hand_turned_on_its_side_still_pinches():
+    # width foreshortened to a third (hand on its side): the palm length keeps the scale
+    lm = hand(size=0.2, gap=0.3)
+    cx = lm[9][0]
+    side = [(cx + (p[0] - cx) / 3.0, p[1], p[2]) for p in lm]  # squash x only
+    side[4] = (side[8][0] - 0.3 * 0.2 * H / W * 0.9, side[8][1], 0.0)  # tips stay ~0.27 hand widths apart
+    flat = pinch_ratio(lm, W, H)
+    turned = pinch_ratio(side, W, H)
+    assert flat == pytest.approx(0.3, abs=1e-6)
+    assert turned < 0.45  # width alone would make it ~0.8: no pinch
+    c = HandControl(HandControlConfig(pinch_confirm_ms=0))
+    assert c.update([side], [0.9], W, H, 0.0)["pinch"]
+
+
+def test_thresholds_can_change_at_run_time_within_sane_bounds():
+    c = HandControlConfig()
+    c.update({"pinch_start": 0.5, "pinch_release": 0.4, "pinch_confirm_ms": -5})
+    assert c.pinch_start == 0.5 and c.pinch_release == pytest.approx(0.55) and c.pinch_confirm_ms == 0.0
+    assert c.to_dict()["pinch_start"] == 0.5
+
+
+async def test_gesture_config_command():
+    from corexy_ufo_backend.vision_service import CameraConfig, VisionService
+    robot = MockRobot()
+    await robot.connect()
+    ctrl = HandControl()
+    vision = VisionService([CameraConfig(roles=("hands",), control=ctrl)])
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30, vision=vision)
+    await srv.start()
+    port = next(iter(srv._server.sockets)).getsockname()[1]
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            r = await _cmd(ws, "g1", "gesture_config", pinch_start=0.5, pinch_release=0.7)
+            assert r["type"] == "ack" and r["data"]["pinch_start"] == 0.5 and ctrl.cfg.pinch_release == 0.7
+        no_vision = GameServer(robot, "127.0.0.1", 0)
+        assert (await no_vision.execute("gesture_config", {"pinch_start": 0.5}))["type"] == "nack"
+    finally:
+        await srv.stop()
