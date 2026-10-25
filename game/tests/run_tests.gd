@@ -885,7 +885,7 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 	var pinch_cue: String = game.sfx.last_cue
 	feed.call(_hev(0, true, false, 0.65, 0.5))
 	var after_release: Vector3 = game.mock.target
-	var release_cue: String = game.sfx.last_cue  # a plain release is quiet
+	var release_cue: String = game.sfx.last_cue
 	for i in range(10):
 		feed.call(_hev(0, true, false, 0.65, 0.5))
 	_ok(moved.x > 5.0 and absf(moved.y) < 1e-3 and src == "gesture" and game.mock.target == after_release,
@@ -895,9 +895,12 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 	feed.call(_hev(0, false, false))  # the hand vanishes while steering
 	var lost_cue: String = game.sfx.last_cue
 	var blips: AudioStreamWAV = game.sfx.cue_stream("pinch")
-	_ok(pinch_cue == "pinch" and release_cue == "pinch" and lost_cue == "lost" and blips != null and blips.data.size() > 4000,
-		"gesture sound: a blip when the pinch is caught, another when control is cut (not on a plain release)",
-		"%s %s %s" % [pinch_cue, release_cue, lost_cue])
+	var log_: Array[String] = game.sfx.cue_log
+	var first_hand := log_.find("hand")
+	_ok(first_hand >= 0 and log_.find("pinch") > first_hand and pinch_cue == "pinch" and release_cue == "release" and lost_cue == "lost"
+		and blips != null and blips.data.size() > 4000 and game.sfx.cue_stream("hand") != null and game.sfx.cue_stream("release") != null,
+		"gesture sound: hand seen, pinch caught, fingers opened, control cut - each its own blip",
+		"%s | %s %s %s" % [log_, pinch_cue, release_cue, lost_cue])
 	var ov := GestureCameraOverlay.new()
 	ov.size = Vector2(320, 240)
 	var straight := ov.to_px(Vector2(0.25, 0.5))

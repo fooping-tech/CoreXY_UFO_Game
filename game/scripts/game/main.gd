@@ -43,6 +43,9 @@ var _gesture_demo_t := -1.0
 ## The gesture stops when the game window loses focus (off for the scripted
 ## demo and the headless tests, which have no focused window).
 var gesture_require_focus := true
+## The "hand seen" cue at most this often (a hand at the edge of the view flickers).
+const HAND_CUE_GAP_MS := 600
+var _hand_cue_ms := -100000
 const GATE_FOCUS := "ゲームのウィンドウを選んでね"
 
 var _initialised := false
@@ -807,6 +810,13 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 		GestureControl.State.HAND_DETECTED:
 			if was_live and why == "released":
 				gesture_hud.flash("停止", 0.8)
+				sfx.play_cue("release")  # fingers opened: a normal end of steering
+			elif from in [GestureControl.State.WAITING_HAND, GestureControl.State.WAITING_RELEASE]:
+				# an open hand came into view: a quiet "pon", at most every HAND_CUE_GAP_MS
+				var now := Time.get_ticks_msec()
+				if now - _hand_cue_ms >= HAND_CUE_GAP_MS:
+					_hand_cue_ms = now
+					sfx.play_cue("hand")
 	# control was cut (not a plain release, not a stop asked for by hand)
 	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled"]:
 		sfx.play_cue("lost")
