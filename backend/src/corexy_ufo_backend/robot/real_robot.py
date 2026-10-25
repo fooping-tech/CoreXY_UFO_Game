@@ -46,7 +46,9 @@ SERVO_SPEED_COUNTS_PER_S = 2400.0
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
 # swings back ("reverses for a moment" on W/S release; the joystick's analog stick
 # never drops the rate at once). Ramping the rate down first lets it stop cleanly.
-Z_RAMP_S = 0.25
+# Ease-out (rate * f^2): the last steps are very slow, so the hanging arm is not
+# thrown up and does not drop back when a raise (W) stops.
+Z_RAMP_S = 0.35
 Z_RAMP_STEP_S = 0.04
 
 
@@ -375,7 +377,7 @@ class RealRobot(RobotInterface):
             self._state = MachineState.IDLE
 
     def _ramped_z(self, requested: int, now: float) -> int:
-        """Z rate to send: the request, or (after a release) a linear ramp down to 0."""
+        """Z rate to send: the request, or (after a release) an ease-out ramp down to 0."""
         if requested:
             self._z_ramp_from = 0
             return requested
@@ -384,7 +386,7 @@ class RealRobot(RobotInterface):
         if self._z_ramp_from:
             f = 1.0 - (now - self._z_ramp_t0) / Z_RAMP_S
             if f > 0.0:
-                return int(self._z_ramp_from * f)
+                return int(self._z_ramp_from * f * f)
             self._z_ramp_from = 0
         return 0
 

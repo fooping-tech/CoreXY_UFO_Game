@@ -175,11 +175,11 @@ async def test_release_ramps_z_down_before_stopping():
         await robot.enable_motors(True)
         await robot.jog(0, 0, -15)  # -1843 counts/s
         await robot.jog(0, 0, 0)    # all keys released
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.5)
         rates = z_rates(robot)
         ramp = rates[1:]
         assert rates[0] == -1843 and ramp[-1] == 0 and len(ramp) >= 4
-        assert all(-1843 <= r < 0 for r in ramp[:-1]) and ramp[-2] > -500, ramp  # slow at the end
+        assert all(-1843 <= r < 0 for r in ramp[:-1]) and ramp[-2] > -150, ramp  # very slow at the end
         assert all(abs(a) >= abs(b) for a, b in zip(ramp, ramp[1:])), ramp  # never speeds up
         assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
     finally:
@@ -200,7 +200,7 @@ async def test_new_press_or_stop_cancels_the_ramp():
         await robot.jog(0, 0, 0)
         await robot.soft_stop()  # Space during the ramp
         n = len(robot.serial.transport.sent)
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.5)
         assert len(robot.serial.transport.sent) == n and robot.serial.transport.sent[-1] == "STOP"
     finally:
         await robot.disconnect()
@@ -228,7 +228,7 @@ async def test_releasing_only_w_s_ramps_z_within_the_refreshes():
         await robot.enable_motors(True)
         await robot.home()
         await robot.jog(20, 0, -15)
-        for _ in range(7):  # arrow still held, W/S released
+        for _ in range(9):  # arrow still held, W/S released
             await asyncio.sleep(0.05)
             await robot.jog(20, 0, 0)
         rates = z_rates(robot)
