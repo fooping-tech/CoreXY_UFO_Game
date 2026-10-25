@@ -9,7 +9,7 @@ extends Node
 ## CanvasLayers (the debug panel) do not shake.
 
 var enabled := true
-var max_offset_px := 22.0
+var max_offset_px := 12.0
 ## Trauma lost per second.
 var decay := 1.2
 

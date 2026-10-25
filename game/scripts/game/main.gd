@@ -91,6 +91,7 @@ func _ready() -> void:
 	ufo_fx.name = "UfoFx"
 	ufo_fx.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
 	ufo_fx.enabled = bool(GameConfig.get_value("render", "particles", true))
+	ufo_fx.amount = float(GameConfig.get_value("render", "particle_amount", 1.0))
 	add_child(ufo_fx)
 	cameras = CameraHub.new()
 	cameras.name = "Cameras"
@@ -120,7 +121,7 @@ func _ready() -> void:
 	shake = ScreenShake.new()
 	shake.name = "ScreenShake"
 	shake.enabled = bool(GameConfig.get_value("render", "screen_shake", true))
-	shake.max_offset_px = float(GameConfig.get_value("render", "shake_max_px", 14.0))
+	shake.max_offset_px = float(GameConfig.get_value("render", "shake_max_px", 12.0))
 	add_child(shake)
 	ufo_fx.kicked.connect(shake.add_trauma)
 	mock = MockRobot.new()

@@ -128,6 +128,7 @@ func _build() -> void:
 	_button(_vbox, "Sound: ON/OFF", func(): main.sfx.enabled = not main.sfx.enabled)
 	_button(_vbox, "Screen shake: ON/OFF", func(): main.shake.enabled = not main.shake.enabled)
 	_slider("shake_px", "Shake max px", 0.0, 40.0, main.shake.max_offset_px, 1.0, func(v): main.shake.max_offset_px = v)
+	_slider("fx_amount", "Particle amount", 0.0, 2.0, main.ufo_fx.amount, 0.05, func(v): main.ufo_fx.amount = v)
 	_slider("sfx_db", "Sound volume dB", -40.0, 6.0, main.sfx.volume_db, 1.0, func(v): main.sfx.volume_db = v)
 	_header("Character")
 	_expr_option = OptionButton.new()
