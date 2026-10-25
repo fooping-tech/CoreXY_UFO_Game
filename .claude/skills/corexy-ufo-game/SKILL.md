@@ -129,7 +129,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 63 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 64 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import

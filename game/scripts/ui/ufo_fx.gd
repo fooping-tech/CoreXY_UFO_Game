@@ -56,8 +56,8 @@ func ring_count() -> int:
 func update_fx(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 		move_i: float, up_i: float, down_i: float, dt: float) -> void:
 	_hue = fmod(_hue + dt * 0.9, 1.0)
-	if enabled:
-		_emit(ufo_px, scale, screen_vel, move_i, up_i, down_i, dt)
+	# start / stop detection (and the shake kicks) run even with particles off
+	_emit(ufo_px, scale, screen_vel, move_i, up_i, down_i, dt)
 	_step(dt)
 	queue_redraw()
 
@@ -68,15 +68,19 @@ func _emit(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 	if not _active and any > START_THRESHOLD:
 		_active = true
 		_peak = any
-		_burst(ufo_px, scale, "stars", 28, 180.0, 380.0)
 		kicked.emit(0.3)
+		if enabled:
+			_burst(ufo_px, scale, "stars", 28, 180.0, 380.0)
 	elif _active and any < STOP_THRESHOLD:
 		_active = false
 		kicked.emit(0.35 + 0.5 * _peak)  # a harder stop after a faster move
-		_burst(ufo_px, scale, "sparkles", 36, 140.0, 360.0)
-		_burst(ufo_px, scale, "stars", 14, 60.0, 160.0)
-		_rings.append({"p": ufo_px, "t": 0.0, "life": 0.45, "r0": 20.0 * scale, "r1": 170.0 * scale})
-		_rings.append({"p": ufo_px, "t": -0.08, "life": 0.5, "r0": 10.0 * scale, "r1": 120.0 * scale})
+		if enabled:
+			_burst(ufo_px, scale, "sparkles", 36, 140.0, 360.0)
+			_burst(ufo_px, scale, "stars", 14, 60.0, 160.0)
+			_rings.append({"p": ufo_px, "t": 0.0, "life": 0.45, "r0": 20.0 * scale, "r1": 170.0 * scale})
+			_rings.append({"p": ufo_px, "t": -0.08, "life": 0.5, "r0": 10.0 * scale, "r1": 120.0 * scale})
+	if not enabled:
+		return
 	var s := pixel_scale * scale
 	# trail: opposite to the motion, faster when moving faster
 	_emit_acc.trail += trail_rate * move_i * dt

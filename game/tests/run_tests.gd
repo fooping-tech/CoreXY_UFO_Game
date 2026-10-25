@@ -379,6 +379,19 @@ func _test_motion_fx() -> void:
 	fx2.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
 	remove_child(fx2)
 	fx2.free()
+	# particles off: still kicks the shake, but spawns nothing
+	var off_kicks: Array[float] = []
+	var fx3 := UfoFx.new()
+	add_child(fx3)
+	fx3.enabled = false
+	fx3.kicked.connect(func(s): off_kicks.append(s))
+	for k in range(10):
+		fx3.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
+	fx3.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	_ok(off_kicks.size() == 2 and fx3.particle_count() == 0 and fx3.ring_count() == 0,
+		"fx: particles off still kicks the shake on start / stop", "kicks %s parts %d rings %d" % [off_kicks, fx3.particle_count(), fx3.ring_count()])
+	remove_child(fx3)
+	fx3.free()
 	var sh := ScreenShake.new()
 	sh.max_offset_px = 14.0
 	sh.add_trauma(0.8)
