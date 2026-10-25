@@ -4,6 +4,7 @@
 #   ./start.sh                     ゲームのみ（Godot 内蔵 MockRobot）
 #   ./start.sh mock [backend args] Python バックエンド --mock + ゲーム（WebSocket 経由）
 #   ./start.sh real [PORT] [args]  実機バックエンド + ゲーム（PORT 省略時は config / 自動検出）
+#   ./start.sh gesture [args]      バックエンド --mock --gesture（カメラでピンチ操作）+ ゲーム（ジェスチャー ON）
 #   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
 #
 # 環境変数 GODOT で Godot 実行ファイルを上書きできます。
@@ -135,7 +136,12 @@ start_backend() {
   require_uv
   resolve_ws_endpoint "$@"
   ensure_port_free
-  (cd "$BACKEND_DIR" && uv sync --quiet)
+  # camera / hand tracking need the optional extras; a plain sync would remove them
+  local extras=() a
+  for a in "$@"; do
+    case "$a" in --gesture|--gesture=*|--hands|--camera|--camera=*) extras=(--extra vision --extra hands) ;; esac
+  done
+  (cd "$BACKEND_DIR" && uv sync --quiet ${extras[@]+"${extras[@]}"})
   (cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@") &
   BACKEND_PID=$!
   wait_for_port
@@ -158,12 +164,16 @@ case "$MODE" in
     start_backend ${args[@]+"${args[@]}"} "$@"
     run_game --source websocket
     ;;
+  gesture)
+    start_backend --mock --gesture "$@"
+    run_game --source websocket --gesture
+    ;;
   backend)
     require_uv
     cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
     ;;
   -h|--help|help)
-    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     echo "不明なモード: $MODE（./start.sh --help を参照）" >&2

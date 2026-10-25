@@ -18,6 +18,7 @@ var _state_chip: Label
 var _log_lines: PackedStringArray = PackedStringArray()
 ## role -> {"option": OptionButton, "view": TextureRect, "info": Label}
 var _cam_ui: Dictionary = {}
+var _gesture_status: Label
 
 func panel_width() -> float:
 	return PANEL_W if visible else 0.0
@@ -80,6 +81,7 @@ func _build() -> void:
 	_button(hb2, "z_zero", func(): main.ws.send_command("z_zero"))
 	_button(hb2, "clear_alarm", func(): main.ws.send_command("clear_alarm"))
 
+	_build_gesture()
 	_build_cameras()
 
 	_header("Virtual robot target (mm / z units)")
@@ -161,10 +163,57 @@ func _build() -> void:
 	_log.add_theme_font_size_override("normal_font_size", 11)
 	_vbox.add_child(_log)
 	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  G/F=result  F1=hide panel"
+	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  H=hand gesture  G/F=result  F1=hide panel"
 	help.add_theme_font_size_override("font_size", 11)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_vbox.add_child(help)
+
+## Hand joystick: mode, simulation, live values and tuning.
+func _build_gesture() -> void:
+	var g: GestureControl = main.gesture
+	var j: HandJoystick = g.joystick
+	_header("Hand gesture joystick (H)")
+	var hb := HBoxContainer.new()
+	_vbox.add_child(hb)
+	_button(hb, "Gesture: ON/OFF", func(): main.set_gesture_enabled(not g.enabled))
+	_button(hb, "Sim hand (mouse): ON/OFF", func(): main.set_gesture_sim(not main.gesture_sim))
+	var hb2 := HBoxContainer.new()
+	_vbox.add_child(hb2)
+	_button(hb2, "Invert X", func(): j.invert_x = not j.invert_x)
+	_button(hb2, "Invert Y", func(): j.invert_y = not j.invert_y)
+	_button(hb2, "Swap XY", func(): j.swap_xy = not j.swap_xy)
+	_button(hb2, "ROI: ON/OFF", func(): g.roi_enabled = not g.roi_enabled)
+	_gesture_status = Label.new()
+	_gesture_status.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_gesture_status)
+	_slider("g_speed", "Max speed mm/s", 5.0, 50.0, j.max_speed, 1.0, func(v): j.max_speed = v)
+	_slider("g_radius", "Stick radius (short side)", 0.05, 0.4, j.radius, 0.01, func(v): j.radius = v)
+	_slider("g_dead", "Dead zone (of radius)", 0.0, 0.5, j.deadzone, 0.01, func(v): j.deadzone = v)
+	_slider("g_full", "Full speed at (of radius)", 0.3, 1.0, j.full, 0.01, func(v): j.full = v)
+	_slider("g_smooth", "Smoothing ms", 0.0, 300.0, j.smoothing_ms, 5.0, func(v): j.smoothing_ms = v)
+	_slider("g_stale", "Event expiry ms", 50.0, 500.0, g.stale_ms, 10.0, func(v): g.stale_ms = v)
+	_slider("g_roi_x0", "ROI x0", 0.0, 1.0, g.roi.position.x, 0.01, func(v): g.roi = Rect2(Vector2(v, g.roi.position.y), Vector2(g.roi.end.x - v, g.roi.size.y)))
+	_slider("g_roi_y0", "ROI y0", 0.0, 1.0, g.roi.position.y, 0.01, func(v): g.roi = Rect2(Vector2(g.roi.position.x, v), Vector2(g.roi.size.x, g.roi.end.y - v)))
+	_slider("g_roi_x1", "ROI x1", 0.0, 1.0, g.roi.end.x, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(v - g.roi.position.x, g.roi.size.y)))
+	_slider("g_roi_y1", "ROI y1", 0.0, 1.0, g.roi.end.y, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(g.roi.size.x, v - g.roi.position.y)))
+
+func _update_gesture_status() -> void:
+	if _gesture_status == null:
+		return
+	var g: GestureControl = main.gesture
+	var j: HandJoystick = g.joystick
+	var now := float(Time.get_ticks_msec())
+	var ev: Dictionary = g.last_event
+	var src := "mouse (sim)" if main.gesture_sim else ("backend camera %s %dx%d" % [GameConfig.get_value("gesture", "camera", "?"), int(ev.get("frame_w", 0)), int(ev.get("frame_h", 0))])
+	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s swap %s  ROI %s %s\ngate: %s" % [
+		"ON" if g.enabled else "off", g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
+		src, main.control_source,
+		"yes" if g.detected else "no", "YES" if g.pinch else "no", g.pinch_ratio, float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
+		j.stick.x, j.stick.y, g.velocity.x, g.velocity.y,
+		g.latency_ms, ("%.0f ms" % g.age_ms(now)) if g.age_ms(now) >= 0.0 else "-", g.events, g.dropped,
+		j.invert_x, j.invert_y, j.swap_xy, "ON" if g.roi_enabled else "off",
+		"[%.2f %.2f %.2f %.2f]" % [g.roi.position.x, g.roi.position.y, g.roi.end.x, g.roi.end.y],
+		main.gesture_gate_reason if main.gesture_gate_reason != "" else "ok"]
 
 ## Both USB cameras at their full field of view (no crop, real aspect), each
 ## with a picker for which camera plays that role.
@@ -296,6 +345,7 @@ func _process(_dt: float) -> void:
 	if main == null:
 		return
 	_update_cameras()
+	_update_gesture_status()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)

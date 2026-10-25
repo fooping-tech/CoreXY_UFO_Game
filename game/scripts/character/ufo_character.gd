@@ -40,6 +40,12 @@ var peer_left := false:
 		if v != peer_left:
 			peer_left = v
 			_apply_frame()
+## Hand joystick cues (set every frame by the main scene):
+##   gesture_face "lost" - looks around (surprised, wobbling);  "blocked" - worried
+##   steer        - the stick (-1..1, robot X / Y): leans that way, turns to face
+##                  a sideways move, speed lines when it is nearly full
+var gesture_face := ""
+var steer := Vector2.ZERO
 ## Draw the `action_effects` overlay (speed lines, sweat...) on top of action
 ## poses. The pose art itself is character-only.
 var show_pose_effects: bool = true:
@@ -71,6 +77,11 @@ var _lateral_vel := 0.0
 var _depth_vel := 0.0
 var _bob_phase := 0.0
 var _last_expr_shown := ""
+var _flash_face := ""
+var _flash_left := 0.0
+var _look_t := 0.0
+## A steering pose without its speed lines (they are for a fast stick only).
+var _quiet_pose := false
 
 func _ready() -> void:
 	_sprite = Sprite2D.new()
@@ -160,7 +171,7 @@ func _apply_frame() -> void:
 	_sprite.position = -attach * pixel_scale
 	# action_effects cells line up 1:1 with action_poses cells, so the overlay
 	# reuses the pose's frame index and attachment offset.
-	var fx := show_pose_effects and _current_sheet == "action_poses" and _textures.has("action_effects")
+	var fx := show_pose_effects and not _quiet_pose and _current_sheet == "action_poses" and _textures.has("action_effects")
 	_fx_sprite.visible = fx
 	if fx:
 		_fx_sprite.texture = _textures["action_effects"]
@@ -233,7 +244,10 @@ func update_motion(tangent_angle: float, lateral_vel: float, depth_vel: float, a
 	var target_tilt := tangent_angle * tilt_follow + lateral_vel * tilt_from_velocity
 	target_tilt = clampf(target_tilt, -deg_to_rad(max_tilt_deg), deg_to_rad(max_tilt_deg))
 	_tilt = lerpf(_tilt, target_tilt, clampf(dt * 14.0, 0.0, 1.0))
-	rotation = _tilt
+	# hand joystick: lean into the steering, wobble while looking for the hand
+	_look_t = _look_t + dt if gesture_face == "lost" else 0.0
+	var lean := steer.x * deg_to_rad(8.0) + sin(_look_t * 6.0) * deg_to_rad(10.0) * minf(_look_t * 3.0, 1.0)
+	rotation = _tilt + lean
 	scale = Vector2.ONE * depth_scale
 	if anchor_accel.length() > panic_accel_threshold and _panic_left <= 0.0 and mood in ["IDLE", "MOVING_XY", "MOVING_FORWARD", "MOVING_BACKWARD"]:
 		_panic_left = 0.7
@@ -263,6 +277,8 @@ func _tick_face(dt: float) -> void:
 		if _last_expr_shown != p:
 			_set_pose(p)
 		return
+	if _gesture_face(dt):
+		return
 	if peering and mood in ["IDLE", "Z_LOWERING", "Z_RAISING"]:
 		_want_anim("telescope")
 		return
@@ -288,6 +304,38 @@ func _tick_face(dt: float) -> void:
 			_want_anim("move")
 		_:
 			_idle(dt)
+
+## Show `face` (an expression) for `secs`, over the hand joystick cues.
+func flash(face: String, secs: float) -> void:
+	_flash_face = face
+	_flash_left = secs
+
+## The hand joystick's faces; true when one is shown.
+func _gesture_face(dt: float) -> bool:
+	var quiet := false
+	var shown := true
+	_flash_left -= dt
+	if _flash_left > 0.0:
+		_want(_flash_face)
+	elif gesture_face == "lost":
+		_want("surprised")
+	elif gesture_face == "blocked":
+		_want("worried")
+	elif steer.length() > 0.25 and mood in ["IDLE", "MOVING_XY", "MOVING_FORWARD", "MOVING_BACKWARD"]:
+		if absf(steer.x) >= absf(steer.y) * 0.7:
+			quiet = steer.length() < 0.7  # speed lines for a fast stick only
+			if quiet != _quiet_pose:
+				_quiet_pose = quiet
+				_apply_frame()
+			_want_pose("move_right" if steer.x > 0.0 else "move_left")
+		else:
+			_want_anim("move")  # forwards / backwards
+	else:
+		shown = false
+	if not quiet and _quiet_pose:
+		_quiet_pose = false
+		_apply_frame()
+	return shown
 
 func _want(expr: String) -> void:
 	if _last_expr_shown != expr:

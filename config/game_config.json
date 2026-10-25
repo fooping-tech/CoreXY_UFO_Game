@@ -53,6 +53,40 @@
     "down": "hyun1.mp3",
     "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). up/down = the UFO rising/sinking on screen (arm going down/up)."
   },
+  "gesture": {
+    "enabled": false,
+    "allow_real_robot": false,
+    "camera": "C270",
+    "frame_width": 640,
+    "frame_height": 480,
+    "fps": 30.0,
+    "pinch_start": 0.35,
+    "pinch_release": 0.55,
+    "pinch_confirm_ms": 100.0,
+    "min_confidence": 0.6,
+    "delegate": "gpu",
+    "stale_ms": 250.0,
+    "arm_delay_ms": 120.0,
+    "roi": [
+      0.0,
+      0.0,
+      1.0,
+      1.0
+    ],
+    "roi_enabled": false,
+    "joystick": {
+      "radius": 0.15,
+      "deadzone": 0.12,
+      "full": 0.8,
+      "max_speed_mm_s": 30.0,
+      "curve": 1.5,
+      "smoothing_ms": 80.0,
+      "invert_x": false,
+      "invert_y": false,
+      "swap_xy": false
+    },
+    "_note": "Pinch hand joystick (backend: --gesture). delegate = gpu (Metal, falls back to cpu). stale_ms = an event older than this stops the stick (150 stopped every few seconds on an M4 MacBook Air: MediaPipe frames occasionally take 200-400 ms). camera = part of the gesture camera's name (or an index). Pinch = |thumb tip - index tip| / |index MCP - pinky MCP|: starts <= pinch_start held pinch_confirm_ms, ends >= pinch_release. roi = operating region [x0, y0, x1, y1] in normalised image coords (keep it outside the crane's reach). joystick: radius = fraction of the image short side, deadzone / full = fractions of the radius, speed = ((r - deadzone)/(full - deadzone))^curve * max_speed_mm_s. allow_real_robot stays false until the gesture has been checked with the mock (H toggles the mode; the robot must be connected, motors on, homed, no alarm)."
+  },
   "camera": {
     "enabled": true,
     "overview": {
@@ -61,7 +95,7 @@
       "flip_v": false
     },
     "focus": {
-      "match": "",
+      "match": "Innomaker",
       "flip_h": false,
       "flip_v": false
     },
@@ -71,7 +105,7 @@
       "hold_s": 10.0,
       "zoom": 1.0
     },
-    "_note": "USB cameras by role: overview = looks down on the desk (gesture detection later), focus = on the arm tip. match = part of the camera name (empty = none; pick one in the debug panel). The scope view shows focus, or overview when there is no focus camera. Frames are only drawn: never saved or sent."
+    "_note": "USB cameras by role (C270 = overview / gesture, Innomaker U20CAM = arm tip): overview = looks down on the desk (gesture detection later), focus = on the arm tip. match = part of the camera name (empty = none; pick one in the debug panel). The scope view shows focus, or overview when there is no focus camera. Frames are only drawn: never saved or sent."
   },
   "network": {
     "websocket_url": "ws://127.0.0.1:8765",

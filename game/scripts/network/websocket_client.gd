@@ -10,6 +10,15 @@ signal disconnected
 signal message_received(msg: Dictionary)
 signal ack(request_id: String, ok: bool, payload: Dictionary)
 signal log_line(text: String)
+## A hand joystick event and when it arrived (Time.get_ticks_msec(), this side's
+## monotonic clock: freshness is judged by it, never by the sender's timestamp).
+signal hand_control(data: Dictionary, recv_ms: float)
+
+## Only listen (vision events): never touch RobotState. Used to get the hand
+## gesture from the backend while the game drives its own MockRobot.
+var listen_only := false
+## What the backend drives ("mock", "real", ...), from its hello.
+var server_robot := ""
 
 var url: String = "ws://127.0.0.1:8765"
 var auto_reconnect: bool = true
@@ -88,7 +97,8 @@ func _process(dt: float) -> void:
 
 func _on_closed() -> void:
 	log_line.emit("disconnected (code %d)" % _peer.get_close_code())
-	if RobotState.source == "websocket":
+	server_robot = ""
+	if RobotState.source == "websocket" and not listen_only:
 		RobotState.connected = false
 		RobotState.machine_state = "UNKNOWN"
 	for rid in _pending.keys():
@@ -104,7 +114,7 @@ func _check_timeouts() -> void:
 			log_line.emit("timeout " + rid)
 			ack.emit(rid, false, {"reason": "timeout"})
 	# Backend alive but robot samples stale -> treat as link problem.
-	if RobotState.source == "websocket" and RobotState.connected and now - _last_state_ms > state_timeout_ms:
+	if not listen_only and RobotState.source == "websocket" and RobotState.connected and now - _last_state_ms > state_timeout_ms:
 		RobotState.report_error("robot_state timeout")
 		RobotState.connected = false
 		RobotState.machine_state = "UNKNOWN"
@@ -113,7 +123,13 @@ func _handle(msg: Dictionary) -> void:
 	message_received.emit(msg)
 	var t := str(msg.get("type", ""))
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
+	if listen_only and t != "vision_event":
+		if t == "hello":
+			server_robot = str(data.get("robot", ""))
+		return
 	match t:
+		"hello":
+			server_robot = str(data.get("robot", ""))
 		"robot_state":
 			_last_state_ms = Time.get_ticks_msec()
 			RobotState.source = "websocket"
@@ -147,7 +163,10 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.report_error(str(data.get("message", "error")))
 			log_line.emit("ERROR " + str(data.get("message", "")))
 		"vision_event":
-			GameState.post_event(str(data.get("event", "vision")), data)
+			if str(data.get("event", "")) == "hand_control":
+				hand_control.emit(data, float(Time.get_ticks_msec()))
+			else:
+				GameState.post_event(str(data.get("event", "vision")), data)
 		"log":
 			log_line.emit(str(data.get("line", "")))
 		_:
@@ -159,6 +178,13 @@ func send(msg: Dictionary) -> void:
 	if not msg.has("timestamp"):
 		msg["timestamp"] = Time.get_ticks_msec()
 	_peer.send_text(JSON.stringify(msg))
+
+## A home / move / grab command is still waiting for its answer.
+func has_pending_motion() -> bool:
+	for rid in _pending.keys():
+		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab"]:
+			return true
+	return false
 
 ## Send a command and track it. Returns the request id.
 func send_command(name: String, params: Dictionary = {}) -> String:
