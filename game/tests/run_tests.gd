@@ -27,6 +27,7 @@ func _ready() -> void:
 	_test_mock_robot_settles(rs)
 	_test_real_jog_velocity()
 	_test_fit_travel_to_screen(rs)
+	_test_motion_fx()
 	_test_z_inverse_mapping(rs)
 	_test_projection_consistency()
 	_test_performance()
@@ -334,6 +335,81 @@ func _test_fit_travel_to_screen(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## Sound / particle presentation follows the motion and stays out of the physics.
+func _test_motion_fx() -> void:
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	var i: Vector3 = main_script.motion_intensities(Vector3(15, 0, 0), 0.0)
+	var rise: Vector3 = main_script.motion_intensities(Vector3.ZERO, -8.0)  # rope shortening
+	var sink: Vector3 = main_script.motion_intensities(Vector3.ZERO, 4.0)
+	_ok(is_equal_approx(i.x, 1.0) and i.y == 0.0 and is_equal_approx(rise.y, 1.0) and rise.z == 0.0
+		and is_equal_approx(sink.z, 0.5) and sink.y == 0.0, "fx: move / rise / sink intensities", "%s %s %s" % [i, rise, sink])
+
+	var fx := UfoFx.new()
+	add_child(fx)
+	fx.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
+	var after_start := fx.particle_count()
+	for k in range(30):
+		fx.update_fx(Vector2(400 + k * 5, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
+	var moving := fx.particle_count()
+	fx.update_fx(Vector2(550, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	var ring := fx.ring_count()
+	for k in range(150):
+		fx.update_fx(Vector2(550, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	_ok(after_start >= 18 and moving > after_start and ring >= 1 and fx.particle_count() == 0 and fx.ring_count() == 0,
+		"fx: start burst, trail while moving, stop burst + ring, then clears",
+		"start %d moving %d ring %d left %d" % [after_start, moving, ring, fx.particle_count()])
+	for k in range(20):
+		fx.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 1.0, 0.0, 1.0 / 60.0)
+	var jets := fx.particle_count()
+	fx.enabled = false
+	for k in range(150):
+		fx.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 1.0, 0.0, 1.0 / 60.0)
+	_ok(jets > 18 and fx.particle_count() == 0, "fx: thrust while rising; nothing when switched off", "jets %d off %d" % [jets, fx.particle_count()])
+	remove_child(fx)
+	fx.free()
+
+	# start / stop bursts kick the screen shake; the shake decays and never moves the physics
+	var kicks: Array[float] = []
+	var fx2 := UfoFx.new()
+	add_child(fx2)
+	fx2.kicked.connect(func(s): kicks.append(s))
+	for k in range(10):
+		fx2.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
+	fx2.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	remove_child(fx2)
+	fx2.free()
+	var sh := ScreenShake.new()
+	sh.max_offset_px = 14.0
+	sh.add_trauma(0.8)
+	sh.step(1.0 / 60.0)
+	var shaking := sh.offset.length()
+	var bounded := true
+	for k in range(120):
+		sh.step(1.0 / 60.0)
+		bounded = bounded and sh.offset.length() <= 14.0 * 1.5
+	var settled := sh.offset.length()
+	sh.enabled = false
+	sh.add_trauma(1.0)
+	sh.step(1.0 / 60.0)
+	_ok(kicks.size() == 2 and kicks[1] > kicks[0] and shaking > 0.0 and bounded and settled == 0.0 and sh.offset == Vector2.ZERO,
+		"shake: start and (harder) stop kick it, it decays to rest, off = still",
+		"kicks %s shaking %.2f settled %.2f" % [kicks, shaking, settled])
+	sh.free()
+
+	var sfx := Sfx.new()
+	add_child(sfx)  # files may be absent (not in the repo): must still work, silently
+	_ok(Sfx.load_mp3("res://assets/audio/does-not-exist.mp3") == null, "sfx: a missing file loads as null (silence)")
+	sfx.update_sfx(1.0, 0.0, 0.0, 0.1)
+	var on := sfx.level("move")
+	sfx.update_sfx(0.0, 0.0, 0.0, 0.1)
+	var fading := sfx.level("move")
+	sfx.enabled = false
+	sfx.update_sfx(1.0, 1.0, 1.0, 1.0)
+	_ok(is_equal_approx(on, 1.0) and fading > 0.5 and fading < 1.0 and sfx.level("up") == 0.0,
+		"sfx: fades in fast, out slowly; silent when off", "on %.2f fading %.2f" % [on, fading])
+	remove_child(sfx)
+	sfx.free()
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()

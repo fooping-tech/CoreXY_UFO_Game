@@ -14,6 +14,9 @@ var mock: MockRobot
 var ws: UfoWebSocketClient
 var background: Node2D
 var effects: Node2D
+var ufo_fx: UfoFx
+var sfx: Sfx
+var shake: ScreenShake
 var debug_ui: CanvasLayer
 
 var _initialised := false
@@ -35,6 +38,16 @@ var _anchor_screen_vel := Vector2.ZERO
 var _anchor_screen_accel := Vector2.ZERO
 var _ufo_screen_vel := Vector2.ZERO
 var _depth_vel := 0.0
+## Motion intensities 0..1 for the sound / particle presentation (per physics tick).
+var fx_move := 0.0
+var fx_up := 0.0
+var fx_down := 0.0
+var _fx_prev_rope := -1.0
+## Speeds that count as "full" for the presentation: anchor travel (cm/s) and
+## rope length change (cm/s). The real W/S jog (15 Z units/s) changes the rope by
+## ~8 cm/s.
+const FX_MOVE_FULL_CM_S := 15.0
+const FX_ROPE_FULL_CM_S := 8.0
 var physics_usec: int = 0
 ## Keyboard jog speed for the mock robot (mm/s)
 var jog_speed_mm := 180.0
@@ -69,6 +82,12 @@ func _ready() -> void:
 	rope_view.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
 	rope_view.rope_width_px = float(GameConfig.get_value("render", "rope_width_px", 6.0))
 	add_child(rope_view)
+	# drawn before (behind) the UFO so the trail never covers its face
+	ufo_fx = UfoFx.new()
+	ufo_fx.name = "UfoFx"
+	ufo_fx.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
+	ufo_fx.enabled = bool(GameConfig.get_value("render", "particles", true))
+	add_child(ufo_fx)
 	ufo = UfoScene.instantiate()
 	ufo.name = "UFO"
 	ufo.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
@@ -77,6 +96,15 @@ func _ready() -> void:
 	effects.name = "Effects"
 	effects.set_script(load("res://scripts/ui/effects.gd"))
 	add_child(effects)
+	sfx = Sfx.new()
+	sfx.name = "Sfx"
+	add_child(sfx)
+	shake = ScreenShake.new()
+	shake.name = "ScreenShake"
+	shake.enabled = bool(GameConfig.get_value("render", "screen_shake", true))
+	shake.max_offset_px = float(GameConfig.get_value("render", "shake_max_px", 14.0))
+	add_child(shake)
+	ufo_fx.kicked.connect(shake.add_trauma)
 	mock = MockRobot.new()
 	mock.name = "MockRobot"
 	add_child(mock)
@@ -315,6 +343,7 @@ func _reset_render_history() -> void:
 	_cue_prev_ufo = sim.ufo_position()
 	_cue_prev_anchor = sim.anchor
 	_anchor_screen_vel = Vector2.ZERO
+	_fx_prev_rope = sim.rope_length
 
 func _store_tick(dt: float) -> void:
 	_prev_points = _cur_points.duplicate()
@@ -332,6 +361,21 @@ func _store_tick(dt: float) -> void:
 	_depth_vel = sim.anchor_velocity().z
 	_cue_prev_ufo = u
 	_cue_prev_anchor = sim.anchor
+	var rope_rate := 0.0 if _fx_prev_rope < 0.0 else (sim.rope_length - _fx_prev_rope) / dt
+	_fx_prev_rope = sim.rope_length
+	var fx := motion_intensities(sim.anchor_velocity(), rope_rate)
+	fx_move = fx.x
+	fx_up = fx.y
+	fx_down = fx.z
+
+## Presentation intensities 0..1 from the physics: (sideways move, UFO rising,
+## UFO sinking). A longer rope means the UFO sinks (arm up), a shorter one that it
+## rises (arm down).
+static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Vector3:
+	var move := clampf(Vector2(anchor_vel.x, anchor_vel.z).length() / FX_MOVE_FULL_CM_S, 0.0, 1.0)
+	var rise := clampf(-rope_rate_cm_s / FX_ROPE_FULL_CM_S, 0.0, 1.0)
+	var sink := clampf(rope_rate_cm_s / FX_ROPE_FULL_CM_S, 0.0, 1.0)
+	return Vector3(move, rise, sink)
 
 func _process(dt: float) -> void:
 	_capture_tick(dt)
@@ -359,6 +403,10 @@ func _process(dt: float) -> void:
 	ufo.update_motion(tangent_angle, _ufo_screen_vel.x, _depth_vel, _anchor_screen_accel, r.scale, dt)
 	effects.position = r.screen
 	effects.scale = Vector2.ONE * r.scale
+	# the saucer's body hangs below the rope end (attachment near the sprite top)
+	var body_px := r.screen + Vector2(0.0, 27.0 * ufo.pixel_scale * r.scale)
+	ufo_fx.update_fx(body_px, r.scale, _ufo_screen_vel, fx_move, fx_up, fx_down, dt)
+	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
 	_log_motion("R", dt, Vector3.ZERO)
 
 func _mood() -> String:
@@ -386,6 +434,7 @@ func _mood() -> String:
 func _on_game_state_changed(_prev: String, cur: String) -> void:
 	if cur == "RESULT":
 		effects.burst("sparkles" if GameState.result_success else "motion_lines")
+		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
 	if str(data.get("command", "")) != "jog":
