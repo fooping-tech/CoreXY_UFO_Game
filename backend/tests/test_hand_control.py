@@ -307,3 +307,48 @@ async def test_a_stop_ends_the_jog_expiry_watch():
             assert srv._jog_owner is None and len(calls) == n  # no extra zero jog from the expiry
     finally:
         await srv.stop()
+
+
+def test_the_gpu_landmarker_is_rebuilt_in_the_background_and_swapped():
+    # MediaPipe's GPU path holds every frame until the landmarker is closed: the
+    # tracker rebuilds it every recreate_s without pausing (built and closed on threads).
+    import threading
+    import time as _time
+    from corexy_ufo_backend.vision_service.mediapipe_hands import MediaPipeHandTracker
+
+    class Fake:
+        def __init__(self, n):
+            self.n, self.closed = n, threading.Event()
+
+        def close(self):
+            self.closed.set()
+
+    made = []
+
+    def create(_delegate):
+        _time.sleep(0.05)  # building takes a while
+        made.append(Fake(len(made) + 1))
+        return made[-1]
+
+    tr = MediaPipeHandTracker.__new__(MediaPipeHandTracker)
+    tr._create, tr.delegate, tr.recreate_s, tr.swaps = create, "gpu", 0.1, 0
+    tr._landmarker, tr._next, tr._building, tr._lock = Fake(0), None, False, threading.Lock()
+    first = tr._landmarker
+    tr._born = _time.monotonic()
+    tr._maybe_swap()
+    assert tr._landmarker is first and not tr._building  # still young
+    _time.sleep(0.12)
+    tr._maybe_swap()  # starts the build, keeps the old one working meanwhile
+    assert tr._building and tr._landmarker is first
+    tr._maybe_swap()
+    assert tr._landmarker is first  # not ready yet: no pause, no swap
+    for _ in range(50):
+        if tr._next is not None:
+            break
+        _time.sleep(0.01)
+    tr._maybe_swap()
+    assert tr._landmarker is made[0] and tr.swaps == 1
+    assert first.closed.wait(1.0)  # the old one is closed (its memory freed)
+    cpu = MediaPipeHandTracker.__new__(MediaPipeHandTracker)
+    cpu.recreate_s = 0.0
+    cpu._maybe_swap()  # the CPU path is never rebuilt
