@@ -9,7 +9,7 @@ godot --headless --path game res://tests/test_runner.tscn
 # クリーンなチェックアウト（game/.godot/ がない）では先に:
 godot --headless --path game --import
 
-# Python。基準 78 件（約 21 秒）
+# Python。基準 79 件（約 21 秒）
 cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 ```
 

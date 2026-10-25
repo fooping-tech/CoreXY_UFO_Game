@@ -78,7 +78,7 @@ def make_vision(args: argparse.Namespace, gesture_cfg: dict | None = None) -> Vi
     if args.hands or gesture is not None:
         from .vision_service.mediapipe_hands import MediaPipeHandTracker
         g = gesture_cfg or {}
-        hands = MediaPipeHandTracker(delegate=str(g.get("delegate", "gpu")),
+        hands = MediaPipeHandTracker(delegate=str(g.get("delegate", "cpu")),
                                      min_confidence=float(g.get("detection_confidence", 0.5)),
                                      tracking_confidence=float(g.get("tracking_confidence", 0.3)))
     return VisionService(cams, detector, hands)
