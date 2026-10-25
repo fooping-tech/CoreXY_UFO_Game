@@ -51,7 +51,7 @@
     "move": "wizard-flight1.mp3",
     "up": "magic-statusup1.mp3",
     "down": "hyun1.mp3",
-    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). Not in the repository (its terms forbid redistributing the files): download them into game/assets/audio/ (see SOURCES.md there). up/down = the UFO rising/sinking on screen (arm going down/up)."
+    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). up/down = the UFO rising/sinking on screen (arm going down/up)."
   },
   "camera": {
     "enabled": true,
