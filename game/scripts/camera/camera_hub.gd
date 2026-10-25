@@ -154,17 +154,32 @@ func _feed(id: int) -> CameraFeed:
 
 func _refresh() -> void:
 	var feeds := feed_list()
+	for role in ROLES:
+		if feed_id(role) >= 0 and _feed(feed_id(role)) == null:
+			_manual[role] = false  # unplugged: back to the name match
+	_feed_id = fill_roles(feeds, _feed_id, _match, _manual)
+	_apply_feeds()
+
+## New role -> feed id map: roles whose camera is still plugged in keep it
+## (all of them reserved first, so a vacant role never takes another role's
+## camera); vacant roles not picked by hand take the first free name match.
+static func fill_roles(feeds: Array, current: Dictionary, patterns: Dictionary, manual: Dictionary) -> Dictionary:
+	var present := {}
+	for f in feeds:
+		present[int(f.id)] = true
+	var out := {}
 	var taken: Array = []
 	for role in ROLES:
-		var id := feed_id(role)
-		if id >= 0 and _feed(id) == null:
-			_feed_id[role] = -1  # unplugged
-			_manual[role] = false
-		if not _manual[role] and _feed_id[role] < 0:
-			_feed_id[role] = pick_feed(feeds, _match[role], taken)
-		if _feed_id[role] >= 0:
-			taken.append(_feed_id[role])
-	_apply_feeds()
+		var id := int(current.get(role, -1))
+		out[role] = id if present.has(id) else -1
+		if out[role] >= 0:
+			taken.append(out[role])
+	for role in ROLES:
+		if out[role] < 0 and not bool(manual.get(role, false)):
+			out[role] = pick_feed(feeds, str(patterns.get(role, "")), taken)
+			if out[role] >= 0:
+				taken.append(out[role])
+	return out
 
 func _apply_feeds() -> void:
 	var used := {}

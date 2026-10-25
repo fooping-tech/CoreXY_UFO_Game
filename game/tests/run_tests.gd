@@ -551,6 +551,18 @@ func _test_camera_scope() -> void:
 	_ok(CameraHub.pick_feed(feeds, "c270") == 2 and CameraHub.pick_feed(feeds, "") == -1 and CameraHub.pick_feed(feeds, "C270", [2]) == -1
 		and CameraHub.pick_feed(feeds, " usb ") == 3 and CameraHub.pick_feed(feeds, "none") == -1,
 		"camera: a role picks its camera by a name substring, never one already taken")
+	# two identical webcams both match the overview pattern: unplugging the overview
+	# one must not hand it the focus camera, and plugging it back restores it
+	var two := [{"id": 5, "name": "C270 HD WEBCAM"}, {"id": 6, "name": "C270 HD WEBCAM"}]
+	var pats := {"overview": "C270", "focus": "C270"}
+	var none := {"overview": false, "focus": false}
+	var first: Dictionary = CameraHub.fill_roles(two, {"overview": -1, "focus": -1}, pats, none)
+	var unplugged: Dictionary = CameraHub.fill_roles([two[1]], first, pats, none)
+	var back: Dictionary = CameraHub.fill_roles(two, unplugged, pats, none)
+	var by_hand: Dictionary = CameraHub.fill_roles(two, {"overview": -1, "focus": 6}, pats, {"overview": true, "focus": true})
+	_ok(first.overview == 5 and first.focus == 6 and unplugged.overview == -1 and unplugged.focus == 6
+		and back.overview == 5 and back.focus == 6 and by_hand.overview == -1 and by_hand.focus == 6,
+		"camera: unplugging one camera never moves another role's camera onto it", "%s %s %s %s" % [first, unplugged, back, by_hand])
 	# headless: no cameras, but every view still gets a texture (static)
 	var hub := CameraHub.new()
 	add_child(hub)
