@@ -8,6 +8,8 @@ extends Node2D
 ## around the knot. If the sprite sheets are missing it draws a placeholder.
 
 const META_PATH := "res://assets/ufo/ufo_metadata.json"
+## Sheets that are played whole as one looping animation.
+const SHEET_ANIMATIONS := ["idle", "telescope"]
 
 ## Game-level mood (set by the main scene from GameState). One of:
 ## IDLE, MOVING_XY, MOVING_FORWARD, MOVING_BACKWARD, Z_LOWERING, Z_RAISING,
@@ -30,6 +32,14 @@ var max_tilt_deg: float = 35.0
 ## Accelerations above this (screen px/s^2) trigger the panic pose.
 var panic_accel_threshold: float = 2600.0
 var manual_expression: String = "" # debug override, "" = automatic
+## Peering through the spyglass while the scope view is up (set by the main scene).
+var peering := false
+## Look through it to the left (the telescope frames are mirrored).
+var peer_left := false:
+	set(v):
+		if v != peer_left:
+			peer_left = v
+			_apply_frame()
 ## Draw the `action_effects` overlay (speed lines, sweat...) on top of action
 ## poses. The pose art itself is character-only.
 var show_pose_effects: bool = true:
@@ -144,6 +154,9 @@ func _apply_frame() -> void:
 	_sprite.region_rect = _frame_rect(_current_sheet, _current_frame)
 	_sprite.scale = Vector2.ONE * pixel_scale
 	var attach := _frame_attach(_current_sheet, _current_frame)
+	_sprite.flip_h = peer_left and _current_sheet == "telescope"
+	if _sprite.flip_h:
+		attach.x = _frame_size.x - attach.x
 	_sprite.position = -attach * pixel_scale
 	# action_effects cells line up 1:1 with action_poses cells, so the overlay
 	# reuses the pose's frame index and attachment offset.
@@ -176,14 +189,14 @@ func _set_pose(name: String) -> void:
 	_last_expr_shown = name
 
 ## Animation from `actions` (swing, pull, release, move, success, failure, recover)
-## or the idle sheet (name == "idle").
+## or a looping sheet of its own (idle, telescope).
 func _play_animation(name: String) -> void:
-	if name == "idle" and _meta.has("sheets") and _meta.sheets.has("idle"):
-		var s: Dictionary = _meta.sheets.idle
+	if name in SHEET_ANIMATIONS and _meta.has("sheets") and _meta.sheets.has(name):
+		var s: Dictionary = _meta.sheets[name]
 		_anim_frames = range(int(s.frame_count))
 		_anim_fps = float(s.fps)
 		_anim_loop = bool(s.loop)
-		_current_sheet = "idle"
+		_current_sheet = name
 	elif _meta.has("sheets") and _meta.sheets.has("actions") and _meta.sheets.actions.animations.has(name):
 		var a: Dictionary = _meta.sheets.actions.animations[name]
 		_anim_frames = a.frames
@@ -249,6 +262,9 @@ func _tick_face(dt: float) -> void:
 		var p := "panic_right" if _panic_dir > 0 else "panic_left"
 		if _last_expr_shown != p:
 			_set_pose(p)
+		return
+	if peering and mood in ["IDLE", "Z_LOWERING", "Z_RAISING"]:
+		_want_anim("telescope")
 		return
 	match mood:
 		"SUCCESS", "FAILURE", "GRABBING":
@@ -318,11 +334,18 @@ func available_expressions() -> Array[String]:
 		out.append(str(e.name))
 	for a in _meta.sheets.actions.animations.keys():
 		out.append(str(a))
-	out.append("idle")
+	for a in SHEET_ANIMATIONS:
+		if _meta.sheets.has(a):
+			out.append(a)
 	return out
 
 func current_face() -> String:
 	return _last_expr_shown
+
+## The spyglass lens relative to the rope knot, in sprite pixels: frame pixel
+## (62, 30) against the knot (32, 5), mirrored when looking left.
+func lens_offset() -> Vector2:
+	return Vector2(-31.0 if peer_left else 30.0, 25.0) * pixel_scale
 
 func pose_effects_visible() -> bool:
 	return _fx_sprite != null and _fx_sprite.visible

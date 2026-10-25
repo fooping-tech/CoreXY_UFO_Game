@@ -17,6 +17,10 @@ var effects: Node2D
 var ufo_fx: UfoFx
 var sfx: Sfx
 var shake: ScreenShake
+var cameras: CameraHub
+var scope: ScopeView
+var scope_trigger := ScopeTrigger.new()
+var scope_enabled := true
 var debug_ui: CanvasLayer
 
 var _initialised := false
@@ -88,6 +92,20 @@ func _ready() -> void:
 	ufo_fx.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
 	ufo_fx.enabled = bool(GameConfig.get_value("render", "particles", true))
 	add_child(ufo_fx)
+	cameras = CameraHub.new()
+	cameras.name = "Cameras"
+	add_child(cameras)
+	# the scope view: behind the UFO, so a UFO still swinging passes in front of it
+	scope = ScopeView.new()
+	scope.name = "Scope"
+	add_child(scope)
+	scope.attach(cameras)
+	var sc = GameConfig.get_value("camera", "scope", {})
+	if sc is Dictionary:
+		scope_enabled = bool(sc.get("enabled", true))
+		scope_trigger.settle_s = float(sc.get("settle_s", 0.7))
+		scope_trigger.hold_s = float(sc.get("hold_s", 10.0))
+		scope.zoom = float(sc.get("zoom", 1.0))
 	ufo = UfoScene.instantiate()
 	ufo.name = "UFO"
 	ufo.pixel_scale = float(GameConfig.get_value("render", "pixel_scale", 3.0))
@@ -407,7 +425,54 @@ func _process(dt: float) -> void:
 	var body_px := r.screen + Vector2(0.0, 27.0 * ufo.pixel_scale * r.scale)
 	ufo_fx.update_fx(body_px, r.scale, _ufo_screen_vel, fx_move, fx_up, fx_down, dt)
 	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
+	_update_scope(dt)
 	_log_motion("R", dt, Vector3.ZERO)
+
+## The telescope moment: the trigger decides, the UFO peers through its
+## spyglass and the round focus-camera view opens on the right.
+func _update_scope(dt: float) -> void:
+	var lowering := GameState.state in ["LOWERING", "GRABBING"]
+	var want := scope_trigger.step(fx_move, maxf(fx_up, fx_down), lowering, dt) and scope_enabled
+	scope.wanted = want
+	ufo.peering = want
+	if want and scope.open_amount == 0.0:
+		_place_scope()
+	scope.beam_from = ufo.global_transform * ufo.lens_offset()
+	scope.show_beam = ufo.current_face() == "telescope"
+	scope.locking = fx_up > 0.05 or GameState.state in ["LOWERING", "GRABBING"]
+	var r := GameConfig.robot()
+	var z_span := float(r.z_max_mm) - float(r.z_min_mm)
+	scope.z_level = (RobotState.z_mm - float(r.z_min_mm)) / z_span if z_span > 0.0 else -1.0
+	if z_span > 0.0 and not r.z_up_is_positive:
+		scope.z_level = 1.0 - scope.z_level  # the gauge shows the arm height
+	scope.readout = "X %6.1f  Y %6.1f  Z %5.1f" % [RobotState.x_mm, RobotState.y_mm, RobotState.z_mm]
+	scope.step(dt)
+
+## Where the scope opens: next to the UFO on its right, or on its left when the
+## UFO is too far right (it then looks left). Fixed while open.
+func _place_scope() -> void:
+	var vs := get_viewport_rect().size
+	var r := clampf(minf(_play_w * 0.15, vs.y * 0.24), 80.0, 200.0)
+	# x where the UFO comes to rest (under the anchor; it may still be swinging), y of its body
+	var body := ufo.global_position + Vector2(0.0, 27.0 * ufo.pixel_scale)
+	var rest_x := proj.project(Vector3(sim.anchor.x, sim.ufo_position().y, sim.anchor.z)).screen.x
+	var placed := scope_placement(_play_w, vs.y, r, Vector2(rest_x, body.y))
+	scope.radius = r
+	scope.center = Vector2(placed.x, placed.y)
+	ufo.peer_left = placed.z < 0.0
+
+## Scope centre (x, y) and side (z: +1 right of the UFO, -1 left) for a disc of
+## radius `r` next to a UFO resting at `ufo_px` in a play area `play_w` x `h`.
+## Leaves room for the brackets (r + 46) and the Z gauge on the right.
+static func scope_placement(play_w: float, h: float, r: float, ufo_px: Vector2) -> Vector3:
+	var gap := 90.0  # UFO body half-width, the spyglass and some leftover swing
+	var right_min := ufo_px.x + gap + r + 46.0
+	var right_max := play_w - r - 46.0 - 40.0
+	var side := 1.0 if right_min <= right_max else -1.0
+	var x := right_min if side > 0.0 else ufo_px.x - gap - r - 46.0
+	x = clampf(x, r + 50.0, maxf(right_max, r + 50.0))
+	var y := clampf(ufo_px.y - r * 0.3, r + 60.0, maxf(h - r - 80.0, r + 60.0))
+	return Vector3(x, y, side)
 
 func _mood() -> String:
 	match GameState.state:
@@ -554,6 +619,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
 				_layout()
+			KEY_V:
+				scope_trigger.toggle()
 			KEY_G:
 				GameState.post_event("result_success")
 			KEY_F:

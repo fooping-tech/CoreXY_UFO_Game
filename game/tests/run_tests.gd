@@ -34,6 +34,7 @@ func _ready() -> void:
 	_test_game_assets_in_sync()
 	_test_ufo_metadata()
 	_test_ufo_faces_and_pose_effects()
+	_test_camera_scope()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -498,6 +499,11 @@ func _test_ufo_metadata() -> void:
 	var poses: Array = meta.sheets.get("action_poses", {}).get("frames", [])
 	var fx: Array = meta.sheets.get("action_effects", {}).get("frames", [])
 	_ok(poses.size() > 0 and poses.size() == fx.size(), "metadata: action_effects aligned 1:1 with action_poses", "%d poses, %d fx" % [poses.size(), fx.size()])
+	var tele: Dictionary = meta.sheets.get("telescope", {})
+	var tele_ok := int(tele.get("frame_count", 0)) == 2 and bool(tele.get("loop", false))
+	for f in tele.get("frames", []):
+		tele_ok = tele_ok and int(f.rope_attachment_local.x) == 32 and int(f.rope_attachment_local.y) == 5
+	_ok(tele_ok, "metadata: telescope sheet, 2 looping frames on the usual knot", str(tele))
 
 func _test_ufo_faces_and_pose_effects() -> void:
 	var ufo: UfoCharacter = load("res://scenes/ufo.tscn").instantiate()
@@ -522,5 +528,86 @@ func _test_ufo_faces_and_pose_effects() -> void:
 	ufo.mood = "Z_LOWERING"
 	tick.call()
 	_ok(not ufo.pose_effects_visible(), "pose fx: can be switched off")
+	# the telescope moment: peering while idle or moving the arm, mirrored to look left
+	ufo.mood = "IDLE"
+	ufo.peering = true
+	tick.call()
+	var looks_right := ufo.current_face() == "telescope" and not body.flip_h and ufo.lens_offset().x > 0.0
+	ufo.peer_left = true
+	tick.call()
+	var looks_left := body.flip_h and ufo.lens_offset().x < 0.0 and body.position.x == -32.0 * ufo.pixel_scale
+	ufo.mood = "Z_LOWERING"
+	tick.call()
+	var while_lowering := ufo.current_face() == "telescope"
+	ufo.peering = false
+	tick.call()
+	_ok(looks_right and looks_left and while_lowering and ufo.current_face() == "strain_up" and not body.flip_h,
+		"face: peers through the spyglass (right or mirrored left), then back", "%s %s %s %s" % [looks_right, looks_left, while_lowering, ufo.current_face()])
 	remove_child(ufo)
 	ufo.free()
+
+func _test_camera_scope() -> void:
+	var feeds := [{"id": 1, "name": "MacBook Airカメラ"}, {"id": 2, "name": "C270 HD WEBCAM"}, {"id": 3, "name": "USB Camera"}]
+	_ok(CameraHub.pick_feed(feeds, "c270") == 2 and CameraHub.pick_feed(feeds, "") == -1 and CameraHub.pick_feed(feeds, "C270", [2]) == -1
+		and CameraHub.pick_feed(feeds, " usb ") == 3 and CameraHub.pick_feed(feeds, "none") == -1,
+		"camera: a role picks its camera by a name substring, never one already taken")
+	# headless: no cameras, but every view still gets a texture (static)
+	var hub := CameraHub.new()
+	add_child(hub)
+	_ok(not hub.has_feed("focus") and hub.texture("focus") != null and hub.texture("overview") != null and is_equal_approx(hub.feed_aspect("focus"), 4.0 / 3.0),
+		"camera: without cameras the roles show static at 4:3")
+
+	var t := ScopeTrigger.new()
+	var dt := 1.0 / 60.0
+	var run := func(move: float, z: float, secs: float, lowering := false) -> bool:
+		var o := false
+		for i in range(int(secs * 60.0)):
+			o = t.step(move, z, lowering, dt)
+		return o
+	var start_closed: bool = not run.call(0.0, 0.0, 2.0)
+	var while_moving: bool = run.call(1.0, 0.0, 1.0)
+	var just_stopped: bool = run.call(0.0, 0.0, 0.5)
+	var settled: bool = run.call(0.0, 0.0, 0.3)
+	var arm_moving: bool = run.call(0.0, 0.8, 12.0)
+	var held: bool = run.call(0.0, 0.0, 9.5)
+	var timed_out: bool = run.call(0.0, 0.0, 0.6)
+	_ok(start_closed and not while_moving and not just_stopped and settled and arm_moving and held and not timed_out,
+		"scope: opens once at rest after a move, stays while the arm moves, closes after hold_s",
+		"%s %s %s %s %s %s %s" % [start_closed, while_moving, just_stopped, settled, arm_moving, held, timed_out])
+	var z_opens: bool = run.call(0.0, 0.6, 0.1)
+	var move_closes: bool = not run.call(0.6, 0.6, 0.1)
+	t.toggle()
+	var hand_open: bool = t.is_open and run.call(0.0, 0.0, 1.0)
+	var hand_move_closes: bool = not run.call(1.0, 0.0, 0.1)
+	run.call(0.0, 0.8, 0.1)  # arm moving: opens
+	t.toggle()  # closed by hand while the arm still moves
+	var stays_shut: bool = not run.call(0.0, 0.8, 1.0)
+	run.call(0.0, 0.0, 0.1)
+	var lowering_opens: bool = run.call(0.0, 0.0, 0.1, true)
+	_ok(z_opens and move_closes and hand_open and hand_move_closes and stays_shut and lowering_opens,
+		"scope: arm motion and lowering open it, a sideways move closes it, V toggles and a hand close sticks",
+		"%s %s %s %s %s %s" % [z_opens, move_closes, hand_open, hand_move_closes, stays_shut, lowering_opens])
+
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	var mid: Vector3 = main_script.scope_placement(920.0, 720.0, 130.0, Vector2(400.0, 300.0))
+	var edge: Vector3 = main_script.scope_placement(920.0, 720.0, 130.0, Vector2(860.0, 300.0))
+	var inside := func(p: Vector3) -> bool: return p.x - 130.0 - 46.0 >= 0.0 and p.x + 130.0 + 46.0 <= 920.0 and p.y - 130.0 >= 0.0 and p.y + 130.0 <= 720.0
+	_ok(mid.z > 0.0 and mid.x - 130.0 - 46.0 > 400.0 and edge.z < 0.0 and edge.x + 130.0 + 46.0 < 860.0 and inside.call(mid) and inside.call(edge),
+		"scope: opens beside the UFO, on its right unless there is no room", "%s %s" % [mid, edge])
+
+	var view := ScopeView.new()
+	add_child(view)
+	view.attach(hub)
+	view.wanted = true
+	for i in range(30):
+		view.step(dt)
+	var opened := view.is_fully_open() and view.visible and view.source_role() == ""
+	view.wanted = false
+	for i in range(30):
+		view.step(dt)
+	_ok(opened and not view.visible and view.open_amount == 0.0, "scope view: irises open, shows static without a camera, closes",
+		"%s %s %.2f" % [opened, view.visible, view.open_amount])
+	remove_child(view)
+	view.free()
+	remove_child(hub)
+	hub.free()
