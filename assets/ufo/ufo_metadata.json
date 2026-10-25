@@ -120,6 +120,36 @@
         }
       ]
     },
+    "telescope": {
+      "file": "res://assets/ufo/ufo_telescope.png",
+      "columns": 2,
+      "rows": 1,
+      "frame_count": 2,
+      "fps": 2.5,
+      "loop": true,
+      "frames": [
+        {
+          "index": 0,
+          "x": 0,
+          "y": 0,
+          "name": "telescope",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        },
+        {
+          "index": 1,
+          "x": 64,
+          "y": 0,
+          "name": "telescope_glint",
+          "rope_attachment_local": {
+            "x": 32,
+            "y": 5
+          }
+        }
+      ]
+    },
     "actions": {
       "file": "res://assets/ufo/ufo_actions.png",
       "columns": 7,
