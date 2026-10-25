@@ -381,7 +381,7 @@ func _test_motion_fx() -> void:
 			f.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), peak, 0.0, 0.0, 1.0 / 60.0)
 		for k in range(20):
 			f.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
-	move_stop.call(fx2, 0.2, 1.0)  # a tap: no shake
+	move_stop.call(fx2, 0.3, 1.0)  # a tap: no shake (the 0.2 s stop wait does not count as motion)
 	move_stop.call(fx2, 1.0, 0.5)
 	move_stop.call(fx2, 1.0, 1.0)
 	remove_child(fx2)

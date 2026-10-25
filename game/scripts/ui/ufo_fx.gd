@@ -94,7 +94,7 @@ func _emit(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 		if _below_s >= STOP_HOLD_S:
 			_active = false
 			stop_count += 1
-			if _moving_s >= SHAKE_MIN_MOVE_S:
+			if _moving_s - _below_s >= SHAKE_MIN_MOVE_S:  # the stop-confirmation wait is not motion
 				kicked.emit(0.25 + 0.35 * _peak)  # a harder stop after a faster move
 			if enabled:
 				_burst(ufo_px, scale, "sparkles", 20, 120.0, 300.0)
