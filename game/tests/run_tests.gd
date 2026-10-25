@@ -843,6 +843,15 @@ func _test_gesture_states() -> void:
 	_ok(e1 == Vector2(1, 0) and e2 == Vector2(-1, -1) and e3 == Vector2.ZERO and mid_ok and near_ok and out_ok and back_ok and middle_loss,
 		"gesture: knows when the hand is near the frame edge and when it left the view there",
 		"%s %s %s | %s %s %s %s %s" % [e1, e2, e3, mid_ok, near_ok, out_ok, back_ok, middle_loss])
+	# the HUD ring shows the hand like the (flipped) camera view does
+	var gv := GestureControl.new()
+	gv.joystick.set_anchor(Vector2(0.5, 0.5))
+	gv.detected = true
+	gv.hand = Vector2(0.5 + gv.joystick.radius * 0.5, 0.5 - gv.joystick.radius * 0.5)  # right and up in the image
+	var plain := GestureHud.view_offset(gv, false, false)
+	var turned := GestureHud.view_offset(gv, true, true)
+	_ok(plain.is_equal_approx(Vector2(0.5, -0.5)) and turned.is_equal_approx(Vector2(-0.5, 0.5)),
+		"gesture HUD: the ring follows the camera view's flips", "%s %s" % [plain, turned])
 	_ok(GestureHud.direction_text(Vector2(20, 15)) == "右奥へ移動" and GestureHud.direction_text(Vector2(-20, 0)) == "左へ移動"
 		and GestureHud.direction_text(Vector2(0, -20)) == "手前へ移動" and GestureHud.direction_text(Vector2.ZERO) == "",
 		"gesture HUD: direction words")

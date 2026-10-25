@@ -79,6 +79,14 @@ func step(dt: float) -> void:
 		queue_redraw()
 		_cam_fx.queue_redraw()
 
+## The hand's offset from the stick centre in stick radii, in the camera view's
+## screen axes (x right, y down, after the view's flips); zero when not steering.
+static func view_offset(g: GestureControl, flip_h: bool, flip_v: bool) -> Vector2:
+	if not (g.joystick.has_anchor and g.detected):
+		return Vector2.ZERO
+	var off := (g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6)
+	return Vector2(-off.x if flip_h else off.x, -off.y if flip_v else off.y)
+
 ## Robot-axes direction in words (+X 右, +Y 奥).
 static func direction_text(v: Vector2) -> String:
 	if v.length() < 0.5:
@@ -169,13 +177,12 @@ func _draw() -> void:
 		draw_arc(c0, RING_R, a0, a0 + TAU / 48.0, 3, ring_col, 3.0 if live else 2.0)
 	draw_arc(c0, RING_R * g.joystick.deadzone, 0.0, TAU, 16, Color(CYAN, 0.35), 1.0)
 	draw_arc(c0, RING_R * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
-	var dot := c0
-	if g.joystick.has_anchor and g.detected:
-		# the offset in robot axes (after invert / swap, like the arrow), robot +Y up on screen
-		var off := g.joystick.to_robot((g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6))
-		dot = c0 + Vector2(off.x, -off.y).limit_length(1.15) * RING_R
-	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5:
-		var dir := Vector2(g.velocity.x, -g.velocity.y).normalized()  # robot Y up = screen up
+	# The ring is the hand's motion as the mini camera view shows it (the view's
+	# flips included), so the square and the arrow move like the hand on it.
+	var off := view_offset(g, _overlay.flip_h, _overlay.flip_v)
+	var dot := c0 + off.limit_length(1.15) * RING_R
+	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5 and off.length() > 1e-3:
+		var dir := off.normalized()
 		var tip := c0 + dir * RING_R * 0.85
 		draw_line(c0, tip, Color(GOLD, 0.9), 3.0)
 		draw_colored_polygon(PackedVector2Array([tip + dir * 7.0, tip + dir.orthogonal() * 5.0, tip - dir.orthogonal() * 5.0]), Color(GOLD, 0.9))

@@ -95,7 +95,7 @@
     "enabled": true,
     "overview": {
       "match": "C270",
-      "flip_h": false,
+      "flip_h": true,
       "flip_v": true
     },
     "focus": {
