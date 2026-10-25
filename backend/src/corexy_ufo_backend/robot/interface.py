@@ -43,11 +43,12 @@ class RobotInterface(ABC):
     async def grab(self, close: bool) -> None: ...
 
     @abstractmethod
-    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
-        """Velocity jog (dead-man): keep sending while a key is held; (0, 0) stops.
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+        """Velocity jog (dead-man): keep sending while a key is held; all zero stops.
 
-        The robot stops by itself if refreshes stop for ~250 ms, so this is never
-        retried. Requires enable_motors and homing."""
+        vz is the Z value per second (+ = larger z). The robot stops by itself if
+        refreshes stop for ~250 ms, so this is never retried. Requires enable_motors;
+        XY also requires homing (Z alone does not, like the firmware)."""
 
     @abstractmethod
     async def soft_stop(self) -> None:

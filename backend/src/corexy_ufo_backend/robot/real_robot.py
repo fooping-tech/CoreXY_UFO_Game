@@ -73,6 +73,8 @@ class RealRobot(RobotInterface):
         self._z_measured = False
         self._busy = False
         self._last_poll = 0.0
+        self._last_z_poll = 0.0
+        self._z_poll_interval = 1.0 / max(cfg.z_poll_hz, 0.1)
         self._poll_interval = 1.0 / max(cfg.status_poll_hz, 0.5)
         self.serial.add_listener(self._on_line)
 
@@ -133,7 +135,23 @@ class RealRobot(RobotInterface):
             self._z_counts = None
             self.error = "firmware rebooted"
 
+    def _apply_z_counts(self, counts: int) -> None:
+        """Drum servo absolute counts -> Z (only meaningful once z_zero is set)."""
+        self._z_counts = counts
+        if self._z_zero_counts is not None:
+            self._z_units_est = self._z_units_from_counts(counts)
+            self._z_measured = True
+
+    def _z_counts_per_unit_signed(self) -> float:
+        """Servo counts per +1 Z unit, same convention as move_z (z_sign, z_up_is_positive)."""
+        k = self.cfg.z_counts_per_unit * self.cfg.z_sign
+        return k if self.limits.z_up_is_positive else -k
+
     def _on_jog_line(self, kind: str, line: str) -> None:
+        if kind == "jog_pos":
+            z_abs = P.z_abs_from(line)
+            if z_abs is not None:
+                self._apply_z_counts(z_abs)
         xy = P.xy_from(line)
         if xy and kind in ("jog_pos", "jog_end", "stop_done"):
             self._pos_xy = [xy[0], xy[1]]
@@ -343,8 +361,16 @@ class RealRobot(RobotInterface):
             self._busy = False
             self._state = MachineState.IDLE
 
-    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
-        stopping = vx_mm_s == 0 and vy_mm_s == 0
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+        if vz_units_s and self._z_zero_counts is not None:
+            # with a Z reference, never jog out of the 0..100 range
+            z = self._z_units_est
+            if (vz_units_s > 0 and z >= self.limits.z_max) or (vz_units_s < 0 and z <= self.limits.z_min):
+                vz_units_s = 0.0
+        z_counts_s = int(round(vz_units_s * self._z_counts_per_unit_signed()))
+        zcap = max(int(self.cfg.jog_z_max_counts_s), 0)
+        z_counts_s = max(-zcap, min(zcap, z_counts_s))
+        stopping = vx_mm_s == 0 and vy_mm_s == 0 and z_counts_s == 0
         if stopping:
             # always allowed: ends the session (and re-arms after a rejected press)
             if self.serial.connected:
@@ -352,7 +378,8 @@ class RealRobot(RobotInterface):
             self._jog_requested = False
             self._last_jog_t = 0.0  # the next non-zero JOG is a new press
             return
-        self._require()  # connected, motors enabled, no alarm, homed, no XY move running
+        # connected, motors enabled, no alarm, no move running; XY also needs homing
+        self._require(homed=bool(vx_mm_s or vy_mm_s))
         speed = math.hypot(vx_mm_s, vy_mm_s)
         cap = max(self.cfg.jog_max_mm_s, 0.0)
         if speed > cap > 0:
@@ -362,7 +389,7 @@ class RealRobot(RobotInterface):
         self._last_jog_t = now
         if new_press and self.error.startswith(("jog rejected", "jog ended")):
             self.error = ""  # the firmware reports again if it still refuses this press
-        self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s))
+        self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s, z_counts_s))
         self._jog_requested = True
 
     async def soft_stop(self) -> None:
@@ -406,6 +433,18 @@ class RealRobot(RobotInterface):
         if not self.serial.connected or self._busy:
             return
         now = time.monotonic()
+        if (not self._jogging and not self._jog_requested
+                and now - self._last_z_poll >= self._z_poll_interval and now - self._last_poll >= 0.05):
+            # Track the drum servo when something else moves it (joystick, other tools).
+            # During a jog JOG_POS carries Z_ABS instead.
+            self._last_z_poll = now
+            try:
+                st = await self.serial.servo_status(Z_SERVO_ID, timeout=2.0)
+                if st.ok and st.abs_counts is not None:
+                    self._apply_z_counts(st.abs_counts)
+            except SerialError:
+                pass  # a missed sample is fine; the next poll retries
+            return
         if now - self._last_poll < self._poll_interval:
             return
         self._last_poll = now

@@ -295,8 +295,19 @@ def validate_line(cmd: str) -> None:
 
 
 # --- JOG / STOP -----------------------------------------------------------------
-def cmd_jog(vx_mm_s: float, vy_mm_s: float) -> str:
+def cmd_jog(vx_mm_s: float, vy_mm_s: float, z_counts_s: int = 0) -> str:
+    """`JOG vx vy` or, with a Z (servo ID1) speed, `JOG vx vy z 0` (arm not jogged)."""
+    if z_counts_s:
+        return f"JOG {vx_mm_s:.1f} {vy_mm_s:.1f} {int(z_counts_s)} 0"
     return f"JOG {vx_mm_s:.1f} {vy_mm_s:.1f}"
+
+
+def z_abs_from(line: str) -> int | None:
+    """Z_ABS of a JOG_POS line (servo ID1 absolute counts); None when `NA`."""
+    try:
+        return int(parse_kv(line)["Z_ABS"])
+    except (KeyError, ValueError):
+        return None
 
 
 def parse_kv(line: str) -> dict[str, str]:
