@@ -23,6 +23,8 @@ var flip_h := false
 var flip_v := false
 ## The events come from the mouse, not this camera: draw only the status line.
 var simulated := false
+## Small version for the game HUD: smaller marks, no status line.
+var compact := false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -72,8 +74,8 @@ func _draw() -> void:
 		if seen or g.detected:
 			var c := to_px(g.hand_norm)
 			var dot := GOLD if g.pinch else (CYAN if g.detected else GREY)
-			draw_circle(c, 5.0, dot)
-			draw_arc(c, 8.0, 0.0, TAU, 16, Color.BLACK, 1.0)
+			draw_circle(c, 3.0 if compact else 5.0, dot)
+			draw_arc(c, 4.5 if compact else 8.0, 0.0, TAU, 16, Color.BLACK, 1.0)
 		if g.joystick.has_anchor:
 			var a2 := short_to_px(g.joystick.anchor)
 			var r := g.joystick.radius * short_px
@@ -82,6 +84,8 @@ func _draw() -> void:
 			draw_arc(a2, r * g.joystick.deadzone, 0.0, TAU, 16, Color(PINK, 0.6), 1.0, true)
 			if g.detected:
 				draw_line(a2, to_px(g.hand_norm), Color(GOLD, 0.9), 2.0, true)
+	if compact:
+		return
 	# status line (with a backing so it reads on any image)
 	var f := ThemeDB.fallback_font
 	var line := "%s%s  hands %d  pinch %s  ratio %.2f" % [g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",

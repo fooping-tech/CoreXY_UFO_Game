@@ -56,6 +56,15 @@ var pinch_ratio := 0.0
 var latency_ms := 0.0
 var events := 0
 var dropped := 0
+## Within this distance (normalised image coords) of the frame edge the hand is
+## "near the edge" (about to leave the camera's view).
+var edge_margin := 0.1
+## Image-axes edge flags (-1 / 0 / +1 per axis): while the hand is seen, the
+## edges it is near; once it is lost, the edges it was near when last seen.
+var edge := Vector2.ZERO
+## The hand vanished while near an edge: it most likely left the camera's view.
+var left_view := false
+var last_seen := Vector2(-1.0, -1.0)
 var _last_seq := -1
 var _last_recv_ms := -1.0
 var _armed_ms := 0.0
@@ -101,16 +110,39 @@ func on_event(ev: Dictionary, recv_ms: float) -> bool:
 	hand_norm = Vector2(float(ev.get("hand_x", 0.0)), float(ev.get("hand_y", 0.0)))
 	hand = Vector2(hand_norm.x * w / s, hand_norm.y * h / s)
 	detected = bool(ev.get("detected", false)) and camera_ok
+	var seen := detected or (camera_ok and int(ev.get("hand_count", 0)) == 1 and str(ev.get("reason", "")) == "outside_roi")
+	if seen:
+		last_seen = hand_norm
+		edge = edge_of(hand_norm, edge_margin)
+		left_view = false
+	elif camera_ok and str(ev.get("reason", "")) == "no_hand":
+		left_view = edge != Vector2.ZERO  # gone from next to an edge: out of the view
 	if detected and roi_enabled and not roi.has_point(hand_norm):
 		detected = false
 	pinch = detected and bool(ev.get("pinch", false))
 	return true
+
+## Which frame edges `n` (normalised image coords) is within `margin` of:
+## x -1 left / +1 right, y -1 top / +1 bottom.
+static func edge_of(n: Vector2, margin: float) -> Vector2:
+	var e := Vector2.ZERO
+	if n.x <= margin:
+		e.x = -1.0
+	elif n.x >= 1.0 - margin:
+		e.x = 1.0
+	if n.y <= margin:
+		e.y = -1.0
+	elif n.y >= 1.0 - margin:
+		e.y = 1.0
+	return e
 
 ## A new event stream (backend restarted / reconnected): sequence numbers start
 ## over. Also a forced stop, so a pinch held across it needs a new pinch.
 func reset_stream(why: String) -> void:
 	_last_seq = -1
 	_last_recv_ms = -1.0
+	edge = Vector2.ZERO
+	left_view = false
 	detected = false
 	pinch = false
 	stop(why)

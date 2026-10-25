@@ -824,6 +824,25 @@ func _test_gesture_states() -> void:
 	g.roi = Rect2(0.0, 0.0, 0.5, 1.0)
 	hold.call(func(): return _hev(0, true, false, 0.8, 0.5), 0.1)
 	_ok(not g.detected and g.state == S.WAITING_HAND and g.reason == "outside_roi", "gesture: a hand outside the ROI is ignored", g.reason)
+	# where in the view: near an edge while seen, "left the view" when it vanishes from there
+	var e1 := GestureControl.edge_of(Vector2(0.95, 0.5), 0.1)
+	var e2 := GestureControl.edge_of(Vector2(0.05, 0.02), 0.1)
+	var e3 := GestureControl.edge_of(Vector2(0.5, 0.5), 0.1)
+	g.roi_enabled = false
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	var mid_ok := g.edge == Vector2.ZERO and not g.left_view
+	hold.call(func(): return _hev(0, true, false, 0.95, 0.5), 0.05)
+	var near_ok := g.edge == Vector2(1, 0)
+	step.call(_hev(0, false, false))
+	var out_ok := g.left_view and g.last_seen.is_equal_approx(Vector2(0.95, 0.5))
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	var back_ok := not g.left_view and g.edge == Vector2.ZERO
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	step.call(_hev(0, false, false))
+	var middle_loss := not g.left_view  # vanished in the middle: not "out of the view"
+	_ok(e1 == Vector2(1, 0) and e2 == Vector2(-1, -1) and e3 == Vector2.ZERO and mid_ok and near_ok and out_ok and back_ok and middle_loss,
+		"gesture: knows when the hand is near the frame edge and when it left the view there",
+		"%s %s %s | %s %s %s %s %s" % [e1, e2, e3, mid_ok, near_ok, out_ok, back_ok, middle_loss])
 	_ok(GestureHud.direction_text(Vector2(20, 15)) == "右奥へ移動" and GestureHud.direction_text(Vector2(-20, 0)) == "左へ移動"
 		and GestureHud.direction_text(Vector2(0, -20)) == "手前へ移動" and GestureHud.direction_text(Vector2.ZERO) == "",
 		"gesture HUD: direction words")

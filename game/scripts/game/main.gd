@@ -171,6 +171,11 @@ func _ready() -> void:
 	gesture_hud.name = "GestureHud"
 	gesture_hud.gesture = gesture
 	hud_layer.add_child(gesture_hud)
+	var ov = GameConfig.get_value("camera", "overview", {})
+	if ov is Dictionary:
+		gesture_hud.attach(cameras, bool(ov.get("flip_h", false)), bool(ov.get("flip_v", false)))
+	else:
+		gesture_hud.attach(cameras)
 	debug_ui = DebugScene.instantiate()
 	debug_ui.name = "DebugUI"
 	add_child(debug_ui)
@@ -210,8 +215,8 @@ func _apply_cmdline() -> void:
 				set_gesture_enabled(true)
 			"--gesture-demo":
 				# a scripted hand (pinch, steer, release, lose it) through the gesture path
-				set_gesture_enabled(true)
 				_gesture_demo_t = 0.0
+				set_gesture_enabled(true)
 				gesture_require_focus = false
 			"--quit-after":
 				if i + 1 < args.size():
@@ -688,13 +693,13 @@ func set_gesture_enabled(on: bool) -> void:
 func _update_vision_link() -> void:
 	if vision_ws == null:
 		return
-	var want := gesture.enabled and RobotState.source == "mock" and not gesture_sim
+	var want := gesture.enabled and RobotState.source == "mock" and not gesture_sim and _gesture_demo_t < 0.0
 	if vision_ws.enabled != want:
 		vision_ws.enabled = want
 
 func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient) -> void:
 	# only the link that matches the current source counts (and not while simulating)
-	if gesture_sim or (link == ws) != (RobotState.source == "websocket"):
+	if gesture_sim or _gesture_demo_t >= 0.0 or (link == ws) != (RobotState.source == "websocket"):
 		return
 	gesture.on_event(data, recv_ms)
 
@@ -714,7 +719,7 @@ func _feed_sim_hand() -> void:
 
 ## The scripted hand of --gesture-demo at `t` seconds (a 7 s loop): open hand,
 ## pinch, steer to the right and away, back to the centre, release, then pinch
-## again and vanish while pinching (the stop that needs a new pinch).
+## again and slide out of the view at the right edge (the stop that needs a new pinch).
 static func gesture_demo_event(t: float) -> Dictionary:
 	var k := fmod(t, 7.0)
 	var c := Vector2(0.45, 0.55)
@@ -727,6 +732,7 @@ static func gesture_demo_event(t: float) -> Dictionary:
 		p = c + Vector2(0.12, -0.07) * s
 	elif k >= 5.0 and k < 5.8:
 		pinch = true
+		p = c.lerp(Vector2(0.97, 0.5), clampf((k - 5.0) / 0.6, 0.0, 1.0))  # off the right edge
 	elif k >= 5.8:
 		seen = false
 	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,
