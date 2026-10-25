@@ -94,7 +94,7 @@
     "overview": {
       "match": "C270",
       "flip_h": false,
-      "flip_v": false
+      "flip_v": true
     },
     "focus": {
       "match": "Innomaker",
