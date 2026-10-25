@@ -73,7 +73,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |
 | `stop` | `ABORT` | 非常停止。ロック外で即送信。以後 `clear_alarm` と `home` が必要 |
 | `soft_stop` | `STOP` | 減速停止。ロック外で即送信し `STOP complete` を待つ。実行中の `move_xy` は `reason=stopped` で NACK になる |
-| `jog {vx,vy,vz}` | `JOG vx vy`、Z があれば `JOG vx vy <z counts/s> 0` | XY は mm/s、vz は Z の値/秒（`z_counts_per_unit`・`z_sign` でサーボの count/s に換算、`backend.jog_z_max_counts_s` = 2400 で制限）。ゲームは押している間 20 Hz で送り、離したら全部 0。再送しない（途絶えたらファームウェアが 250 ms で止める）。`enable_motors` が必要、XY は HOMED も必要（Z だけなら不要）、`move_xy` などの実行中は `busy`。`z_zero` 後は Z を 0..100 の外へ送らない。XY の速度は `backend.jog_max_mm_s`（既定 50）で制限 |
+| `jog {vx,vy,vz}` | `JOG vx vy`、Z があれば `JOG vx vy <z counts/s> 0` | XY は mm/s、vz は Z の値/秒（`z_counts_per_unit`・`z_sign` でサーボの count/s に換算、`backend.jog_z_max_counts_s` = 2400 で制限）。ゲームは押している間 20 Hz で送り、離したら全部 0。再送しない（途絶えたらファームウェアが 250 ms で止める。バックエンドも、JOG を送っていたクライアントの切断時と、更新が 300 ms 途絶えたときにゼロ JOG を送る）。キーボードとハンドジェスチャーはゲーム側の `ControlArbiter` で 1 本にまとめてから送る。`enable_motors` が必要、XY は HOMED も必要（Z だけなら不要）、`move_xy` などの実行中は `busy`。`z_zero` 後は Z を 0..100 の外へ送らない。XY の速度は `backend.jog_max_mm_s`（既定 50）で制限 |
 | `clear_alarm` | `ALARM_CLEAR` | |
 
 ## 6. 既存ツールとの関係
