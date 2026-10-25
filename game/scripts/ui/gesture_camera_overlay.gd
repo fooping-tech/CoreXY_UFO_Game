@@ -28,7 +28,8 @@ var compact := false
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	if not compact:  # the HUD sizes the compact one itself (anchors would override that)
+		set_anchors_preset(Control.PRESET_FULL_RECT)
 
 func _process(_dt: float) -> void:
 	queue_redraw()
