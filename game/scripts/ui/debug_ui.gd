@@ -240,6 +240,8 @@ func _process(_dt: float) -> void:
 	var hint: String = main.jog_hint
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
+	if RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
+		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W でアームを一番上まで上げて「z_zero」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
 	var ok_color := Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4)
