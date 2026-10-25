@@ -38,6 +38,7 @@ func _ready() -> void:
 	_test_hand_joystick()
 	_test_gesture_states()
 	_test_gesture_with_mock_robot(rs)
+	_test_error_clears_when_the_machine_recovers(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -911,3 +912,25 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## After an alarm the game leaves ERROR once the machine reports a normal state
+## again (clear_alarm -> home), so the UFO's moods (and the telescope) come back.
+func _test_error_clears_when_the_machine_recovers(rs: Node) -> void:
+	var was_source: String = rs.source
+	var was_connected: bool = rs.connected
+	rs.source = "websocket"
+	rs.connected = true
+	GameState.set_state("READY")
+	rs.machine_state = "ALARM"
+	var in_error := GameState.state == "ERROR"
+	rs.machine_state = "UNKNOWN"
+	var still := GameState.state == "ERROR"
+	rs.machine_state = "HOMING"
+	var homing := GameState.state == "HOMING"
+	rs.machine_state = "IDLE"
+	var ready := GameState.state == "READY"
+	_ok(in_error and still and homing and ready, "game state: ERROR after an alarm ends when the machine is back (HOMING -> READY)",
+		"%s %s %s %s" % [in_error, still, homing, GameState.state])
+	rs.machine_state = "UNKNOWN"
+	rs.connected = was_connected
+	rs.source = was_source
