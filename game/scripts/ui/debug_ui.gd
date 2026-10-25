@@ -119,6 +119,12 @@ func _build() -> void:
 	_slider("pixel_scale", "Sprite pixel scale", 1.0, 6.0, main.ufo.pixel_scale, 1.0, func(v): main.ufo.pixel_scale = v; main.rope_view.pixel_scale = v)
 	_slider("tilt_follow", "UFO tilt follow", 0.0, 1.5, main.ufo.tilt_follow, 0.05, func(v): main.ufo.tilt_follow = v)
 
+	_header("Effects / sound")
+	_button(_vbox, "Particles: ON/OFF", func(): main.ufo_fx.enabled = not main.ufo_fx.enabled)
+	_button(_vbox, "Sound: ON/OFF", func(): main.sfx.enabled = not main.sfx.enabled)
+	_button(_vbox, "Screen shake: ON/OFF", func(): main.shake.enabled = not main.shake.enabled)
+	_slider("shake_px", "Shake max px", 0.0, 40.0, main.shake.max_offset_px, 1.0, func(v): main.shake.max_offset_px = v)
+	_slider("sfx_db", "Sound volume dB", -40.0, 6.0, main.sfx.volume_db, 1.0, func(v): main.sfx.volume_db = v)
 	_header("Character")
 	_expr_option = OptionButton.new()
 	_expr_option.add_item("(auto)")

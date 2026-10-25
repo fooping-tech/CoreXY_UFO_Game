@@ -23,3 +23,7 @@ id_ed25519*
 
 # pinned security scanners (tools/security/install_tools.sh)
 tools/.bin/
+
+# sound effects from 効果音ラボ: redistribution of the files is not allowed (game/assets/audio/SOURCES.md)
+game/assets/audio/*
+!game/assets/audio/SOURCES.md
