@@ -159,6 +159,6 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 | アニメーションの仕組み | `godot-animation` | UFO は metadata 駆動のコード再生。AnimationPlayer へ移行するなら理由を示してから |
 | HUD・メニュー | `game-ui-ux`, `godot-ui-control` | デバッグパネルはコードで構築（`debug_ui.gd`）。プレイ画面にクレーンアームを描かない |
 | 性能 | `performance-optimization` | `physics_usec`、`--capture` の FPS で計測してから直す |
-| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、規約上リポジトリに入れない（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける |
+| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける |
 | カメラ | `camera-systems` | 基本は不要。固定カメラの投影（`origin_px`）を壊す追従カメラを入れない |
 | どれか分からない | `router` | このスキルを読んだ後に使う |

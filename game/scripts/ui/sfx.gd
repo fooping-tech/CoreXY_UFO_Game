@@ -5,10 +5,10 @@ extends Node
 ## the physics) is up and fades out when the motion stops; moving faster raises
 ## the pitch a little.
 ##
-## The MP3s come from 効果音ラボ (soundeffect-lab.info). Its terms forbid
-## redistributing the files, so they are NOT in the repository: put them in
-## game/assets/audio/ yourself (see game/assets/audio/SOURCES.md). They are read
-## as raw bytes (no import step); a missing file just means silence.
+## The MP3s in game/assets/audio/ come from 効果音ラボ (soundeffect-lab.info):
+## built into the game as its sounds, which its terms allow (GitHub included);
+## they must not be handed out on their own (see game/assets/audio/SOURCES.md).
+## They are read as raw bytes (no import step); a missing file just means silence.
 
 const VOICES := ["move", "up", "down"]
 const FADE_IN_S := 0.08
