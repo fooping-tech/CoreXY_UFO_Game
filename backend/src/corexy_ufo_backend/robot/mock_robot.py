@@ -30,7 +30,7 @@ class MockRobot(RobotInterface):
         self.motors_enabled = False
         # jog: per-axis speed caps while active, and when the last refresh expires
         self.jog_max_mm_s = 50.0
-        self._jog_cap = [0.0, 0.0]
+        self._jog_cap = [0.0, 0.0, 0.0]
         self._jog_until = 0.0
         self.alarm = False
         self.error = ""
@@ -89,17 +89,18 @@ class MockRobot(RobotInterface):
         self._require()
         self._grabbing = close
 
-    async def jog(self, vx_mm_s: float, vy_mm_s: float) -> None:
-        if vx_mm_s == 0 and vy_mm_s == 0:
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+        if vx_mm_s == 0 and vy_mm_s == 0 and vz_units_s == 0:
             self._end_jog()
             return
-        self._require()
+        self._require(homed=bool(vx_mm_s or vy_mm_s))  # Z alone works un-homed, like the firmware
         speed = math.hypot(vx_mm_s, vy_mm_s)
         if speed > self.jog_max_mm_s > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * self.jog_max_mm_s / speed, vy_mm_s * self.jog_max_mm_s / speed
         lim = self.limits
-        bounds = [(lim.x_min, lim.x_max), (lim.y_min, lim.y_max)]
-        for i, v in enumerate((vx_mm_s, vy_mm_s)):
+        bounds = [(lim.x_min, lim.x_max), (lim.y_min, lim.y_max), (lim.z_min, lim.z_max)]
+        vz_units_s = max(-self.speed[2], min(self.speed[2], vz_units_s))
+        for i, v in enumerate((vx_mm_s, vy_mm_s, vz_units_s)):
             # head for the soft limit in the jog direction at the jog speed; the
             # bounded-acceleration controller slows down before the limit by itself
             self._jog_cap[i] = abs(v)
@@ -115,7 +116,7 @@ class MockRobot(RobotInterface):
     def _end_jog(self) -> None:
         if self._jog_until:
             self._jog_until = 0.0
-            for i in range(2):
+            for i in range(3):
                 self.target[i] = self._stopping_point(i)
 
     async def soft_stop(self) -> None:
@@ -154,7 +155,7 @@ class MockRobot(RobotInterface):
             # discrete controller overshoots and hunts around the target).
             a_dt = self.accel[i] * dt
             stop_v = a_dt * (math.sqrt(0.25 + 2 * abs(d) / (a_dt * dt)) - 0.5)
-            vmax = min(self.speed[i], self._jog_cap[i]) if (jogging and i < 2) else self.speed[i]
+            vmax = min(self.speed[i], self._jog_cap[i]) if jogging else self.speed[i]
             desired = math.copysign(min(vmax, stop_v, abs(d) / dt), d)
             v = self.vel[i]
             step = self.accel[i] * dt

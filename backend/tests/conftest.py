@@ -119,12 +119,14 @@ class FakeFirmware(SerialTransport):
             elif self.jogging:
                 self.x = min(max(self.x + vx * 0.05, 0.0), 390.0)
                 self.y = min(max(self.y + vy * 0.05, 0.0), 200.0)
-                self._emit(f"JOG_POS X={self.x:.3f} Y={self.y:.3f} VX={vx:.1f} VY={vy:.1f} Z_ABS=NA ARM_ABS=NA")
+                zc = int(float(parts[3])) if len(parts) > 3 else 0
+                self.servo_abs[1] += int(zc * 0.05)
+                self._emit(f"JOG_POS X={self.x:.3f} Y={self.y:.3f} VX={vx:.1f} VY={vy:.1f} Z_ABS={self.servo_abs[1]} ARM_ABS=NA")
             elif self.jog_rejected:
                 pass
             else:
                 reason = ("alarm" if self.alarm else "busy" if self._xy_move else
-                          "not_homed" if (vx or vy) and not self.homed else None)
+                          "not_homed" if (vx or vy) and not self.homed else None)  # Z alone: no homing needed
                 if reason:
                     self.jog_rejected = True
                     self._emit(f"NACK_JOG reason={reason}")

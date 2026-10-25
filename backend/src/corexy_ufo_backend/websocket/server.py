@@ -7,7 +7,7 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop (ABORT, emergency),
-  soft_stop (decelerate, no alarm), jog {vx,vy} (mm/s, dead-man: resend ~20 Hz while
+  soft_stop (decelerate, no alarm), jog {vx,vy,vz?} (mm/s; vz = Z value/s; dead-man: resend ~20 Hz while
   held, {0,0} on release; the firmware stops after 250 ms without one), clear_alarm,
   get_state, list_ports
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
@@ -227,9 +227,10 @@ class GameServer:
                 # Dead-man refresh, sent ~20 Hz while a key is held; never retried. Outside
                 # the motion lock, but refused while a home/move/grab command is running.
                 vx, vy = float(params.get("vx", 0.0)), float(params.get("vy", 0.0))
-                if (vx or vy) and self._motion_lock.locked():
+                vz = float(params.get("vz", 0.0))
+                if (vx or vy or vz) and self._motion_lock.locked():
                     return self._nack(name, "busy: another motion command is running")
-                await self.robot.jog(vx, vy)
+                await self.robot.jog(vx, vy, vz)
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
             elif name == "z_zero":

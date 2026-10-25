@@ -37,6 +37,8 @@ var machine_state: String = "UNKNOWN":
 var last_error: String = ""
 ## The backend's current `error` field, mirrored as-is (empty once it clears).
 var robot_error: String = ""
+## The backend has a Z reference (z_zero: arm at its top); without it Z is unknown.
+var z_reference_set: bool = false
 ## True when the position is the firmware's reported value, false when it is
 ## estimated by the host from commanded targets.
 var position_is_measured: bool = true

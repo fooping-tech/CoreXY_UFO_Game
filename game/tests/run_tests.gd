@@ -252,12 +252,11 @@ func _test_real_jog_velocity() -> void:
 	_ok(absf(diag.length() - 40.0) < 1e-4 and diag.x > 0 and diag.y > 0, "jog: diagonal keeps the speed", str(diag))
 	_ok(none == Vector2.ZERO, "jog: released -> zero", str(none))
 	# Space with an arrow held latches; the arrow must be released before jogging again
-	var held := Vector2(1, 0)
-	var latched: bool = main_script.jog_latch(true, held)
+	var latched: bool = main_script.jog_latch(true, true)
 	_ok(latched, "jog: after Space a still-held arrow does not restart the robot")
-	latched = main_script.jog_latch(latched, Vector2.ZERO)
+	latched = main_script.jog_latch(latched, false)
 	_ok(not latched, "jog: releasing the arrows clears the stop latch")
-	_ok(not main_script.jog_latch(false, held), "jog: no latch without Space")
+	_ok(not main_script.jog_latch(false, true), "jog: no latch without Space")
 	# a refused jog is explained as the next thing to press
 	var cases := {
 		"motors not enabled (send enable_motors first)": "enable motors",

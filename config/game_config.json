@@ -55,6 +55,8 @@
     "arm_open_turns": 0.5,
     "xy_feed_mm_min": 900,
     "jog_max_mm_s": 50,
+    "jog_z_max_counts_s": 2400,
+    "z_poll_hz": 3,
     "_note": "z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
   }
 }

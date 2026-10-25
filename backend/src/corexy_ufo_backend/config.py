@@ -43,6 +43,10 @@ class BackendConfig:
     xy_feed_mm_min: float = 900.0
     # serial JOG speed cap (firmware recommends <= 50 mm/s = 3000 mm/min, see REPLY_FIRMWARE_JOG.md)
     jog_max_mm_s: float = 50.0
+    # Z (drum servo) jog speed cap; the servo itself tops out at 2400 counts/s
+    jog_z_max_counts_s: int = 2400
+    # how often the drum servo position is polled while idle (picks up joystick moves)
+    z_poll_hz: float = 3.0
     websocket_host: str = "127.0.0.1"
     websocket_port: int = 8765
     limits: RobotLimits = field(default_factory=RobotLimits)
@@ -76,6 +80,8 @@ def load_config(path: Path | None = None) -> BackendConfig:
     cfg.arm_open_turns = float(b.get("arm_open_turns", 0.5))
     cfg.xy_feed_mm_min = float(b.get("xy_feed_mm_min", 900.0))
     cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
+    cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
+    cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))
     hostport = url.split("://", 1)[-1].rstrip("/")
     if ":" in hostport:
