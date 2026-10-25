@@ -16,7 +16,7 @@ const DEFAULTS := {
 		"ufo_drag": 0.25, "ufo_mass": 25.0, "rope_length_rate": 60.0, "swing_gain": 1.0,
 	},
 	"projection": {"pitch_deg": 28.0, "pixels_per_unit": 6.0, "xy_display_scale": 1.0, "perspective": 0.0045, "depth_scale": 1.0, "edge_margin_px": 24.0},
-	"render": {"pixel_scale": 3.0, "rope_width_px": 6.0, "particles": true, "screen_shake": true, "shake_max_px": 22.0},
+	"render": {"pixel_scale": 3.0, "rope_width_px": 6.0, "particles": true, "screen_shake": true, "shake_max_px": 12.0, "particle_amount": 1.0},
 	"audio": {"enabled": true, "volume_db": -8.0, "dir": "res://assets/audio",
 		"move": "wizard-flight1.mp3", "up": "magic-statusup1.mp3", "down": "hyun1.mp3"},
 	"camera": {"enabled": true,

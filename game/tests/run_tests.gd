@@ -353,11 +353,12 @@ func _test_motion_fx() -> void:
 	for k in range(30):
 		fx.update_fx(Vector2(400 + k * 5, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
 	var moving := fx.particle_count()
-	fx.update_fx(Vector2(550, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	for k in range(int(UfoFx.STOP_HOLD_S * 60.0) + 1):
+		fx.update_fx(Vector2(550, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
 	var ring := fx.ring_count()
 	for k in range(150):
 		fx.update_fx(Vector2(550, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
-	_ok(after_start >= 18 and moving > after_start and ring >= 1 and fx.particle_count() == 0 and fx.ring_count() == 0,
+	_ok(after_start >= 10 and moving > after_start and ring >= 1 and fx.particle_count() == 0 and fx.ring_count() == 0,
 		"fx: start burst, trail while moving, stop burst + ring, then clears",
 		"start %d moving %d ring %d left %d" % [after_start, moving, ring, fx.particle_count()])
 	for k in range(20):
@@ -375,22 +376,42 @@ func _test_motion_fx() -> void:
 	var fx2 := UfoFx.new()
 	add_child(fx2)
 	fx2.kicked.connect(func(s): kicks.append(s))
-	for k in range(10):
-		fx2.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
-	fx2.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	var move_stop := func(f: UfoFx, secs: float, peak: float) -> void:
+		for k in range(int(secs * 60.0)):
+			f.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), peak, 0.0, 0.0, 1.0 / 60.0)
+		for k in range(20):
+			f.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	move_stop.call(fx2, 0.3, 1.0)  # a tap: no shake (the 0.2 s stop wait does not count as motion)
+	move_stop.call(fx2, 1.0, 0.5)
+	move_stop.call(fx2, 1.0, 1.0)
 	remove_child(fx2)
 	fx2.free()
+	# a held key with the speed dropping out for a few frames now and then: one
+	# start and one stop, not a burst and a shake per dropout
+	var held_kicks: Array[float] = []
+	var fx4 := UfoFx.new()
+	add_child(fx4)
+	fx4.kicked.connect(func(s): held_kicks.append(s))
+	for k in range(180):
+		var dropout := k % 12 >= 9  # 3 frames of zero speed every 12
+		fx4.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 0.0 if dropout else 1.0, 0.0, 0.0, 1.0 / 60.0)
+	var during := Vector2i(fx4.start_count, fx4.stop_count)
+	for k in range(20):
+		fx4.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
+	_ok(during == Vector2i(1, 0) and fx4.start_count == 1 and fx4.stop_count == 1 and held_kicks.size() == 1,
+		"fx: a held key with speed dropouts gives one start, one stop and one shake",
+		"during %s starts %d stops %d kicks %s" % [during, fx4.start_count, fx4.stop_count, held_kicks])
+	remove_child(fx4)
+	fx4.free()
 	# particles off: still kicks the shake, but spawns nothing
 	var off_kicks: Array[float] = []
 	var fx3 := UfoFx.new()
 	add_child(fx3)
 	fx3.enabled = false
 	fx3.kicked.connect(func(s): off_kicks.append(s))
-	for k in range(10):
-		fx3.update_fx(Vector2(400, 300), 1.0, Vector2(300, 0), 1.0, 0.0, 0.0, 1.0 / 60.0)
-	fx3.update_fx(Vector2(400, 300), 1.0, Vector2.ZERO, 0.0, 0.0, 0.0, 1.0 / 60.0)
-	_ok(off_kicks.size() == 2 and fx3.particle_count() == 0 and fx3.ring_count() == 0,
-		"fx: particles off still kicks the shake on start / stop", "kicks %s parts %d rings %d" % [off_kicks, fx3.particle_count(), fx3.ring_count()])
+	move_stop.call(fx3, 1.0, 1.0)
+	_ok(off_kicks.size() == 1 and fx3.particle_count() == 0 and fx3.ring_count() == 0,
+		"fx: particles off still kicks the shake on a stop", "kicks %s parts %d rings %d" % [off_kicks, fx3.particle_count(), fx3.ring_count()])
 	remove_child(fx3)
 	fx3.free()
 	var sh := ScreenShake.new()
@@ -407,7 +428,7 @@ func _test_motion_fx() -> void:
 	sh.add_trauma(1.0)
 	sh.step(1.0 / 60.0)
 	_ok(kicks.size() == 2 and kicks[1] > kicks[0] and shaking > 0.0 and bounded and settled == 0.0 and sh.offset == Vector2.ZERO,
-		"shake: start and (harder) stop kick it, it decays to rest, off = still",
+		"shake: a stop after a real move kicks it (harder after a faster one, none after a tap), it decays to rest, off = still",
 		"kicks %s shaking %.2f settled %.2f" % [kicks, shaking, settled])
 	sh.free()
 

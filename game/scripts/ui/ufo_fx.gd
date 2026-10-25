@@ -11,19 +11,29 @@ extends Node2D
 ##   thrust  - UFO rising (arm going down): jets spraying out below the saucer
 ##   sprinkle- UFO sinking (arm going up): glitter floating up above it
 ##   bursts  - motion starts: a star pop; motion stops: sparkle pop + shock ring
+##
+## The real robot's speed can drop to zero for a frame or two while a key is
+## held (sample jitter), so a stop counts only after STOP_HOLD_S below the
+## threshold: holding a key gives one start and one stop, not a burst per dropout.
 
-## Emitted on the start / stop bursts (strength 0..1) so the screen can shake.
+## Emitted when a real move stops (strength 0..1) so the screen can shake.
 signal kicked(strength: float)
 
-const MAX_PARTICLES := 450
+const MAX_PARTICLES := 300
 const START_THRESHOLD := 0.25
 const STOP_THRESHOLD := 0.05
+## Below STOP_THRESHOLD this long before the motion counts as stopped.
+const STOP_HOLD_S := 0.2
+## Only a move that lasted this long shakes the screen when it stops.
+const SHAKE_MIN_MOVE_S := 0.4
 
 var enabled := true
 var pixel_scale := 3.0
+## Scales every emission and burst (config render.particle_amount).
+var amount := 1.0
 ## Particles per second at full intensity.
-var trail_rate := 160.0
-var jet_rate := 120.0
+var trail_rate := 70.0
+var jet_rate := 60.0
 
 var _tex: Dictionary = {}
 var _parts: Array[Dictionary] = []
@@ -31,8 +41,13 @@ var _rings: Array[Dictionary] = []
 var _emit_acc := {"trail": 0.0, "jet": 0.0}
 var _active := false  # moving in any way (with hysteresis)
 var _peak := 0.0  # strongest intensity since the motion started
+var _below_s := 0.0  # how long the intensity has been under STOP_THRESHOLD
+var _moving_s := 0.0  # how long the current motion has lasted
 var _hue := 0.0
 var _rng := RandomNumberGenerator.new()
+## Motions started / stopped so far (for tests and the debug log).
+var start_count := 0
+var stop_count := 0
 
 func _ready() -> void:
 	for n in ["sparkles", "stars", "motion_lines"]:
@@ -68,22 +83,28 @@ func _emit(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 	if not _active and any > START_THRESHOLD:
 		_active = true
 		_peak = any
-		kicked.emit(0.3)
+		_below_s = 0.0
+		_moving_s = 0.0
+		start_count += 1
 		if enabled:
-			_burst(ufo_px, scale, "stars", 28, 180.0, 380.0)
-	elif _active and any < STOP_THRESHOLD:
-		_active = false
-		kicked.emit(0.35 + 0.5 * _peak)  # a harder stop after a faster move
-		if enabled:
-			_burst(ufo_px, scale, "sparkles", 36, 140.0, 360.0)
-			_burst(ufo_px, scale, "stars", 14, 60.0, 160.0)
-			_rings.append({"p": ufo_px, "t": 0.0, "life": 0.45, "r0": 20.0 * scale, "r1": 170.0 * scale})
-			_rings.append({"p": ufo_px, "t": -0.08, "life": 0.5, "r0": 10.0 * scale, "r1": 120.0 * scale})
+			_burst(ufo_px, scale, "stars", 14, 160.0, 320.0)
+	elif _active:
+		_moving_s += dt
+		_below_s = _below_s + dt if any < STOP_THRESHOLD else 0.0
+		if _below_s >= STOP_HOLD_S:
+			_active = false
+			stop_count += 1
+			if _moving_s - _below_s >= SHAKE_MIN_MOVE_S:  # the stop-confirmation wait is not motion
+				kicked.emit(0.25 + 0.35 * _peak)  # a harder stop after a faster move
+			if enabled:
+				_burst(ufo_px, scale, "sparkles", 20, 120.0, 300.0)
+				_burst(ufo_px, scale, "stars", 8, 60.0, 160.0)
+				_rings.append({"p": ufo_px, "t": 0.0, "life": 0.45, "r0": 20.0 * scale, "r1": 150.0 * scale})
 	if not enabled:
 		return
 	var s := pixel_scale * scale
 	# trail: opposite to the motion, faster when moving faster
-	_emit_acc.trail += trail_rate * move_i * dt
+	_emit_acc.trail += trail_rate * amount * move_i * dt
 	var back := -screen_vel.normalized() if screen_vel.length() > 1.0 else Vector2.UP
 	while _emit_acc.trail >= 1.0:
 		_emit_acc.trail -= 1.0
@@ -92,7 +113,7 @@ func _emit(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 		_spawn(ufo_px + jitter, v, "sparkles" if _rng.randf() < 0.6 else "stars", _rng.randf_range(0.5, 1.0),
 			s * _rng.randf_range(0.8, 1.5), 0.0)
 	# vertical jets
-	_emit_acc.jet += jet_rate * maxf(up_i, down_i) * dt
+	_emit_acc.jet += jet_rate * amount * maxf(up_i, down_i) * dt
 	while _emit_acc.jet >= 1.0:
 		_emit_acc.jet -= 1.0
 		if up_i >= down_i:
@@ -108,8 +129,9 @@ func _emit(ufo_px: Vector2, scale: float, screen_vel: Vector2,
 			_spawn(p, v, "sparkles", _rng.randf_range(0.5, 0.9), s * _rng.randf_range(0.7, 1.2), 0.0)
 
 func _burst(at: Vector2, scale: float, kind: String, count: int, v_lo: float, v_hi: float) -> void:
-	for i in range(count):
-		var ang := TAU * float(i) / float(count) + _rng.randf_range(-0.2, 0.2)
+	var n := int(roundf(count * amount))
+	for i in range(n):
+		var ang := TAU * float(i) / float(n) + _rng.randf_range(-0.2, 0.2)
 		var v := Vector2(cos(ang), sin(ang)) * _rng.randf_range(v_lo, v_hi) * scale
 		_spawn(at, v, kind, _rng.randf_range(0.55, 1.0), pixel_scale * scale * _rng.randf_range(1.0, 1.7), 260.0)
 
