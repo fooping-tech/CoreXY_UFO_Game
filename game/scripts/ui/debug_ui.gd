@@ -104,7 +104,8 @@ func _build() -> void:
 	_slider("rope_min", "Rope min cm", 2.0, 60.0, main.sim.min_rope_length, 1.0, func(v): main.sim.min_rope_length = v; GameConfig.data.world.rope_min_cm = v)
 	_slider("rope_max", "Rope max cm", 10.0, 120.0, main.sim.max_rope_length, 1.0, func(v): main.sim.max_rope_length = v; GameConfig.data.world.rope_max_cm = v)
 	_slider("swing_gain", "Swing exaggeration", 0.5, 3.0, main.sim.swing_gain, 0.05, func(v): main.sim.swing_gain = v)
-	_slider("travel_x", "World travel X cm", 10.0, 150.0, GameConfig.data.world.travel_x_cm, 1.0, func(v): GameConfig.data.world.travel_x_cm = v)
+	_button(_vbox, "Fit X to screen: ON/OFF", func(): GameConfig.data.world.fit_travel_x_to_screen = not bool(GameConfig.data.world.get("fit_travel_x_to_screen", false)))
+	_slider("travel_x", "World travel X cm (fit OFF)", 10.0, 150.0, GameConfig.data.world.travel_x_cm, 1.0, func(v): GameConfig.data.world.travel_x_cm = v)
 	_slider("travel_z", "World travel depth cm", 5.0, 120.0, GameConfig.data.world.travel_z_cm, 1.0, func(v): GameConfig.data.world.travel_z_cm = v)
 	_button(_vbox, "Reset rope (hang straight)", func(): main.sim.reset())
 
@@ -229,9 +230,10 @@ func _process(_dt: float) -> void:
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)
-	_status.text = "FPS %d | physics %d µs | pts %d substeps %d\nrobot x=%.1f y=%.1f z=%.1f (%s)\nrope %.1f→%.1f cm  realised %.1f  anchor→ufo %.1f\nufo v=%.0f cm/s  face=%s" % [
+	_status.text = "FPS %d | physics %d µs | pts %d substeps %d\nrobot x=%.1f y=%.1f z=%.1f (%s)  travelX %.0f cm %s\nrope %.1f→%.1f cm  realised %.1f  anchor→ufo %.1f\nufo v=%.0f cm/s  face=%s" % [
 		fps, main.physics_usec, sim.points.size(), sim.substeps,
 		pose.x, pose.y, pose.z, "measured" if RobotState.position_is_measured else "estimated",
+		RobotState.travel_x_cm(), "(fit)" if GameConfig.data.world.get("fit_travel_x_to_screen", false) else "(fixed)",
 		sim.rope_length, sim.target_rope_length, sim.realised_length(), sim.anchor_to_ufo_distance(),
 		sim.ufo_velocity().length(), main.ufo.current_face()]
 	var conn := "CONNECTED" if RobotState.connected else "DISCONNECTED"

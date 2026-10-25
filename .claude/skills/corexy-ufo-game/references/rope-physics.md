@@ -34,7 +34,8 @@
 | `substeps`, `segment_count` | 精度と滑らかさ（16 × 16 で約 0.2 ms） | 性能テストとセットで変える |
 | `rope_length_rate` | ロープ長の追従速度 | Z の巻き取り/送り出しの見た目 |
 | `world.rope_min_cm` / `rope_max_cm` | Z の範囲 → ロープ長（`main.gd` が sim の min/max を上書き） | UFO の上下の可動幅 |
-| `world.travel_x_cm` / `travel_z_cm` | 実機 XY の可動域 → ワールドの幅 | 画面上の移動量 |
+| `world.fit_travel_x_to_screen` | true: 実機 X の全範囲がプレイ領域（デバッグパネルを除く）の端から端に収まるよう、ワールドの X 可動幅を自動で決める（UFO の絵、`projection.edge_margin_px`、実機の最高速度で止まったときの揺れ v·√(L/g) の分を残す） | 画面の端まで行かない／はみ出す。投影で横だけ伸ばすとロープがゆがむので、幅はワールド側で決める |
+| `world.travel_x_cm` / `travel_z_cm` | 実機 XY の可動域 → ワールドの幅（X は自動調整が off のときだけ使う） | 画面上の移動量 |
 | `projection.*` | 俯角、倍率、遠近、奥行きの強さ | 前後方向の見え方 |
 
 決まった値はデバッグパネルで探し、JSON に書き戻す。コード内の既定値（`rope_simulator.gd` と `game_config.gd::DEFAULTS`）を変えるなら両方を揃える。
