@@ -35,6 +35,9 @@ func _ready() -> void:
 	_test_ufo_metadata()
 	_test_ufo_faces_and_pose_effects()
 	_test_camera_scope()
+	_test_hand_joystick()
+	_test_gesture_states()
+	_test_gesture_with_mock_robot(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -644,3 +647,264 @@ func _test_camera_scope() -> void:
 	view.free()
 	remove_child(hub)
 	hub.free()
+
+# ------------------------------------------------------------ hand gesture joystick
+## A hand_control event (640x480 frame), like the backend sends.
+func _hev(seq: int, detected: bool, pinch: bool, x := 0.5, y := 0.5, extra := {}) -> Dictionary:
+	var ev := {"event": "hand_control", "camera_ok": true, "detected": detected, "hand_count": 1 if detected else 0,
+		"pinch": pinch, "hand_x": x, "hand_y": y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
+		"reason": "" if detected else "no_hand", "frame_w": 640, "frame_h": 480, "sequence": seq, "timestamp": 0, "latency_ms": 30.0}
+	ev.merge(extra, true)
+	return ev
+
+func _test_hand_joystick() -> void:
+	var j := HandJoystick.new()
+	j.smoothing_ms = 0.0
+	j.set_anchor(Vector2(0.6, 0.5))
+	var r := j.radius
+	var dead := j.update(Vector2(0.6 + r * 0.1, 0.5), 0.05)
+	var right := j.update(Vector2(0.6 + r * 0.5, 0.5), 0.05)
+	var away := j.update(Vector2(0.6, 0.5 - r * 0.5), 0.05)  # hand moved up in the image
+	var far := j.update(Vector2(0.6 + r * 3.0, 0.5), 0.05)
+	var diag := j.update(Vector2(0.6 + r * 2.0, 0.5 - r * 2.0), 0.05)
+	var back := j.update(Vector2(0.6, 0.5), 0.05)
+	var mid := HandJoystick.shape(Vector2(r * 0.46, 0.0), r, 0.12, 0.8, 1.5).x  # half way between dead and full
+	_ok(dead == Vector2.ZERO and right.x > 0.0 and is_zero_approx(right.y) and away.y > 0.0 and is_zero_approx(away.x)
+		and is_equal_approx(far.x, j.max_speed) and diag.length() <= j.max_speed + 1e-3 and diag.x > 0.0 and diag.y > 0.0
+		and back == Vector2.ZERO and is_equal_approx(mid, pow(0.5, 1.5)),
+		"stick: dead zone, +X right, +Y away, curve, max speed, diagonal capped, centre stops",
+		"%s %s %s %s %s %s mid %.3f" % [dead, right, away, far, diag, back, mid])
+	j.invert_x = true
+	j.swap_xy = true
+	var swapped := j.update(Vector2(0.6 + r * 3.0, 0.5), 0.05)
+	j.smoothing_ms = 80.0
+	j.invert_x = false
+	j.swap_xy = false
+	j.set_anchor(Vector2(0.6, 0.5))
+	var first := j.update(Vector2(0.6 + r * 3.0, 0.5), 1.0 / 60.0)
+	_ok(is_equal_approx(swapped.y, j.max_speed) and is_zero_approx(swapped.x) and first.x > 0.0 and first.x < j.max_speed * 0.4,
+		"stick: axes can be swapped / inverted; the output is smoothed", "%s %s" % [swapped, first])
+
+func _test_gesture_states() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 100.0, "joystick": {"smoothing_ms": 0.0}})
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var dt := 1.0 / 60.0
+	# one tick: the event (if any) arrives now, then the physics tick
+	var step := func(ev: Dictionary, gate := "") -> Vector2:
+		t[0] += dt * 1000.0
+		if not ev.is_empty():
+			seq[0] += 1
+			ev["sequence"] = seq[0]
+			g.on_event(ev, t[0])
+		return g.tick(t[0], dt, gate)
+	var hold := func(make: Callable, secs: float, gate := "") -> Vector2:
+		var v := Vector2.ZERO
+		for i in range(int(secs * 60.0)):
+			v = step.call(make.call(), gate)
+		return v
+	var open_hand := func(): return _hev(0, true, false, 0.5, 0.5)
+	var pinch_at := func(x: float, y: float): return func(): return _hev(0, true, true, x, y)
+
+	step.call({})
+	var waits := g.state == S.WAITING_HAND
+	hold.call(open_hand, 0.1)
+	var seen := g.state == S.HAND_DETECTED
+	step.call(pinch_at.call(0.5, 0.5).call())
+	var armed := g.state == S.ARMED and g.joystick.has_anchor
+	hold.call(pinch_at.call(0.5, 0.5), 0.15)
+	var active := g.state == S.ACTIVE and g.velocity == Vector2.ZERO  # anchor = where it pinched
+	var v: Vector2 = hold.call(pinch_at.call(0.62, 0.5), 0.2)
+	var moved := v.x > 0.0
+	var released: Vector2 = step.call(open_hand.call())
+	_ok(waits and seen and armed and active and moved and released == Vector2.ZERO and g.state == S.HAND_DETECTED and g.reason == "released",
+		"gesture: hand -> pinch (anchor) -> ARMED -> ACTIVE moves; release = zero velocity",
+		"%s %s %s %s %s %s %s" % [waits, seen, armed, active, moved, released, g.state_name()])
+
+	# lost while steering: stops and stays stopped when the hand comes back still pinching
+	hold.call(pinch_at.call(0.5, 0.5), 0.3)
+	hold.call(pinch_at.call(0.62, 0.5), 0.1)
+	var lost_v: Vector2 = step.call(_hev(0, false, false))
+	var latched := g.state == S.WAITING_RELEASE and g.reason == "no_hand"
+	var back_v: Vector2 = hold.call(pinch_at.call(0.62, 0.5), 0.5)
+	var still_latched := g.state == S.WAITING_RELEASE and back_v == Vector2.ZERO
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	var new_anchor := g.state == S.ACTIVE and g.joystick.anchor.is_equal_approx(Vector2(0.3 * 640.0 / 480.0, 0.3)) and g.velocity == Vector2.ZERO
+	_ok(lost_v == Vector2.ZERO and latched and still_latched and new_anchor,
+		"gesture: losing the hand stops; it does not restart until released, a new pinch sets a new centre",
+		"%s %s %s %s %s" % [lost_v, latched, still_latched, new_anchor, g.state_name()])
+
+	# two hands
+	hold.call(pinch_at.call(0.42, 0.3), 0.1)
+	var two: Vector2 = step.call(_hev(0, false, true, 0.5, 0.5, {"hand_count": 2, "reason": "multiple_hands"}))
+	_ok(two == Vector2.ZERO and g.state == S.WAITING_RELEASE and g.reason == "multiple_hands", "gesture: two hands stop it", g.state_name())
+
+	# stale events: nothing for longer than stale_ms
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	hold.call(pinch_at.call(0.42, 0.3), 0.05)
+	var moving_before := g.velocity.length() > 0.0
+	for i in range(12):  # 200 ms without an event
+		step.call({})
+	var stale_stop := g.state == S.WAITING_RELEASE and g.reason == "stale" and g.velocity == Vector2.ZERO
+	_ok(moving_before and stale_stop, "gesture: events older than stale_ms stop it", "%s %s %s" % [moving_before, g.state_name(), g.reason])
+
+	# old / reordered events are dropped and cannot lift a stop
+	var dropped0 := g.dropped
+	t[0] += 16.0
+	var accepted_old := g.on_event(_hev(1, true, false), t[0])  # sequence 1: long gone
+	var dup := g.on_event(_hev(seq[0], true, false), t[0])
+	g.tick(t[0], dt, "")
+	_ok(not accepted_old and not dup and g.dropped == dropped0 + 2 and g.state == S.WAITING_RELEASE,
+		"gesture: old and duplicate events are ignored (a stop stays latched)", "%s %s" % [g.dropped, g.state_name()])
+
+	# camera lost
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	step.call(_hev(0, false, false, 0.5, 0.5, {"camera_ok": false, "reason": "camera_lost"}))
+	_ok(g.state == S.WAITING_RELEASE and g.reason == "camera_lost", "gesture: a lost camera stops it", g.reason)
+
+	# WebSocket gone and back: a new stream starting at 1 while still pinching does not restart it
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	g.reset_stream("ws_disconnect")
+	var after_drop := g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	seq[0] = 0
+	var reconnect_v: Vector2 = hold.call(pinch_at.call(0.45, 0.3), 0.5)
+	_ok(after_drop and reconnect_v == Vector2.ZERO and g.state == S.WAITING_RELEASE,
+		"gesture: a disconnect stops it; after reconnecting a held pinch does not restart it", "%s %s" % [reconnect_v, g.state_name()])
+
+	# STOP (Space) and the keyboard: latched until a new pinch
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	g.stop("stop_key")
+	var stop_v: Vector2 = hold.call(pinch_at.call(0.45, 0.3), 0.3)
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	var again: Vector2 = hold.call(pinch_at.call(0.45, 0.3), 0.2)
+	_ok(stop_v == Vector2.ZERO and again.x > 0.0, "gesture: after STOP it needs a release and a new pinch", "%s %s" % [stop_v, again])
+	var kb := ControlArbiter.decide(false, false, Vector3(40, 0, 0), Vector3(-20, 0, 0), true)
+	var gs := ControlArbiter.decide(false, false, Vector3.ZERO, Vector3(-20, 5, 0), true)
+	var halted := ControlArbiter.decide(true, false, Vector3(40, 0, 0), Vector3(-20, 0, 0), true)
+	var latched_stop := ControlArbiter.decide(false, true, Vector3.ZERO, Vector3(-20, 0, 0), true)
+	var idle := ControlArbiter.decide(false, false, Vector3.ZERO, Vector3(-20, 0, 0), false)
+	_ok(kb.source == "keyboard" and kb.v == Vector3(40, 0, 0) and gs.source == "gesture" and halted.v == Vector3.ZERO
+		and halted.source == "halt" and latched_stop.v == Vector3.ZERO and idle.v == Vector3.ZERO,
+		"arbiter: alarm > STOP > keyboard > gesture, never both", "%s %s %s" % [kb, gs, halted])
+
+	# not ready (e.g. not homed): a pinch does nothing, and it does not start once ready while held
+	hold.call(open_hand, 0.05)
+	var blocked: Vector2 = hold.call(pinch_at.call(0.3, 0.3), 0.3, "原点復帰（home）してください")
+	var blocked_state := g.state == S.WAITING_RELEASE and g.reason == "原点復帰（home）してください"
+	var ready_held: Vector2 = hold.call(pinch_at.call(0.45, 0.3), 0.3)
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	var not_homed: String = main_script.real_gesture_gate(true, true, "mock", false, true, false, false)
+	var real_off: String = main_script.real_gesture_gate(true, true, "real", false, true, true, false)
+	var real_on: String = main_script.real_gesture_gate(true, true, "real", true, true, true, false)
+	var no_motors: String = main_script.real_gesture_gate(true, true, "mock", false, false, true, false)
+	_ok(blocked == Vector2.ZERO and blocked_state and ready_held == Vector2.ZERO and not_homed.contains("原点復帰")
+		and real_off.contains("allow_real_robot") and real_on == "" and no_motors.contains("モーター"),
+		"gesture: refused before homing / motors / on the real robot unless allowed; no start while held",
+		"%s %s %s | %s | %s | %s" % [blocked, g.state_name(), ready_held, not_homed, real_off, no_motors])
+
+	# gesture mode off
+	hold.call(open_hand, 0.05)
+	hold.call(pinch_at.call(0.3, 0.3), 0.3)
+	g.enabled = false
+	var off_v: Vector2 = hold.call(pinch_at.call(0.5, 0.3), 0.2)
+	_ok(off_v == Vector2.ZERO and g.state == S.DISABLED, "gesture: switching the mode off stops it", g.state_name())
+
+	# operating region (ROI) on the game side
+	g.enabled = true
+	g.roi_enabled = true
+	g.roi = Rect2(0.0, 0.0, 0.5, 1.0)
+	hold.call(func(): return _hev(0, true, false, 0.8, 0.5), 0.1)
+	_ok(not g.detected and g.state == S.WAITING_HAND and g.reason == "outside_roi", "gesture: a hand outside the ROI is ignored", g.reason)
+	# where in the view: near an edge while seen, "left the view" when it vanishes from there
+	var e1 := GestureControl.edge_of(Vector2(0.95, 0.5), 0.1)
+	var e2 := GestureControl.edge_of(Vector2(0.05, 0.02), 0.1)
+	var e3 := GestureControl.edge_of(Vector2(0.5, 0.5), 0.1)
+	g.roi_enabled = false
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	var mid_ok := g.edge == Vector2.ZERO and not g.left_view
+	hold.call(func(): return _hev(0, true, false, 0.95, 0.5), 0.05)
+	var near_ok := g.edge == Vector2(1, 0)
+	step.call(_hev(0, false, false))
+	var out_ok := g.left_view and g.last_seen.is_equal_approx(Vector2(0.95, 0.5))
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	var back_ok := not g.left_view and g.edge == Vector2.ZERO
+	hold.call(func(): return _hev(0, true, false, 0.5, 0.5), 0.05)
+	step.call(_hev(0, false, false))
+	var middle_loss := not g.left_view  # vanished in the middle: not "out of the view"
+	_ok(e1 == Vector2(1, 0) and e2 == Vector2(-1, -1) and e3 == Vector2.ZERO and mid_ok and near_ok and out_ok and back_ok and middle_loss,
+		"gesture: knows when the hand is near the frame edge and when it left the view there",
+		"%s %s %s | %s %s %s %s %s" % [e1, e2, e3, mid_ok, near_ok, out_ok, back_ok, middle_loss])
+	# the HUD ring shows the hand like the (flipped) camera view does
+	var gv := GestureControl.new()
+	gv.joystick.set_anchor(Vector2(0.5, 0.5))
+	gv.detected = true
+	gv.hand = Vector2(0.5 + gv.joystick.radius * 0.5, 0.5 - gv.joystick.radius * 0.5)  # right and up in the image
+	var plain := GestureHud.view_offset(gv, false, false)
+	var turned := GestureHud.view_offset(gv, true, true)
+	_ok(plain.is_equal_approx(Vector2(0.5, -0.5)) and turned.is_equal_approx(Vector2(-0.5, 0.5)),
+		"gesture HUD: the ring follows the camera view's flips", "%s %s" % [plain, turned])
+	_ok(GestureHud.direction_text(Vector2(20, 15)) == "右奥へ移動" and GestureHud.direction_text(Vector2(-20, 0)) == "左へ移動"
+		and GestureHud.direction_text(Vector2(0, -20)) == "手前へ移動" and GestureHud.direction_text(Vector2.ZERO) == "",
+		"gesture HUD: direction words")
+
+func _test_gesture_with_mock_robot(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.gesture_require_focus = false
+	game.set_gesture_enabled(true)
+	game.gesture.joystick.smoothing_ms = 0.0
+	game.gesture.arm_delay_ms = 0.0  # real-time delays: this loop runs in a few ms
+	game.gesture.joystick.invert_x = false  # the config holds the real camera's calibration
+	game.gesture.joystick.invert_y = false
+	game.gesture.joystick.swap_xy = false
+	var start: Vector3 = game.mock.target
+	var dt := 1.0 / 60.0
+	var seq := [0]  # lambdas capture ints by value
+	var feed := func(ev: Dictionary) -> void:
+		seq[0] += 1
+		ev["sequence"] = seq[0]
+		game.gesture.on_event(ev, float(Time.get_ticks_msec()))
+		game._handle_input(dt)
+	for i in range(6):
+		feed.call(_hev(0, true, false, 0.5, 0.5))
+	for i in range(15):
+		feed.call(_hev(0, true, true, 0.5, 0.5))
+	for i in range(30):
+		feed.call(_hev(0, true, true, 0.65, 0.5))
+	var moved: Vector3 = game.mock.target - start
+	var src: String = game.control_source
+	var pinch_cue: String = game.sfx.last_cue
+	feed.call(_hev(0, true, false, 0.65, 0.5))
+	var after_release: Vector3 = game.mock.target
+	var release_cue: String = game.sfx.last_cue  # a plain release is quiet
+	for i in range(10):
+		feed.call(_hev(0, true, false, 0.65, 0.5))
+	_ok(moved.x > 5.0 and absf(moved.y) < 1e-3 and src == "gesture" and game.mock.target == after_release,
+		"gesture + MockRobot: steering right moves the mock target +X; releasing stops it", "%s %s" % [moved, src])
+	for i in range(15):
+		feed.call(_hev(0, true, true, 0.5, 0.5))
+	feed.call(_hev(0, false, false))  # the hand vanishes while steering
+	var lost_cue: String = game.sfx.last_cue
+	var blips: AudioStreamWAV = game.sfx.cue_stream("pinch")
+	_ok(pinch_cue == "pinch" and release_cue == "pinch" and lost_cue == "lost" and blips != null and blips.data.size() > 4000,
+		"gesture sound: a blip when the pinch is caught, another when control is cut (not on a plain release)",
+		"%s %s %s" % [pinch_cue, release_cue, lost_cue])
+	var ov := GestureCameraOverlay.new()
+	ov.size = Vector2(320, 240)
+	var straight := ov.to_px(Vector2(0.25, 0.5))
+	ov.flip_h = true
+	var mirrored := ov.to_px(Vector2(0.25, 0.5))
+	ov.free()
+	_ok(straight == Vector2(80, 120) and mirrored == Vector2(240, 120), "gesture overlay: image coords map onto the camera view (mirrored with it)")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()

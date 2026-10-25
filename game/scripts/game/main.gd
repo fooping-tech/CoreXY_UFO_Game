@@ -22,6 +22,28 @@ var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
 var debug_ui: CanvasLayer
+## Hand joystick (pinch). Its events come from the backend (`--gesture`): over
+## `ws` when the backend drives the robot, over the listen-only `vision_ws`
+## while the game drives its own MockRobot, or from the mouse (`gesture_sim`).
+var gesture := GestureControl.new()
+var vision_ws: UfoWebSocketClient
+var gesture_hud: GestureHud
+## The mouse stands in for the hand: left button = pinch (no camera needed).
+var gesture_sim := false
+var _sim_seq := 0
+## The real robot may be driven by the gesture (config gesture.allow_real_robot).
+var gesture_allow_real := false
+## Why the gesture may not move the robot now ("" = it may).
+var gesture_gate_reason := ""
+## Who drove the crane on the last tick (ControlArbiter source).
+var control_source := "none"
+var _lost_since_ms := -1.0
+## --gesture-demo clock (s; < 0 = off).
+var _gesture_demo_t := -1.0
+## The gesture stops when the game window loses focus (off for the scripted
+## demo and the headless tests, which have no focused window).
+var gesture_require_focus := true
+const GATE_FOCUS := "ゲームのウィンドウを選んでね"
 
 var _initialised := false
 var _last_anchor := Vector3.ZERO
@@ -130,6 +152,30 @@ func _ready() -> void:
 	ws = UfoWebSocketClient.new()
 	ws.name = "WebSocket"
 	add_child(ws)
+	vision_ws = UfoWebSocketClient.new()
+	vision_ws.name = "VisionLink"
+	vision_ws.listen_only = true
+	add_child(vision_ws)
+	gesture.configure(GameConfig.data.get("gesture", {}))
+	gesture_allow_real = bool(GameConfig.get_value("gesture", "allow_real_robot", false))
+	ws.hand_control.connect(_on_hand_control.bind(ws))
+	vision_ws.hand_control.connect(_on_hand_control.bind(vision_ws))
+	ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
+	vision_ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
+	gesture.state_changed.connect(_on_gesture_state)
+	var hud_layer := CanvasLayer.new()
+	hud_layer.name = "GestureHudLayer"
+	hud_layer.layer = 4
+	add_child(hud_layer)
+	gesture_hud = GestureHud.new()
+	gesture_hud.name = "GestureHud"
+	gesture_hud.gesture = gesture
+	hud_layer.add_child(gesture_hud)
+	var ov = GameConfig.get_value("camera", "overview", {})
+	if ov is Dictionary:
+		gesture_hud.attach(cameras, bool(ov.get("flip_h", false)), bool(ov.get("flip_v", false)))
+	else:
+		gesture_hud.attach(cameras)
 	debug_ui = DebugScene.instantiate()
 	debug_ui.name = "DebugUI"
 	add_child(debug_ui)
@@ -138,6 +184,7 @@ func _ready() -> void:
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
 	_layout()
+	set_gesture_enabled(bool(GameConfig.get_value("gesture", "enabled", false)))
 	_apply_cmdline()
 
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
@@ -164,6 +211,13 @@ func _apply_cmdline() -> void:
 				# jitter: robot samples, playback pose, anchor, UFO, character cues.
 				if i + 1 < args.size():
 					_open_motion_log(args[i + 1])
+			"--gesture":
+				set_gesture_enabled(true)
+			"--gesture-demo":
+				# a scripted hand (pinch, steer, release, lose it) through the gesture path
+				_gesture_demo_t = 0.0
+				set_gesture_enabled(true)
+				gesture_require_focus = false
 			"--quit-after":
 				if i + 1 < args.size():
 					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
@@ -315,9 +369,11 @@ func use_source(src: String) -> void:
 		mock.enabled = true
 		mock.set_connected(true)
 		RobotState.source = "mock"
+	gesture.reset_stream("source_changed")
+	_update_vision_link()
 
 func _physics_process(dt: float) -> void:
-	_handle_keys(dt)
+	_handle_input(dt)
 	var pose := RobotState.playback_pose(dt)
 	var anchor := RobotState.anchor_for_xy(pose.x, pose.y)
 	sim.target_rope_length = RobotState.rope_length_for_z(pose.z)
@@ -427,6 +483,7 @@ func _process(dt: float) -> void:
 	ufo_fx.update_fx(body_px, r.scale, _ufo_screen_vel, fx_move, fx_up, fx_down, dt)
 	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
 	_update_scope(dt)
+	_update_gesture_presentation(dt)
 	_log_motion("R", dt, Vector3.ZERO)
 
 ## The telescope moment: the trigger decides, the UFO peers through its
@@ -434,6 +491,8 @@ func _process(dt: float) -> void:
 func _update_scope(dt: float) -> void:
 	var lowering := GameState.state in ["LOWERING", "GRABBING"]
 	var want := scope_trigger.step(fx_move, maxf(fx_up, fx_down), lowering, dt) and scope_enabled
+	# not while the hand joystick has the crane (the UFO shows the steering then)
+	want = want and not gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
 	scope.wanted = want
 	ufo.peering = want
 	if want and scope.open_amount == 0.0:
@@ -457,7 +516,9 @@ func _place_scope() -> void:
 	# x where the UFO comes to rest (under the anchor; it may still be swinging), y of its body
 	var body := ufo.global_position + Vector2(0.0, 27.0 * ufo.pixel_scale)
 	var rest_x := proj.project(Vector3(sim.anchor.x, sim.ufo_position().y, sim.anchor.z)).screen.x
-	var placed := scope_placement(_play_w, vs.y, r, Vector2(rest_x, body.y))
+	# keep clear of the gesture HUD at the bottom
+	var h := vs.y - (GestureHud.SIZE.y + 44.0 if gesture.enabled else 0.0)
+	var placed := scope_placement(_play_w, h, r, Vector2(rest_x, body.y))
 	scope.radius = r
 	scope.center = Vector2(placed.x, placed.y)
 	ufo.peer_left = placed.z < 0.0
@@ -565,17 +626,14 @@ func _latched_jog_input() -> Vector3:
 static func jog_latch(latched: bool, any_held: bool) -> bool:
 	return latched and any_held
 
-## Real robot: dead-man jog. While an arrow key or W/S is held send `jog` every
-## 50 ms (XY in mm/s, Z in z-units/s); on release send one zero `jog` (stops at
-## once). Never retried: if messages stop, the firmware stops by itself.
-func _handle_real_jog(dt: float) -> void:
-	var d := _latched_jog_input()
-	var v := jog_velocity(Vector2(d.x, d.y), jog_speed_real_mm)
-	var vz := d.z * jog_speed_real_z
+## Real robot: dead-man jog. While a velocity is asked for, send `jog` every
+## 50 ms (XY in mm/s, Z in z-units/s); when it drops to zero send one zero `jog`
+## (stops at once). Never retried: if messages stop, the firmware stops by itself.
+func _send_jog(v: Vector3, dt: float) -> void:
 	if not ws.enabled or not ws.is_open():
 		_jog_active = false
 		return
-	if v == Vector2.ZERO and vz == 0.0:
+	if v == Vector3.ZERO:
 		if _jog_active:
 			ws.send_command("jog", {"vx": 0.0, "vy": 0.0, "vz": 0.0})
 			_jog_active = false
@@ -584,33 +642,210 @@ func _handle_real_jog(dt: float) -> void:
 	_jog_refresh_left -= dt
 	if _jog_refresh_left <= 0.0:
 		_jog_refresh_left = JOG_REFRESH_S
-		var rid: String = ws.send_command("jog", {"vx": v.x, "vy": v.y, "vz": vz})
+		var rid: String = ws.send_command("jog", {"vx": v.x, "vy": v.y, "vz": v.z})
 		_moving_jog_rids[rid] = true
 		if _moving_jog_rids.size() > 64:  # acks lost on a disconnect must not pile up
 			_moving_jog_rids.erase(_moving_jog_rids.keys()[0])
 		_jog_active = true
 
-func _handle_keys(dt: float) -> void:
-	if RobotState.source == "websocket":
-		_handle_real_jog(dt)
-		return
-	if not mock.enabled:
-		return
-	var d := _latched_jog_input()
-	if d != Vector3.ZERO:
-		var t := mock.target
-		t.x += d.x * jog_speed_mm * dt
-		t.y += d.y * jog_speed_mm * dt
-		t.z += d.z * jog_speed_z * dt
-		mock.set_target(t)
+## Every physics tick: keyboard and hand joystick -> ControlArbiter -> the one
+## jog path (real robot) or the MockRobot target.
+func _handle_input(dt: float) -> void:
+	var real := RobotState.source == "websocket"
+	var keys := _latched_jog_input()
+	var kb := Vector3.ZERO
+	if keys != Vector3.ZERO:
+		var xy := jog_velocity(Vector2(keys.x, keys.y), jog_speed_real_mm if real else jog_speed_mm)
+		kb = Vector3(xy.x, xy.y, keys.z * (jog_speed_real_z if real else jog_speed_z))
+	if gesture_sim:
+		_feed_sim_hand()
+	elif _gesture_demo_t >= 0.0:
+		_gesture_demo_t += dt
+		var ev := gesture_demo_event(_gesture_demo_t)
+		_sim_seq += 1
+		ev["sequence"] = _sim_seq
+		gesture.on_event(ev, float(Time.get_ticks_msec()))
+	gesture_gate_reason = gesture_gate()
+	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	if kb != Vector3.ZERO and gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]:
+		gesture.stop("manual")  # the keyboard takes over; the gesture needs a new pinch
+		gv = Vector2.ZERO
+	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
+	if halt and kb != Vector3.ZERO:
+		jog_hint = jog_hint_for("alarm")
+	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, 0.0), gesture.is_active())
+	control_source = d.source
+	var v: Vector3 = d.v
+	if real:
+		_send_jog(v, dt)
+	elif mock.enabled and v != Vector3.ZERO:
+		mock.set_target(mock.target + v * dt)
 		if debug_ui != null:
 			debug_ui.sync_targets_from_mock()
+
+# ------------------------------------------------------------ hand joystick
+func set_gesture_enabled(on: bool) -> void:
+	gesture.enabled = on
+	_update_vision_link()
+
+## The listen-only link to the backend is up only while the gesture needs it:
+## gesture on, the game driving its own MockRobot, no mouse simulation.
+func _update_vision_link() -> void:
+	if vision_ws == null:
+		return
+	var want := gesture.enabled and RobotState.source == "mock" and not gesture_sim and _gesture_demo_t < 0.0
+	if vision_ws.enabled != want:
+		vision_ws.enabled = want
+
+func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient) -> void:
+	# only the link that matches the current source counts (and not while simulating)
+	if gesture_sim or _gesture_demo_t >= 0.0 or (link == ws) != (RobotState.source == "websocket"):
+		return
+	gesture.on_event(data, recv_ms)
+
+## Debug: a `hand_control` event from the mouse over the play area (left button
+## = pinch), through the same path as the camera's.
+func _feed_sim_hand() -> void:
+	var vs := get_viewport_rect().size
+	var m := get_viewport().get_mouse_position()
+	var inside := m.x >= 0.0 and m.x < _play_w and m.y >= 0.0 and m.y < vs.y and get_window().has_focus()
+	var pinch := inside and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	_sim_seq += 1
+	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
+		"pinch": pinch, "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
+		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
+		"timestamp": int(Time.get_unix_time_from_system() * 1000.0), "sequence": _sim_seq, "latency_ms": 0.0},
+		float(Time.get_ticks_msec()))
+
+## The scripted hand of --gesture-demo at `t` seconds (a 7 s loop): open hand,
+## pinch, steer to the right and away, back to the centre, release, then pinch
+## again and slide out of the view at the right edge (the stop that needs a new pinch).
+static func gesture_demo_event(t: float) -> Dictionary:
+	var k := fmod(t, 7.0)
+	var c := Vector2(0.45, 0.55)
+	var p := c
+	var pinch := false
+	var seen := true
+	if k >= 0.6 and k < 4.2:
+		pinch = true
+		var s := clampf((k - 0.9) / 0.8, 0.0, 1.0) - clampf((k - 3.0) / 0.6, 0.0, 1.0)
+		p = c + Vector2(0.12, -0.07) * s
+	elif k >= 5.0 and k < 5.8:
+		pinch = true
+		p = c.lerp(Vector2(0.97, 0.5), clampf((k - 5.0) / 0.6, 0.0, 1.0))  # off the right edge
+	elif k >= 5.8:
+		seen = false
+	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,
+		"pinch": pinch and seen, "hand_x": p.x, "hand_y": p.y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
+		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
+
+## Pinch thresholds to the backend at run time (they are applied where the
+## landmarks are, in the backend). Returns false when no link is open.
+func send_gesture_config(params: Dictionary) -> bool:
+	var link := ws if RobotState.source == "websocket" else vision_ws
+	if not link.is_open():
+		return false
+	link.send_command("gesture_config", params)
+	var g: Dictionary = GameConfig.data.get("gesture", {})
+	for k in params.keys():
+		g[k] = params[k]
+	return true
+
+func set_gesture_sim(on: bool) -> void:
+	gesture_sim = on
+	gesture.reset_stream("source_changed")
+	_sim_seq = 0
+	_update_vision_link()
+
+## "" when the hand joystick may move the robot now, else why not (shown in the
+## HUD). It never starts anything itself: no homing, no motor enabling.
+func gesture_gate() -> String:
+	if gesture_require_focus and not get_window().has_focus():
+		return GATE_FOCUS
+	if RobotState.machine_state in ["ALARM", "ESTOP"]:
+		return "アラーム中:「clear_alarm」→「home」"
+	if RobotState.source == "mock":
+		return "" if mock.enabled and RobotState.connected else "ロボットに未接続"
+	return real_gesture_gate(ws.is_open(), RobotState.connected, ws.server_robot, gesture_allow_real,
+		RobotState.motors_enabled, RobotState.homed, RobotState.machine_state == "HOMING" or ws.has_pending_motion())
+
+## The real (backend) robot checks, in the order they must be fixed.
+static func real_gesture_gate(ws_open: bool, connected: bool, server_robot: String, allow_real: bool,
+		motors: bool, homed: bool, busy: bool) -> String:
+	if not ws_open:
+		return "バックエンドに未接続"
+	if not connected:
+		return "実機に未接続"
+	if server_robot != "mock" and not allow_real:
+		return "実機のジェスチャー操作は無効（gesture.allow_real_robot）"
+	if not motors:
+		return "モーターを有効にしてください"
+	if not homed:
+		return "原点復帰（home）してください"
+	if busy:
+		return "ほかの移動を実行中"
+	return ""
+
+func _on_gesture_state(from: int, to: int, why: String) -> void:
+	var S := GestureControl.STATE_NAMES
+	var line := "gesture: %s -> %s%s" % [S[from], S[to], (" (%s)" % why) if why != "" else ""]
+	if debug_ui != null:
+		debug_ui._append_log(line)
+	var was_live := from in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
+	if was_live:
+		# also in the terminal: why a steer ended, with the hand's last numbers
+		var ev := gesture.last_event
+		print("[%d ms] %s  hands %d pinch_ratio %.2f reason %s latency %.0f ms" % [Time.get_ticks_msec(), line,
+			int(ev.get("hand_count", 0)), float(ev.get("pinch_ratio", 0.0)), str(ev.get("reason", "")), float(ev.get("latency_ms", 0.0))])
+	match to:
+		GestureControl.State.ARMED:
+			ufo.flash("excited", 0.7)  # eyes light up on the pinch
+			sfx.play_cue("pinch")
+			gesture_hud.flash("操縦開始！", 0.6)
+		GestureControl.State.ACTIVE:
+			ufo.flash("straining", 0.35)  # psyched up
+		GestureControl.State.HAND_DETECTED:
+			if was_live and why == "released":
+				gesture_hud.flash("停止", 0.8)
+	# control was cut (not a plain release, not a stop asked for by hand)
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled"]:
+		sfx.play_cue("lost")
+	# lost track / stale / camera gone while driving the real robot: besides the
+	# zero jog, a decelerating STOP (no alarm)
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why in ["stale", "camera_lost", "no_events", GATE_FOCUS] \
+			and RobotState.source == "websocket" and ws.is_open():
+		_jog_active = false
+		ws.send_command("soft_stop")
+
+## UFO cues and the HUD (render frame).
+func _update_gesture_presentation(dt: float) -> void:
+	gesture_hud.gate = gesture_gate_reason
+	gesture_hud.place(_play_w, get_viewport_rect().size.y)
+	gesture_hud.step(dt)
+	var face := ""
+	var steer := Vector2.ZERO
+	if gesture.enabled:
+		var now := float(Time.get_ticks_msec())
+		var lost := gesture.state == GestureControl.State.WAITING_RELEASE and gesture.reason in ["no_hand", "stale", "camera_lost"] and not gesture.detected
+		if lost and _lost_since_ms < 0.0:
+			_lost_since_ms = now
+		elif not lost:
+			_lost_since_ms = -1.0
+		if lost and now - _lost_since_ms < 4000.0:
+			face = "lost"  # looks around for a few seconds
+		elif gesture_gate_reason != "" and gesture_gate_reason != GATE_FOCUS and gesture.detected:
+			face = "blocked"
+		elif gesture.is_active():
+			steer = gesture.velocity / maxf(gesture.joystick.max_speed, 1e-6)
+	ufo.gesture_face = face
+	ufo.steer = steer
 
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		match ev.keycode:
 			KEY_SPACE:
 				_jog_latched = _jog_input() != Vector3.ZERO
+				gesture.stop("stop_key")
 				if mock.enabled:
 					mock.emergency_stop()
 				if ws.enabled and ws.is_open():
@@ -622,6 +857,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				_layout()
 			KEY_V:
 				scope_trigger.toggle()
+			KEY_H:
+				set_gesture_enabled(not gesture.enabled)
 			KEY_G:
 				GameState.post_event("result_success")
 			KEY_F:

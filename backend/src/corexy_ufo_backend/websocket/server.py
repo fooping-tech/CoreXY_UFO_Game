@@ -8,8 +8,11 @@ Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero, grab {close}, stop (ABORT, emergency),
   soft_stop (decelerate, no alarm), jog {vx,vy,vz?} (mm/s; vz = Z value/s; dead-man: resend ~20 Hz while
-  held, {0,0} on release; the firmware stops after 250 ms without one), clear_alarm,
-  get_state, list_ports
+  held, {0,0} on release; the firmware stops after 250 ms without one; the host also
+  sends a zero jog when the jogging client disconnects or its refresh is older than
+  jog_expiry_s), clear_alarm,
+  get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
+  (hand joystick thresholds at run time; vision only)
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
@@ -37,7 +40,7 @@ from ..robot.interface import RobotCommandError, RobotInterface
 log = logging.getLogger(__name__)
 
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
-            "clear_alarm", "get_state", "list_ports")
+            "clear_alarm", "get_state", "list_ports", "gesture_config")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
@@ -61,6 +64,13 @@ class GameServer:
         self._server = None
         self._tasks: list[asyncio.Task] = []
         self._motion_lock = asyncio.Lock()
+        # Moving jog bookkeeping: who sent the last non-zero jog and when (monotonic).
+        # The firmware (and MockRobot) stop 250 ms after the last JOG by themselves;
+        # the host also stops at once when that client disconnects, and when no
+        # refresh came for jog_expiry_s (a frozen game must not keep the crane going).
+        self._jog_owner: ServerConnection | None = None
+        self._jog_last = 0.0
+        self.jog_expiry_s = 0.3
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -100,9 +110,22 @@ class GameServer:
         while True:
             try:
                 await self.robot.tick()
+                await self._expire_jog()
             except Exception:  # pragma: no cover
                 log.exception("poll loop")
             await asyncio.sleep(0.01)
+
+    async def _expire_jog(self) -> None:
+        if self._jog_owner is not None and time.monotonic() - self._jog_last > self.jog_expiry_s:
+            log.warning("jog refresh expired (%.0f ms): stopping", (time.monotonic() - self._jog_last) * 1000)
+            await self._end_jog()
+
+    async def _end_jog(self) -> None:
+        self._jog_owner = None
+        try:
+            await self.robot.jog(0.0, 0.0, 0.0)
+        except RobotCommandError as e:  # pragma: no cover - a zero jog is not refused
+            log.warning("zero jog: %s", e)
 
     async def _state_loop(self) -> None:
         # Fixed-rate schedule: sleep until the next slot instead of a fixed
@@ -164,6 +187,9 @@ class GameServer:
         finally:
             self.clients.discard(ws)
             log.info("client disconnected (%d)", len(self.clients))
+            if self._jog_owner is ws:
+                log.warning("the jogging client disconnected: stopping the jog")
+                await self._end_jog()
 
     async def _ordered_worker(self, ws: ServerConnection, queue: asyncio.Queue) -> None:
         while True:
@@ -196,6 +222,10 @@ class GameServer:
             await ws.send(json.dumps({**cached, "timestamp": now_ms(), "duplicate": True}))
             return
         reply = await self.execute(name, params)
+        if name == "jog" and reply.get("type") == "ack":
+            moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
+            self._jog_owner = ws if moving else None
+            self._jog_last = time.monotonic()
         reply["request_id"] = rid
         reply["timestamp"] = now_ms()
         if rid:
@@ -213,6 +243,12 @@ class GameServer:
                 return self._nack(name, "busy: another motion command is running")
             if name == "get_state":
                 return self._ack(name, self.robot.snapshot().to_message()["data"])
+            if name == "gesture_config":
+                # pinch thresholds of the hand joystick (vision only, never moves the robot)
+                cfg = self.vision.configure_hands(params) if self.vision is not None else None
+                if cfg is None:
+                    return self._nack(name, "no hand joystick camera (start the backend with --gesture)")
+                return self._ack(name, cfg)
             if name == "list_ports":
                 from ..serial_service.transport import list_serial_ports
                 return self._ack(name, {"ports": list_serial_ports()})

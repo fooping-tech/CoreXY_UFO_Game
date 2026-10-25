@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .base import DetectionResult, HandResult, HandTracker, ObjectDetector
+from .hand_control import HandControl
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,10 @@ class CameraConfig:
     fps: float = 15.0
     roles: tuple[str, ...] = ("objects",)  # "objects" and/or "hands"
     name: str = "A"
+    # the hand joystick: a `hand_control` event per frame from this camera's hands
+    control: HandControl | None = None
+    # include the 21 landmarks in hand_control (debugging only)
+    debug_landmarks: bool = False
 
 
 @dataclass
@@ -46,6 +52,8 @@ class _CameraWorker:
     last_hands: HandResult | None = None
     frames: int = 0
     error: str = ""
+    # a frame read failing for this long counts as a lost camera (hand control stops)
+    lost_after_s: float = 0.3
 
     def run(self) -> None:
         try:
@@ -54,7 +62,8 @@ class _CameraWorker:
             self.error = "opencv-python not installed (uv sync --extra vision)"
             log.error(self.error)
             return
-        cap = cv2.VideoCapture(self.cfg.index)
+        # AVFoundation explicitly on macOS: its indices follow camera_index_by_name()
+        cap = cv2.VideoCapture(self.cfg.index, cv2.CAP_AVFOUNDATION) if sys.platform == "darwin" else cv2.VideoCapture(self.cfg.index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
         if not cap.isOpened():
@@ -64,12 +73,21 @@ class _CameraWorker:
         period = 1.0 / max(self.cfg.fps, 1.0)
         prev_gesture = "none"
         prev_labels: set[str] = set()
+        failing_since: float | None = None
+        lost_sent = False
         while not self.stop.is_set():
             t0 = time.perf_counter()
             ok, frame = cap.read()
             if not ok:
+                now = time.monotonic()
+                failing_since = failing_since or now
+                if self.cfg.control is not None and not lost_sent and now - failing_since >= self.lost_after_s:
+                    self.on_event(self.cfg.control.camera_lost(timestamp_ms=int(time.time() * 1000)))
+                    lost_sent = True
                 time.sleep(0.05)
                 continue
+            failing_since = None
+            lost_sent = False
             self.frames += 1
             if self.detector is not None and "objects" in self.cfg.roles:
                 try:
@@ -91,10 +109,18 @@ class _CameraWorker:
                 try:
                     hr = self.hands.track(frame)
                     self.last_hands = hr
+                    if self.cfg.control is not None:
+                        h, w = frame.shape[:2]
+                        ev = self.cfg.control.update(hr.landmarks, hr.scores, w, h, time.monotonic() * 1000.0,
+                                                     timestamp_ms=int(time.time() * 1000), latency_ms=hr.latency_ms)
+                        if self.cfg.debug_landmarks:
+                            ev["landmarks"] = [[list(p) for p in hand] for hand in hr.landmarks]
+                        self.on_event(ev)
                     if hr.gesture != prev_gesture:
                         self.on_event({"event": "gesture", "camera": self.cfg.name, "gesture": hr.gesture, "detected": hr.detected})
                         prev_gesture = hr.gesture
-                    self.on_event({"event": "hands", "camera": self.cfg.name, **{k: v for k, v in hr.to_dict().items() if k != "landmarks"}})
+                    if self.cfg.control is None:  # hand_control already carries what the game needs
+                        self.on_event({"event": "hands", "camera": self.cfg.name, **{k: v for k, v in hr.to_dict().items() if k != "landmarks"}})
                 except Exception as e:  # pragma: no cover
                     self.error = f"hands: {e}"
             dt = time.perf_counter() - t0
@@ -144,6 +170,15 @@ class VisionService:
             self.detector.close()
         if self.hands:
             self.hands.close()
+
+    def configure_hands(self, params: dict[str, Any]) -> dict[str, float] | None:
+        """Update the pinch thresholds of every hand-joystick camera; returns them (None = none)."""
+        out = None
+        for cam in self.cameras:
+            if cam.control is not None:
+                cam.control.cfg.update(params)
+                out = cam.control.cfg.to_dict()
+        return out
 
     def status(self) -> list[dict[str, Any]]:
         return [{"camera": w.cfg.name, "index": w.cfg.index, "frames": w.frames, "error": w.error,
