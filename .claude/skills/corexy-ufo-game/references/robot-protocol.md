@@ -65,6 +65,6 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 | 項目 | 現状 | 影響 |
 |---|---|---|
 | GDScript Mock の E-STOP | ALARM にならず、`homed` も外れない | Mock で作った E-STOP 演出が実機の復帰手順と合わない |
-| `GameState` の ERROR | `error_cleared`（デバッグパネル Clear）でしか抜けない。`clear_alarm` → `home` 後も ERROR のまま | 実機モードで演出が戻らない |
+| `GameState` の ERROR | 接続中に実機が ALARM / ESTOP / UNKNOWN 以外を報告すると抜ける（`clear_alarm` → `home` で戻る）。デバッグパネルの Clear でも抜ける | 実機の状態が変わらない間は ERROR のまま（例: `robot_state timeout` の後、まだ IDLE のとき） |
 | `RELEASING` | `GameState._on_machine_state_changed` に対応がない | 放す動作のリアクションがない |
 | `alarm` | Python は送るが Godot は読んでいない | UI でアラームを直接出せない（`state` の ALARM で代用） |

@@ -70,6 +70,11 @@ func _on_connection_changed(c: bool) -> void:
 func _on_machine_state_changed(ms: String) -> void:
 	if not follow_robot:
 		return
+	# The machine reports a normal state again (after clear_alarm / home): the
+	# error is over. Otherwise the game stayed in ERROR (surprised face, no
+	# telescope) until someone pressed Clear in the debug panel.
+	if state == "ERROR" and ms not in ["ALARM", "ESTOP", "UNKNOWN"] and RobotState.connected:
+		post_event("error_cleared")
 	if state in ["DISCONNECTED", "ERROR", "RESULT"] and ms not in ["ALARM", "ESTOP"]:
 		if state != "RESULT":
 			return
