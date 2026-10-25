@@ -59,15 +59,22 @@ func loaded_count() -> int:
 	return n
 
 # ------------------------------------------------------------ one-shot cues
-## Hand joystick cues: "pinch" (the pinch is caught) and "lost" (control was
-## cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
+## Hand joystick cues: "hand" (an open hand is seen), "pinch" (the pinch is
+## caught), "release" (the fingers opened: a normal end of steering) and
+## "lost" (control was cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
 ## square wave with a short envelope), so they need no file; a file named in
 ## audio.cue_<name> (in audio.dir, mp3) replaces one.
 const CUE_RATE := 22050
 const CUE_NOTES := {
+	"hand": [[784.0, 0.06]],                           # "pon" (quiet)
 	"pinch": [[988.0, 0.05], [1480.0, 0.11]],          # "pi-pon!" up
+	"release": [[1480.0, 0.05], [988.0, 0.11]],        # "pon-pi" down: the pinch reversed
 	"lost": [[523.0, 0.08], [392.0, 0.08], [262.0, 0.16]],  # "bu-bu-buu" down
 }
+## Level of each cue relative to audio.volume_db.
+const CUE_GAIN_DB := {"hand": -8.0, "pinch": 0.0, "release": -3.0, "lost": 0.0}
+## Every cue played, newest last (tests / debug; capped).
+var cue_log: Array[String] = []
 var _cue_player: AudioStreamPlayer
 var _cues: Dictionary = {}
 ## Name of the cue played last (tests / debug).
@@ -87,10 +94,13 @@ func _enter_tree() -> void:
 
 func play_cue(cue: String) -> void:
 	last_cue = cue
+	cue_log.append(cue)
+	if cue_log.size() > 32:
+		cue_log.remove_at(0)
 	if not enabled or not _cues.has(cue):
 		return
 	_cue_player.stream = _cues[cue]
-	_cue_player.volume_db = volume_db
+	_cue_player.volume_db = volume_db + float(CUE_GAIN_DB.get(cue, 0.0))
 	_cue_player.play()
 
 func cue_stream(cue: String) -> AudioStream:

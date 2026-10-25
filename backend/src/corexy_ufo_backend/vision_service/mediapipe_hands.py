@@ -37,7 +37,7 @@ class MediaPipeHandTracker(HandTracker):
     name = "mediapipe"
 
     def __init__(self, max_hands: int = 2, min_confidence: float = 0.5, model_path: Path | None = None,
-                 delegate: str = "gpu", tracking_confidence: float = 0.3) -> None:
+                 delegate: str = "cpu", tracking_confidence: float = 0.3) -> None:
         try:
             import mediapipe as mp  # type: ignore
             from mediapipe.tasks.python import vision  # type: ignore
@@ -61,8 +61,11 @@ class MediaPipeHandTracker(HandTracker):
             )
             return vision.HandLandmarker.create_from_options(opts)
 
-        # GPU (Metal) roughly halves the time per frame on an M-series Mac and has
-        # fewer slow frames; it needs RGBA input. Fall back to the CPU.
+        # CPU by default. GPU (Metal) roughly halves the time per frame on an
+        # M-series Mac, but MediaPipe 1.1.1 aborted the whole process after ~8 min
+        # ("Error creating pixel buffer: -6662", a CVPixelBuffer allocation
+        # failure in ImageToTensorMetalConverter). GPU needs RGBA input; it falls
+        # back to the CPU if it cannot start.
         self.delegate = delegate.lower()
         try:
             self._landmarker = create(self.delegate)

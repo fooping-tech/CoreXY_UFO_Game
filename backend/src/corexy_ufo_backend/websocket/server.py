@@ -255,8 +255,10 @@ class GameServer:
             if name == "enable_motors":
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
+                self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
                 await self.robot.stop()
             elif name == "soft_stop":
+                self._jog_owner = None
                 # outside the motion lock: it must reach a running move
                 await self.robot.soft_stop()
             elif name == "jog":

@@ -8,6 +8,7 @@
 #   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
 #
 # 環境変数 GODOT で Godot 実行ファイルを上書きできます。
+# 環境変数 START_SH_WAIT_S でバックエンドの起動を待つ秒数を変えられます（既定 60。--gesture は約 12 秒かかる）。
 # 環境変数 START_SH_NO_GAME=1 なら Godot を起動せず、起動コマンドを表示するだけ（確認用）。
 #
 # バックエンドの WebSocket のアドレスは config/game_config.json の network.websocket_url
@@ -89,9 +90,14 @@ listener_is_ours() {
   return 1
 }
 
+# How long to wait for the backend's WebSocket. With --gesture, MediaPipe takes
+# ~11 s to load (GPU delegate) before the port opens.
+WAIT_S="${START_SH_WAIT_S:-60}"
+
 wait_for_port() {
   local i
-  for i in $(seq 1 100); do
+  for i in $(seq 1 $((WAIT_S * 10))); do
+    if (( i % 50 == 0 )); then echo "バックエンドの起動を待っています（$((i / 10)) 秒）..." >&2; fi
     if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
       echo "バックエンドが起動に失敗しました" >&2; exit 1
     fi
@@ -109,7 +115,7 @@ wait_for_port() {
     fi
     sleep 0.1
   done
-  echo "バックエンドの WebSocket ($WS_HOST:$WS_PORT) が開きませんでした" >&2
+  echo "バックエンドの WebSocket ($WS_HOST:$WS_PORT) が ${WAIT_S} 秒以内に開きませんでした（START_SH_WAIT_S で延ばせます）" >&2
   exit 1
 }
 

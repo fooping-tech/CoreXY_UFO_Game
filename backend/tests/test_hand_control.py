@@ -286,3 +286,24 @@ async def test_gesture_config_command():
         assert (await no_vision.execute("gesture_config", {"pinch_start": 0.5}))["type"] == "nack"
     finally:
         await srv.stop()
+
+
+async def test_a_stop_ends_the_jog_expiry_watch():
+    robot = await _ready_mock()
+    calls = []
+    orig = robot.jog
+    async def spy(vx, vy, vz=0.0):
+        calls.append((vx, vy, vz))
+        await orig(vx, vy, vz)
+    robot.jog = spy
+    srv, port = await _server(robot)
+    srv.jog_expiry_s = 0.15
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await _cmd(ws, "j1", "jog", vx=20, vy=0)
+            assert (await _cmd(ws, "s1", "soft_stop"))["type"] == "ack"
+            n = len(calls)
+            await asyncio.sleep(0.4)
+            assert srv._jog_owner is None and len(calls) == n  # no extra zero jog from the expiry
+    finally:
+        await srv.stop()

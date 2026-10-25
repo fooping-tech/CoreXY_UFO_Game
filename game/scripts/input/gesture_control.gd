@@ -23,7 +23,7 @@ const STATE_NAMES := ["DISABLED", "WAITING_HAND", "HAND_DETECTED", "ARMED", "ACT
 
 var joystick := HandJoystick.new()
 ## An event older than this (receive time) no longer counts: stop.
-var stale_ms := 250.0
+var stale_ms := 350.0
 ## How long ARMED shows "操縦開始！" before the stick goes live.
 var arm_delay_ms := 120.0
 ## Operating region (normalised image coords); outside it the hand is ignored.
