@@ -3,7 +3,7 @@
 #
 #   ./start.sh                     ゲームのみ（Godot 内蔵 MockRobot）
 #   ./start.sh mock [backend args] Python バックエンド --mock + ゲーム（WebSocket 経由）
-#   ./start.sh real [PORT] [args]  実機バックエンド + ゲーム（PORT 省略時は config / 自動検出）
+#   ./start.sh real [PORT] [args]  実機バックエンド + ゲーム（PORT 省略時は config / 自動検出。--gesture でハンドジェスチャー ON）
 #   ./start.sh gesture [args]      バックエンド --mock --gesture（カメラでピンチ操作）+ ゲーム（ジェスチャー ON）
 #   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
 #
@@ -161,8 +161,14 @@ case "$MODE" in
   real)
     args=()
     if [[ $# -gt 0 && "$1" != -* ]]; then args=(--port "$1"); shift; fi
+    game_args=(--source websocket)
+    for a in "$@"; do
+      # --gesture: the game starts with the hand joystick on, the backend sends the
+      # landmarks for the HUD / debug view
+      if [[ "$a" == --gesture || "$a" == --gesture=* ]]; then game_args+=(--gesture); args+=(--gesture-landmarks); fi
+    done
     start_backend ${args[@]+"${args[@]}"} "$@"
-    run_game --source websocket
+    run_game "${game_args[@]}"
     ;;
   gesture)
     # landmarks too: the debug panel draws the hand skeleton over the camera view
