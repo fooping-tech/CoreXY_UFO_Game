@@ -99,6 +99,8 @@ var jog_hint := ""
 ## the {0,0} sent on key release is always accepted and says nothing about it.
 var _moving_jog_rids := {}
 var jog_speed_z := 50.0
+## Claw step for the [ / ] keys (degrees).
+var arm_step_deg := 5.0
 
 func _ready() -> void:
 	_apply_config()
@@ -742,6 +744,26 @@ static func gesture_demo_event(t: float) -> Dictionary:
 		"pinch": pinch and seen, "hand_x": p.x, "hand_y": p.y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
 		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
 
+## Claw test: turn the claw servo by `deg` degrees (relative). The real robot
+## gets `arm_step` (SERVO_TURN 2; one step at a time, refused while another
+## move runs); the game's own MockRobot just changes its angle.
+func arm_step(deg: float) -> void:
+	if RobotState.source == "websocket":
+		if ws.is_open() and not ws.has_pending_motion():
+			ws.send_command("arm_step", {"deg": deg})
+	elif mock.enabled:
+		mock.arm_deg += deg
+		mock._report(true)
+
+## Make the claw's current angle 0 degrees.
+func arm_zero() -> void:
+	if RobotState.source == "websocket":
+		if ws.is_open():
+			ws.send_command("arm_zero")
+	elif mock.enabled:
+		mock.arm_deg = 0.0
+		mock._report(true)
+
 ## Pinch thresholds to the backend at run time (they are applied where the
 ## landmarks are, in the backend). Returns false when no link is open.
 func send_gesture_config(params: Dictionary) -> bool:
@@ -869,6 +891,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				scope_trigger.toggle()
 			KEY_H:
 				set_gesture_enabled(not gesture.enabled)
+			KEY_BRACKETLEFT:
+				arm_step(-arm_step_deg)
+			KEY_BRACKETRIGHT:
+				arm_step(arm_step_deg)
 			KEY_G:
 				GameState.post_event("result_success")
 			KEY_F:

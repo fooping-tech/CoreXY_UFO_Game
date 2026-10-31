@@ -42,6 +42,10 @@ class RobotSnapshot:
     test_mode: bool = False
     timestamp_ms: int = 0
     z_reference_set: bool = False
+    # claw servo (ID 2): degrees from the arm_zero reference (or the raw angle in
+    # its turn, 0..360, before one is set); None = not read yet
+    arm_deg: float | None = None
+    arm_reference_set: bool = False
 
     def to_message(self) -> dict:
         d = asdict(self)

@@ -46,7 +46,9 @@ def test_classify_and_failure():
 
 def test_builders_and_validation():
     assert P.cmd_xy(10, 20.5, 900) == "XY 10.000 20.500 900"
-    assert P.cmd_servo_turn(1, -1.234) == "SERVO_TURN 1 -1.23"
+    assert P.cmd_servo_turn(1, -1.234) == "SERVO_TURN 1 -1.234"
+    assert P.cmd_servo_turn(2, 1 / 360) == "SERVO_TURN 2 0.00278"  # 1 degree (it was sent as 0.00)
+    assert P.cmd_servo_turn(1, 3.0) == "SERVO_TURN 1 3.00"
     import pytest
     with pytest.raises(ValueError):
         P.validate_line("X" * 200)
