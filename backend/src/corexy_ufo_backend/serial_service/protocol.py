@@ -280,7 +280,12 @@ def cmd_xy(x: float, y: float, feed: float | None = None) -> str:
 
 
 def cmd_servo_turn(servo_id: int, turns: float) -> str:
-    return f"SERVO_TURN {servo_id} {turns:.2f}"
+    # up to 5 decimals (the firmware reads a float): 1 degree is 0.0028 turn, which
+    # "%.2f" sent as 0.00; at least 2, so whole numbers read as before ("3.00")
+    s = f"{turns:.5f}".rstrip("0")
+    if len(s.split(".")[1]) < 2:
+        s = f"{turns:.2f}"
+    return f"SERVO_TURN {servo_id} {s}"
 
 
 def cmd_servo_status(servo_id: int) -> str:

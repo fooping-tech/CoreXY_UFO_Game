@@ -41,6 +41,8 @@ COUNTS_PER_TURN = 4096
 MAX_TURNS_PER_COMMAND = 3.0
 Z_SERVO_ID = 1
 ARM_SERVO_ID = 2
+# arm_step: largest single manual step of the claw servo (degrees)
+ARM_STEP_MAX_DEG = 90.0
 SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Z jog release ramp. The firmware's servo jog holds the position it last READ when
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
@@ -80,6 +82,8 @@ class RealRobot(RobotInterface):
         self._move_t0 = 0.0
         self._move_eta = 0.0
         self._z_counts: int | None = None  # servo abs counts, last known
+        self._arm_counts: int | None = None  # claw servo abs counts, last read
+        self._arm_zero_counts: int | None = None  # arm_zero reference
         self._z_zero_counts: int | None = None
         self._z_units_est: float = cfg.limits.z_max if cfg.limits.z_up_is_positive else cfg.limits.z_min
         self._z_measured = False
@@ -376,6 +380,54 @@ class RealRobot(RobotInterface):
             self._busy = False
             self._state = MachineState.IDLE
 
+    # ------------------------------------------------------------ claw (manual)
+    async def arm_step(self, deg: float) -> None:
+        """Turn the claw servo by `deg` degrees (SERVO_TURN 2, relative; TEST_MODE ON).
+
+        Relative on purpose: SERVO_ANGLE takes the shorter way round to an angle in
+        the turn, which can swing a claw with a limited range into its stop."""
+        if not math.isfinite(deg) or abs(deg) > ARM_STEP_MAX_DEG:
+            raise RobotCommandError(f"arm_step: deg must be within +-{ARM_STEP_MAX_DEG:.0f}")
+        self._require(homed=False)  # a servo: no XY homing needed
+        if deg == 0.0:
+            return
+        self._busy = True
+        try:
+            await self._ensure_test_mode()
+            r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
+            res = P.parse_servo_result(r.completion or "")
+            if res is None or not res.ok:
+                self.error = r.completion or "arm servo failed"
+                raise RobotCommandError(self.error)
+            await self._read_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            self.error = str(e)
+            raise RobotCommandError(str(e)) from e
+        finally:
+            self._busy = False
+
+    async def _read_arm(self) -> None:
+        st = await self.serial.servo_status(ARM_SERVO_ID)
+        if not st.ok or st.abs_counts is None:
+            raise RobotCommandError(f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}")
+        self._arm_counts = st.abs_counts
+
+    async def arm_zero(self) -> None:
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        try:
+            await self._read_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            raise RobotCommandError(str(e)) from e
+        self._arm_zero_counts = self._arm_counts
+
+    def _arm_deg(self) -> float | None:
+        if self._arm_counts is None:
+            return None
+        if self._arm_zero_counts is None:
+            return (self._arm_counts % COUNTS_PER_TURN) * 360.0 / COUNTS_PER_TURN
+        return (self._arm_counts - self._arm_zero_counts) * 360.0 / COUNTS_PER_TURN
+
     def _ramped_z(self, requested: int, now: float) -> int:
         """Z rate to send: the request, or (after a release) an ease-out ramp down to 0."""
         if requested:
@@ -553,4 +605,5 @@ class RealRobot(RobotInterface):
             state=self._state, x=x, y=y, z=self._z_units_est, measured=measured and self._z_measured,
             alarm=self.alarm, error=self.error, test_mode=self.test_mode,
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
+            arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
         )

@@ -39,6 +39,7 @@ func _ready() -> void:
 	_test_gesture_states()
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
+	_test_claw_steps_on_the_mock(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -934,3 +935,25 @@ func _test_error_clears_when_the_machine_recovers(rs: Node) -> void:
 	rs.machine_state = "UNKNOWN"
 	rs.connected = was_connected
 	rs.source = was_source
+
+## Claw test controls: [ / ] and the debug buttons step the claw; arm_zero makes 0 degrees.
+func _test_claw_steps_on_the_mock(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.arm_zero()
+	game.arm_step(5.0)
+	game.arm_step(5.0)
+	game.arm_step(-1.0)
+	var after_steps: float = rs.arm_deg
+	game.arm_zero()
+	var zeroed: float = rs.arm_deg
+	var key := InputEventKey.new()
+	key.keycode = KEY_BRACKETRIGHT
+	key.pressed = true
+	game._unhandled_input(key)
+	var by_key: float = rs.arm_deg
+	_ok(is_equal_approx(after_steps, 9.0) and zeroed == 0.0 and is_equal_approx(by_key, game.arm_step_deg) and rs.arm_reference_set,
+		"claw: steps add up, arm_zero makes 0, ] steps by the set amount (mock)", "%.1f %.1f %.1f" % [after_steps, zeroed, by_key])
+	remove_child(game)
+	game.free()
+	rs.clear_samples()

@@ -42,6 +42,14 @@ class RobotInterface(ABC):
     @abstractmethod
     async def grab(self, close: bool) -> None: ...
 
+    async def arm_step(self, deg: float) -> None:
+        """Turn the claw servo by `deg` degrees from where it is (manual testing)."""
+        raise RobotCommandError("arm_step not supported")
+
+    async def arm_zero(self) -> None:
+        """Make the claw's current angle 0 degrees (its reference)."""
+        raise RobotCommandError("arm_zero not supported")
+
     @abstractmethod
     async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
         """Velocity jog (dead-man): keep sending while a key is held; all zero stops.

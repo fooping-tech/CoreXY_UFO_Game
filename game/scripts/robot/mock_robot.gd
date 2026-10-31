@@ -21,6 +21,8 @@ var pos: Vector3 = Vector3.ZERO
 var vel: Vector3 = Vector3.ZERO
 var target: Vector3 = Vector3.ZERO
 var grabbing: bool = false
+## Claw angle (degrees from its reference), like the backend's arm_step / arm_zero.
+var arm_deg: float = 0.0
 var connected: bool = true
 var _report_accum: float = 0.0
 ## Sample clock (ms) advanced by the fixed physics dt, so samples are stamped
@@ -109,6 +111,8 @@ func _report(force: bool) -> void:
 	RobotState.source = "mock"
 	RobotState.connected = connected
 	RobotState.homed = true
+	RobotState.arm_deg = arm_deg
+	RobotState.arm_reference_set = true
 	var p := pos
 	if jitter_mm > 0.0:
 		p += Vector3(randf_range(-jitter_mm, jitter_mm), randf_range(-jitter_mm, jitter_mm), 0.0)
