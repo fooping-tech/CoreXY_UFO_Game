@@ -38,6 +38,7 @@ func _ready() -> void:
 	_test_hand_joystick()
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
+	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
 	_test_claw_steps_on_the_mock(rs)
@@ -1000,7 +1001,7 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
-## Middle-finger pinch steers Z (up on the shown view = arm up); a held fist /
+## Ring-finger pinch steers Z (up on the shown view = arm up); a held fist /
 ## peace sign asks for the claw once per pose, never while the robot is gated.
 func _test_gesture_z_and_claw() -> void:
 	var g := GestureControl.new()
@@ -1016,7 +1017,7 @@ func _test_gesture_z_and_claw() -> void:
 		ev["sequence"] = seq[0]
 		g.on_event(ev, t[0])
 		g.tick(t[0], 1.0 / 60.0, gate)
-	var mid := func(y: float): return _hev(0, true, true, 0.5, y, {"pinch_finger": "middle", "pose": "open"})
+	var mid := func(y: float): return _hev(0, true, true, 0.5, y, {"pinch_finger": "ring", "pose": "open"})
 	var open_hand := func(pose: String): return _hev(0, true, false, 0.5, 0.5, {"pose": pose})
 	for i in 6:
 		step.call(open_hand.call("open"))
@@ -1032,7 +1033,7 @@ func _test_gesture_z_and_claw() -> void:
 	g.joystick.view_flip_v = false
 	step.call(open_hand.call("open"))
 	var stopped := g.velocity_z == 0.0 and g.state == GestureControl.State.HAND_DETECTED
-	_ok(up and flipped and stopped, "gesture: thumb + middle pinch steers Z only; follows the shown view; release stops",
+	_ok(up and flipped and stopped, "gesture: thumb + ring pinch steers Z only; follows the shown view; release stops",
 		"%s %s %s %.1f %s" % [up, flipped, stopped, g.velocity_z, g.state_name()])
 
 	for i in 20:  # 0.33 s of fist: not yet
@@ -1053,3 +1054,21 @@ func _test_gesture_z_and_claw() -> void:
 	var gated := claws.size() == 2
 	_ok(early and once and both and gated, "gesture: fist 0.5 s closes, peace opens, once per pose, not while gated",
 		"%s %s %s %s %s" % [early, once, both, gated, claws])
+
+## The Z pinch is told apart by ear: its own cue, different from the XY pinch.
+func _test_gesture_z_has_its_own_sound(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var S := GestureControl.State
+	game.gesture.mode = "xy"
+	game._on_gesture_state(S.HAND_DETECTED, S.ARMED, "")
+	var xy: String = game.sfx.cue_log[-1] if not game.sfx.cue_log.is_empty() else ""
+	game.gesture.mode = "z"
+	game._on_gesture_state(S.HAND_DETECTED, S.ARMED, "")
+	var z: String = game.sfx.cue_log[-1] if not game.sfx.cue_log.is_empty() else ""
+	var notes: Dictionary = game.sfx.CUE_NOTES
+	_ok(xy == "pinch" and z == "pinch_z" and notes.pinch_z != notes.pinch, "gesture: the Z pinch plays its own cue", "%s %s" % [xy, z])
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+

@@ -356,7 +356,7 @@ def test_the_gpu_landmarker_is_rebuilt_in_the_background_and_swapped():
 
 def shaped_hand(folded=(), thumb_at=None, cx=0.5, cy=0.5, size=0.2):
     """A hand with each finger out or folded (tip nearer the wrist than its PIP);
-    the thumb tip next to the tip of `thumb_at` ("index" / "middle") or well away."""
+    the thumb tip next to the tip of `thumb_at` (a finger name) or well away."""
     s = size * H
 
     def px(dx, dy):
@@ -379,17 +379,17 @@ def shaped_hand(folded=(), thumb_at=None, cx=0.5, cy=0.5, size=0.2):
     return pts
 
 
-def test_thumb_and_middle_is_the_z_pinch_and_keeps_its_finger():
+def test_thumb_and_ring_is_the_z_pinch_and_keeps_its_finger():
     ctrl = HandControl(HandControlConfig(pinch_confirm_ms=60, release_confirm_ms=0))
-    ev = frames(ctrl, [shaped_hand(thumb_at="middle")] * 4)[-1]
-    assert ev["pinch"] and ev["pinch_finger"] == "middle" and ev["pose"] == "open"
+    ev = frames(ctrl, [shaped_hand(thumb_at="ring")] * 4)[-1]
+    assert ev["pinch"] and ev["pinch_finger"] == "ring" and ev["pose"] == "open"
     ctrl = HandControl(HandControlConfig(pinch_confirm_ms=60, release_confirm_ms=0))
     ev = frames(ctrl, [shaped_hand(thumb_at="index")] * 4)[-1]
     assert ev["pinch"] and ev["pinch_finger"] == "index"
-    # once pinching with the middle finger, it stays the middle-finger pinch
-    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=0, pinch_release=1.0))
-    evs = frames(ctrl, [shaped_hand(thumb_at="middle"), shaped_hand(thumb_at="index")])
-    assert evs[1]["pinch_finger"] == "middle"
+    # once pinching with the ring finger, it stays the ring-finger pinch
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=0, pinch_start=1.0, pinch_release=1.5))
+    evs = frames(ctrl, [shaped_hand(thumb_at="ring"), shaped_hand(thumb_at="index")])  # still a pinch for the ring
+    assert evs[1]["pinch_finger"] == "ring"
 
 
 def test_fist_and_peace_are_reported_and_never_start_a_pinch():
@@ -411,7 +411,7 @@ def test_an_open_hand_releases_even_below_a_wide_release_threshold():
     cfg = HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=0, pinch_start=1.0, pinch_release=1.5)
     open_hand = shaped_hand()  # thumb out to the side: ratio about 1.3, under 1.5
     assert 1.0 < pinch_ratio(open_hand, W, H) < 1.5
-    for finger in ("index", "middle"):
+    for finger in ("index", "ring"):
         ctrl = HandControl(cfg)
         evs = frames(ctrl, [shaped_hand(thumb_at=finger), open_hand])
         assert evs[0]["pinch"] and not evs[1]["pinch"], finger

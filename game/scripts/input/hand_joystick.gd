@@ -24,7 +24,7 @@ var smoothing_ms := 80.0
 var invert_x := false
 var invert_y := false
 var swap_xy := false
-## Z (middle-finger pinch): the hand going up in the camera view as shown
+## Z (ring-finger pinch): the hand going up in the camera view as shown
 ## (view_flip_v = the overview camera's flip_v) raises the arm; invert_z flips it.
 var max_speed_z := 15.0  # z units/s (0..100 is the whole range)
 var invert_z := false

@@ -118,7 +118,7 @@ func texts() -> Array[String]:
 				return [gate, "準備ができたら、つまんで操縦"]
 			if g.claw_pose != "" and g.claw_progress(float(Time.get_ticks_msec())) > 0.0:
 				return ["爪を閉じるよ…" if g.claw_pose == "fist" else "爪を開くよ…", "そのまま"]
-			return ["🤏 つまんで操縦", "人差し指=移動 中指=上下 グー=閉じる ピース=開く"]
+			return ["🤏 つまんで操縦", "人差し指=移動 薬指=上下 グー=閉じる ピース=開く"]
 		GestureControl.State.ARMED:
 			return ["操縦開始！", ""]
 		GestureControl.State.ACTIVE:

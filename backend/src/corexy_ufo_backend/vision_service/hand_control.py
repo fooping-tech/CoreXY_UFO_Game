@@ -21,7 +21,8 @@ Rules (all thresholds from config `gesture.*`):
   - no control (detected false, pinch false) with two or more hands, a low
     confidence, or the palm outside the operating region (ROI)
   - two pinches: thumb + index (`pinch_finger` "index": the XY stick) and
-    thumb + middle ("middle": the Z stick). A pinch starts on the finger with the
+    thumb + ring ("ring": the Z stick; far enough from the index finger not to be
+    mistaken for it, by the player or the tracker). A pinch starts on the finger with the
     smaller ratio and keeps that finger until it is released
   - `pose`: "fist" (index..pinky folded), "peace" (index + middle out, ring +
     pinky folded), "open", or "other". A finger is folded when its tip is nearer
@@ -45,7 +46,8 @@ WRIST, MIDDLE_MCP = 0, 9
 MIDDLE_TIP = 12
 # (tip, pip) of index, middle, ring, pinky
 FINGERS = {"index": (8, 6), "middle": (12, 10), "ring": (16, 14), "pinky": (20, 18)}
-PINCH_TIPS = {"index": INDEX_TIP, "middle": MIDDLE_TIP}
+RING_TIP = 16
+PINCH_TIPS = {"index": INDEX_TIP, "ring": RING_TIP}
 # wrist-to-tip over wrist-to-PIP above which a finger counts as straight
 # (stretched out about 1.3; bent round to meet the thumb about 1.0)
 STRAIGHT_RATIO = 1.2
@@ -162,7 +164,7 @@ class HandControl:
     cfg: HandControlConfig = field(default_factory=HandControlConfig)
     sequence: int = 0
     _pinched: bool = False
-    _finger: str = ""  # the pinching finger ("index" / "middle"), or the one about to be confirmed
+    _finger: str = ""  # the pinching finger ("index" / "ring"), or the one about to be confirmed
     _pinch_since_ms: float | None = None
     _release_since_ms: float | None = None
     _last_good: dict[str, Any] | None = None  # the last frame with exactly one usable hand
@@ -191,7 +193,7 @@ class HandControl:
             "pinch": False, "hand_x": 0.0, "hand_y": 0.0, "pinch_ratio": 0.0, "confidence": 0.0,
             "in_roi": False, "reason": "", "frame_w": frame_w, "frame_h": frame_h,
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
-            "pinch_finger": "", "pose": "", "middle_ratio": 0.0,
+            "pinch_finger": "", "pose": "", "ring_ratio": 0.0,
         }
         conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
         lost = ""
@@ -211,7 +213,7 @@ class HandControl:
         finger = self._finger or min(ratios, key=lambda k: ratios[k])
         ratio = ratios[finger]
         ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3),
-                  middle_ratio=round(min(ratios["middle"], 99.0), 3), pose=pose)
+                  ring_ratio=round(min(ratios["ring"], 99.0), 3), pose=pose)
         if not self._in_roi(cx, cy):
             self.reset()
             ev["reason"] = "outside_roi"
@@ -254,7 +256,7 @@ class HandControl:
         ev["pinch"] = self._pinched
         ev["pinch_finger"] = self._finger if self._pinched else ""
         self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi",
-                                              "pinch_finger", "pose", "middle_ratio")}
+                                              "pinch_finger", "pose", "ring_ratio")}
         return ev
 
     def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:

@@ -335,7 +335,7 @@ func _build_gesture() -> void:
 	_gesture_status = Label.new()
 	_gesture_status.add_theme_font_size_override("font_size", 11)
 	_vbox.add_child(_gesture_status)
-	_note("人差し指つまみ = XY、中指つまみ = 上下（画面で手を上へ = アーム上げ）、グー 0.5 秒 = 爪を閉じる、ピース 0.5 秒 = 開く（爪の位置を記録してから）。検出の様子はカメラタブの Overview に重ねて出る")
+	_note("人差し指つまみ = XY、薬指つまみ = 上下（音が変わる）（画面で手を上へ = アーム上げ）、グー 0.5 秒 = 爪を閉じる、ピース 0.5 秒 = 開く（爪の位置を記録してから）。検出の様子はカメラタブの Overview に重ねて出る")
 	var box := _fold("感度・速度・ROI")
 	var gc: Dictionary = GameConfig.data.get("gesture", {})
 	_slider("g_pinch_on", "Pinch start (ratio <=)", 0.1, 1.0, float(gc.get("pinch_start", 1.0)), 0.01, func(v): main.send_gesture_config({"pinch_start": v}))

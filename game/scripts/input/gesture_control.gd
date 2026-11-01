@@ -16,7 +16,7 @@ extends RefCounted
 ## monotonic clock and by their sequence number; an old or reordered event is
 ## dropped and can never lift a stop.
 ##
-## The pinching finger picks the axis: thumb + index steers XY, thumb + middle
+## The pinching finger picks the axis: thumb + index steers XY, thumb + ring
 ## steers Z (the stick's vertical). Not pinching, a fist held for claw_hold_ms
 ## asks to close the claw and a peace sign to open it, once per pose: the same
 ## pose again does nothing until the hand shows another shape.
@@ -52,9 +52,9 @@ var state: int = State.DISABLED
 var reason := ""
 ## Velocity asked for this tick (mm/s, robot X / Y).
 var velocity := Vector2.ZERO
-## Z velocity asked for this tick (z units/s; + = arm up), middle-finger pinch only.
+## Z velocity asked for this tick (z units/s; + = arm up), ring-finger pinch only.
 var velocity_z := 0.0
-## What the current steer drives: "xy" (index pinch) or "z" (middle pinch).
+## What the current steer drives: "xy" (index pinch) or "z" (ring pinch).
 var mode := "xy"
 ## How long a fist / peace sign must be held before the claw moves.
 var claw_hold_ms := 500.0
@@ -67,7 +67,7 @@ var detected := false
 var pinch := false
 var camera_ok := false
 var pinch_ratio := 0.0
-var pinch_finger := ""  # "index" / "middle" while pinching
+var pinch_finger := ""  # "index" / "ring" while pinching
 var pose := ""  # "fist" / "peace" / "open" / "other" from the backend
 ## Fist / peace being held now, since when, and the pose that already moved the claw.
 var claw_pose := ""
@@ -246,7 +246,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 					stop(gate)
 				else:
 					joystick.set_anchor(hand)
-					mode = "z" if pinch_finger == "middle" else "xy"
+					mode = "z" if pinch_finger == "ring" else "xy"
 					_armed_ms = now_ms
 					_set_state(State.ARMED, "")
 			else:
