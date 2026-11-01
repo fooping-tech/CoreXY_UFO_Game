@@ -42,6 +42,8 @@ func _ready() -> void:
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
 	_test_claw_steps_on_the_mock(rs)
+	_test_vfx_manager()
+	_test_vfx_follows_the_game(rs)
 	_test_debug_panel_tabs_and_z_buttons(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -988,7 +990,7 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		titles.append(tabs.get_tab_title(i))
 	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
 	var d: Vector3 = game._jog_input()
-	_ok(titles[0] == "実機" and titles.size() == 6 and game.ui_jog_z == 0.0 and d.z == 0.0,
+	_ok(titles[0] == "実機" and titles.size() == 7 and game.ui_jog_z == 0.0 and d.z == 0.0,
 		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
 	# backend / serial lines and game lines land in one log; the copy has the state on top
 	game.ws._handle({"type": "log", "data": {"line": "[serial] RX JOG servo id=1 disabled test"}})
@@ -1000,6 +1002,116 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;
+## spawn_fx honours the options; one-shots free themselves; off = nothing spawns.
+func _test_vfx_manager() -> void:
+	var bad: Array[String] = []
+	for id in VFXManager.ids():
+		var m := VFXManager.meta(id)
+		var sf := VFXManager._load(id, bool(m.get("loop", false)))
+		if m.is_empty() or sf == null or sf.get_frame_count("default") != int(m.frames) \
+				or not is_equal_approx(sf.get_animation_speed("default"), float(m.fps)) \
+				or not is_equal_approx(sf.get_frame_duration("default", 0), 1.0):
+			bad.append(id)
+	_ok(VFXManager.ids().size() >= 9 and bad.is_empty(), "vfx: every catalog sheet loads (frames, fps, per-frame time)", str(bad))
+	var holder := Node2D.new()
+	add_child(holder)
+	var was_layer = VFXManager.layer if is_instance_valid(VFXManager.layer) else null
+	VFXManager.layer = holder
+	var m := VFXManager.meta("grab_burst")
+	var s := VFXManager.spawn_fx("grab_burst", Vector2(100, 200), {"scale": 3.0, "speed": 2.0, "alpha": 0.5, "layer": "back"})
+	var pivot_ok := s != null and s.offset == Vector2(m.frameSize[0], m.frameSize[1]) * 0.5 - Vector2(m.pivot[0], m.pivot[1])
+	var opts_ok := s != null and s.scale == Vector2(3, 3) and s.speed_scale == 2.0 and is_equal_approx(s.modulate.a, 0.5) \
+		and s.z_index == VFXManager.Z_BACK and s.position == Vector2(100, 200) and s.get_parent() == holder
+	var frees := s != null and s.animation_finished.is_connected(s.queue_free) and not s.sprite_frames.get_animation_loop("default")
+	var loop := VFXManager.spawn_fx("grab_burst", Vector2.ZERO, {"loop": true})
+	var loops := loop != null and loop.sprite_frames.get_animation_loop("default") and not loop.animation_finished.is_connected(loop.queue_free)
+	var target := Node2D.new()
+	holder.add_child(target)
+	target.position = Vector2(300, 50)
+	var f := VFXManager.spawn_fx("idle_glow", Vector2.ZERO, {"follow": target, "offset": Vector2(0, 10)})
+	target.position = Vector2(320, 60)
+	f._process(0.016)
+	var follows := f != null and f.global_position == Vector2(320, 70)
+	var count := VFXManager.active_count()
+	VFXManager.stop_all()
+	var stopped := VFXManager.active_count() == 0
+	VFXManager.enabled = false
+	var off := VFXManager.spawn_fx("grab_burst", Vector2.ZERO) == null
+	VFXManager.enabled = true
+	var unknown := VFXManager.spawn_fx("no_such_fx", Vector2.ZERO) == null
+	_ok(pivot_ok and opts_ok and frees and loops and follows and count == 3 and stopped and off and unknown,
+		"vfx: spawn_fx options (pivot, scale, speed, alpha, layer, loop, follow), auto free, stop_all, off",
+		"%s %s %s %s %s %d %s %s %s" % [pivot_ok, opts_ok, frees, loops, follows, count, stopped, off, unknown])
+	VFXManager.layer = was_layer
+	remove_child(holder)
+	holder.free()
+
+## The director plays the moments from GameState, loops one at a time, one-shots
+## not repeated by a duplicate event, success only from the result event.
+func _test_vfx_follows_the_game(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var gs := GameState
+	var was_follow := gs.follow_robot
+	gs.follow_robot = false
+	var log: Array[String] = VFXManager.spawned_log
+	var since := func(n: int) -> Array: return log.slice(n)
+	gs.set_state("DISCONNECTED")
+	var n := log.size()
+	gs.set_state("READY")
+	var start: Array = since.call(n)
+	n = log.size()
+	gs.set_state("MOVING")
+	gs.set_state("READY")
+	gs.set_state("MOVING")
+	var loops := VFXManager.active_count()
+	var moving: Array = since.call(n)
+	n = log.size()
+	gs.post_event("claw_closed")
+	gs.post_event("claw_closed")  # a duplicate (slow link): one burst
+	var grabs: Array = since.call(n)
+	n = log.size()
+	gs.post_event("result_success")
+	var win: Array = since.call(n)
+	n = log.size()
+	gs.set_state("READY")
+	gs.post_event("result_failure")
+	var lose: Array = since.call(n)
+	_ok(start.has("start_countdown") and start.has("start_energy") and start.has("idle_glow")
+		and moving.count("idle_glow") == 1 and not moving.has("move_sparkle") and grabs == ["grab_burst"]
+		and win.has("success_confetti") and win.has("success_sparkle") and not win.has("fail_poof")
+		and lose.has("fail_poof") and lose.has("end_fade") and not lose.has("success_confetti"),
+		"vfx: game moments -> effects (start, loops, grab once, success / failure from the result only)",
+		"%s | %s | %s | %s | %s" % [start, moving, grabs, win, lose])
+	# loops are one slot: the moving state left the idle loop stopped
+	_ok(loops <= 3, "vfx: state loops replace each other instead of stacking", "%d active" % loops)
+	# "stop all" (debug tab) frees the running loop; the next state still gets its effects
+	gs.set_state("READY")  # the idle loop runs
+	var had_loop: bool = is_instance_valid(game.vfx._loop)
+	VFXManager.stop_all()
+	await_free_now(game)
+	n = log.size()
+	gs.set_state("LOWERING")
+	_ok(had_loop and since.call(n).has("lower_charge"), "vfx: after stop all, the next state's loop still starts", "%s %s" % [had_loop, since.call(n)])
+	VFXManager.enabled = false
+	n = log.size()
+	gs.post_event("result_success")
+	_ok(log.size() == n, "vfx: off = no effects, the game goes on", str(since.call(n)))
+	VFXManager.enabled = true
+	gs.follow_robot = was_follow
+	gs.set_state("DISCONNECTED")
+	remove_child(game)
+	game.free()
+	VFXManager.stop_all()
+	rs.clear_samples()
+
+## Free what queue_free() queued under `n` now (tests run in one frame).
+func await_free_now(n: Node) -> void:
+	for c in n.get_children():
+		if c.is_queued_for_deletion():
+			c.free()
 
 ## A palm-down pinch steers Z (up on the shown view = arm up); a held fist /
 ## peace sign asks for the claw once per pose, never while the robot is gated.

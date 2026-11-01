@@ -1,0 +1,2107 @@
+{
+ "frames": [
+  {
+   "filename": "countdown 0",
+   "frame": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 1",
+   "frame": {
+    "x": 152,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 2",
+   "frame": {
+    "x": 304,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 3",
+   "frame": {
+    "x": 456,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 4",
+   "frame": {
+    "x": 608,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 5",
+   "frame": {
+    "x": 760,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 6",
+   "frame": {
+    "x": 912,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 7",
+   "frame": {
+    "x": 1064,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 8",
+   "frame": {
+    "x": 1216,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 9",
+   "frame": {
+    "x": 1368,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 10",
+   "frame": {
+    "x": 0,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 11",
+   "frame": {
+    "x": 152,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 12",
+   "frame": {
+    "x": 304,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 13",
+   "frame": {
+    "x": 456,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 14",
+   "frame": {
+    "x": 608,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 15",
+   "frame": {
+    "x": 760,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 16",
+   "frame": {
+    "x": 912,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 17",
+   "frame": {
+    "x": 1064,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 18",
+   "frame": {
+    "x": 1216,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 19",
+   "frame": {
+    "x": 1368,
+    "y": 136,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 20",
+   "frame": {
+    "x": 0,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 21",
+   "frame": {
+    "x": 152,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 22",
+   "frame": {
+    "x": 304,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 23",
+   "frame": {
+    "x": 456,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 24",
+   "frame": {
+    "x": 608,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 25",
+   "frame": {
+    "x": 760,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 26",
+   "frame": {
+    "x": 912,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 27",
+   "frame": {
+    "x": 1064,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 28",
+   "frame": {
+    "x": 1216,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 29",
+   "frame": {
+    "x": 1368,
+    "y": 272,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 30",
+   "frame": {
+    "x": 0,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 31",
+   "frame": {
+    "x": 152,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 32",
+   "frame": {
+    "x": 304,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 33",
+   "frame": {
+    "x": 456,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 34",
+   "frame": {
+    "x": 608,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 35",
+   "frame": {
+    "x": 760,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 36",
+   "frame": {
+    "x": 912,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 37",
+   "frame": {
+    "x": 1064,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 38",
+   "frame": {
+    "x": 1216,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 39",
+   "frame": {
+    "x": 1368,
+    "y": 408,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 40",
+   "frame": {
+    "x": 0,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 41",
+   "frame": {
+    "x": 152,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 42",
+   "frame": {
+    "x": 304,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 43",
+   "frame": {
+    "x": 456,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 44",
+   "frame": {
+    "x": 608,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 45",
+   "frame": {
+    "x": 760,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 46",
+   "frame": {
+    "x": 912,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 47",
+   "frame": {
+    "x": 1064,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 48",
+   "frame": {
+    "x": 1216,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 49",
+   "frame": {
+    "x": 1368,
+    "y": 544,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 50",
+   "frame": {
+    "x": 0,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 51",
+   "frame": {
+    "x": 152,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 52",
+   "frame": {
+    "x": 304,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 53",
+   "frame": {
+    "x": 456,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 54",
+   "frame": {
+    "x": 608,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 55",
+   "frame": {
+    "x": 760,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 56",
+   "frame": {
+    "x": 912,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 57",
+   "frame": {
+    "x": 1064,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 58",
+   "frame": {
+    "x": 1216,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 59",
+   "frame": {
+    "x": 1368,
+    "y": 680,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 60",
+   "frame": {
+    "x": 0,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 61",
+   "frame": {
+    "x": 152,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 62",
+   "frame": {
+    "x": 304,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 63",
+   "frame": {
+    "x": 456,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 64",
+   "frame": {
+    "x": 608,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 65",
+   "frame": {
+    "x": 760,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 66",
+   "frame": {
+    "x": 912,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 67",
+   "frame": {
+    "x": 1064,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 68",
+   "frame": {
+    "x": 1216,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 69",
+   "frame": {
+    "x": 1368,
+    "y": 816,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 70",
+   "frame": {
+    "x": 0,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 71",
+   "frame": {
+    "x": 152,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 72",
+   "frame": {
+    "x": 304,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 73",
+   "frame": {
+    "x": 456,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 74",
+   "frame": {
+    "x": 608,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 75",
+   "frame": {
+    "x": 760,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 76",
+   "frame": {
+    "x": 912,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 77",
+   "frame": {
+    "x": 1064,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 78",
+   "frame": {
+    "x": 1216,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 79",
+   "frame": {
+    "x": 1368,
+    "y": 952,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 80",
+   "frame": {
+    "x": 0,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 81",
+   "frame": {
+    "x": 152,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 82",
+   "frame": {
+    "x": 304,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 83",
+   "frame": {
+    "x": 456,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 84",
+   "frame": {
+    "x": 608,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 85",
+   "frame": {
+    "x": 760,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 86",
+   "frame": {
+    "x": 912,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 87",
+   "frame": {
+    "x": 1064,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 88",
+   "frame": {
+    "x": 1216,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 89",
+   "frame": {
+    "x": 1368,
+    "y": 1088,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 90",
+   "frame": {
+    "x": 0,
+    "y": 1224,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 91",
+   "frame": {
+    "x": 152,
+    "y": 1224,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 92",
+   "frame": {
+    "x": 304,
+    "y": 1224,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  },
+  {
+   "filename": "countdown 93",
+   "frame": {
+    "x": 456,
+    "y": 1224,
+    "w": 152,
+    "h": 136
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 152,
+    "h": 136
+   },
+   "sourceSize": {
+    "w": 152,
+    "h": 136
+   },
+   "duration": 33
+  }
+ ],
+ "meta": {
+  "app": "https://github.com/patch-gg/pixelfx",
+  "version": "1",
+  "image": "start_countdown.png",
+  "format": "RGBA8888",
+  "size": {
+   "w": 1520,
+   "h": 1360
+  },
+  "scale": "1",
+  "frameTags": [
+   {
+    "name": "countdown",
+    "from": 0,
+    "to": 93,
+    "direction": "forward"
+   }
+  ],
+  "pixelfx": {
+   "id": "ui/countdown",
+   "name": "Countdown",
+   "fps": 30,
+   "loop": false,
+   "frames": 94,
+   "frameSize": [
+    152,
+    136
+   ],
+   "pivot": [
+    76,
+    68
+   ],
+   "columns": 10
+  }
+ }
+}

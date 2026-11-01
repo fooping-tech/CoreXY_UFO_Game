@@ -42,7 +42,8 @@
     "particles": true,
     "screen_shake": true,
     "shake_max_px": 12.0,
-    "particle_amount": 1.0
+    "particle_amount": 1.0,
+    "vfx": true
   },
   "audio": {
     "enabled": true,

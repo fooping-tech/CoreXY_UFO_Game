@@ -28,6 +28,11 @@ var _gesture_status: Label
 var _claw_label: Label
 var _z_label: Label
 var _claw_marks_label: Label
+## VFX tab: the effect picked, how to play it, and the live count.
+var _vfx_option: OptionButton
+var _vfx_loop := false
+var _vfx_at_ufo := true
+var _vfx_label: Label
 var _palm_invert: bool = bool(GameConfig.get_value("gesture", "palm_invert", false))
 ## The arm-tip camera in the hardware tab: {"view": TextureRect, "info": Label}
 var _arm_cam: Dictionary = {}
@@ -102,6 +107,8 @@ func _build() -> void:
 	_build_cameras()
 	_tab("見た目")
 	_build_look()
+	_tab("VFX")
+	_build_vfx()
 	_tab("モック")
 	_build_mock()
 	_tab("ログ")
@@ -274,6 +281,53 @@ func _build_look() -> void:
 	_button(hb4, "Failure (F)", func(): GameState.post_event("result_failure"))
 	_button(hb4, "Error", func(): GameState.post_event("error"))
 	_button(hb4, "Clear", func(): GameState.post_event("error_cleared"))
+
+## pixelfx VFX: play any effect by hand, or the effects of a game moment.
+func _build_vfx() -> void:
+	_vfx_label = Label.new()
+	_vfx_label.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_vfx_label)
+	_button(_vbox, "VFX: ON/OFF", func(): VFXManager.enabled = not VFXManager.enabled)
+	_header("エフェクトを再生")
+	_vfx_option = OptionButton.new()
+	_vfx_option.add_theme_font_size_override("font_size", 11)
+	_vfx_option.focus_mode = Control.FOCUS_NONE
+	for id in VFXManager.ids():
+		_vfx_option.add_item(id)
+	_vbox.add_child(_vfx_option)
+	var hb := HBoxContainer.new()
+	_vbox.add_child(hb)
+	_button(hb, "再生", play_vfx_from_panel).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hb, "ループ: ON/OFF", func(): _vfx_loop = not _vfx_loop)
+	_button(hb, "全部止める", func(): VFXManager.stop_all())
+	_slider("vfx_speed", "速度", 0.1, 3.0, 1.0, 0.05, func(_v): pass)
+	_slider("vfx_scale", "拡大", 0.5, 4.0, 2.0, 0.25, func(_v): pass)
+	_button(_vbox, "位置: UFO / 下の X・Y", func(): _vfx_at_ufo = not _vfx_at_ufo)
+	_slider("vfx_x", "X（画面の割合）", 0.0, 1.0, 0.5, 0.01, func(_v): pass)
+	_slider("vfx_y", "Y（画面の割合）", 0.0, 1.0, 0.5, 0.01, func(_v): pass)
+	_header("ゲームの場面を模擬")
+	_note("その場面で出る VFX だけを再生する（ゲームや実機の状態は変えない）。ループの演出は 3 秒")
+	var grid := GridContainer.new()
+	grid.columns = 4
+	_vbox.add_child(grid)
+	var names := {"start": "開始", "idle": "待機", "lowering": "下降", "grab": "掴む", "success": "成功", "failure": "失敗", "end": "終了"}
+	for m in VfxDirector.MOMENTS:
+		_button(grid, names[m], func(): main.vfx.play(m, 3.0, true)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+## The debug tab's 再生: the picked effect with the tab's speed / scale / place / loop.
+func play_vfx_from_panel() -> AnimatedSprite2D:
+	if _vfx_option == null or _vfx_option.item_count == 0:
+		return null
+	var id := _vfx_option.get_item_text(_vfx_option.selected)
+	var vs := get_viewport().get_visible_rect().size
+	var pos: Vector2 = main.vfx.ufo_body() if _vfx_at_ufo else Vector2(_sliders.vfx_x.value * main._play_w, _sliders.vfx_y.value * vs.y)
+	return VFXManager.spawn_fx(id, pos, {"speed": _sliders.vfx_speed.value, "scale": _sliders.vfx_scale.value,
+		"loop": _vfx_loop, "duration": 0.0})
+
+func _update_vfx() -> void:
+	if _vfx_label != null:
+		_vfx_label.text = "VFX %s  再生中 %d  ループ %s  位置 %s" % ["ON" if VFXManager.enabled else "OFF",
+			VFXManager.active_count(), "ON" if _vfx_loop else "OFF", "UFO" if _vfx_at_ufo else "X・Y"]
 
 ## The GDScript MockRobot: link faults, dynamics and the scripted scenarios.
 func _build_mock() -> void:
@@ -621,6 +675,7 @@ func _process(_dt: float) -> void:
 	_update_cameras()
 	_update_gesture_status()
 	_update_robot_test()
+	_update_vfx()
 	_refresh_log()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim

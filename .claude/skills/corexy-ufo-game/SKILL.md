@@ -131,7 +131,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 104 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 110 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトでは先に: godot --headless --path game --import
@@ -160,6 +160,7 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 | アニメーションの仕組み | `godot-animation` | UFO は metadata 駆動のコード再生。AnimationPlayer へ移行するなら理由を示してから |
 | HUD・メニュー | `game-ui-ux`, `godot-ui-control` | デバッグパネルはコードで構築（`debug_ui.gd`）。プレイ画面にクレーンアームを描かない |
 | 性能 | `performance-optimization` | `physics_usec`、`--capture` の FPS で計測してから直す |
+| ピクセル VFX（pixelfx） | `pixelfx-vfx`（このリポジトリ専用） | カタログ → `tools/build_vfx.py` → `VFXManager.spawn_fx`。場面は `vfx_director.gd` |
 | 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける |
 | カメラ | `camera-systems` | 基本は不要。固定カメラの投影（`origin_px`）を壊す追従カメラを入れない |
 | どれか分からない | `router` | このスキルを読んだ後に使う |

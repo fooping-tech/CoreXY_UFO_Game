@@ -24,6 +24,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 GameConfig="*res://scripts/game/game_config.gd"
 RobotState="*res://scripts/robot/robot_state.gd"
 GameState="*res://scripts/game/game_state.gd"
+VFXManager="*res://scripts/vfx/vfx_manager.gd"
 
 [display]
 

@@ -1,0 +1,147 @@
+{
+  "_note": "VFX the game uses. Each entry is baked from a pixelfx effect (source + opts) into <id>.png / <id>.json by tools/build_vfx.py (Node at build time only). scale = on-screen pixels per pixelfx pixel; layer = back (behind the UFO) / front; alpha = opacity; loop overrides the sheet's loop flag. pixelfx is MIT: see LICENSE-pixelfx.txt. Moving has no entry on purpose: the UFO's own motion particles (ufo_fx.gd) already give the light while it moves.",
+  "pixelfx": {
+    "repo": "https://github.com/patch-gg/pixelfx",
+    "version": "0.3.0",
+    "commit": "a841596"
+  },
+  "effects": {
+    "start_countdown": {
+      "source": "ui/countdown",
+      "opts": {},
+      "scale": 2.0,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "start_energy": {
+      "source": "lightning/charge-up",
+      "opts": {
+        "palette": [
+          "#03101c",
+          "#072a40",
+          "#0b4a68",
+          "#127396",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.5,
+      "layer": "back",
+      "alpha": 0.9
+    },
+    "idle_glow": {
+      "source": "holy/halo",
+      "opts": {
+        "palette": [
+          "#03101c",
+          "#0b4a68",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#ffffff"
+        ]
+      },
+      "scale": 3.0,
+      "layer": "back",
+      "alpha": 0.45
+    },
+    "lower_charge": {
+      "source": "arcane/spell-charge",
+      "opts": {
+        "palette": [
+          "#03101c",
+          "#072a40",
+          "#0b4a68",
+          "#127396",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#ffffff"
+        ]
+      },
+      "scale": 2.0,
+      "layer": "back",
+      "alpha": 0.8
+    },
+    "grab_burst": {
+      "source": "pickups/collect-burst",
+      "opts": {
+        "palette": [
+          "#03101c",
+          "#072a40",
+          "#0b4a68",
+          "#127396",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#ffffff"
+        ]
+      },
+      "scale": 2.0,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "success_confetti": {
+      "source": "ui/confetti",
+      "opts": {
+        "palette": [
+          "#3cc8ff",
+          "#7ae0ff",
+          "#ffffff",
+          "#ffe03c",
+          "#5ad84a",
+          "#7a6cff",
+          "#f53cd1"
+        ]
+      },
+      "scale": 2.0,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "success_sparkle": {
+      "source": "pickups/collect-burst",
+      "opts": {
+        "palette": [
+          "#06121f",
+          "#0b4a68",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#fff3a8",
+          "#ffe03c",
+          "#ffffff"
+        ]
+      },
+      "scale": 2.5,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "fail_poof": {
+      "source": "spawn/poof",
+      "opts": {},
+      "scale": 1.5,
+      "layer": "front",
+      "alpha": 0.85
+    },
+    "end_fade": {
+      "source": "holy/feather-burst",
+      "opts": {
+        "palette": [
+          "#03101c",
+          "#072a40",
+          "#0b4a68",
+          "#127396",
+          "#1fa3c4",
+          "#4fd0ec",
+          "#a8f2ff",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.5,
+      "layer": "back",
+      "alpha": 0.8
+    }
+  }
+}
