@@ -17,6 +17,9 @@ var mock: MockRobot
 var ws: UfoWebSocketClient
 var background: Node2D
 var effects: Node2D
+var vfx: VfxDirector
+## request id of a claw close sent to the backend: its ACK is the "claw_closed" moment
+var _claw_close_rid := ""
 var ufo_fx: UfoFx
 var sfx: Sfx
 var shake: ScreenShake
@@ -152,6 +155,13 @@ func _ready() -> void:
 	effects.name = "Effects"
 	effects.set_script(load("res://scripts/ui/effects.gd"))
 	add_child(effects)
+	# pixelfx VFX on this scene (so they shake with it), driven by GameState
+	VFXManager.layer = self
+	VFXManager.enabled = bool(GameConfig.get_value("render", "vfx", true))
+	vfx = VfxDirector.new()
+	vfx.name = "VfxDirector"
+	add_child(vfx)
+	vfx.setup(self)
 	sfx = Sfx.new()
 	sfx.name = "Sfx"
 	add_child(sfx)
@@ -176,6 +186,7 @@ func _ready() -> void:
 	ws.hand_control.connect(_on_hand_control.bind(ws))
 	vision_ws.hand_control.connect(_on_hand_control.bind(vision_ws))
 	ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
+	ws.ack.connect(_on_claw_ack)
 	vision_ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
 	gesture.state_changed.connect(_on_gesture_state)
 	var hud_layer := CanvasLayer.new()
@@ -807,10 +818,20 @@ func arm_set(which: String) -> void:
 func arm_goto(which: String) -> void:
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
-			ws.send_command("arm_goto", {"which": which})
+			var rid := ws.send_command("arm_goto", {"which": which})
+			_claw_close_rid = rid if which == "closed" else ""
 	elif mock.enabled and mock.arm_marks.size() == 2:
 		mock.arm_deg = mock.arm_marks[which]
 		mock._report(true)
+		if which == "closed":
+			GameState.post_event("claw_closed")
+
+## The backend confirmed the claw closed (not just that we asked): the grab moment.
+func _on_claw_ack(rid: String, ok: bool, _payload: Dictionary) -> void:
+	if rid != "" and rid == _claw_close_rid:
+		_claw_close_rid = ""
+		if ok:
+			GameState.post_event("claw_closed")
 
 ## Pinch thresholds to the backend at run time (they are applied where the
 ## landmarks are, in the backend). Returns false when no link is open.
