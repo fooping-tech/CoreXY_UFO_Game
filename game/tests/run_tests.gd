@@ -1054,6 +1054,20 @@ func _test_gesture_z_and_claw() -> void:
 	var gated := claws.size() == 2
 	_ok(early and once and both and gated, "gesture: fist 0.5 s closes, peace opens, once per pose, not while gated",
 		"%s %s %s %s %s" % [early, once, both, gated, claws])
+	# Space while a fist builds up: no claw until the hand changes shape
+	for i in 3:
+		step.call(open_hand.call("open"))
+	for i in 10:
+		step.call(open_hand.call("fist"))
+	g.stop("stop_key")
+	for i in 60:
+		step.call(open_hand.call("fist"))
+	var held_after_stop := claws.size() == 2
+	for i in 3:
+		step.call(open_hand.call("open"))
+	for i in 40:
+		step.call(open_hand.call("fist"))
+	_ok(held_after_stop and claws.size() == 3, "gesture: a stop latches a claw pose being held; a new fist works again", str(claws))
 
 ## The Z pinch is told apart by ear: its own cue, different from the XY pinch.
 func _test_gesture_z_has_its_own_sound(rs: Node) -> void:

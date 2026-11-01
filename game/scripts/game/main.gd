@@ -714,7 +714,9 @@ func _handle_input(dt: float) -> void:
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
-	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gesture.velocity_z), gesture.is_active())
+	# gesture Z is "+ = arm up", like W: the same z_up_is_positive sign as the keys
+	var gz := gesture.velocity_z * (1.0 if GameConfig.robot().z_up_is_positive else -1.0)
+	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
 	control_source = d.source
 	var v: Vector3 = d.v
 	if real:

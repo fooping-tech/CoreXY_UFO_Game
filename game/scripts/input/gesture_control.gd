@@ -195,10 +195,14 @@ func reset_stream(why: String) -> void:
 	stop(why)
 
 ## Forced stop: zero velocity and, unless off, wait for the fingers to open.
+## A fist / peace sign being held is latched too: the claw needs a new shape.
 func stop(why: String) -> void:
 	joystick.reset()
 	velocity = Vector2.ZERO
 	velocity_z = 0.0
+	if pose in ["fist", "peace"]:
+		_claw_fired = pose
+	claw_pose = ""
 	if state == State.DISABLED:
 		return
 	if state != State.WAITING_RELEASE or reason != why:
