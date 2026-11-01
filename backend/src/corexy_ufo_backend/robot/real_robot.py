@@ -102,6 +102,7 @@ class RealRobot(RobotInterface):
 
     # ---------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
+        self._claw_marks.clear()  # a new link may mean a restarted firmware count
         await self.serial.connect()
         try:
             pos = await self.serial.query_pos()
@@ -133,6 +134,7 @@ class RealRobot(RobotInterface):
         self.motors_enabled = False
 
     def _on_serial_lost(self) -> None:
+        self._claw_marks.clear()
         self.motors_enabled = False
         self._state = MachineState.UNKNOWN
         self.error = self.serial.last_error
@@ -156,6 +158,12 @@ class RealRobot(RobotInterface):
             self.homed = False
             self.test_mode = False
             self._z_counts = None
+            # the multi-turn counts restart from the angle in the turn: counts taken
+            # before are not comparable any more (a claw span from them could point
+            # the wrong way round); the recorded angles and direction stay valid
+            self._claw_marks.clear()
+            self._arm_counts = None
+            self._arm_zero_counts = None
             self.error = "firmware rebooted"
 
     def _apply_z_counts(self, counts: int) -> None:

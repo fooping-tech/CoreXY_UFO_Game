@@ -157,3 +157,22 @@ async def test_claw_right_after_a_z_jog_waits_for_the_ramp_down_then_turns(tmp_p
         assert fw.sent.index(turns[0]) > max(i for i, l in enumerate(fw.sent) if l.startswith("JOG"))
     finally:
         await robot.disconnect()
+
+
+async def test_after_a_firmware_reboot_re_marking_keeps_the_opening_direction(tmp_path):
+    from corexy_ufo_backend.serial_service.protocol import BOOT_BANNER
+
+    robot = await make_real(tmp_path / "c.json")
+    fw = robot.serial.transport
+    try:
+        await robot.enable_motors(True)
+        fw.servo_abs[2] = 3800
+        await robot.arm_set("closed")
+        await robot.arm_step(60.0)  # open at 4483 counts: span +60
+        await robot.arm_set("open")
+        robot._on_line(BOOT_BANNER)  # power cycle while the backend keeps running
+        fw.servo_abs[2] = 4483 % 4096  # the same place, counted afresh
+        await robot.arm_set("open")
+        assert robot.snapshot().arm_span_deg == pytest.approx(60.0, abs=0.2)  # not -300
+    finally:
+        await robot.disconnect()
