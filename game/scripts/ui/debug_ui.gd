@@ -6,6 +6,8 @@ extends CanvasLayer
 ## never take keyboard focus, so Space and the arrows always reach the game.
 
 const PANEL_W := 360.0
+const LOG_MAX := 500
+const MINI_LOG_LINES := 6
 
 var main: Node2D
 var _panel: PanelContainer
@@ -13,6 +15,8 @@ var _vbox: VBoxContainer
 var _sliders: Dictionary = {}
 var _status: Label
 var _log: RichTextLabel
+var _mini_log: Label
+var _log_dirty := false
 var _expr_option: OptionButton
 var _source_option: OptionButton
 var _state_chip: Label
@@ -32,6 +36,7 @@ func setup(m: Node2D) -> void:
 	main = m
 	_build()
 	main.ws.log_line.connect(_append_log)
+	main.debug_log.connect(_append_log)
 	GameState.state_changed.connect(func(p, c): _append_log("game: %s -> %s" % [p, c]))
 	RobotState.error_reported.connect(func(e): _append_log("robot error: " + e))
 	main.mock.scenario_started.connect(func(n): _append_log("scenario start: " + n))
@@ -95,11 +100,32 @@ func _build() -> void:
 	_tab("モック")
 	_build_mock()
 	_tab("ログ")
+	_note("ゲーム・バックエンド・シリアル（TX = 送信、RX = ファームウェアから）の行。POS / JOG_POS の定期報告は省く。")
+	_log_buttons(_vbox)
 	_log = RichTextLabel.new()
-	_log.custom_minimum_size = Vector2(0, 420)
+	_log.custom_minimum_size = Vector2(0, 460)
 	_log.scroll_following = true
-	_log.add_theme_font_size_override("normal_font_size", 11)
+	_log.selection_enabled = true
+	_log.focus_mode = Control.FOCUS_NONE
+	_log.add_theme_font_size_override("normal_font_size", 10)
 	_vbox.add_child(_log)
+
+	# the last few lines stay in view whatever the tab, with the copy button
+	var mini_head := HBoxContainer.new()
+	root.add_child(mini_head)
+	var mini_title := Label.new()
+	mini_title.text = "Log"
+	mini_title.add_theme_font_size_override("font_size", 11)
+	mini_title.add_theme_color_override("font_color", Color(0.55, 0.8, 1.0))
+	mini_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mini_head.add_child(mini_title)
+	_log_buttons(mini_head)
+	_mini_log = Label.new()
+	_mini_log.add_theme_font_size_override("font_size", 10)
+	_mini_log.add_theme_color_override("font_color", Color(0.8, 0.85, 0.95))
+	_mini_log.clip_text = true
+	_mini_log.custom_minimum_size.y = MINI_LOG_LINES * 13
+	root.add_child(_mini_log)
 
 	var help := Label.new()
 	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  space=stop  V=scope  H=gesture  G/F=result  F1=hide"
@@ -497,12 +523,44 @@ func _ws_z() -> void:
 	if main.ws.enabled:
 		main.ws.send_command("move_z", {"z": _sliders.target_z.value})
 
+func _log_buttons(parent: Node) -> void:
+	_button(parent, "ログをコピー", copy_log)
+	_button(parent, "クリア", func(): _log_lines.clear(); _log_dirty = true)
+
 func _append_log(t: String) -> void:
-	_log_lines.append(t)
-	if _log_lines.size() > 60:
+	var now := Time.get_time_dict_from_system()
+	_log_lines.append("%02d:%02d:%02d.%03d %s" % [now.hour, now.minute, now.second, Time.get_ticks_msec() % 1000, t])
+	if _log_lines.size() > LOG_MAX:
 		_log_lines.remove_at(0)
+	_log_dirty = true  # redrawn once per frame: serial lines can come in bursts
+
+func _refresh_log() -> void:
+	if not _log_dirty:
+		return
+	_log_dirty = false
 	if _log != null:
 		_log.text = "\n".join(_log_lines)
+	if _mini_log != null:
+		_mini_log.text = "\n".join(_log_lines.slice(maxi(_log_lines.size() - MINI_LOG_LINES, 0)))
+
+## The state at this moment and the whole log, for pasting into a bug report.
+func log_report() -> String:
+	var lines := PackedStringArray()
+	lines.append("CoreXY UFO debug log  %s" % Time.get_datetime_string_from_system(false, true))
+	lines.append(_state_chip.text if _state_chip != null else "")
+	lines.append("robot: source=%s connected=%s machine=%s motors=%s homed=%s z=%.1f z_ref=%s arm_deg=%s backend=%s" % [
+		RobotState.source, RobotState.connected, RobotState.machine_state, RobotState.motors_enabled, RobotState.homed,
+		RobotState.z_mm, RobotState.z_reference_set, "-" if is_nan(RobotState.arm_deg) else "%.1f" % RobotState.arm_deg,
+		main.ws.server_robot if main.ws.enabled else "off"])
+	lines.append("game=%s control=%s window_focus=%s gesture=%s" % [GameState.state, main.control_source,
+		main.get_window().has_focus(), main.gesture.state_name() if main.gesture.enabled else "off"])
+	lines.append("---")
+	lines.append_array(_log_lines)
+	return "\n".join(lines)
+
+func copy_log() -> void:
+	DisplayServer.clipboard_set(log_report())
+	_append_log("(log copied to the clipboard: %d lines)" % _log_lines.size())
 
 func _process(_dt: float) -> void:
 	if main == null:
@@ -510,6 +568,7 @@ func _process(_dt: float) -> void:
 	_update_cameras()
 	_update_gesture_status()
 	_update_robot_test()
+	_refresh_log()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)

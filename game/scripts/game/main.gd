@@ -6,6 +6,9 @@ extends Node2D
 const UfoScene := preload("res://scenes/ufo.tscn")
 const DebugScene := preload("res://scenes/debug.tscn")
 
+## A line for the debug panel's log (keyboard jog start/stop, ignored keys...).
+signal debug_log(text: String)
+
 var sim := RopeSimulator.new()
 var proj := Projection25D.new()
 var rope_view: RopeView
@@ -93,6 +96,10 @@ var _jog_active := false
 ## Set by Space (stop): arrow keys are ignored until all of them are released,
 ## so a key still held after Space cannot restart the robot.
 var _jog_latched := false
+## Last keyboard jog sent to the arbiter, and whether "no focus" was logged, so the
+## debug log gets one line per change instead of one per tick.
+var _kb_logged := Vector3.ZERO
+var _unfocused_logged := false
 ## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
 var jog_hint := ""
 ## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
@@ -610,7 +617,11 @@ func _jog_input() -> Vector3:
 	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		ui_jog_z = 0.0  # a missed button_up (panel hidden mid-press) must not keep it moving
 	if not get_window().has_focus():
+		if not _unfocused_logged and _any_jog_key():
+			debug_log.emit("keys: ignored, the game window has no keyboard focus (click the game)")
+			_unfocused_logged = true
 		return d  # keys of an unfocused window must not keep the robot moving
+	_unfocused_logged = false
 	if Input.is_key_pressed(KEY_RIGHT):
 		d.x += 1
 	if Input.is_key_pressed(KEY_LEFT):
@@ -626,6 +637,12 @@ func _jog_input() -> Vector3:
 		d.z -= zsign
 	d.z = clampf(d.z + ui_jog_z * zsign, -1.0, 1.0)
 	return d
+
+func _any_jog_key() -> bool:
+	for k in [KEY_RIGHT, KEY_LEFT, KEY_UP, KEY_DOWN, KEY_W, KEY_S]:
+		if Input.is_key_pressed(k):
+			return true
+	return false
 
 ## Jog keys, or zero while stopped by Space and a key is still held.
 func _latched_jog_input() -> Vector3:
@@ -668,6 +685,13 @@ func _handle_input(dt: float) -> void:
 	if keys != Vector3.ZERO:
 		var xy := jog_velocity(Vector2(keys.x, keys.y), jog_speed_real_mm if real else jog_speed_mm)
 		kb = Vector3(xy.x, xy.y, keys.z * (jog_speed_real_z if real else jog_speed_z))
+	if kb != _kb_logged:
+		if kb == Vector3.ZERO:
+			debug_log.emit("keys: jog stop" + (" (latched by Space)" if _jog_latched else ""))
+		else:
+			debug_log.emit("keys: jog vx %.0f vy %.0f vz %.0f -> %s" % [kb.x, kb.y, kb.z,
+				("backend (open)" if ws.is_open() else "backend NOT CONNECTED") if real else "mock"])
+		_kb_logged = kb
 	if gesture_sim:
 		_feed_sim_hand()
 	elif _gesture_demo_t >= 0.0:

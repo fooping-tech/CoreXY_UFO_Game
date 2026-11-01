@@ -971,6 +971,13 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	var d: Vector3 = game._jog_input()
 	_ok(titles[0] == "実機" and titles.size() == 6 and game.ui_jog_z == 0.0 and d.z == 0.0,
 		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
+	# backend / serial lines and game lines land in one log; the copy has the state on top
+	game.ws._handle({"type": "log", "data": {"line": "[serial] RX JOG servo id=1 disabled test"}})
+	game.debug_log.emit("keys: jog vx 0 vy 0 vz 15 -> mock")
+	var report: String = game.debug_ui.log_report()
+	_ok(report.begins_with("CoreXY UFO debug log") and report.contains("robot: source=") and report.contains("window_focus=")
+		and report.contains("[serial] RX JOG servo id=1 disabled test") and report.contains("keys: jog vx 0 vy 0 vz 15"),
+		"debug panel: the log collects backend, serial and key lines; the copy starts with the state", report.left(300))
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
