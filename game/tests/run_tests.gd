@@ -1001,7 +1001,7 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
-## Ring-finger pinch steers Z (up on the shown view = arm up); a held fist /
+## A palm-down pinch steers Z (up on the shown view = arm up); a held fist /
 ## peace sign asks for the claw once per pose, never while the robot is gated.
 func _test_gesture_z_and_claw() -> void:
 	var g := GestureControl.new()
@@ -1017,7 +1017,7 @@ func _test_gesture_z_and_claw() -> void:
 		ev["sequence"] = seq[0]
 		g.on_event(ev, t[0])
 		g.tick(t[0], 1.0 / 60.0, gate)
-	var mid := func(y: float): return _hev(0, true, true, 0.5, y, {"pinch_finger": "ring", "pose": "open"})
+	var mid := func(y: float): return _hev(0, true, true, 0.5, y, {"pinch_finger": "middle", "pose": "open", "palm": "down"})
 	var open_hand := func(pose: String): return _hev(0, true, false, 0.5, 0.5, {"pose": pose})
 	for i in 6:
 		step.call(open_hand.call("open"))
@@ -1033,7 +1033,7 @@ func _test_gesture_z_and_claw() -> void:
 	g.joystick.view_flip_v = false
 	step.call(open_hand.call("open"))
 	var stopped := g.velocity_z == 0.0 and g.state == GestureControl.State.HAND_DETECTED
-	_ok(up and flipped and stopped, "gesture: thumb + ring pinch steers Z only; follows the shown view; release stops",
+	_ok(up and flipped and stopped, "gesture: a palm-down pinch steers Z only; follows the shown view; release stops",
 		"%s %s %s %.1f %s" % [up, flipped, stopped, g.velocity_z, g.state_name()])
 
 	for i in 20:  # 0.33 s of fist: not yet

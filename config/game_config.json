@@ -55,6 +55,7 @@
   },
   "gesture": {
     "enabled": false,
+    "palm_invert": false,
     "allow_real_robot": true,
     "camera": "C270",
     "frame_width": 640,

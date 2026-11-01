@@ -60,7 +60,7 @@ func loaded_count() -> int:
 
 # ------------------------------------------------------------ one-shot cues
 ## Hand joystick cues: "hand" (an open hand is seen), "pinch" (the pinch is
-## caught), "pinch_z" (the ring-finger pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and
+## caught), "pinch_z" (a palm-down pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and
 ## "lost" (control was cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
 ## square wave with a short envelope), so they need no file; a file named in
 ## audio.cue_<name> (in audio.dir, mp3) replaces one.

@@ -755,16 +755,16 @@ func _on_gesture_claw(which: String) -> void:
 	arm_goto(which)
 
 ## Debug: a `hand_control` event from the mouse over the play area (left button
-## = pinch, right button = ring-finger pinch (Z)), through the same path as the camera's.
+## = pinch, right button = a pinch with the palm down (Z)), through the same path as the camera's.
 func _feed_sim_hand() -> void:
 	var vs := get_viewport_rect().size
 	var m := get_viewport().get_mouse_position()
 	var inside := m.x >= 0.0 and m.x < _play_w and m.y >= 0.0 and m.y < vs.y and get_window().has_focus()
-	var ring := inside and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
-	var pinch := inside and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or ring)
+	var down := inside and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	var pinch := inside and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or down)
 	_sim_seq += 1
 	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
-		"pinch": pinch, "pinch_finger": ("ring" if ring else "index") if pinch else "", "pose": "open", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
+		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": "open", "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
 		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
 		"timestamp": int(Time.get_unix_time_from_system() * 1000.0), "sequence": _sim_seq, "latency_ms": 0.0},
 		float(Time.get_ticks_msec()))

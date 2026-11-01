@@ -20,10 +20,13 @@ Rules (all thresholds from config `gesture.*`):
     fingertips, so opening / closing the fingers does not move the "stick"
   - no control (detected false, pinch false) with two or more hands, a low
     confidence, or the palm outside the operating region (ROI)
-  - two pinches: thumb + index (`pinch_finger` "index": the XY stick) and
-    thumb + ring ("ring": the Z stick; far enough from the index finger not to be
-    mistaken for it, by the player or the tracker). A pinch starts on the finger with the
-    smaller ratio and keeps that finger until it is released
+  - the thumb may pinch the index, middle or ring finger (`pinch_finger`): the
+    one nearest the thumb when the pinch starts, kept until it is released
+  - `palm`: which side of the hand faces the camera above the desk, from the
+    winding of wrist -> index MCP -> pinky MCP in the image: "up" (the palm),
+    "down" (the back of the hand) or "side" (edge on, |sin| < PALM_SIDE_SIN).
+    The winding is mirrored for the other hand: a right hand by default,
+    `palm_invert` for a left one (the game uses it: palm up = XY, down = Z)
   - `pose`: "fist" (index..pinky folded), "peace" (index + middle out, ring +
     pinky folded), "open", or "other". A finger is folded when its tip is nearer
     the wrist than its PIP joint. No pinch starts in a fist or a peace sign (the
@@ -47,7 +50,9 @@ MIDDLE_TIP = 12
 # (tip, pip) of index, middle, ring, pinky
 FINGERS = {"index": (8, 6), "middle": (12, 10), "ring": (16, 14), "pinky": (20, 18)}
 RING_TIP = 16
-PINCH_TIPS = {"index": INDEX_TIP, "ring": RING_TIP}
+PINCH_TIPS = {"index": INDEX_TIP, "middle": MIDDLE_TIP, "ring": RING_TIP}
+# below this |sin| between wrist->index MCP and wrist->pinky MCP the hand is edge on
+PALM_SIDE_SIN = 0.3
 # wrist-to-tip over wrist-to-PIP above which a finger counts as straight
 # (stretched out about 1.3; bent round to meet the thumb about 1.0)
 STRAIGHT_RATIO = 1.2
@@ -71,6 +76,8 @@ class HandControlConfig:
     # operating region in normalised image coords (x0, y0, x1, y1); the whole frame by default
     roi: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
     roi_enabled: bool = False
+    # palm facing for a left hand (or a mirrored camera): swap "up" and "down"
+    palm_invert: bool = False
 
     def update(self, d: dict[str, Any]) -> None:
         """Change thresholds at run time (debug panel); the release stays above the start."""
@@ -81,11 +88,13 @@ class HandControlConfig:
         self.pinch_release = min(max(self.pinch_release, self.pinch_start + 0.05), 2.0)
         for k in ("pinch_confirm_ms", "release_confirm_ms", "lost_grace_ms"):
             setattr(self, k, min(max(getattr(self, k), 0.0), 1000.0))
+        if "palm_invert" in d:
+            self.palm_invert = bool(d["palm_invert"])
 
     def to_dict(self) -> dict[str, float]:
         return {"pinch_start": self.pinch_start, "pinch_release": self.pinch_release,
                 "pinch_confirm_ms": self.pinch_confirm_ms, "release_confirm_ms": self.release_confirm_ms,
-                "lost_grace_ms": self.lost_grace_ms}
+                "lost_grace_ms": self.lost_grace_ms, "palm_invert": self.palm_invert}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> HandControlConfig:
@@ -101,6 +110,7 @@ class HandControlConfig:
         if isinstance(roi, (list, tuple)) and len(roi) == 4:
             c.roi = tuple(float(v) for v in roi)  # type: ignore[assignment]
         c.roi_enabled = bool(d.get("roi_enabled", c.roi_enabled))
+        c.palm_invert = bool(d.get("palm_invert", c.palm_invert))
         return c
 
 
@@ -127,6 +137,26 @@ def finger_folded(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
     wx, wy = _px(lm[WRIST], w, h)
     t, p = _px(lm[tip], w, h), _px(lm[pip], w, h)
     return math.hypot(t[0] - wx, t[1] - wy) < math.hypot(p[0] - wx, p[1] - wy)
+
+
+def palm_facing(lm: list[Landmark], w: int, h: int, invert: bool = False) -> tuple[str, float]:
+    """("up" / "down" / "side", signed sin) for a right hand seen from above: the
+    back of the hand turns wrist -> index MCP -> pinky MCP clockwise on the screen
+    (image y down: positive cross product)."""
+    wx, wy = _px(lm[WRIST], w, h)
+    ax, ay = _px(lm[INDEX_MCP], w, h)
+    bx, by = _px(lm[PINKY_MCP], w, h)
+    a = (ax - wx, ay - wy)
+    b = (bx - wx, by - wy)
+    na, nb = math.hypot(*a), math.hypot(*b)
+    if na * nb <= 1e-9:
+        return "side", 0.0
+    sin = (a[0] * b[1] - a[1] * b[0]) / (na * nb)
+    if invert:
+        sin = -sin
+    if abs(sin) < PALM_SIDE_SIN:
+        return "side", sin
+    return ("down" if sin > 0 else "up"), sin
 
 
 def finger_straight(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
@@ -164,7 +194,7 @@ class HandControl:
     cfg: HandControlConfig = field(default_factory=HandControlConfig)
     sequence: int = 0
     _pinched: bool = False
-    _finger: str = ""  # the pinching finger ("index" / "ring"), or the one about to be confirmed
+    _finger: str = ""  # the pinching finger ("index" / "middle" / "ring"), or the one about to be confirmed
     _pinch_since_ms: float | None = None
     _release_since_ms: float | None = None
     _last_good: dict[str, Any] | None = None  # the last frame with exactly one usable hand
@@ -193,7 +223,7 @@ class HandControl:
             "pinch": False, "hand_x": 0.0, "hand_y": 0.0, "pinch_ratio": 0.0, "confidence": 0.0,
             "in_roi": False, "reason": "", "frame_w": frame_w, "frame_h": frame_h,
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
-            "pinch_finger": "", "pose": "", "ring_ratio": 0.0,
+            "pinch_finger": "", "pose": "", "palm": "", "palm_sin": 0.0,
         }
         conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
         lost = ""
@@ -209,11 +239,12 @@ class HandControl:
         cx, cy = palm_center(lm)
         ratios = {k: pinch_ratio(lm, frame_w, frame_h, t) for k, t in PINCH_TIPS.items()}
         pose = hand_pose(lm, frame_w, frame_h)
+        palm, palm_sin = palm_facing(lm, frame_w, frame_h, self.cfg.palm_invert)
         # the finger that counts: the held one, else the closer of the two
         finger = self._finger or min(ratios, key=lambda k: ratios[k])
         ratio = ratios[finger]
         ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3),
-                  ring_ratio=round(min(ratios["ring"], 99.0), 3), pose=pose)
+                  pose=pose, palm=palm, palm_sin=round(palm_sin, 3))
         if not self._in_roi(cx, cy):
             self.reset()
             ev["reason"] = "outside_roi"
@@ -256,7 +287,7 @@ class HandControl:
         ev["pinch"] = self._pinched
         ev["pinch_finger"] = self._finger if self._pinched else ""
         self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi",
-                                              "pinch_finger", "pose", "ring_ratio")}
+                                              "pinch_finger", "pose", "palm", "palm_sin")}
         return ev
 
     def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:
