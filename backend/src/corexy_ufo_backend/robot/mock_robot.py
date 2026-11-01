@@ -38,6 +38,7 @@ class MockRobot(RobotInterface):
         self._homing_until = 0.0
         self._last = time.monotonic()
         self.z_reference_set = True
+        self.arm_deg = 0.0  # claw: degrees from its reference
 
     async def connect(self) -> None:
         self.connected = True
@@ -88,6 +89,17 @@ class MockRobot(RobotInterface):
     async def grab(self, close: bool) -> None:
         self._require()
         self._grabbing = close
+
+    async def arm_step(self, deg: float) -> None:
+        if not math.isfinite(deg) or abs(deg) > 90.0:
+            raise RobotCommandError("arm_step: deg must be within +-90")
+        self._require(homed=False)
+        self.arm_deg += deg
+
+    async def arm_zero(self) -> None:
+        if not self.connected:
+            raise RobotCommandError("not connected")
+        self.arm_deg = 0.0
 
     async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
         if vx_mm_s == 0 and vy_mm_s == 0 and vz_units_s == 0:
@@ -186,5 +198,5 @@ class MockRobot(RobotInterface):
             connected=self.connected, homed=self.homed, motors_enabled=self.motors_enabled,
             state=self._state(), x=self.pos[0], y=self.pos[1], z=self.pos[2], measured=True,
             alarm=self.alarm, error=self.error, test_mode=True, timestamp_ms=int(time.time() * 1000),
-            z_reference_set=self.z_reference_set,
+            z_reference_set=self.z_reference_set, arm_deg=self.arm_deg, arm_reference_set=True,
         )

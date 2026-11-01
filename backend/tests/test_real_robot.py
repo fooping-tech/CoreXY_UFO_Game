@@ -103,6 +103,6 @@ async def test_grab(robot):
     await robot.enable_motors(True)
     await robot.home()
     await robot.grab(True)
-    assert robot.serial.transport.sent[-1] == "SERVO_TURN 2 0.50"
+    assert robot.serial.transport.sent[-2:] == ["SERVO_TURN 2 0.50", "SERVO_STATUS 2"]  # then re-read the claw
     await robot.grab(False)
-    assert robot.serial.transport.sent[-1] == "SERVO_TURN 2 -0.50"
+    assert robot.serial.transport.sent[-2:] == ["SERVO_TURN 2 -0.50", "SERVO_STATUS 2"]

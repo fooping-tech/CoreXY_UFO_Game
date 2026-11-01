@@ -19,6 +19,7 @@ var _log_lines: PackedStringArray = PackedStringArray()
 ## role -> {"option": OptionButton, "view": TextureRect, "info": Label}
 var _cam_ui: Dictionary = {}
 var _gesture_status: Label
+var _claw_label: Label
 var _gesture_overlay: GestureCameraOverlay
 
 func panel_width() -> float:
@@ -82,6 +83,7 @@ func _build() -> void:
 	_button(hb2, "z_zero", func(): main.ws.send_command("z_zero"))
 	_button(hb2, "clear_alarm", func(): main.ws.send_command("clear_alarm"))
 
+	_build_claw()
 	_build_gesture()
 	_build_cameras()
 
@@ -164,10 +166,34 @@ func _build() -> void:
 	_log.add_theme_font_size_override("normal_font_size", 11)
 	_vbox.add_child(_log)
 	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  H=hand gesture  G/F=result  F1=hide panel"
+	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  H=hand gesture  [ ]=claw  G/F=result  F1=hide panel"
 	help.add_theme_font_size_override("font_size", 11)
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_vbox.add_child(help)
+
+## Claw (servo 2) test: step it a little at a time and read its angle.
+func _build_claw() -> void:
+	_header("Claw (servo 2) test  [ / ] = step")
+	_claw_label = Label.new()
+	_claw_label.add_theme_font_size_override("font_size", 13)
+	_vbox.add_child(_claw_label)
+	var hb := HBoxContainer.new()
+	_vbox.add_child(hb)
+	for d in [-10.0, -1.0, 1.0, 10.0]:
+		_button(hb, "%+d°" % int(d), func(): main.arm_step(d))
+	_button(hb, "arm_zero (0° here)", func(): main.arm_zero())
+	_slider("arm_step", "Step for [ / ] (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
+
+func _update_claw() -> void:
+	if _claw_label == null:
+		return
+	var a: float = RobotState.arm_deg
+	if is_nan(a):
+		_claw_label.text = "claw: angle not read yet (step once or press arm_zero)"
+	elif RobotState.arm_reference_set:
+		_claw_label.text = "claw: %+.1f° from arm_zero" % a
+	else:
+		_claw_label.text = "claw: %.1f° (raw angle in its turn; arm_zero sets 0°)" % a
 
 ## Hand joystick: mode, simulation, live values and tuning.
 func _build_gesture() -> void:
@@ -364,6 +390,7 @@ func _process(_dt: float) -> void:
 		return
 	_update_cameras()
 	_update_gesture_status()
+	_update_claw()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)
