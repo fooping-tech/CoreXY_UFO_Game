@@ -116,10 +116,15 @@ func texts() -> Array[String]:
 		GestureControl.State.HAND_DETECTED:
 			if gate != "":
 				return [gate, "準備ができたら、つまんで操縦"]
-			return ["🤏 つまんで操縦", "親指と人差し指をつまむ"]
+			if g.claw_pose != "" and g.claw_progress(float(Time.get_ticks_msec())) > 0.0:
+				return ["爪を閉じるよ…" if g.claw_pose == "fist" else "爪を開くよ…", "そのまま"]
+			return ["🤏 つまんで操縦", "手のひら上=移動 下=上下 グー=閉じる ピース=開く"]
 		GestureControl.State.ARMED:
 			return ["操縦開始！", ""]
 		GestureControl.State.ACTIVE:
+			if g.mode == "z":
+				var zt := "上げる ▲" if g.velocity_z > 0.2 else ("下げる ▼" if g.velocity_z < -0.2 else "上下")
+				return [zt, "手を上下に動かす / 離すと止まる"]
 			var d := direction_text(g.velocity)
 			return [d if d != "" else "操縦中", "カメラの端に近いよ！" if g.edge != Vector2.ZERO else "離すと止まるよ"]
 		GestureControl.State.WAITING_RELEASE:
