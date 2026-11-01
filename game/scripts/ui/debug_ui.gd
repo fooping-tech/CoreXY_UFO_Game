@@ -28,6 +28,8 @@ var _gesture_status: Label
 var _claw_label: Label
 var _z_label: Label
 var _claw_marks_label: Label
+## The arm-tip camera in the hardware tab: {"view": TextureRect, "info": Label}
+var _arm_cam: Dictionary = {}
 var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
 
@@ -159,6 +161,20 @@ func _build_robot_test() -> void:
 	_button(hz, "z_zero", func(): main.ws.send_command("z_zero"))
 	_note("ボタンは押している間だけ動く。アームを一番上まで上げて z_zero を押すと高さが画面に出る。")
 	_slider("z_speed", "上げ下げの速さ (z/s, 実機)", 3.0, 40.0, main.jog_speed_real_z, 1.0, func(v): main.jog_speed_real_z = v)
+
+	_header("アーム先端カメラ")
+	var hub: CameraHub = main.cameras
+	var arm_view := TextureRect.new()
+	arm_view.texture = hub.texture("focus")
+	arm_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	arm_view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	arm_view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	arm_view.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 9.0 / 16.0)
+	_vbox.add_child(arm_view)
+	var arm_info := Label.new()
+	arm_info.add_theme_font_size_override("font_size", 10)
+	_vbox.add_child(arm_info)
+	_arm_cam = {"view": arm_view, "info": arm_info}
 
 	_header("3. 爪（サーボ 2）")
 	_claw_label = Label.new()
@@ -417,6 +433,12 @@ func _refresh_camera_options() -> void:
 
 func _update_cameras() -> void:
 	var hub: CameraHub = main.cameras
+	if not _arm_cam.is_empty():
+		var aw := _inner_w()
+		_arm_cam.view.custom_minimum_size = Vector2(aw, aw / hub.feed_aspect("focus"))
+		var fs := hub.feed_size("focus")
+		_arm_cam.info.text = ("%s  %dx%d（カメラの選択はカメラタブ）" % [hub.feed_name("focus"), fs.x, fs.y]) if hub.has_feed("focus") \
+			else "NO SIGNAL（カメラタブの Focus で選ぶか、camera.focus.match を設定）"
 	for role in _cam_ui.keys():
 		var ui: Dictionary = _cam_ui[role]
 		var w := _inner_w()
