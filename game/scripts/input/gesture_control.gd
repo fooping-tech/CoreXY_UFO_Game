@@ -15,8 +15,15 @@ extends RefCounted
 ## NEW pinch starts. Events are judged by the receive time on this side's
 ## monotonic clock and by their sequence number; an old or reordered event is
 ## dropped and can never lift a stop.
+##
+## The palm picks the axis when the pinch starts (thumb + index, middle or
+## ring finger): palm up steers XY, the back of the hand up (palm down) steers Z (the stick's vertical). Not pinching, a fist held for claw_hold_ms
+## asks to close the claw and a peace sign to open it, once per pose: the same
+## pose again does nothing until the hand shows another shape.
 
 signal state_changed(from: int, to: int, reason: String)
+## The claw should turn to its recorded "closed" / "open" position.
+signal claw_requested(which: String)
 
 enum State { DISABLED, WAITING_HAND, HAND_DETECTED, ARMED, ACTIVE, WAITING_RELEASE }
 const STATE_NAMES := ["DISABLED", "WAITING_HAND", "HAND_DETECTED", "ARMED", "ACTIVE", "WAITING_RELEASE"]
@@ -39,11 +46,18 @@ var enabled := false:
 			_set_state(State.DISABLED, "disabled")
 			joystick.reset()
 			velocity = Vector2.ZERO
+			velocity_z = 0.0
 var state: int = State.DISABLED
 ## Why the last stop / wait happened ("released", "lost", "stale", a gate reason...).
 var reason := ""
 ## Velocity asked for this tick (mm/s, robot X / Y).
 var velocity := Vector2.ZERO
+## Z velocity asked for this tick (z units/s; + = arm up), palm-down pinch only.
+var velocity_z := 0.0
+## What the current steer drives: "xy" (palm up / edge on) or "z" (palm down).
+var mode := "xy"
+## How long a fist / peace sign must be held before the claw moves.
+var claw_hold_ms := 500.0
 
 # latest accepted event
 var last_event: Dictionary = {}
@@ -53,6 +67,13 @@ var detected := false
 var pinch := false
 var camera_ok := false
 var pinch_ratio := 0.0
+var pinch_finger := ""  # "index" / "middle" / "ring" while pinching
+var palm := ""  # "up" / "down" / "side" from the backend
+var pose := ""  # "fist" / "peace" / "open" / "other" from the backend
+## Fist / peace being held now, since when, and the pose that already moved the claw.
+var claw_pose := ""
+var _claw_since_ms := 0.0
+var _claw_fired := ""
 var latency_ms := 0.0
 var events := 0
 var dropped := 0
@@ -120,7 +141,33 @@ func on_event(ev: Dictionary, recv_ms: float) -> bool:
 	if detected and roi_enabled and not roi.has_point(hand_norm):
 		detected = false
 	pinch = detected and bool(ev.get("pinch", false))
+	pinch_finger = str(ev.get("pinch_finger", "index")) if pinch else ""
+	if pinch and pinch_finger == "":
+		pinch_finger = "index"  # older backends / the simulator only know the index pinch
+	pose = str(ev.get("pose", "")) if detected else ""
+	palm = str(ev.get("palm", "")) if detected else ""
 	return true
+
+## 0..1 of the fist / peace hold before the claw moves (0 when none is building up).
+func claw_progress(now_ms: float) -> float:
+	if claw_pose == "" or claw_pose == _claw_fired:
+		return 0.0
+	return clampf((now_ms - _claw_since_ms) / maxf(claw_hold_ms, 1.0), 0.0, 1.0)
+
+## Not pinching, hand in view: a fist / peace held long enough asks for the claw.
+func _claw_tick(now_ms: float, gate: String) -> void:
+	if pose not in ["fist", "peace"]:
+		claw_pose = ""
+		_claw_fired = ""  # another shape: the next fist / peace counts again
+		return
+	if pose != claw_pose:
+		claw_pose = pose
+		_claw_since_ms = now_ms
+	if pose == _claw_fired or gate != "":
+		return
+	if now_ms - _claw_since_ms >= claw_hold_ms:
+		_claw_fired = pose
+		claw_requested.emit("closed" if pose == "fist" else "open")
 
 ## Which frame edges `n` (normalised image coords) is within `margin` of:
 ## x -1 left / +1 right, y -1 top / +1 bottom.
@@ -148,9 +195,14 @@ func reset_stream(why: String) -> void:
 	stop(why)
 
 ## Forced stop: zero velocity and, unless off, wait for the fingers to open.
+## A fist / peace sign being held is latched too: the claw needs a new shape.
 func stop(why: String) -> void:
 	joystick.reset()
 	velocity = Vector2.ZERO
+	velocity_z = 0.0
+	if pose in ["fist", "peace"]:
+		_claw_fired = pose
+	claw_pose = ""
 	if state == State.DISABLED:
 		return
 	if state != State.WAITING_RELEASE or reason != why:
@@ -160,6 +212,7 @@ func stop(why: String) -> void:
 ## gesture, otherwise the reason it may not (shown to the player).
 func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 	velocity = Vector2.ZERO
+	velocity_z = 0.0
 	if not enabled:
 		return velocity
 	if state == State.DISABLED:
@@ -174,6 +227,8 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 		elif state == State.WAITING_HAND and reason != why:
 			reason = why
 		return velocity
+	if not detected or pinch or state != State.HAND_DETECTED:
+		claw_pose = ""  # a claw pose only builds up on a seen, open (not pinching) hand
 	if not detected:
 		var lost := str(last_event.get("reason", "")) if not bool(last_event.get("detected", false)) else "outside_roi"
 		if lost == "":
@@ -197,8 +252,11 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 					stop(gate)
 				else:
 					joystick.set_anchor(hand)
+					mode = "z" if palm == "down" else "xy"
 					_armed_ms = now_ms
 					_set_state(State.ARMED, "")
+			else:
+				_claw_tick(now_ms, gate)
 		State.ARMED:
 			if not pinch:
 				_set_state(State.HAND_DETECTED, "released")
@@ -213,6 +271,8 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 				_set_state(State.HAND_DETECTED, "released")
 			elif gate != "":
 				stop(gate)
+			elif mode == "z":
+				velocity_z = joystick.update_z(hand, dt)
 			else:
 				velocity = joystick.update(hand, dt)
 		State.WAITING_RELEASE:

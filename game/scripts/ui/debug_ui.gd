@@ -33,6 +33,7 @@ var _vfx_option: OptionButton
 var _vfx_loop := false
 var _vfx_at_ufo := true
 var _vfx_label: Label
+var _palm_invert: bool = bool(GameConfig.get_value("gesture", "palm_invert", false))
 ## The arm-tip camera in the hardware tab: {"view": TextureRect, "info": Label}
 var _arm_cam: Dictionary = {}
 var _tabs: TabContainer
@@ -384,11 +385,13 @@ func _build_gesture() -> void:
 	_button(hb2, "Invert X", func(): j.invert_x = not j.invert_x)
 	_button(hb2, "Invert Y", func(): j.invert_y = not j.invert_y)
 	_button(hb2, "Swap XY", func(): j.swap_xy = not j.swap_xy)
+	_button(hb2, "Invert Z", func(): j.invert_z = not j.invert_z)
+	_button(hb2, "Swap palm", func(): _palm_invert = not _palm_invert; main.send_gesture_config({"palm_invert": _palm_invert}))
 	_button(hb2, "ROI: ON/OFF", func(): g.roi_enabled = not g.roi_enabled)
 	_gesture_status = Label.new()
 	_gesture_status.add_theme_font_size_override("font_size", 11)
 	_vbox.add_child(_gesture_status)
-	_note("検出の様子はカメラタブの Overview に重ねて出る")
+	_note("つまむ指は人差し指・中指・薬指のどれでもよい。手のひらを上に向けてつまむ = XY、手の甲を上に（手のひらを下に）向けてつまむ = 上下（音が変わる）。右手が前提: 逆なら「Swap palm」（画面で手を上へ = アーム上げ）、グー 0.5 秒 = 爪を閉じる、ピース 0.5 秒 = 開く（爪の位置を記録してから）。検出の様子はカメラタブの Overview に重ねて出る")
 	var box := _fold("感度・速度・ROI")
 	var gc: Dictionary = GameConfig.data.get("gesture", {})
 	_slider("g_pinch_on", "Pinch start (ratio <=)", 0.1, 1.0, float(gc.get("pinch_start", 1.0)), 0.01, func(v): main.send_gesture_config({"pinch_start": v}))
@@ -396,6 +399,8 @@ func _build_gesture() -> void:
 	_slider("g_pinch_ms", "Pinch confirm ms", 0.0, 300.0, float(gc.get("pinch_confirm_ms", 0.0)), 5.0, func(v): main.send_gesture_config({"pinch_confirm_ms": v}))
 	_slider("g_lost_ms", "Lost-hand grace ms", 0.0, 600.0, float(gc.get("lost_grace_ms", 300.0)), 10.0, func(v): main.send_gesture_config({"lost_grace_ms": v}))
 	_slider("g_speed", "Max speed mm/s", 5.0, 50.0, j.max_speed, 1.0, func(v): j.max_speed = v)
+	_slider("g_speed_z", "Max Z speed (z/s)", 3.0, 40.0, j.max_speed_z, 1.0, func(v): j.max_speed_z = v)
+	_slider("g_claw_ms", "Fist / peace hold ms", 200.0, 1500.0, g.claw_hold_ms, 50.0, func(v): g.claw_hold_ms = v)
 	_slider("g_radius", "Stick radius (short side)", 0.05, 0.4, j.radius, 0.01, func(v): j.radius = v)
 	_slider("g_dead", "Dead zone (of radius)", 0.0, 0.5, j.deadzone, 0.01, func(v): j.deadzone = v)
 	_slider("g_full", "Full speed at (of radius)", 0.3, 1.0, j.full, 0.01, func(v): j.full = v)
@@ -417,13 +422,16 @@ func _update_gesture_status() -> void:
 	var now := float(Time.get_ticks_msec())
 	var ev: Dictionary = g.last_event
 	var src := "mouse (sim)" if main.gesture_sim else ("backend camera %s %dx%d" % [GameConfig.get_value("gesture", "camera", "?"), int(ev.get("frame_w", 0)), int(ev.get("frame_h", 0))])
-	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f (on <=%.2f off >=%.2f) conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s swap %s  ROI %s %s\ngate: %s" % [
+	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f (on <=%.2f off >=%.2f) conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s  mode %s vz %+.1f\nfinger %s pose %s palm %s %+.2f%s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s Z %s swap %s  ROI %s %s\ngate: %s" % [
 		"ON" if g.enabled else "off", g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
 		src, main.control_source,
 		"yes" if g.detected else "no", "YES" if g.pinch else "no", g.pinch_ratio, float(GameConfig.get_value("gesture", "pinch_start", 0.45)), float(GameConfig.get_value("gesture", "pinch_release", 0.65)), float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
-		j.stick.x, j.stick.y, g.velocity.x, g.velocity.y,
+		j.stick.x, j.stick.y, g.velocity.x, g.velocity.y, g.mode, g.velocity_z,
+		g.pinch_finger if g.pinch_finger != "" else "-", g.pose if g.pose != "" else "-",
+		g.palm if g.palm != "" else "-", float(g.last_event.get("palm_sin", 0.0)),
+		("  claw %s %.0f%%" % [g.claw_pose, g.claw_progress(now) * 100.0]) if g.claw_pose != "" else "",
 		g.latency_ms, ("%.0f ms" % g.age_ms(now)) if g.age_ms(now) >= 0.0 else "-", g.events, g.dropped,
-		j.invert_x, j.invert_y, j.swap_xy, "ON" if g.roi_enabled else "off",
+		j.invert_x, j.invert_y, j.invert_z, j.swap_xy, "ON" if g.roi_enabled else "off",
 		"[%.2f %.2f %.2f %.2f]" % [g.roi.position.x, g.roi.position.y, g.roi.end.x, g.roi.end.y],
 		main.gesture_gate_reason if main.gesture_gate_reason != "" else "ok"]
 

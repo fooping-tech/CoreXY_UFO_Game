@@ -60,7 +60,7 @@ func loaded_count() -> int:
 
 # ------------------------------------------------------------ one-shot cues
 ## Hand joystick cues: "hand" (an open hand is seen), "pinch" (the pinch is
-## caught), "release" (the fingers opened: a normal end of steering) and
+## caught), "pinch_z" (a palm-down pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and
 ## "lost" (control was cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
 ## square wave with a short envelope), so they need no file; a file named in
 ## audio.cue_<name> (in audio.dir, mp3) replaces one.
@@ -68,11 +68,12 @@ const CUE_RATE := 22050
 const CUE_NOTES := {
 	"hand": [[784.0, 0.06]],                           # "pon" (quiet)
 	"pinch": [[988.0, 0.05], [1480.0, 0.11]],          # "pi-pon!" up
+	"pinch_z": [[523.0, 0.05], [784.0, 0.05], [523.0, 0.05], [784.0, 0.1]],  # "po-pi-po-pi": Z mode
 	"release": [[1480.0, 0.05], [988.0, 0.11]],        # "pon-pi" down: the pinch reversed
 	"lost": [[523.0, 0.08], [392.0, 0.08], [262.0, 0.16]],  # "bu-bu-buu" down
 }
 ## Level of each cue relative to audio.volume_db.
-const CUE_GAIN_DB := {"hand": -8.0, "pinch": 0.0, "release": -3.0, "lost": 0.0}
+const CUE_GAIN_DB := {"hand": -8.0, "pinch": 0.0, "pinch_z": 0.0, "release": -3.0, "lost": 0.0}
 ## Every cue played, newest last (tests / debug; capped).
 var cue_log: Array[String] = []
 var _cue_player: AudioStreamPlayer
