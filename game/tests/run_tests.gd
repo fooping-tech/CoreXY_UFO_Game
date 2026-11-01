@@ -37,6 +37,7 @@ func _ready() -> void:
 	_test_camera_scope()
 	_test_hand_joystick()
 	_test_gesture_states()
+	_test_gesture_z_and_claw()
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
 	_test_claw_steps_on_the_mock(rs)
@@ -998,3 +999,57 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## Middle-finger pinch steers Z (up on the shown view = arm up); a held fist /
+## peace sign asks for the claw once per pose, never while the robot is gated.
+func _test_gesture_z_and_claw() -> void:
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "joystick": {"smoothing_ms": 0.0, "max_speed_z": 15.0}})
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(ev: Dictionary, gate := "") -> void:
+		t[0] += 1000.0 / 60.0
+		seq[0] += 1
+		ev["sequence"] = seq[0]
+		g.on_event(ev, t[0])
+		g.tick(t[0], 1.0 / 60.0, gate)
+	var mid := func(y: float): return _hev(0, true, true, 0.5, y, {"pinch_finger": "middle", "pose": "open"})
+	var open_hand := func(pose: String): return _hev(0, true, false, 0.5, 0.5, {"pose": pose})
+	for i in 6:
+		step.call(open_hand.call("open"))
+	for i in 6:
+		step.call(mid.call(0.5))
+	for i in 10:
+		step.call(mid.call(0.3))  # hand up in the image
+	var up := g.mode == "z" and g.velocity_z > 10.0 and g.velocity == Vector2.ZERO
+	g.joystick.view_flip_v = true  # the view is shown upside down: same hand motion = down
+	for i in 10:
+		step.call(mid.call(0.3))
+	var flipped := g.velocity_z < -10.0
+	g.joystick.view_flip_v = false
+	step.call(open_hand.call("open"))
+	var stopped := g.velocity_z == 0.0 and g.state == GestureControl.State.HAND_DETECTED
+	_ok(up and flipped and stopped, "gesture: thumb + middle pinch steers Z only; follows the shown view; release stops",
+		"%s %s %s %.1f %s" % [up, flipped, stopped, g.velocity_z, g.state_name()])
+
+	for i in 20:  # 0.33 s of fist: not yet
+		step.call(open_hand.call("fist"))
+	var early := claws.is_empty()
+	for i in 20:
+		step.call(open_hand.call("fist"))
+	var once := claws == ["closed"]
+	for i in 60:
+		step.call(open_hand.call("fist"))  # still the same fist: no repeat
+	for i in 40:
+		step.call(open_hand.call("peace"))
+	var both := claws == ["closed", "open"]
+	for i in 3:
+		step.call(open_hand.call("open"))
+	for i in 40:
+		step.call(open_hand.call("fist"), "モーターを有効にしてください")  # gated: nothing
+	var gated := claws.size() == 2
+	_ok(early and once and both and gated, "gesture: fist 0.5 s closes, peace opens, once per pose, not while gated",
+		"%s %s %s %s %s" % [early, once, both, gated, claws])

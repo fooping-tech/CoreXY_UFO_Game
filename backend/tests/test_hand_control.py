@@ -352,3 +352,56 @@ def test_the_gpu_landmarker_is_rebuilt_in_the_background_and_swapped():
     cpu = MediaPipeHandTracker.__new__(MediaPipeHandTracker)
     cpu.recreate_s = 0.0
     cpu._maybe_swap()  # the CPU path is never rebuilt
+
+
+def shaped_hand(folded=(), thumb_at=None, cx=0.5, cy=0.5, size=0.2):
+    """A hand with each finger out or folded (tip nearer the wrist than its PIP);
+    the thumb tip next to the tip of `thumb_at` ("index" / "middle") or well away."""
+    s = size * H
+
+    def px(dx, dy):
+        return (cx + dx * s / W, cy + dy * s / H, 0.0)
+    pts = [px(0, 0)] * 21
+    pts[0] = px(0, 0.9)
+    mcps = {"index": (5, -0.5), "middle": (9, -0.15), "ring": (13, 0.2), "pinky": (17, 0.5)}
+    tips = {}
+    for f, (mcp, x) in mcps.items():
+        pts[mcp] = px(x, 0.0)
+        pts[mcp + 1] = px(x, -0.4)  # PIP
+        tip = px(x, 0.1) if f in folded else px(x, -0.8)
+        pts[mcp + 3] = tip
+        tips[f] = (x, 0.1 if f in folded else -0.8)
+    if thumb_at:
+        tx, ty = tips[thumb_at]
+        pts[4] = px(tx - 0.05, ty)
+    else:
+        pts[4] = px(-1.2, 0.3)
+    return pts
+
+
+def test_thumb_and_middle_is_the_z_pinch_and_keeps_its_finger():
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=60, release_confirm_ms=0))
+    ev = frames(ctrl, [shaped_hand(thumb_at="middle")] * 4)[-1]
+    assert ev["pinch"] and ev["pinch_finger"] == "middle" and ev["pose"] == "open"
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=60, release_confirm_ms=0))
+    ev = frames(ctrl, [shaped_hand(thumb_at="index")] * 4)[-1]
+    assert ev["pinch"] and ev["pinch_finger"] == "index"
+    # once pinching with the middle finger, it stays the middle-finger pinch
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=0, pinch_release=1.0))
+    evs = frames(ctrl, [shaped_hand(thumb_at="middle"), shaped_hand(thumb_at="index")])
+    assert evs[1]["pinch_finger"] == "middle"
+
+
+def test_fist_and_peace_are_reported_and_never_start_a_pinch():
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, pinch_start=1.0, pinch_release=1.5))
+    fist = shaped_hand(folded=("index", "middle", "ring", "pinky"), thumb_at="index")
+    ev = frames(ctrl, [fist] * 3)[-1]
+    assert ev["pose"] == "fist" and not ev["pinch"]
+    peace = shaped_hand(folded=("ring", "pinky"))
+    ev = frames(ctrl, [peace] * 3)[-1]
+    assert ev["pose"] == "peace" and not ev["pinch"]
+    assert frames(ctrl, [shaped_hand(folded=("ring",))])[-1]["pose"] == "other"
+    # pinching, then closing into a fist: the pinch ends at once
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=200, pinch_start=1.0, pinch_release=1.5))
+    evs = frames(ctrl, [shaped_hand(thumb_at="index"), fist])
+    assert evs[0]["pinch"] and not evs[1]["pinch"]

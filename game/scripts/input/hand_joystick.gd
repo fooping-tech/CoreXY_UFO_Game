@@ -24,6 +24,14 @@ var smoothing_ms := 80.0
 var invert_x := false
 var invert_y := false
 var swap_xy := false
+## Z (middle-finger pinch): the hand going up in the camera view as shown
+## (view_flip_v = the overview camera's flip_v) raises the arm; invert_z flips it.
+var max_speed_z := 15.0  # z units/s (0..100 is the whole range)
+var invert_z := false
+var view_flip_v := false
+## Shaped Z stick (-1..1, + = up) and the smoothed Z output (z units/s).
+var stick_z := 0.0
+var output_z := 0.0
 
 var anchor := Vector2.ZERO
 var has_anchor := false
@@ -37,11 +45,15 @@ func set_anchor(hand: Vector2) -> void:
 	has_anchor = true
 	stick = Vector2.ZERO
 	output = Vector2.ZERO
+	stick_z = 0.0
+	output_z = 0.0
 
 func reset() -> void:
 	has_anchor = false
 	stick = Vector2.ZERO
 	output = Vector2.ZERO
+	stick_z = 0.0
+	output_z = 0.0
 
 func configure(c: Dictionary) -> void:
 	radius = float(c.get("radius", radius))
@@ -53,6 +65,8 @@ func configure(c: Dictionary) -> void:
 	invert_x = bool(c.get("invert_x", invert_x))
 	invert_y = bool(c.get("invert_y", invert_y))
 	swap_xy = bool(c.get("swap_xy", swap_xy))
+	max_speed_z = float(c.get("max_speed_z", max_speed_z))
+	invert_z = bool(c.get("invert_z", invert_z))
 
 ## Offset (image short-side units) -> stick vector of length 0..1 (image axes).
 static func shape(offset: Vector2, radius_: float, dead: float, full_: float, curve_: float) -> Vector2:
@@ -74,6 +88,24 @@ func to_robot(s: Vector2) -> Vector2:
 	if invert_y:
 		v.y = -v.y
 	return v
+
+## Hand at `hand` this tick -> smoothed Z velocity (z units/s, + = arm up), from
+## the vertical offset only.
+func update_z(hand: Vector2, dt: float) -> float:
+	if not has_anchor:
+		return 0.0
+	var s := shape(Vector2(0.0, hand.y - anchor.y), radius, deadzone, full, curve).y
+	stick_z = -s  # image y grows downwards: up in the image = +
+	if view_flip_v:
+		stick_z = -stick_z  # shown upside down: up on the screen is down in the image
+	if invert_z:
+		stick_z = -stick_z
+	var target := stick_z * max_speed_z
+	var a := 1.0 if smoothing_ms <= 0.0 else 1.0 - exp(-dt * 1000.0 / smoothing_ms)
+	output_z = clampf(lerpf(output_z, target, a), -max_speed_z, max_speed_z)
+	if target == 0.0 and absf(output_z) < 0.2:
+		output_z = 0.0
+	return output_z
 
 ## Hand at `hand` this tick -> smoothed velocity (mm/s).
 func update(hand: Vector2, dt: float) -> Vector2:

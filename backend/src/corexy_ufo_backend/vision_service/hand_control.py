@@ -18,6 +18,14 @@ Rules (all thresholds from config `gesture.*`):
     fingertips, so opening / closing the fingers does not move the "stick"
   - no control (detected false, pinch false) with two or more hands, a low
     confidence, or the palm outside the operating region (ROI)
+  - two pinches: thumb + index (`pinch_finger` "index": the XY stick) and
+    thumb + middle ("middle": the Z stick). A pinch starts on the finger with the
+    smaller ratio and keeps that finger until it is released
+  - `pose`: "fist" (index..pinky folded), "peace" (index + middle out, ring +
+    pinky folded), "open", or "other". A finger is folded when its tip is nearer
+    the wrist than its PIP joint. No pinch starts in a fist or a peace sign (the
+    thumb lies near the fingertips there), nor with the pinching finger folded,
+    and turning into one ends a running pinch
 
 Pure logic, no MediaPipe import: tests feed landmarks directly.
 """
@@ -32,6 +40,10 @@ Landmark = tuple[float, float, float]
 
 THUMB_TIP, INDEX_TIP, INDEX_MCP, PINKY_MCP = 4, 8, 5, 17
 WRIST, MIDDLE_MCP = 0, 9
+MIDDLE_TIP = 12
+# (tip, pip) of index, middle, ring, pinky
+FINGERS = {"index": (8, 6), "middle": (12, 10), "ring": (16, 14), "pinky": (20, 18)}
+PINCH_TIPS = {"index": INDEX_TIP, "middle": MIDDLE_TIP}
 # palm length -> width: a flat adult hand is about 1.1-1.3 widths long, so this
 # only takes over when the width is foreshortened
 PALM_TO_WIDTH = 0.75
@@ -89,10 +101,10 @@ def _px(p: Landmark, w: int, h: int) -> tuple[float, float]:
     return (p[0] * w, p[1] * h)
 
 
-def pinch_ratio(lm: list[Landmark], w: int, h: int) -> float:
-    """Fingertip distance over the hand size (see the module doc), in pixels."""
+def pinch_ratio(lm: list[Landmark], w: int, h: int, tip: int = INDEX_TIP) -> float:
+    """Thumb-to-`tip` distance over the hand size (see the module doc), in pixels."""
     tx, ty = _px(lm[THUMB_TIP], w, h)
-    ix, iy = _px(lm[INDEX_TIP], w, h)
+    ix, iy = _px(lm[tip], w, h)
     ax, ay = _px(lm[INDEX_MCP], w, h)
     bx, by = _px(lm[PINKY_MCP], w, h)
     wx, wy = _px(lm[WRIST], w, h)
@@ -101,6 +113,25 @@ def pinch_ratio(lm: list[Landmark], w: int, h: int) -> float:
     if scale <= 1e-6:
         return math.inf
     return math.hypot(tx - ix, ty - iy) / scale
+
+
+def finger_folded(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
+    tip, pip = FINGERS[finger]
+    wx, wy = _px(lm[WRIST], w, h)
+    t, p = _px(lm[tip], w, h), _px(lm[pip], w, h)
+    return math.hypot(t[0] - wx, t[1] - wy) < math.hypot(p[0] - wx, p[1] - wy)
+
+
+def hand_pose(lm: list[Landmark], w: int, h: int) -> str:
+    """"fist" / "peace" / "open" / "other" from which fingers are folded (thumb ignored)."""
+    f = {k: finger_folded(lm, k, w, h) for k in FINGERS}
+    if all(f.values()):
+        return "fist"
+    if not f["index"] and not f["middle"] and f["ring"] and f["pinky"]:
+        return "peace"
+    if not any(f.values()):
+        return "open"
+    return "other"
 
 
 def palm_center(lm: list[Landmark]) -> tuple[float, float]:
@@ -117,6 +148,7 @@ class HandControl:
     cfg: HandControlConfig = field(default_factory=HandControlConfig)
     sequence: int = 0
     _pinched: bool = False
+    _finger: str = ""  # the pinching finger ("index" / "middle"), or the one about to be confirmed
     _pinch_since_ms: float | None = None
     _release_since_ms: float | None = None
     _last_good: dict[str, Any] | None = None  # the last frame with exactly one usable hand
@@ -124,6 +156,7 @@ class HandControl:
 
     def reset(self) -> None:
         self._pinched = False
+        self._finger = ""
         self._pinch_since_ms = None
         self._release_since_ms = None
         self._last_good = None
@@ -144,6 +177,7 @@ class HandControl:
             "pinch": False, "hand_x": 0.0, "hand_y": 0.0, "pinch_ratio": 0.0, "confidence": 0.0,
             "in_roi": False, "reason": "", "frame_w": frame_w, "frame_h": frame_h,
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
+            "pinch_finger": "", "pose": "", "middle_ratio": 0.0,
         }
         conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
         lost = ""
@@ -157,33 +191,51 @@ class HandControl:
         lm = hands[0]
         ev["confidence"] = round(conf, 3)
         cx, cy = palm_center(lm)
-        ratio = pinch_ratio(lm, frame_w, frame_h)
-        ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3))
+        ratios = {k: pinch_ratio(lm, frame_w, frame_h, t) for k, t in PINCH_TIPS.items()}
+        pose = hand_pose(lm, frame_w, frame_h)
+        # the finger that counts: the held one, else the closer of the two
+        finger = self._finger or min(ratios, key=lambda k: ratios[k])
+        ratio = ratios[finger]
+        ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3),
+                  middle_ratio=round(min(ratios["middle"], 99.0), 3), pose=pose)
         if not self._in_roi(cx, cy):
             self.reset()
             ev["reason"] = "outside_roi"
             return ev
         ev["detected"] = True
         ev["in_roi"] = True
-        if self._pinched:
+        if self._pinched and pose in ("fist", "peace"):
+            # closing into a fist can pass through a pinch-like frame; a fist keeps the
+            # ratio small and would never release: a claw pose always ends the pinch
+            self._pinched = False
+            self._finger = ""
+            self._pinch_since_ms = None
+            self._release_since_ms = None
+        elif self._pinched:
             if ratio >= self.cfg.pinch_release:
                 if self._release_since_ms is None:
                     self._release_since_ms = now_ms
                 if now_ms - self._release_since_ms >= self.cfg.release_confirm_ms:
                     self._pinched = False
+                    self._finger = ""
                     self._pinch_since_ms = None
                     self._release_since_ms = None
             else:
                 self._release_since_ms = None
-        elif ratio <= self.cfg.pinch_start:
-            if self._pinch_since_ms is None:
-                self._pinch_since_ms = now_ms
+        elif (ratio <= self.cfg.pinch_start and pose not in ("fist", "peace")
+              and not finger_folded(lm, finger, frame_w, frame_h)):
+            if self._pinch_since_ms is None or finger != self._finger:
+                self._pinch_since_ms = now_ms  # (re)start the confirmation for this finger
+            self._finger = finger
             if now_ms - self._pinch_since_ms >= self.cfg.pinch_confirm_ms:
                 self._pinched = True
         else:
             self._pinch_since_ms = None  # the closing pinch opened again before it was confirmed
+            self._finger = ""
         ev["pinch"] = self._pinched
-        self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi")}
+        ev["pinch_finger"] = self._finger if self._pinched else ""
+        self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi",
+                                              "pinch_finger", "pose", "middle_ratio")}
         return ev
 
     def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:

@@ -111,6 +111,7 @@ var arm_step_deg := 5.0
 ## Held on-screen Z buttons in the debug panel: +1 = like W (arm up), -1 = like S.
 ## Dead-man: cleared as soon as the left mouse button is up.
 var ui_jog_z := 0.0
+var _overview_flip_v := false
 
 func _ready() -> void:
 	_apply_config()
@@ -172,12 +173,15 @@ func _ready() -> void:
 	vision_ws.listen_only = true
 	add_child(vision_ws)
 	gesture.configure(GameConfig.data.get("gesture", {}))
+	var ovc = GameConfig.get_value("camera", "overview", {})
+	_overview_flip_v = ovc is Dictionary and bool(ovc.get("flip_v", false))
 	gesture_allow_real = bool(GameConfig.get_value("gesture", "allow_real_robot", false))
 	ws.hand_control.connect(_on_hand_control.bind(ws))
 	vision_ws.hand_control.connect(_on_hand_control.bind(vision_ws))
 	ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
 	vision_ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
 	gesture.state_changed.connect(_on_gesture_state)
+	gesture.claw_requested.connect(_on_gesture_claw)
 	var hud_layer := CanvasLayer.new()
 	hud_layer.name = "GestureHudLayer"
 	hud_layer.layer = 4
@@ -692,6 +696,8 @@ func _handle_input(dt: float) -> void:
 			debug_log.emit("keys: jog vx %.0f vy %.0f vz %.0f -> %s" % [kb.x, kb.y, kb.z,
 				("backend (open)" if ws.is_open() else "backend NOT CONNECTED") if real else "mock"])
 		_kb_logged = kb
+	# Z: up on the screen raises the arm; the camera view may be shown flipped, the mouse never is
+	gesture.joystick.view_flip_v = _overview_flip_v and not gesture_sim
 	if gesture_sim:
 		_feed_sim_hand()
 	elif _gesture_demo_t >= 0.0:
@@ -708,7 +714,7 @@ func _handle_input(dt: float) -> void:
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
-	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, 0.0), gesture.is_active())
+	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gesture.velocity_z), gesture.is_active())
 	control_source = d.source
 	var v: Vector3 = d.v
 	if real:
@@ -738,16 +744,27 @@ func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient
 		return
 	gesture.on_event(data, recv_ms)
 
+## A held fist / peace sign: the claw to its recorded position (like A / Q).
+func _on_gesture_claw(which: String) -> void:
+	var line := "gesture: claw %s" % which
+	if is_nan(RobotState.arm_span_deg):
+		line += " (positions not recorded: set them in the hardware tab)"
+	debug_log.emit(line)
+	gesture_hud.flash("爪を閉じる！" if which == "closed" else "爪を開く！", 0.8)
+	sfx.play_cue("pinch" if which == "closed" else "release")
+	arm_goto(which)
+
 ## Debug: a `hand_control` event from the mouse over the play area (left button
-## = pinch), through the same path as the camera's.
+## = pinch, right button = middle-finger pinch (Z)), through the same path as the camera's.
 func _feed_sim_hand() -> void:
 	var vs := get_viewport_rect().size
 	var m := get_viewport().get_mouse_position()
 	var inside := m.x >= 0.0 and m.x < _play_w and m.y >= 0.0 and m.y < vs.y and get_window().has_focus()
-	var pinch := inside and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var middle := inside and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+	var pinch := inside and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or middle)
 	_sim_seq += 1
 	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
-		"pinch": pinch, "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
+		"pinch": pinch, "pinch_finger": ("middle" if middle else "index") if pinch else "", "pose": "open", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
 		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
 		"timestamp": int(Time.get_unix_time_from_system() * 1000.0), "sequence": _sim_seq, "latency_ms": 0.0},
 		float(Time.get_ticks_msec()))
