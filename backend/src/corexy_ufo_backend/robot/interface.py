@@ -46,6 +46,14 @@ class RobotInterface(ABC):
         """Turn the claw servo by `deg` degrees from where it is (manual testing)."""
         raise RobotCommandError("arm_step not supported")
 
+    async def arm_set(self, which: str) -> None:
+        """Record the claw's current angle as its "open" or "closed" position."""
+        raise RobotCommandError("arm_set not supported")
+
+    async def arm_goto(self, which: str) -> None:
+        """Turn the claw to its recorded "open" or "closed" position."""
+        raise RobotCommandError("arm_goto not supported")
+
     async def arm_zero(self) -> None:
         """Make the claw's current angle 0 degrees (its reference)."""
         raise RobotCommandError("arm_zero not supported")

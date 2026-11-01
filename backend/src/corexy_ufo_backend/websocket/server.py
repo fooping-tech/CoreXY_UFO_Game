@@ -13,7 +13,9 @@ Command names and safety rules:
   jog_expiry_s), clear_alarm,
   get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
   (hand joystick thresholds at run time; vision only), arm_step {deg} (claw servo ID 2 turned
-  by deg degrees, relative, |deg| <= 90; a motion command), arm_zero (claw angle reference)
+  by deg degrees, relative, |deg| <= 90; a motion command), arm_zero (claw angle reference),
+  arm_set {which: closed|open} (record the claw's current angle as that position; saved),
+  arm_goto {which} (turn the claw there, on the closed..open arc; a motion command)
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
@@ -45,8 +47,9 @@ SERIAL_LOG_SKIP = ("TX POS", "RX POS ", "RX JOG_POS ")
 LOG_QUEUE_MAX = 500
 
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
-            "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero")
-MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step")
+            "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
+            "arm_set", "arm_goto")
+MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
 PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state")
@@ -341,6 +344,8 @@ class GameServer:
                 await self.robot.set_z_zero()
             elif name == "arm_zero":
                 await self.robot.arm_zero()
+            elif name == "arm_set":
+                await self.robot.arm_set(str(params["which"]))
             else:
                 async with self._motion_lock:
                     if name == "home":
@@ -353,6 +358,8 @@ class GameServer:
                         await self.robot.grab(bool(params.get("close", True)))
                     elif name == "arm_step":
                         await self.robot.arm_step(float(params["deg"]))
+                    elif name == "arm_goto":
+                        await self.robot.arm_goto(str(params["which"]))
             return self._ack(name, self.robot.snapshot().to_message()["data"])
         except (KeyError, ValueError, TypeError) as e:
             return self._nack(name, f"bad params: {e}")

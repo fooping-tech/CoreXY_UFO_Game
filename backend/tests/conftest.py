@@ -156,7 +156,9 @@ class FakeFirmware(SerialTransport):
             _, sid, turns = line.split()
             sid = int(sid)
             turns = float(turns)
-            if not self.test_mode:
+            if self.jogging:
+                self._emit("NACK_SERVO_TURN reason=jog_active")
+            elif not self.test_mode:
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=test_mode_off")
             elif abs(turns) > 3.0:
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over")

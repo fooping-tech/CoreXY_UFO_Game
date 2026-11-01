@@ -193,11 +193,14 @@ class SerialService:
             try:
                 queued = False
                 ack_re = re.compile(rf"^ACK (QUEUED {re.escape(name)}\b|ABORT requested)|^ERROR: ")
+                # the firmware may queue a command and then refuse it (NACK_<name> reason=...,
+                # e.g. jog_active): that ends the wait at once instead of a timeout
+                nack_re = re.compile(rf"^NACK_{re.escape(name)}\b")
                 done_fut: asyncio.Future | None = None
                 for _attempt in range(queue_retries):
                     ack_fut = self._register(lambda l: bool(ack_re.match(l)))
                     if completion is not None and done_fut is None:
-                        done_fut = self._register(lambda l: bool(completion.match(l)))
+                        done_fut = self._register(lambda l: bool(completion.match(l) or nack_re.match(l)))
                     self.transport.write_line(command)
                     line = await self._await(ack_fut, timeout=3.0)
                     if line == P.QUEUE_FULL:

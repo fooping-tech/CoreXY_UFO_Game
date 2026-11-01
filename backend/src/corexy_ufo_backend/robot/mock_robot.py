@@ -39,6 +39,7 @@ class MockRobot(RobotInterface):
         self._last = time.monotonic()
         self.z_reference_set = True
         self.arm_deg = 0.0  # claw: degrees from its reference
+        self.arm_marks: dict[str, float] = {}  # claw positions recorded by arm_set
 
     async def connect(self) -> None:
         self.connected = True
@@ -95,6 +96,21 @@ class MockRobot(RobotInterface):
             raise RobotCommandError("arm_step: deg must be within +-90")
         self._require(homed=False)
         self.arm_deg += deg
+
+    async def arm_set(self, which: str) -> None:
+        if which not in ("closed", "open"):
+            raise RobotCommandError("arm_set: which must be closed or open")
+        if not self.connected:
+            raise RobotCommandError("not connected")
+        self.arm_marks[which] = self.arm_deg
+
+    async def arm_goto(self, which: str) -> None:
+        if which not in ("closed", "open"):
+            raise RobotCommandError("arm_goto: which must be closed or open")
+        if len(self.arm_marks) < 2:
+            raise RobotCommandError("claw open / closed positions not both set (arm_set)")
+        self._require(homed=False)
+        self.arm_deg = self.arm_marks[which]
 
     async def arm_zero(self) -> None:
         if not self.connected:
@@ -199,4 +215,6 @@ class MockRobot(RobotInterface):
             state=self._state(), x=self.pos[0], y=self.pos[1], z=self.pos[2], measured=True,
             alarm=self.alarm, error=self.error, test_mode=True, timestamp_ms=int(time.time() * 1000),
             z_reference_set=self.z_reference_set, arm_deg=self.arm_deg, arm_reference_set=True,
+            arm_closed_deg=self.arm_marks.get("closed"), arm_open_deg=self.arm_marks.get("open"),
+            arm_span_deg=(self.arm_marks["open"] - self.arm_marks["closed"]) if len(self.arm_marks) == 2 else None,
         )

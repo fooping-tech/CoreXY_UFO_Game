@@ -32,6 +32,8 @@ import time
 from ..config import BackendConfig
 from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError, SerialService
+from .claw import WHICH as CLAW_WHICH
+from .claw import ClawCalibration, deg_in_turn
 from .interface import RobotCommandError, RobotInterface
 from .state import MachineState, RobotSnapshot
 
@@ -43,6 +45,8 @@ Z_SERVO_ID = 1
 ARM_SERVO_ID = 2
 # arm_step: largest single manual step of the claw servo (degrees)
 ARM_STEP_MAX_DEG = 90.0
+CLAW_TOLERANCE_DEG = 0.5  # already there: no turn
+JOG_END_WAIT_S = 2.0  # how long a servo command waits for a jog (and its ramp) to end
 SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Z jog release ramp. The firmware's servo jog holds the position it last READ when
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
@@ -67,6 +71,8 @@ class RealRobot(RobotInterface):
         self.alarm = False
         self.error = ""
         self.test_mode = False
+        self.claw = ClawCalibration.load(cfg.arm_calibration_path)
+        self._claw_marks: dict[str, int] = {}  # multi-turn counts of this session's marks
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
@@ -96,6 +102,7 @@ class RealRobot(RobotInterface):
 
     # ---------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
+        self._claw_marks.clear()  # a new link may mean a restarted firmware count
         await self.serial.connect()
         try:
             pos = await self.serial.query_pos()
@@ -127,6 +134,7 @@ class RealRobot(RobotInterface):
         self.motors_enabled = False
 
     def _on_serial_lost(self) -> None:
+        self._claw_marks.clear()
         self.motors_enabled = False
         self._state = MachineState.UNKNOWN
         self.error = self.serial.last_error
@@ -150,6 +158,12 @@ class RealRobot(RobotInterface):
             self.homed = False
             self.test_mode = False
             self._z_counts = None
+            # the multi-turn counts restart from the angle in the turn: counts taken
+            # before are not comparable any more (a claw span from them could point
+            # the wrong way round); the recorded angles and direction stay valid
+            self._claw_marks.clear()
+            self._arm_counts = None
+            self._arm_zero_counts = None
             self.error = "firmware rebooted"
 
     def _apply_z_counts(self, counts: int) -> None:
@@ -334,6 +348,7 @@ class RealRobot(RobotInterface):
         self._busy = True
         self._state = MachineState.Z_RAISING if going_up else MachineState.Z_LOWERING
         try:
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             remaining = total_turns
             while abs(remaining) > 1e-3:
@@ -367,6 +382,12 @@ class RealRobot(RobotInterface):
         self._busy = True
         self._state = MachineState.GRABBING if close else MachineState.RELEASING
         try:
+            if self.claw.complete():  # recorded positions win over the fixed relative turn
+                await self._read_arm()
+                turns = self._claw_delta("closed" if close else "open") / 360.0
+                if abs(turns) < CLAW_TOLERANCE_DEG / 360.0:
+                    return
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -394,6 +415,7 @@ class RealRobot(RobotInterface):
             return
         self._busy = True
         try:
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -412,6 +434,59 @@ class RealRobot(RobotInterface):
         if not st.ok or st.abs_counts is None:
             raise RobotCommandError(f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}")
         self._arm_counts = st.abs_counts
+
+    def _claw_delta(self, which: str) -> float:
+        assert self._arm_counts is not None
+        return self.claw.delta_to(which, deg_in_turn(self._arm_counts))
+
+    async def arm_set(self, which: str) -> None:
+        if which not in CLAW_WHICH:
+            raise RobotCommandError(f"arm_set: which must be one of {CLAW_WHICH}")
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        try:
+            await self._read_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            raise RobotCommandError(str(e)) from e
+        assert self._arm_counts is not None
+        self.claw.mark(which, deg_in_turn(self._arm_counts), self._claw_marks, self._arm_counts)
+        self.claw.save(self.cfg.arm_calibration_path)
+        log.info("claw %s set at %.1f deg (span %s)", which, deg_in_turn(self._arm_counts), self.claw.span_deg)
+
+    async def arm_goto(self, which: str) -> None:
+        if which not in CLAW_WHICH:
+            raise RobotCommandError(f"arm_goto: which must be one of {CLAW_WHICH}")
+        if not self.claw.complete():
+            raise RobotCommandError("claw open / closed positions not both set (arm_set)")
+        self._require(homed=False)
+        self._busy = True
+        try:
+            await self._read_arm()
+            deg = self._claw_delta(which)
+            if abs(deg) < CLAW_TOLERANCE_DEG:
+                return
+            await self._wait_jog_ended()
+            await self._ensure_test_mode()
+            r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
+            res = P.parse_servo_result(r.completion or "")
+            if res is None or not res.ok:
+                self.error = r.completion or "arm servo failed"
+                raise RobotCommandError(self.error)
+            await self._refresh_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            self.error = str(e)
+            raise RobotCommandError(str(e)) from e
+        finally:
+            self._busy = False
+
+    async def _wait_jog_ended(self, timeout: float = JOG_END_WAIT_S) -> None:
+        """A servo command sent while a jog (or its ramp-down after the key was let go)
+        is still running is refused by the firmware (NACK ... jog_active): wait for it."""
+        t_end = time.monotonic() + timeout
+        while (self._jogging or self._jog_requested or (self._z_ramp_task and not self._z_ramp_task.done())):
+            if time.monotonic() > t_end:
+                raise RobotCommandError("busy: jog still running")
+            await asyncio.sleep(0.02)
 
     async def _refresh_arm(self) -> None:
         """Re-read the claw after it moved; if that fails, show it as not read."""
@@ -614,4 +689,5 @@ class RealRobot(RobotInterface):
             alarm=self.alarm, error=self.error, test_mode=self.test_mode,
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
+            arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
         )

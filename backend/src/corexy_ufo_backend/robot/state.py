@@ -46,6 +46,10 @@ class RobotSnapshot:
     # its turn, 0..360, before one is set); None = not read yet
     arm_deg: float | None = None
     arm_reference_set: bool = False
+    # recorded claw positions: angle in the servo's turn; span = closed -> open, signed
+    arm_closed_deg: float | None = None
+    arm_open_deg: float | None = None
+    arm_span_deg: float | None = None
 
     def to_message(self) -> dict:
         d = asdict(self)

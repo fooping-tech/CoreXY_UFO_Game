@@ -141,6 +141,8 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.z_reference_set = bool(data.get("z_reference_set", false))
 			RobotState.arm_deg = float(data.arm_deg) if data.get("arm_deg") != null else NAN
 			RobotState.arm_reference_set = bool(data.get("arm_reference_set", false))
+			for k in ["arm_closed_deg", "arm_open_deg", "arm_span_deg"]:
+				RobotState.set(k, float(data[k]) if data.get(k) != null else NAN)
 			if data.has("error") and str(data.error) != "":
 				RobotState.last_error = str(data.error)
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),
@@ -184,7 +186,7 @@ func send(msg: Dictionary) -> void:
 ## A home / move / grab command is still waiting for its answer.
 func has_pending_motion() -> bool:
 	for rid in _pending.keys():
-		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step"]:
+		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step", "arm_goto"]:
 			return true
 	return false
 

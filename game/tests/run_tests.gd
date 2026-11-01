@@ -955,6 +955,23 @@ func _test_claw_steps_on_the_mock(rs: Node) -> void:
 	var by_key: float = rs.arm_deg
 	_ok(is_equal_approx(after_steps, 9.0) and zeroed == 0.0 and is_equal_approx(by_key, game.arm_step_deg) and rs.arm_reference_set,
 		"claw: steps add up, arm_zero makes 0, ] steps by the set amount (mock)", "%.1f %.1f %.1f" % [after_steps, zeroed, by_key])
+	# record closed / open, then go back and forth between them
+	game.arm_goto("open")  # nothing recorded yet: stays
+	var unmoved: float = rs.arm_deg
+	game.arm_set("closed")
+	game.arm_step(30.0)
+	game.arm_set("open")
+	game.arm_goto("closed")
+	var closed_at: float = rs.arm_deg
+	var qa := InputEventKey.new()
+	qa.keycode = KEY_Q
+	qa.pressed = true
+	game._unhandled_input(qa)  # Q opens
+	_ok(unmoved == by_key and closed_at == by_key and is_equal_approx(rs.arm_deg, by_key + 30.0) and is_equal_approx(rs.arm_span_deg, 30.0),
+		"claw: arm_set records closed / open, arm_goto (and Q) turns there (mock)", "%.1f %.1f %.1f %.1f" % [unmoved, closed_at, rs.arm_deg, rs.arm_span_deg])
+	qa.keycode = KEY_A
+	game._unhandled_input(qa)  # A closes
+	_ok(rs.arm_deg == by_key, "claw: Q opens and A closes to the recorded positions (mock)", "%.1f" % rs.arm_deg)
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
