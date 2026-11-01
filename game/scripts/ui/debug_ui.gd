@@ -26,6 +26,7 @@ var _cam_ui: Dictionary = {}
 var _gesture_status: Label
 var _claw_label: Label
 var _z_label: Label
+var _claw_marks_label: Label
 var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
 
@@ -168,6 +169,19 @@ func _build_robot_test() -> void:
 	for d in [-10.0, -1.0, 1.0, 10.0]:
 		_button(hc, "%+d°" % int(d), func(): main.arm_step(d)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(_vbox, "arm_zero（いまの角度を 0° にする）", func(): main.arm_zero())
+	var hs := HBoxContainer.new()
+	_vbox.add_child(hs)
+	_button(hs, "ここを閉じ位置に", func(): main.arm_set("closed")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hs, "ここを開き位置に", func(): main.arm_set("open")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var hg := HBoxContainer.new()
+	_vbox.add_child(hg)
+	_button(hg, "閉じる", func(): main.arm_goto("closed")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hg, "開く", func(): main.arm_goto("open")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_claw_marks_label = Label.new()
+	_claw_marks_label.add_theme_font_size_override("font_size", 11)
+	_claw_marks_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_vbox.add_child(_claw_marks_label)
+	_note("少しずつ回して閉じた所で「ここを閉じ位置に」、開いた所で「ここを開き位置に」。記録は保存され、掴む / 離す（grab）もこの角度を使う。")
 	_slider("arm_step", "[ / ] キー 1 回の角度 (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
 
 	var box := _fold("位置を指定して移動 (move_xy / move_z)")
@@ -269,6 +283,13 @@ func _update_robot_test() -> void:
 	if _z_label != null:
 		var zref := "基準: モック" if RobotState.source != "websocket" else ("基準: 設定済み" if RobotState.z_reference_set else "基準: 未設定（一番上で z_zero）")
 		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
+	if _claw_marks_label != null:
+		var c: float = RobotState.arm_closed_deg
+		var o: float = RobotState.arm_open_deg
+		var sp: float = RobotState.arm_span_deg
+		_claw_marks_label.text = "記録（サーボの 1 回転内の角度）: 閉じ %s / 開き %s%s" % [
+			"未設定" if is_nan(c) else "%.1f°" % c, "未設定" if is_nan(o) else "%.1f°" % o,
+			"" if is_nan(sp) else "（閉じ→開き %+.1f°）" % sp]
 	if _claw_label == null:
 		return
 	var a: float = RobotState.arm_deg

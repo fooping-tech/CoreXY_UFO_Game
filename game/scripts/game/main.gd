@@ -794,6 +794,24 @@ func arm_zero() -> void:
 		mock.arm_deg = 0.0
 		mock._report(true)
 
+## Record the claw's current angle as its "closed" or "open" position (saved by the backend).
+func arm_set(which: String) -> void:
+	if RobotState.source == "websocket":
+		if ws.is_open():
+			ws.send_command("arm_set", {"which": which})
+	elif mock.enabled:
+		mock.arm_marks[which] = mock.arm_deg
+		mock._report(true)
+
+## Turn the claw to its recorded "closed" or "open" position.
+func arm_goto(which: String) -> void:
+	if RobotState.source == "websocket":
+		if ws.is_open() and not ws.has_pending_motion():
+			ws.send_command("arm_goto", {"which": which})
+	elif mock.enabled and mock.arm_marks.size() == 2:
+		mock.arm_deg = mock.arm_marks[which]
+		mock._report(true)
+
 ## Pinch thresholds to the backend at run time (they are applied where the
 ## landmarks are, in the backend). Returns false when no link is open.
 func send_gesture_config(params: Dictionary) -> bool:

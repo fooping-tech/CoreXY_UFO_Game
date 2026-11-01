@@ -23,6 +23,8 @@ var target: Vector3 = Vector3.ZERO
 var grabbing: bool = false
 ## Claw angle (degrees from its reference), like the backend's arm_step / arm_zero.
 var arm_deg: float = 0.0
+## Claw positions recorded with arm_set ("closed" / "open" -> arm_deg).
+var arm_marks: Dictionary = {}
 var connected: bool = true
 var _report_accum: float = 0.0
 ## Sample clock (ms) advanced by the fixed physics dt, so samples are stamped
@@ -113,6 +115,9 @@ func _report(force: bool) -> void:
 	RobotState.homed = true
 	RobotState.arm_deg = arm_deg
 	RobotState.arm_reference_set = true
+	RobotState.arm_closed_deg = float(arm_marks.get("closed", NAN))
+	RobotState.arm_open_deg = float(arm_marks.get("open", NAN))
+	RobotState.arm_span_deg = arm_marks.open - arm_marks.closed if arm_marks.size() == 2 else NAN
 	var p := pos
 	if jitter_mm > 0.0:
 		p += Vector3(randf_range(-jitter_mm, jitter_mm), randf_range(-jitter_mm, jitter_mm), 0.0)

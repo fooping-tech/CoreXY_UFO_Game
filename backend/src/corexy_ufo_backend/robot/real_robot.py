@@ -32,6 +32,8 @@ import time
 from ..config import BackendConfig
 from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError, SerialService
+from .claw import WHICH as CLAW_WHICH
+from .claw import ClawCalibration, deg_in_turn
 from .interface import RobotCommandError, RobotInterface
 from .state import MachineState, RobotSnapshot
 
@@ -43,6 +45,7 @@ Z_SERVO_ID = 1
 ARM_SERVO_ID = 2
 # arm_step: largest single manual step of the claw servo (degrees)
 ARM_STEP_MAX_DEG = 90.0
+CLAW_TOLERANCE_DEG = 0.5  # already there: no turn
 SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Z jog release ramp. The firmware's servo jog holds the position it last READ when
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
@@ -67,6 +70,8 @@ class RealRobot(RobotInterface):
         self.alarm = False
         self.error = ""
         self.test_mode = False
+        self.claw = ClawCalibration.load(cfg.arm_calibration_path)
+        self._claw_marks: dict[str, int] = {}  # multi-turn counts of this session's marks
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
@@ -367,6 +372,11 @@ class RealRobot(RobotInterface):
         self._busy = True
         self._state = MachineState.GRABBING if close else MachineState.RELEASING
         try:
+            if self.claw.complete():  # recorded positions win over the fixed relative turn
+                await self._read_arm()
+                turns = self._claw_delta("closed" if close else "open") / 360.0
+                if abs(turns) < CLAW_TOLERANCE_DEG / 360.0:
+                    return
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -412,6 +422,49 @@ class RealRobot(RobotInterface):
         if not st.ok or st.abs_counts is None:
             raise RobotCommandError(f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}")
         self._arm_counts = st.abs_counts
+
+    def _claw_delta(self, which: str) -> float:
+        assert self._arm_counts is not None
+        return self.claw.delta_to(which, deg_in_turn(self._arm_counts))
+
+    async def arm_set(self, which: str) -> None:
+        if which not in CLAW_WHICH:
+            raise RobotCommandError(f"arm_set: which must be one of {CLAW_WHICH}")
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        try:
+            await self._read_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            raise RobotCommandError(str(e)) from e
+        assert self._arm_counts is not None
+        self.claw.mark(which, deg_in_turn(self._arm_counts), self._claw_marks, self._arm_counts)
+        self.claw.save(self.cfg.arm_calibration_path)
+        log.info("claw %s set at %.1f deg (span %s)", which, deg_in_turn(self._arm_counts), self.claw.span_deg)
+
+    async def arm_goto(self, which: str) -> None:
+        if which not in CLAW_WHICH:
+            raise RobotCommandError(f"arm_goto: which must be one of {CLAW_WHICH}")
+        if not self.claw.complete():
+            raise RobotCommandError("claw open / closed positions not both set (arm_set)")
+        self._require(homed=False)
+        self._busy = True
+        try:
+            await self._read_arm()
+            deg = self._claw_delta(which)
+            if abs(deg) < CLAW_TOLERANCE_DEG:
+                return
+            await self._ensure_test_mode()
+            r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
+            res = P.parse_servo_result(r.completion or "")
+            if res is None or not res.ok:
+                self.error = r.completion or "arm servo failed"
+                raise RobotCommandError(self.error)
+            await self._refresh_arm()
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            self.error = str(e)
+            raise RobotCommandError(str(e)) from e
+        finally:
+            self._busy = False
 
     async def _refresh_arm(self) -> None:
         """Re-read the claw after it moved; if that fails, show it as not read."""
@@ -614,4 +667,5 @@ class RealRobot(RobotInterface):
             alarm=self.alarm, error=self.error, test_mode=self.test_mode,
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
+            arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
         )

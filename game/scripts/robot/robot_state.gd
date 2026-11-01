@@ -43,6 +43,11 @@ var z_reference_set: bool = false
 ## turn before one is set); NAN = not read yet.
 var arm_deg: float = NAN
 var arm_reference_set: bool = false
+## Recorded claw positions (angle in the servo's turn; NAN = not set) and the
+## signed travel closed -> open.
+var arm_closed_deg: float = NAN
+var arm_open_deg: float = NAN
+var arm_span_deg: float = NAN
 ## True when the position is the firmware's reported value, false when it is
 ## estimated by the host from commanded targets.
 var position_is_measured: bool = true
