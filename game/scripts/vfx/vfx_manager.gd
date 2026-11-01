@@ -104,8 +104,9 @@ func spawn_fx(id: String, position: Vector2, options: Dictionary = {}) -> Animat
 		spawned_log.remove_at(0)
 	return s
 
-func stop_fx(s: Node) -> void:
-	if is_instance_valid(s) and not s.is_queued_for_deletion():
+## Untyped on purpose: callers keep references that "stop all" may already have freed.
+func stop_fx(s) -> void:
+	if is_instance_valid(s) and s is Node and not s.is_queued_for_deletion():
 		s.queue_free()
 
 func stop_all() -> void:

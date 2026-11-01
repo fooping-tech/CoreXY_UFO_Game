@@ -1085,6 +1085,14 @@ func _test_vfx_follows_the_game(rs: Node) -> void:
 		"%s | %s | %s | %s | %s" % [start, moving, grabs, win, lose])
 	# loops are one slot: the moving state left the idle loop stopped
 	_ok(loops <= 3, "vfx: state loops replace each other instead of stacking", "%d active" % loops)
+	# "stop all" (debug tab) frees the running loop; the next state still gets its effects
+	gs.set_state("READY")  # the idle loop runs
+	var had_loop: bool = is_instance_valid(game.vfx._loop)
+	VFXManager.stop_all()
+	await_free_now(game)
+	n = log.size()
+	gs.set_state("LOWERING")
+	_ok(had_loop and since.call(n).has("lower_charge"), "vfx: after stop all, the next state's loop still starts", "%s %s" % [had_loop, since.call(n)])
 	VFXManager.enabled = false
 	n = log.size()
 	gs.post_event("result_success")
@@ -1096,4 +1104,10 @@ func _test_vfx_follows_the_game(rs: Node) -> void:
 	game.free()
 	VFXManager.stop_all()
 	rs.clear_samples()
+
+## Free what queue_free() queued under `n` now (tests run in one frame).
+func await_free_now(n: Node) -> void:
+	for c in n.get_children():
+		if c.is_queued_for_deletion():
+			c.free()
 

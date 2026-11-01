@@ -28,7 +28,7 @@ const LOOPS := {"READY": ["idle_glow", Vector2(0, 22)], "LOWERING": ["lower_char
 var main: Node
 ## Effects for each moment, for the debug panel's event buttons.
 const MOMENTS := ["start", "idle", "lowering", "grab", "success", "failure", "end"]
-var _loop: AnimatedSprite2D
+var _loop  # AnimatedSprite2D, or a freed one after "stop all" / VFX off: check is_instance_valid
 var _loop_state := ""
 var _last_s: Dictionary = {}  # moment -> time (s) it last played
 ## A Node2D that sits on the UFO body (the UFO node is at the rope attachment).
@@ -80,7 +80,8 @@ func _on_event(name: String, _payload: Dictionary) -> void:
 func _set_loop(state: String) -> void:
 	if state == _loop_state and is_instance_valid(_loop):
 		return
-	VFXManager.stop_fx(_loop)
+	if is_instance_valid(_loop):
+		VFXManager.stop_fx(_loop)
 	_loop = null
 	_loop_state = state
 	if LOOPS.has(state) and _body != null:
