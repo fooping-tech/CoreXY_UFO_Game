@@ -129,7 +129,7 @@ func _build() -> void:
 	root.add_child(_mini_log)
 
 	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  space=stop  V=scope  H=gesture  G/F=result  F1=hide"
+	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  Q/A=open/close  space=stop  V=scope  H=gesture  G/F=result  F1=hide"
 	help.add_theme_font_size_override("font_size", 10)
 	help.add_theme_color_override("font_color", Color(0.6, 0.7, 0.85))
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -175,8 +175,8 @@ func _build_robot_test() -> void:
 	_button(hs, "ここを開き位置に", func(): main.arm_set("open")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var hg := HBoxContainer.new()
 	_vbox.add_child(hg)
-	_button(hg, "閉じる", func(): main.arm_goto("closed")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_button(hg, "開く", func(): main.arm_goto("open")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hg, "閉じる (A)", func(): main.arm_goto("closed")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hg, "開く (Q)", func(): main.arm_goto("open")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_claw_marks_label = Label.new()
 	_claw_marks_label.add_theme_font_size_override("font_size", 11)
 	_claw_marks_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

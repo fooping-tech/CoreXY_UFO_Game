@@ -943,6 +943,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 				arm_step(-arm_step_deg)
 			KEY_BRACKETRIGHT:
 				arm_step(arm_step_deg)
+			KEY_Q:
+				arm_goto("open")
+			KEY_A:
+				arm_goto("closed")
 			KEY_G:
 				GameState.post_event("result_success")
 			KEY_F:
