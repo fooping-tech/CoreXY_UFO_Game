@@ -373,6 +373,7 @@ class RealRobot(RobotInterface):
             if res is None or not res.ok:
                 self.error = r.completion or "arm servo failed"
                 raise RobotCommandError(self.error)
+            await self._refresh_arm()  # the same servo as arm_step: keep its angle current
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
             raise RobotCommandError(str(e)) from e
@@ -411,6 +412,13 @@ class RealRobot(RobotInterface):
         if not st.ok or st.abs_counts is None:
             raise RobotCommandError(f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}")
         self._arm_counts = st.abs_counts
+
+    async def _refresh_arm(self) -> None:
+        """Re-read the claw after it moved; if that fails, show it as not read."""
+        try:
+            await self._read_arm()
+        except (RobotCommandError, CommandTimeout, CommandRejected, SerialError):
+            self._arm_counts = None
 
     async def arm_zero(self) -> None:
         if not self.serial.connected:

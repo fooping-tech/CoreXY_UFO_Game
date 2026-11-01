@@ -76,3 +76,16 @@ async def test_mock_claw_and_the_server_commands():
             assert (await cmd("a4", "arm_step"))["type"] == "nack"  # no deg
     finally:
         await srv.stop()
+
+
+async def test_grab_refreshes_the_claw_angle():
+    robot = await make_real()
+    try:
+        await robot.enable_motors(True)
+        await robot.home()
+        await robot.arm_zero()
+        await robot.grab(True)  # the same servo: the shown angle must follow it
+        turns = robot.cfg.arm_open_turns
+        assert robot.snapshot().arm_deg == pytest.approx(turns * 360.0, abs=0.2)
+    finally:
+        await robot.disconnect()
