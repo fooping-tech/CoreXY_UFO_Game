@@ -17,6 +17,7 @@ var _status: Label
 var _log: RichTextLabel
 var _mini_log: Label
 var _log_dirty := false
+var _utc_offset_s: int = Time.get_time_zone_from_system().bias * 60
 var _expr_option: OptionButton
 var _source_option: OptionButton
 var _state_chip: Label
@@ -549,8 +550,9 @@ func _log_buttons(parent: Node) -> void:
 	_button(parent, "クリア", func(): _log_lines.clear(); _log_dirty = true)
 
 func _append_log(t: String) -> void:
-	var now := Time.get_time_dict_from_system()
-	_log_lines.append("%02d:%02d:%02d.%03d %s" % [now.hour, now.minute, now.second, Time.get_ticks_msec() % 1000, t])
+	var unix := Time.get_unix_time_from_system()
+	var now := Time.get_time_dict_from_unix_time(int(unix) + _utc_offset_s)
+	_log_lines.append("%02d:%02d:%02d.%03d %s" % [now.hour, now.minute, now.second, int(fmod(unix, 1.0) * 1000.0), t])
 	if _log_lines.size() > LOG_MAX:
 		_log_lines.remove_at(0)
 	_log_dirty = true  # redrawn once per frame: serial lines can come in bursts

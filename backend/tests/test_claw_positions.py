@@ -1,5 +1,6 @@
 """Claw open / closed positions: recording, turning there on the right side, saving, grab."""
 
+import asyncio
 import json
 
 import pytest
@@ -125,3 +126,34 @@ async def test_server_arm_set_and_goto_on_the_mock():
             assert (await cmd("s3", "arm_set", which="middle"))["type"] == "nack"
     finally:
         await srv.stop()
+
+
+async def test_a_refused_servo_turn_fails_at_once_not_after_the_timeout(tmp_path):
+    robot = await make_real(tmp_path / "c.json")
+    fw = robot.serial.transport
+    try:
+        await robot.enable_motors(True)
+        fw.jogging = True  # a jog session the backend does not know about
+        t0 = asyncio.get_running_loop().time()
+        with pytest.raises(RobotCommandError, match="jog_active"):
+            await robot.arm_step(5.0)
+        assert asyncio.get_running_loop().time() - t0 < 1.0  # was a 15 s wait, busy all along
+        assert not robot._busy
+    finally:
+        await robot.disconnect()
+
+
+async def test_claw_right_after_a_z_jog_waits_for_the_ramp_down_then_turns(tmp_path):
+    robot = await make_real(tmp_path / "c.json")
+    fw = robot.serial.transport
+    try:
+        await robot.enable_motors(True)
+        await robot.jog(0.0, 0.0, 15.0)
+        await asyncio.sleep(0.1)
+        await robot.jog(0.0, 0.0, 0.0)  # key let go: Z ramps down for a while
+        await robot.arm_step(5.0)  # Q / [ pressed meanwhile
+        turns = [l for l in fw.sent if l.startswith("SERVO_TURN 2")]
+        assert turns == ["SERVO_TURN 2 0.01389"]
+        assert fw.sent.index(turns[0]) > max(i for i, l in enumerate(fw.sent) if l.startswith("JOG"))
+    finally:
+        await robot.disconnect()

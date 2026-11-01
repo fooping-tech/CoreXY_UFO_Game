@@ -46,6 +46,7 @@ ARM_SERVO_ID = 2
 # arm_step: largest single manual step of the claw servo (degrees)
 ARM_STEP_MAX_DEG = 90.0
 CLAW_TOLERANCE_DEG = 0.5  # already there: no turn
+JOG_END_WAIT_S = 2.0  # how long a servo command waits for a jog (and its ramp) to end
 SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Z jog release ramp. The firmware's servo jog holds the position it last READ when
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
@@ -339,6 +340,7 @@ class RealRobot(RobotInterface):
         self._busy = True
         self._state = MachineState.Z_RAISING if going_up else MachineState.Z_LOWERING
         try:
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             remaining = total_turns
             while abs(remaining) > 1e-3:
@@ -377,6 +379,7 @@ class RealRobot(RobotInterface):
                 turns = self._claw_delta("closed" if close else "open") / 360.0
                 if abs(turns) < CLAW_TOLERANCE_DEG / 360.0:
                     return
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -404,6 +407,7 @@ class RealRobot(RobotInterface):
             return
         self._busy = True
         try:
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -453,6 +457,7 @@ class RealRobot(RobotInterface):
             deg = self._claw_delta(which)
             if abs(deg) < CLAW_TOLERANCE_DEG:
                 return
+            await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
             res = P.parse_servo_result(r.completion or "")
@@ -465,6 +470,15 @@ class RealRobot(RobotInterface):
             raise RobotCommandError(str(e)) from e
         finally:
             self._busy = False
+
+    async def _wait_jog_ended(self, timeout: float = JOG_END_WAIT_S) -> None:
+        """A servo command sent while a jog (or its ramp-down after the key was let go)
+        is still running is refused by the firmware (NACK ... jog_active): wait for it."""
+        t_end = time.monotonic() + timeout
+        while (self._jogging or self._jog_requested or (self._z_ramp_task and not self._z_ramp_task.done())):
+            if time.monotonic() > t_end:
+                raise RobotCommandError("busy: jog still running")
+            await asyncio.sleep(0.02)
 
     async def _refresh_arm(self) -> None:
         """Re-read the claw after it moved; if that fails, show it as not read."""
