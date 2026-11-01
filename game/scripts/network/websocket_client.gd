@@ -193,5 +193,7 @@ func send_command(name: String, params: Dictionary = {}) -> String:
 	_seq += 1
 	var rid := "g%d-%d" % [Time.get_ticks_msec(), _seq]
 	_pending[rid] = {"sent_ms": Time.get_ticks_msec(), "type": name}
+	if name != "jog":  # jog repeats at 20 Hz while a key is held
+		log_line.emit("send %s %s %s" % [rid, name, JSON.stringify(params)])
 	send({"type": "command", "request_id": rid, "data": {"name": name, "params": params}})
 	return rid

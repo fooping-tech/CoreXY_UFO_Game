@@ -109,7 +109,7 @@ cd backend && uv sync && uv run pytest                                          
 cd backend && uv run corexy-ufo-backend --mock          # ターミナル 1
 cd game && Godot --path . -- --source websocket          # ターミナル 2（またはパネルで Robot source を切替）
 ```
-パネルで `Backend: enable motors` → `home` → `z_zero` → スライダー操作。ログ欄に `ack` / `nack` が出る。
+パネルの「実機」タブで `モーター有効` → `原点復帰 (home)` → `z_zero` → スライダー操作。ログ欄に `ack` / `nack` が出る。
 `stop` を押すと ALARM（ファームウェア仕様を再現）になり、`clear_alarm` → `home` が必要。
 Python から直接叩く例は `websockets` で `{"type":"command","request_id":"1","data":{"name":"home","params":{}}}` を送るだけ（README 参照）。
 

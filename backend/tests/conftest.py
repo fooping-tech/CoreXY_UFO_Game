@@ -73,6 +73,8 @@ class FakeFirmware(SerialTransport):
         if not self._open:
             raise ConnectionError("closed")
         self.sent.append(line)
+        if self.tx_log:
+            self.tx_log(line)
         name = line.split()[0]
         if self.queue_full_once:
             self.queue_full_once = False

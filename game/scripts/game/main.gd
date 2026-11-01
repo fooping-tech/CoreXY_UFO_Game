@@ -6,6 +6,9 @@ extends Node2D
 const UfoScene := preload("res://scenes/ufo.tscn")
 const DebugScene := preload("res://scenes/debug.tscn")
 
+## A line for the debug panel's log (keyboard jog start/stop, ignored keys...).
+signal debug_log(text: String)
+
 var sim := RopeSimulator.new()
 var proj := Projection25D.new()
 var rope_view: RopeView
@@ -93,6 +96,10 @@ var _jog_active := false
 ## Set by Space (stop): arrow keys are ignored until all of them are released,
 ## so a key still held after Space cannot restart the robot.
 var _jog_latched := false
+## Last keyboard jog sent to the arbiter, and whether "no focus" was logged, so the
+## debug log gets one line per change instead of one per tick.
+var _kb_logged := Vector3.ZERO
+var _unfocused_logged := false
 ## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
 var jog_hint := ""
 ## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
@@ -101,6 +108,9 @@ var _moving_jog_rids := {}
 var jog_speed_z := 50.0
 ## Claw step for the [ / ] keys (degrees).
 var arm_step_deg := 5.0
+## Held on-screen Z buttons in the debug panel: +1 = like W (arm up), -1 = like S.
+## Dead-man: cleared as soon as the left mouse button is up.
+var ui_jog_z := 0.0
 
 func _ready() -> void:
 	_apply_config()
@@ -587,11 +597,11 @@ static func jog_hint_for(reason: String) -> String:
 	if r.contains("not connected"):
 		return "実機に未接続（バックエンドとシリアルを確認）"
 	if r.contains("motors not enabled"):
-		return "モーターが無効:「Backend: enable motors」を押す"
+		return "モーターが無効:「実機」タブの「モーター有効」を押す"
 	if r.contains("alarm"):
-		return "アラーム中:「clear_alarm」→「home」を押す"
+		return "アラーム中:「アラーム解除」→「原点復帰 (home)」を押す"
 	if r.contains("not homed") or r.contains("not_homed"):
-		return "原点復帰が必要:「home」を押す"
+		return "原点復帰が必要:「原点復帰 (home)」を押す"
 	if r.contains("busy"):
 		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
 	return "JOG が拒否された: " + reason
@@ -604,8 +614,14 @@ static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
 ## i.e. W raises the arm whatever z_up_is_positive says).
 func _jog_input() -> Vector3:
 	var d := Vector3.ZERO
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		ui_jog_z = 0.0  # a missed button_up (panel hidden mid-press) must not keep it moving
 	if not get_window().has_focus():
+		if not _unfocused_logged and _any_jog_key():
+			debug_log.emit("keys: ignored, the game window has no keyboard focus (click the game)")
+			_unfocused_logged = true
 		return d  # keys of an unfocused window must not keep the robot moving
+	_unfocused_logged = false
 	if Input.is_key_pressed(KEY_RIGHT):
 		d.x += 1
 	if Input.is_key_pressed(KEY_LEFT):
@@ -619,7 +635,14 @@ func _jog_input() -> Vector3:
 		d.z += zsign
 	if Input.is_key_pressed(KEY_S):
 		d.z -= zsign
+	d.z = clampf(d.z + ui_jog_z * zsign, -1.0, 1.0)
 	return d
+
+func _any_jog_key() -> bool:
+	for k in [KEY_RIGHT, KEY_LEFT, KEY_UP, KEY_DOWN, KEY_W, KEY_S]:
+		if Input.is_key_pressed(k):
+			return true
+	return false
 
 ## Jog keys, or zero while stopped by Space and a key is still held.
 func _latched_jog_input() -> Vector3:
@@ -662,6 +685,13 @@ func _handle_input(dt: float) -> void:
 	if keys != Vector3.ZERO:
 		var xy := jog_velocity(Vector2(keys.x, keys.y), jog_speed_real_mm if real else jog_speed_mm)
 		kb = Vector3(xy.x, xy.y, keys.z * (jog_speed_real_z if real else jog_speed_z))
+	if kb != _kb_logged:
+		if kb == Vector3.ZERO:
+			debug_log.emit("keys: jog stop" + (" (latched by Space)" if _jog_latched else ""))
+		else:
+			debug_log.emit("keys: jog vx %.0f vy %.0f vz %.0f -> %s" % [kb.x, kb.y, kb.z,
+				("backend (open)" if ws.is_open() else "backend NOT CONNECTED") if real else "mock"])
+		_kb_logged = kb
 	if gesture_sim:
 		_feed_sim_hand()
 	elif _gesture_demo_t >= 0.0:

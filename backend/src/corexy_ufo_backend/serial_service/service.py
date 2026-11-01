@@ -65,6 +65,8 @@ class SerialService:
         self.log_lines: deque[str] = deque(maxlen=log_size)
         self._lock = asyncio.Lock()
         self._listeners: list[Callable[[str], None]] = []
+        # every logged line ("TX ..." / "RX ..."), e.g. for the game's debug log
+        self.log_listeners: list[Callable[[str], None]] = []
         self._disconnect_cb: Callable[[], None] | None = None
         self._pump_task: asyncio.Task | None = None
         self._waiters: list[tuple[Callable[[str], bool], asyncio.Future]] = []
@@ -116,6 +118,11 @@ class SerialService:
 
     def _log(self, line: str) -> None:
         self.log_lines.append(f"{time.strftime('%H:%M:%S')} {line}")
+        for cb in list(self.log_listeners):
+            try:
+                cb(line)
+            except Exception:  # pragma: no cover
+                log.exception("log listener failed")
 
     async def _pump(self) -> None:
         assert self.transport is not None
