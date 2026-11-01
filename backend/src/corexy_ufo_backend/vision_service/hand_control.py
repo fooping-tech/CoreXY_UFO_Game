@@ -7,7 +7,9 @@ Rules (all thresholds from config `gesture.*`):
     PALM_TO_WIDTH x the palm length |wrist (0) - middle MCP (9)| (a hand turned
     on its side looks narrow but not short); in pixels so the image aspect does
     not skew it, and independent of how big the hand looks
-  - hysteresis: a pinch starts at ratio <= pinch_start and ends at >= pinch_release
+  - hysteresis: a pinch starts at ratio <= pinch_start and ends at >= pinch_release,
+    or already at >= pinch_start when the pinching finger is straight again (an
+    open hand: a relaxed open hand stays well under a wide pinch_release)
   - a starting pinch must hold for pinch_confirm_ms before it is reported, and
     an ending one for release_confirm_ms (a fingertip jittering past the release
     threshold for a frame while the hand moves is not a release)
@@ -44,6 +46,9 @@ MIDDLE_TIP = 12
 # (tip, pip) of index, middle, ring, pinky
 FINGERS = {"index": (8, 6), "middle": (12, 10), "ring": (16, 14), "pinky": (20, 18)}
 PINCH_TIPS = {"index": INDEX_TIP, "middle": MIDDLE_TIP}
+# wrist-to-tip over wrist-to-PIP above which a finger counts as straight
+# (stretched out about 1.3; bent round to meet the thumb about 1.0)
+STRAIGHT_RATIO = 1.2
 # palm length -> width: a flat adult hand is about 1.1-1.3 widths long, so this
 # only takes over when the width is foreshortened
 PALM_TO_WIDTH = 0.75
@@ -120,6 +125,15 @@ def finger_folded(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
     wx, wy = _px(lm[WRIST], w, h)
     t, p = _px(lm[tip], w, h), _px(lm[pip], w, h)
     return math.hypot(t[0] - wx, t[1] - wy) < math.hypot(p[0] - wx, p[1] - wy)
+
+
+def finger_straight(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
+    """The finger points out: its tip is clearly farther from the wrist than its PIP
+    (a pinching finger is bent, its tip about as far as the PIP)."""
+    tip, pip = FINGERS[finger]
+    wx, wy = _px(lm[WRIST], w, h)
+    t, p = _px(lm[tip], w, h), _px(lm[pip], w, h)
+    return math.hypot(t[0] - wx, t[1] - wy) > STRAIGHT_RATIO * math.hypot(p[0] - wx, p[1] - wy)
 
 
 def hand_pose(lm: list[Landmark], w: int, h: int) -> str:
@@ -212,7 +226,12 @@ class HandControl:
             self._pinch_since_ms = None
             self._release_since_ms = None
         elif self._pinched:
-            if ratio >= self.cfg.pinch_release:
+            # released: opened past pinch_release, or the pinching finger is straight
+            # again while the gap is past pinch_start (an open hand; a wide release
+            # threshold alone is only reached by spreading the thumb wide)
+            opened = ratio >= self.cfg.pinch_release or (
+                ratio >= self.cfg.pinch_start and finger_straight(lm, self._finger or finger, frame_w, frame_h))
+            if opened:
                 if self._release_since_ms is None:
                     self._release_since_ms = now_ms
                 if now_ms - self._release_since_ms >= self.cfg.release_confirm_ms:

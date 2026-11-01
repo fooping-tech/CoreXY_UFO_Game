@@ -405,3 +405,22 @@ def test_fist_and_peace_are_reported_and_never_start_a_pinch():
     ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=200, pinch_start=1.0, pinch_release=1.5))
     evs = frames(ctrl, [shaped_hand(thumb_at="index"), fist])
     assert evs[0]["pinch"] and not evs[1]["pinch"]
+
+
+def test_an_open_hand_releases_even_below_a_wide_release_threshold():
+    cfg = HandControlConfig(pinch_confirm_ms=0, release_confirm_ms=0, pinch_start=1.0, pinch_release=1.5)
+    open_hand = shaped_hand()  # thumb out to the side: ratio about 1.3, under 1.5
+    assert 1.0 < pinch_ratio(open_hand, W, H) < 1.5
+    for finger in ("index", "middle"):
+        ctrl = HandControl(cfg)
+        evs = frames(ctrl, [shaped_hand(thumb_at=finger), open_hand])
+        assert evs[0]["pinch"] and not evs[1]["pinch"], finger
+    # a bent finger with the same gap (blur while pinching) does not release
+    ctrl = HandControl(cfg)
+    bent = shaped_hand()
+    bent[7] = bent[6]  # DIP onto the PIP
+    bent[8] = (bent[6][0], bent[6][1] + 0.01, 0.0)  # tip curled back level with the PIP
+    bent[4] = (bent[8][0] - 1.2 * 0.2 * H / W, bent[8][1], 0.0)  # thumb 1.2 widths away
+    evs = frames(ctrl, [shaped_hand(thumb_at="index"), bent])
+    assert evs[0]["pinch"] and evs[1]["pinch"]
+
