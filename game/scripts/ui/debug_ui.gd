@@ -1,8 +1,9 @@
 extends CanvasLayer
-## Debug / tuning overlay. Everything in the spec's section 10 lives here:
-## virtual XYZ, mock robot dynamics, rope physics, projection, expression
-## override, connection state, FPS and physics cost, and the test scenarios.
-## Built in code (no .tscn editing needed). Toggle with F1 / Tab.
+## Debug / tuning overlay. State and the stops stay on top; the rest is in tabs:
+## hardware tests (Z drum, claw, moves), hand gesture, cameras, look (rope,
+## projection, effects, character), the MockRobot and its scenarios, the log.
+## Built in code (no .tscn editing needed). Toggle with F1 / Tab. Its controls
+## never take keyboard focus, so Space and the arrows always reach the game.
 
 const PANEL_W := 360.0
 
@@ -20,6 +21,8 @@ var _log_lines: PackedStringArray = PackedStringArray()
 var _cam_ui: Dictionary = {}
 var _gesture_status: Label
 var _claw_label: Label
+var _z_label: Label
+var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
 
 func panel_width() -> float:
@@ -47,47 +50,101 @@ func _build() -> void:
 	style.bg_color = Color(0.02, 0.04, 0.12, 0.88)
 	style.border_color = Color(0.2, 0.5, 0.9)
 	style.border_width_left = 2
+	style.content_margin_left = 6
+	style.content_margin_right = 4
+	style.content_margin_top = 4
 	_panel.add_theme_stylebox_override("panel", style)
 	add_child(_panel)
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_panel.add_child(scroll)
-	_vbox = VBoxContainer.new()
-	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_vbox.custom_minimum_size.x = PANEL_W - 24
-	scroll.add_child(_vbox)
+	var root := VBoxContainer.new()
+	_panel.add_child(root)
 
-	_status = Label.new()
-	_status.add_theme_font_size_override("font_size", 12)
-	_vbox.add_child(_status)
+	# always on top: state, the stops, which robot
+	_vbox = root
 	_state_chip = Label.new()
-	_state_chip.add_theme_font_size_override("font_size", 13)
-	_vbox.add_child(_state_chip)
-
-	_header("Robot source / connection")
+	_state_chip.add_theme_font_size_override("font_size", 12)
+	_state_chip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(_state_chip)
+	var stops := HBoxContainer.new()
+	root.add_child(stops)
+	_button(stops, "STOP (space)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("soft_stop")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var estop := _button(stops, "E-STOP (ABORT)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("stop"))
+	estop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	estop.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 	_source_option = OptionButton.new()
+	_source_option.add_theme_font_size_override("font_size", 11)
+	_source_option.focus_mode = Control.FOCUS_NONE
 	_source_option.add_item("MockRobot (no hardware)")
 	_source_option.add_item("WebSocket backend (real robot)")
 	_source_option.item_selected.connect(func(i): main.use_source("websocket" if i == 1 else "mock"); _append_log("source: " + RobotState.source))
-	_vbox.add_child(_source_option)
+	root.add_child(_source_option)
+
+	_tabs = TabContainer.new()
+	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tabs.add_theme_font_size_override("font_size", 11)
+	_tabs.get_tab_bar().focus_mode = Control.FOCUS_NONE
+	root.add_child(_tabs)
+
+	_tab("実機")
+	_build_robot_test()
+	_tab("ジェスチャー")
+	_build_gesture()
+	_tab("カメラ")
+	_build_cameras()
+	_tab("見た目")
+	_build_look()
+	_tab("モック")
+	_build_mock()
+	_tab("ログ")
+	_log = RichTextLabel.new()
+	_log.custom_minimum_size = Vector2(0, 420)
+	_log.scroll_following = true
+	_log.add_theme_font_size_override("normal_font_size", 11)
+	_vbox.add_child(_log)
+
+	var help := Label.new()
+	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  space=stop  V=scope  H=gesture  G/F=result  F1=hide"
+	help.add_theme_font_size_override("font_size", 10)
+	help.add_theme_color_override("font_color", Color(0.6, 0.7, 0.85))
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	root.add_child(help)
+
+## Hardware tests: get ready, the Z drum (servo 1), the claw (servo 2), and
+## moving to a position.
+func _build_robot_test() -> void:
+	_header("1. 準備")
 	var hb := HBoxContainer.new()
 	_vbox.add_child(hb)
-	_button(hb, "Mock disconnect", func(): main.mock.set_connected(false))
-	_button(hb, "Mock reconnect", func(): main.mock.set_connected(true))
-	_button(hb, "STOP (space)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("soft_stop"))
-	_button(hb, "E-STOP (ABORT)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("stop"))
-	var hb2 := HBoxContainer.new()
-	_vbox.add_child(hb2)
-	_button(hb2, "Backend: enable motors", func(): main.ws.send_command("enable_motors", {"enable": true}))
-	_button(hb2, "home", func(): main.ws.send_command("home"))
-	_button(hb2, "z_zero", func(): main.ws.send_command("z_zero"))
-	_button(hb2, "clear_alarm", func(): main.ws.send_command("clear_alarm"))
+	_button(hb, "モーター有効", func(): main.ws.send_command("enable_motors", {"enable": true}))
+	_button(hb, "原点復帰 (home)", func(): main.ws.send_command("home"))
+	_button(hb, "アラーム解除", func(): main.ws.send_command("clear_alarm"))
+	_note("巻き上げと爪は「モーター有効」だけで動く。XY の移動には原点復帰が要る。")
 
-	_build_claw()
-	_build_gesture()
-	_build_cameras()
+	_header("2. 巻き上げ（Z・サーボ 1）")
+	_z_label = Label.new()
+	_z_label.add_theme_font_size_override("font_size", 12)
+	_z_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_vbox.add_child(_z_label)
+	var hz := HBoxContainer.new()
+	_vbox.add_child(hz)
+	_hold_button(hz, "▲ 上げる (W)", 1.0)
+	_hold_button(hz, "▼ 下げる (S)", -1.0)
+	_button(hz, "z_zero", func(): main.ws.send_command("z_zero"))
+	_note("ボタンは押している間だけ動く。アームを一番上まで上げて z_zero を押すと高さが画面に出る。")
+	_slider("z_speed", "上げ下げの速さ (z/s, 実機)", 3.0, 40.0, main.jog_speed_real_z, 1.0, func(v): main.jog_speed_real_z = v)
 
-	_header("Virtual robot target (mm / z units)")
+	_header("3. 爪（サーボ 2）")
+	_claw_label = Label.new()
+	_claw_label.add_theme_font_size_override("font_size", 12)
+	_claw_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_vbox.add_child(_claw_label)
+	var hc := HBoxContainer.new()
+	_vbox.add_child(hc)
+	for d in [-10.0, -1.0, 1.0, 10.0]:
+		_button(hc, "%+d°" % int(d), func(): main.arm_step(d)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(_vbox, "arm_zero（いまの角度を 0° にする）", func(): main.arm_zero())
+	_slider("arm_step", "[ / ] キー 1 回の角度 (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
+
+	var box := _fold("位置を指定して移動 (move_xy / move_z)")
 	var r := GameConfig.robot()
 	_slider("target_x", "X", r.x_min_mm, r.x_max_mm, main.mock.target.x, 1.0, func(v): main.mock.set_target_axis(0, v); _ws_move())
 	_slider("target_y", "Y (front/back)", r.y_min_mm, r.y_max_mm, main.mock.target.y, 1.0, func(v): main.mock.set_target_axis(1, v); _ws_move())
@@ -97,12 +154,14 @@ func _build() -> void:
 	_button(hb3, "XYZ random", func():
 		main.mock.set_target(Vector3(randf_range(r.x_min_mm, r.x_max_mm), randf_range(r.y_min_mm, r.y_max_mm), randf_range(r.z_min_mm, r.z_max_mm))); sync_targets_from_mock())
 	_button(hb3, "center", func(): main.mock.set_target(Vector3((r.x_min_mm + r.x_max_mm) / 2, (r.y_min_mm + r.y_max_mm) / 2, r.z_max_mm if r.z_up_is_positive else r.z_min_mm)); sync_targets_from_mock())
-	_slider("mock_speed", "Mock XY speed mm/s", 20.0, 800.0, main.mock.max_speed_xy, 5.0, func(v): main.mock.max_speed_xy = v)
-	_slider("mock_accel", "Mock XY accel mm/s²", 100.0, 6000.0, main.mock.accel_xy, 50.0, func(v): main.mock.accel_xy = v)
-	_slider("mock_zspeed", "Mock Z speed", 5.0, 300.0, main.mock.max_speed_z, 1.0, func(v): main.mock.max_speed_z = v)
-	_slider("mock_hz", "Mock report rate Hz", 2.0, 60.0, main.mock.report_hz, 1.0, func(v): main.mock.report_hz = v)
+	_end_fold(box)
 
-	_header("Rope physics")
+## Rope, projection, effects and the character: how the game looks.
+func _build_look() -> void:
+	_status = Label.new()
+	_status.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_status)
+	var box := _fold("Rope physics")
 	_slider("gravity", "Gravity cm/s²", 100.0, 3000.0, main.sim.gravity, 10.0, func(v): main.sim.gravity = v)
 	_slider("damping", "Damping /s", 0.0, 4.0, main.sim.damping, 0.01, func(v): main.sim.damping = v)
 	_slider("ufo_drag", "UFO drag /s", 0.0, 3.0, main.sim.ufo_drag, 0.01, func(v): main.sim.ufo_drag = v)
@@ -117,8 +176,9 @@ func _build() -> void:
 	_slider("travel_x", "World travel X cm (fit OFF)", 10.0, 150.0, GameConfig.data.world.travel_x_cm, 1.0, func(v): GameConfig.data.world.travel_x_cm = v)
 	_slider("travel_z", "World travel depth cm", 5.0, 120.0, GameConfig.data.world.travel_z_cm, 1.0, func(v): GameConfig.data.world.travel_z_cm = v)
 	_button(_vbox, "Reset rope (hang straight)", func(): main.sim.reset())
+	_end_fold(box)
 
-	_header("Projection (2.5D)")
+	box = _fold("Projection (2.5D)")
 	_slider("pitch", "Camera pitch °", 0.0, 70.0, main.proj.pitch_deg, 1.0, func(v): main.proj.pitch_deg = v)
 	_slider("ppu", "Pixels per cm", 2.0, 14.0, main.proj.pixels_per_unit, 0.1, func(v): main.proj.pixels_per_unit = v)
 	_slider("persp", "Perspective (scale change)", 0.0, 0.02, main.proj.perspective, 0.0005, func(v): main.proj.perspective = v)
@@ -127,16 +187,24 @@ func _build() -> void:
 	_slider("rope_w", "Rope width px", 1.0, 16.0, main.rope_view.rope_width_px, 1.0, func(v): main.rope_view.rope_width_px = v)
 	_slider("pixel_scale", "Sprite pixel scale", 1.0, 6.0, main.ufo.pixel_scale, 1.0, func(v): main.ufo.pixel_scale = v; main.rope_view.pixel_scale = v)
 	_slider("tilt_follow", "UFO tilt follow", 0.0, 1.5, main.ufo.tilt_follow, 0.05, func(v): main.ufo.tilt_follow = v)
+	_end_fold(box)
 
-	_header("Effects / sound")
-	_button(_vbox, "Particles: ON/OFF", func(): main.ufo_fx.enabled = not main.ufo_fx.enabled)
-	_button(_vbox, "Sound: ON/OFF", func(): main.sfx.enabled = not main.sfx.enabled)
-	_button(_vbox, "Screen shake: ON/OFF", func(): main.shake.enabled = not main.shake.enabled)
+	box = _fold("Effects / sound")
+	var hf := HBoxContainer.new()
+	_vbox.add_child(hf)
+	_button(hf, "Particles", func(): main.ufo_fx.enabled = not main.ufo_fx.enabled)
+	_button(hf, "Sound", func(): main.sfx.enabled = not main.sfx.enabled)
+	_button(hf, "Shake", func(): main.shake.enabled = not main.shake.enabled)
+	_note("ボタンで ON/OFF を切り替え")
 	_slider("shake_px", "Shake max px", 0.0, 40.0, main.shake.max_offset_px, 1.0, func(v): main.shake.max_offset_px = v)
 	_slider("fx_amount", "Particle amount", 0.0, 2.0, main.ufo_fx.amount, 0.05, func(v): main.ufo_fx.amount = v)
 	_slider("sfx_db", "Sound volume dB", -40.0, 6.0, main.sfx.volume_db, 1.0, func(v): main.sfx.volume_db = v)
+	_end_fold(box)
+
 	_header("Character")
 	_expr_option = OptionButton.new()
+	_expr_option.add_theme_font_size_override("font_size", 11)
+	_expr_option.focus_mode = Control.FOCUS_NONE
 	_expr_option.add_item("(auto)")
 	for e in main.ufo.available_expressions():
 		_expr_option.add_item(e)
@@ -149,57 +217,46 @@ func _build() -> void:
 	_button(hb4, "Error", func(): GameState.post_event("error"))
 	_button(hb4, "Clear", func(): GameState.post_event("error_cleared"))
 
-	_header("Test scenarios (mock)")
+## The GDScript MockRobot: link faults, dynamics and the scripted scenarios.
+func _build_mock() -> void:
+	_header("Link")
+	var hb := HBoxContainer.new()
+	_vbox.add_child(hb)
+	_button(hb, "Mock disconnect", func(): main.mock.set_connected(false))
+	_button(hb, "Mock reconnect", func(): main.mock.set_connected(true))
+	_header("Dynamics")
+	_slider("mock_speed", "Mock XY speed mm/s", 20.0, 800.0, main.mock.max_speed_xy, 5.0, func(v): main.mock.max_speed_xy = v)
+	_slider("mock_accel", "Mock XY accel mm/s²", 100.0, 6000.0, main.mock.accel_xy, 50.0, func(v): main.mock.accel_xy = v)
+	_slider("mock_zspeed", "Mock Z speed", 5.0, 300.0, main.mock.max_speed_z, 1.0, func(v): main.mock.max_speed_z = v)
+	_slider("mock_hz", "Mock report rate Hz", 2.0, 60.0, main.mock.report_hz, 1.0, func(v): main.mock.report_hz = v)
+	_header("Test scenarios")
 	var grid := GridContainer.new()
 	grid.columns = 2
 	_vbox.add_child(grid)
 	var scen := [["1 X sweep", "x_sweep"], ["2 Y sweep", "y_sweep"], ["3 XY diagonal", "xy_diagonal"], ["4 Sudden stop", "sudden_stop"],
 		["5 Z down/up", "z_down_up"], ["6 XYZ together", "xyz_together"], ["7 Disconnect", "disconnect"], ["8 Reconnect", "reconnect"],
 		["9 Limits", "limits"], ["10 Rope snap", "rope_snap"], ["Grab cycle", "grab_cycle"]]
-	for s in scen:
-		_button(grid, s[0], func(): main.mock.run_scenario(s[1]))
+	for sc in scen:
+		_button(grid, sc[0], func(): main.mock.run_scenario(sc[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	_header("Log")
-	_log = RichTextLabel.new()
-	_log.custom_minimum_size = Vector2(0, 160)
-	_log.scroll_following = true
-	_log.add_theme_font_size_override("normal_font_size", 11)
-	_vbox.add_child(_log)
-	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  space=E-stop  V=scope  H=hand gesture  [ ]=claw  G/F=result  F1=hide panel"
-	help.add_theme_font_size_override("font_size", 11)
-	help.autowrap_mode = TextServer.AUTOWRAP_WORD
-	_vbox.add_child(help)
-
-## Claw (servo 2) test: step it a little at a time and read its angle.
-func _build_claw() -> void:
-	_header("Claw (servo 2) test  [ / ] = step")
-	_claw_label = Label.new()
-	_claw_label.add_theme_font_size_override("font_size", 13)
-	_vbox.add_child(_claw_label)
-	var hb := HBoxContainer.new()
-	_vbox.add_child(hb)
-	for d in [-10.0, -1.0, 1.0, 10.0]:
-		_button(hb, "%+d°" % int(d), func(): main.arm_step(d))
-	_button(hb, "arm_zero (0° here)", func(): main.arm_zero())
-	_slider("arm_step", "Step for [ / ] (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
-
-func _update_claw() -> void:
+func _update_robot_test() -> void:
+	if _z_label != null:
+		var zref := "基準: モック" if RobotState.source != "websocket" else ("基準: 設定済み" if RobotState.z_reference_set else "基準: 未設定（一番上で z_zero）")
+		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
 	if _claw_label == null:
 		return
 	var a: float = RobotState.arm_deg
 	if is_nan(a):
-		_claw_label.text = "claw: angle not read yet (step once or press arm_zero)"
+		_claw_label.text = "爪: 角度はまだ読んでいない（1 回回すか arm_zero を押す）"
 	elif RobotState.arm_reference_set:
-		_claw_label.text = "claw: %+.1f° from arm_zero" % a
+		_claw_label.text = "爪: arm_zero から %+.1f°" % a
 	else:
-		_claw_label.text = "claw: %.1f° (raw angle in its turn; arm_zero sets 0°)" % a
+		_claw_label.text = "爪: %.1f°（1 回転の中の角度。arm_zero で 0° にできる）" % a
 
 ## Hand joystick: mode, simulation, live values and tuning.
 func _build_gesture() -> void:
 	var g: GestureControl = main.gesture
 	var j: HandJoystick = g.joystick
-	_header("Hand gesture joystick (H)")
 	var hb := HBoxContainer.new()
 	_vbox.add_child(hb)
 	_button(hb, "Gesture: ON/OFF", func(): main.set_gesture_enabled(not g.enabled))
@@ -213,6 +270,8 @@ func _build_gesture() -> void:
 	_gesture_status = Label.new()
 	_gesture_status.add_theme_font_size_override("font_size", 11)
 	_vbox.add_child(_gesture_status)
+	_note("検出の様子はカメラタブの Overview に重ねて出る")
+	var box := _fold("感度・速度・ROI")
 	var gc: Dictionary = GameConfig.data.get("gesture", {})
 	_slider("g_pinch_on", "Pinch start (ratio <=)", 0.1, 1.0, float(gc.get("pinch_start", 1.0)), 0.01, func(v): main.send_gesture_config({"pinch_start": v}))
 	_slider("g_pinch_off", "Pinch release (ratio >=)", 0.15, 1.5, float(gc.get("pinch_release", 1.5)), 0.01, func(v): main.send_gesture_config({"pinch_release": v}))
@@ -228,6 +287,7 @@ func _build_gesture() -> void:
 	_slider("g_roi_y0", "ROI y0", 0.0, 1.0, g.roi.position.y, 0.01, func(v): g.roi = Rect2(Vector2(g.roi.position.x, v), Vector2(g.roi.size.x, g.roi.end.y - v)))
 	_slider("g_roi_x1", "ROI x1", 0.0, 1.0, g.roi.end.x, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(v - g.roi.position.x, g.roi.size.y)))
 	_slider("g_roi_y1", "ROI y1", 0.0, 1.0, g.roi.end.y, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(g.roi.size.x, v - g.roi.position.y)))
+	_end_fold(box)
 
 func _update_gesture_status() -> void:
 	if _gesture_overlay != null:
@@ -253,7 +313,6 @@ func _update_gesture_status() -> void:
 ## with a picker for which camera plays that role.
 func _build_cameras() -> void:
 	var hub: CameraHub = main.cameras
-	_header("Cameras (full frame)")
 	for role in CameraHub.ROLES:
 		var row := HBoxContainer.new()
 		_vbox.add_child(row)
@@ -265,6 +324,7 @@ func _build_cameras() -> void:
 		var opt := OptionButton.new()
 		opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		opt.add_theme_font_size_override("font_size", 11)
+		opt.focus_mode = Control.FOCUS_NONE
 		opt.item_selected.connect(func(i): hub.assign(role, opt.get_item_id(i)))
 		row.add_child(opt)
 		var view := TextureRect.new()
@@ -272,7 +332,7 @@ func _build_cameras() -> void:
 		view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		view.custom_minimum_size = Vector2(PANEL_W - 24, (PANEL_W - 24) * 0.75)
+		view.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.75)
 		_vbox.add_child(view)
 		if role == "overview":
 			# the gesture camera: what the hand joystick detects, drawn over the frame
@@ -311,14 +371,71 @@ func _update_cameras() -> void:
 	var hub: CameraHub = main.cameras
 	for role in _cam_ui.keys():
 		var ui: Dictionary = _cam_ui[role]
-		var w := PANEL_W - 24
+		var w := _inner_w()
 		ui.view.custom_minimum_size = Vector2(w, w / hub.feed_aspect(role))
 		var s := hub.feed_size(role)
 		ui.info.text = ("%s  %dx%d" % [hub.feed_name(role), s.x, s.y]) if hub.has_feed(role) else "NO SIGNAL (pick a camera above, or set camera.%s.match)" % role
 
+## A new tab, scrolling; the helpers below add to it.
+func _tab(title: String) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_tabs.add_child(scroll)
+	_tabs.set_tab_title(_tabs.get_tab_count() - 1, title)
+	_vbox = VBoxContainer.new()
+	_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_vbox.custom_minimum_size.x = _inner_w()
+	scroll.add_child(_vbox)
+
+func _inner_w() -> float:
+	return PANEL_W - 34
+
+## A closed-by-default section: the helpers add to it until _end_fold(the
+## returned outer box).
+func _fold(title: String) -> VBoxContainer:
+	var outer := _vbox
+	var head := Button.new()
+	head.flat = true
+	head.focus_mode = Control.FOCUS_NONE
+	head.toggle_mode = true
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.add_theme_font_size_override("font_size", 13)
+	head.add_theme_color_override("font_color", Color(0.55, 0.8, 1.0))
+	outer.add_child(head)
+	var body := VBoxContainer.new()
+	body.visible = false
+	outer.add_child(body)
+	head.text = "▸ " + title
+	head.toggled.connect(func(on): body.visible = on; head.text = ("▾ " if on else "▸ ") + title)
+	_vbox = body
+	return outer
+
+func _end_fold(outer: VBoxContainer) -> void:
+	_vbox = outer
+
+func _note(t: String) -> void:
+	var l := Label.new()
+	l.text = t
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", Color(0.6, 0.7, 0.85))
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_vbox.add_child(l)
+
+## Moves Z while held (like W / S); main clears it once the mouse button is up.
+func _hold_button(parent: Node, text: String, dir: float) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.add_theme_font_size_override("font_size", 12)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.focus_mode = Control.FOCUS_NONE
+	b.button_down.connect(func(): main.ui_jog_z = dir)
+	b.button_up.connect(func(): main.ui_jog_z = 0.0)
+	parent.add_child(b)
+	return b
+
 func _header(t: String) -> void:
 	var l := Label.new()
-	l.text = "▸ " + t
+	l.text = t
 	l.add_theme_color_override("font_color", Color(0.55, 0.8, 1.0))
 	l.add_theme_font_size_override("font_size", 13)
 	_vbox.add_child(l)
@@ -327,6 +444,7 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.add_theme_font_size_override("font_size", 11)
+	b.focus_mode = Control.FOCUS_NONE  # Space (stop) and the arrows stay with the game
 	b.pressed.connect(cb)
 	parent.add_child(b)
 	return b
@@ -344,6 +462,7 @@ func _slider(key: String, label: String, lo: float, hi: float, val: float, step:
 	s.step = step
 	s.value = val
 	s.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	s.focus_mode = Control.FOCUS_NONE  # a focused slider would also eat the arrow keys
 	row.add_child(s)
 	var v := Label.new()
 	v.custom_minimum_size.x = 48
@@ -390,7 +509,7 @@ func _process(_dt: float) -> void:
 		return
 	_update_cameras()
 	_update_gesture_status()
-	_update_claw()
+	_update_robot_test()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
 	var pose := Vector3(RobotState.x_mm, RobotState.y_mm, RobotState.z_mm)
@@ -407,7 +526,7 @@ func _process(_dt: float) -> void:
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
-		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W でアームを一番上まで上げて「z_zero」を押す"
+		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「z_zero」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
 	var ok_color := Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4)

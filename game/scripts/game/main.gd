@@ -101,6 +101,9 @@ var _moving_jog_rids := {}
 var jog_speed_z := 50.0
 ## Claw step for the [ / ] keys (degrees).
 var arm_step_deg := 5.0
+## Held on-screen Z buttons in the debug panel: +1 = like W (arm up), -1 = like S.
+## Dead-man: cleared as soon as the left mouse button is up.
+var ui_jog_z := 0.0
 
 func _ready() -> void:
 	_apply_config()
@@ -587,11 +590,11 @@ static func jog_hint_for(reason: String) -> String:
 	if r.contains("not connected"):
 		return "実機に未接続（バックエンドとシリアルを確認）"
 	if r.contains("motors not enabled"):
-		return "モーターが無効:「Backend: enable motors」を押す"
+		return "モーターが無効:「実機」タブの「モーター有効」を押す"
 	if r.contains("alarm"):
-		return "アラーム中:「clear_alarm」→「home」を押す"
+		return "アラーム中:「アラーム解除」→「原点復帰 (home)」を押す"
 	if r.contains("not homed") or r.contains("not_homed"):
-		return "原点復帰が必要:「home」を押す"
+		return "原点復帰が必要:「原点復帰 (home)」を押す"
 	if r.contains("busy"):
 		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
 	return "JOG が拒否された: " + reason
@@ -604,6 +607,8 @@ static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
 ## i.e. W raises the arm whatever z_up_is_positive says).
 func _jog_input() -> Vector3:
 	var d := Vector3.ZERO
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		ui_jog_z = 0.0  # a missed button_up (panel hidden mid-press) must not keep it moving
 	if not get_window().has_focus():
 		return d  # keys of an unfocused window must not keep the robot moving
 	if Input.is_key_pressed(KEY_RIGHT):
@@ -619,6 +624,7 @@ func _jog_input() -> Vector3:
 		d.z += zsign
 	if Input.is_key_pressed(KEY_S):
 		d.z -= zsign
+	d.z = clampf(d.z + ui_jog_z * zsign, -1.0, 1.0)
 	return d
 
 ## Jog keys, or zero while stopped by Space and a key is still held.

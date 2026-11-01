@@ -40,6 +40,7 @@ func _ready() -> void:
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
 	_test_claw_steps_on_the_mock(rs)
+	_test_debug_panel_tabs_and_z_buttons(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -266,10 +267,10 @@ func _test_real_jog_velocity() -> void:
 	_ok(not main_script.jog_latch(false, true), "jog: no latch without Space")
 	# a refused jog is explained as the next thing to press
 	var cases := {
-		"motors not enabled (send enable_motors first)": "enable motors",
+		"motors not enabled (send enable_motors first)": "モーター有効",
 		"not homed": "home",
 		"not_homed": "home",
-		"alarm active: abort requested": "clear_alarm",
+		"alarm active: abort requested": "アラーム解除",
 		"busy: another motion command is running": "Space",
 		"not connected": "未接続",
 	}
@@ -954,6 +955,22 @@ func _test_claw_steps_on_the_mock(rs: Node) -> void:
 	var by_key: float = rs.arm_deg
 	_ok(is_equal_approx(after_steps, 9.0) and zeroed == 0.0 and is_equal_approx(by_key, game.arm_step_deg) and rs.arm_reference_set,
 		"claw: steps add up, arm_zero makes 0, ] steps by the set amount (mock)", "%.1f %.1f %.1f" % [after_steps, zeroed, by_key])
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## Debug panel: hardware tests in the first tab; a held Z button never outlives the mouse press.
+func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var tabs: TabContainer = game.debug_ui._tabs
+	var titles := []
+	for i in tabs.get_tab_count():
+		titles.append(tabs.get_tab_title(i))
+	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
+	var d: Vector3 = game._jog_input()
+	_ok(titles[0] == "実機" and titles.size() == 6 and game.ui_jog_z == 0.0 and d.z == 0.0,
+		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
