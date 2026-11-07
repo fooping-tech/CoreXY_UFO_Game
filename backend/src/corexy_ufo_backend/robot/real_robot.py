@@ -76,6 +76,7 @@ class RealRobot(RobotInterface):
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
+        self._limits_active = (False, False)  # POS LIMIT_X / LIMIT_Y
         self._jogging = False
         self._jog_requested = False  # a non-zero JOG was sent and not yet ended
         self._last_jog_t = 0.0  # when the last non-zero JOG was written
@@ -215,6 +216,7 @@ class RealRobot(RobotInterface):
         self.homed = pos.homed
         self.alarm = pos.alarm
         self.test_mode = pos.test_mode
+        self._limits_active = (pos.limit_x, pos.limit_y)
         if pos.alarm:
             self.error = pos.alarm_reason
         elif self.error.startswith("alarm") or self.error == "abort requested":
@@ -634,6 +636,17 @@ class RealRobot(RobotInterface):
             self.error = ""
             self._state = MachineState.IDLE
 
+    async def refresh_status(self) -> None:
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        if self._busy or self._jogging or self._jog_requested:
+            return  # the firmware does not answer POS during a move; the caller sees "busy"
+        try:
+            self._apply_pos(await self.serial.query_pos(timeout=3.0))
+            self._last_poll = time.monotonic()
+        except SerialError as e:
+            raise RobotCommandError(f"POS failed: {e}") from e
+
     # ---------------------------------------------------------------- polling
     async def tick(self) -> None:
         if not self.serial.connected or self._busy:
@@ -690,4 +703,5 @@ class RealRobot(RobotInterface):
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
+            limit_x=self._limits_active[0], limit_y=self._limits_active[1],
         )

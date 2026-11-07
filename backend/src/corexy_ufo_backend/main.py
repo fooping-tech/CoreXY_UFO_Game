@@ -17,7 +17,10 @@ import signal
 import sys
 
 from .config import load_config
-from .robot import MockRobot, RealRobot
+from .sequence import AutoCatchConfig
+from .robot import RealRobot
+from .sequence import Phase
+from .sequence.dry_run import known_faults, make_dry_run_robot, run_dry
 from .serial_service.transport import list_serial_ports
 from .vision_service import CameraConfig, VisionService
 from .vision_service.cameras import list_cameras_macos, resolve_camera
@@ -29,7 +32,11 @@ log = logging.getLogger("corexy_ufo_backend")
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="corexy-ufo-backend")
-    p.add_argument("--mock", action="store_true", help="use the simulated robot (no serial)")
+    p.add_argument("--mock", action="store_true", help="use the simulated robot (no serial; the auto catch runs as a dry run)")
+    p.add_argument("--auto-catch-dry-run", nargs="?", const="", default=None, metavar="FAULT",
+                   help="run the auto catch once against the virtual crane and exit (nothing is sent to hardware); "
+                        "FAULT: stall_xy, stall_z, claw_stall, claw_fail, z_glitch, disconnect, estop, limit_x, limit_y")
+    p.add_argument("--fault-at", default="LOWER_TO_CATCH", help="state in which --auto-catch-dry-run injects FAULT")
     p.add_argument("--port", help="serial port (default: config / auto-detect)")
     p.add_argument("--baud", type=int)
     p.add_argument("--ws-host")
@@ -94,9 +101,16 @@ async def run(args: argparse.Namespace) -> int:
         cfg.websocket_host = args.ws_host
     if args.ws_port:
         cfg.websocket_port = args.ws_port
-    robot = MockRobot(cfg.limits) if args.mock else RealRobot(cfg)
+    auto_cfg = AutoCatchConfig.from_raw(cfg.raw)
+    if args.mock:
+        # the mock's own speeds (the game's manual controls stay as they were) plus the
+        # dry run's virtual claw / inputs for the auto catch
+        robot = make_dry_run_robot(auto_cfg.dry_run, cfg.limits, speed_model=False)
+    else:
+        robot = RealRobot(cfg)
     vision = make_vision(args, cfg.raw.get("gesture", {}))
-    server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision)
+    server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,
+                        auto_catch=auto_cfg, backend_cfg=cfg)
     try:
         await robot.connect()
     except Exception as e:
@@ -118,6 +132,19 @@ async def run(args: argparse.Namespace) -> int:
     return 0
 
 
+async def auto_catch_dry_run(fault: str, fault_at: str) -> int:
+    """--auto-catch-dry-run: 0 = the run ended as expected (done, or FAULT when a fault was injected)."""
+    cfg = load_config()
+    params = AutoCatchConfig.from_raw(cfg.raw).dry_run
+    if fault and fault not in known_faults():
+        print(f"unknown fault {fault!r}; one of: {', '.join(known_faults())}")
+        return 2
+    seq = await run_dry(params, cfg.limits, cfg, fault=fault or None, fault_at=Phase(fault_at))
+    expected = "fault" if fault else "done"
+    print(f"expected {expected}: {'OK' if seq.last_result == expected else 'UNEXPECTED'}")
+    return 0 if seq.last_result == expected else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -129,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
         for i, c in enumerate(list_cameras_macos()):
             print(f"{i}\t{c['name']}\t{c['unique_id']}")
         return 0
+    if args.auto_catch_dry_run is not None:
+        return asyncio.run(auto_catch_dry_run(args.auto_catch_dry_run, args.fault_at))
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:  # pragma: no cover
