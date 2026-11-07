@@ -18,10 +18,44 @@
 
 ## 2. 状態遷移
 
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> IDLE
+
+    IDLE --> IDLE: auto_catch が NACK<br/>（開始条件を満たさない・連打・busy）
+    IDLE --> OPEN_CLAW: auto_catch<br/>（開始条件 OK、モーションロック取得）
+
+    state "自動キャッチ実行中（手動操作はロック）" as RUN {
+        OPEN_CLAW --> LOWER_TO_CATCH: 爪 PASS + settle
+        LOWER_TO_CATCH --> CLOSE_CLAW: Z が catch_z で停止
+        CLOSE_CLAW --> RAISE_WITH_ITEM: 爪 PASS + settle
+        RAISE_WITH_ITEM --> MOVE_TO_BOX: Z が safe_z で停止
+        MOVE_TO_BOX --> LOWER_TO_RELEASE: XY がボックスで停止<br/>（POS を読み直してリミット確認）
+        LOWER_TO_RELEASE --> RELEASE: Z が release_z で停止
+        RELEASE --> RAISE_EMPTY: 爪 PASS + settle
+        RAISE_EMPTY --> CLAW_STANDBY: Z が safe_z で停止
+    }
+
+    CLAW_STANDBY --> IDLE: 爪 PASS + settle<br/>（完了、ロック解放）
+
+    RUN --> FAULT: 異常 / タイムアウト / stop / soft_stop<br/>/ モーター無効 / 操作者の切断 / 終了
+    FAULT --> OPEN_CLAW: auto_catch<br/>（アラーム解除 + 原点復帰の後、開始条件 OK）
+
+    note right of FAULT
+        ABORT 送信済み
+        （XY・Z・爪が停止、ALARM、HOMED 解除）
+        自動では再開しない
+    end note
+```
+
+GitHub では図として表示される（Mermaid）。文字だけで読む場合の要約:
+
 ```
 IDLE ─(auto_catch・条件OK)→ OPEN_CLAW → LOWER_TO_CATCH → CLOSE_CLAW → RAISE_WITH_ITEM → MOVE_TO_BOX
      → LOWER_TO_RELEASE → RELEASE → RAISE_EMPTY → CLAW_STANDBY → IDLE（完了）
 どの状態からでも ─(異常・stop・soft_stop・切断)→ FAULT（ABORT 送信済み）
+FAULT ─(アラーム解除・原点復帰の後に auto_catch・条件OK)→ OPEN_CLAW
 ```
 
 各状態は「ロボットへの動作を 1 つ非同期タスクとして開始 → 20 ms ごとに監視 → 終了条件を満たしたら次へ」。固定時間の待ちはない。
