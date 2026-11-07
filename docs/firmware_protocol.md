@@ -78,6 +78,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `arm_step {deg}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 2 <deg/360>` → `SERVO_STATUS 2` | 爪の手動テスト。相対回転、1 回 ±90° まで。回転数は小数 5 桁まで送る（1° = 0.00278。以前の 2 桁だと 0.00 になった）。`enable_motors` が必要、HOMED は不要。モーション扱い（ほかの移動中は `busy`） |
 | `arm_zero` | `SERVO_STATUS 2` | いまの `abs=` を爪の 0° 基準にする。robot_state の `arm_deg` は基準からの角度（基準前は 1 回転の中の角度） |
 | `arm_set{which: closed\|open}` | `SERVO_STATUS 2` | いまの 1 回転内の角度をその位置として記録し `config/arm_calibration.json` に保存。閉じ→開きの幅（`arm_span_deg`、符号 = 開く向き）は同じ起動中の abs の差から求める |
+| `auto_catch` | （下の動作の組み合わせ。新しいファームウェアコマンドはない） | 1 ボタン自動キャッチ。バックエンドの状態機械が `arm_goto` / `move_z` / `move_xy` を順に実行し、異常時は `ABORT`。開始前に `POS` で状態を読み直す。詳細は [auto_catch.md](auto_catch.md) |
 | `arm_goto{which}` | `SERVO_STATUS 2` → `SERVO_TURN 2 <turns>` → `SERVO_STATUS 2` | 記録した位置へ、閉じ〜開きの弧の上だけを回る（モーション）。両方の記録があれば `grab` も同じ計算で回す |
 
 ## 6. 既存ツールとの関係

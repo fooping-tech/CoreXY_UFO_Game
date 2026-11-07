@@ -15,7 +15,12 @@ Command names and safety rules:
   (hand joystick thresholds at run time; vision only), arm_step {deg} (claw servo ID 2 turned
   by deg degrees, relative, |deg| <= 90; a motion command), arm_zero (claw angle reference),
   arm_set {which: closed|open} (record the claw's current angle as that position; saved),
-  arm_goto {which} (turn the claw there, on the closed..open arc; a motion command)
+  arm_goto {which} (turn the claw there, on the closed..open arc; a motion command),
+  auto_catch (start the one-button catch sequence; ACK = started, progress in robot_state.auto_catch
+  and {"type": "auto_catch"} messages), auto_catch_status
+While the auto catch runs it holds the motion lock: every command except stop, soft_stop,
+get_state, auto_catch_status, list_ports, gesture_config, a zero jog and enable_motors false is
+refused (busy). stop / soft_stop / enable_motors false end it with ABORT.
 Every command is ACK'd or NACK'd with its request_id. A request_id that was
 already handled is answered with the cached result and NOT executed again
 (protects against duplicate/retried motion commands).
@@ -38,7 +43,9 @@ from typing import Any
 import websockets
 from websockets.asyncio.server import ServerConnection, serve
 
+from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
+from ..sequence import AutoCatchConfig, AutoCatchSequencer
 
 log = logging.getLogger(__name__)
 
@@ -48,11 +55,14 @@ LOG_QUEUE_MAX = 500
 
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
-            "arm_set", "arm_goto")
+            "arm_set", "arm_goto", "auto_catch", "auto_catch_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
-PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state")
+PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status")
+# Accepted while the auto catch runs (anything else is refused as busy).
+AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
+                      "gesture_config")
 
 
 def now_ms() -> int:
@@ -61,7 +71,8 @@ def now_ms() -> int:
 
 class GameServer:
     def __init__(self, robot: RobotInterface, host: str = "127.0.0.1", port: int = 8765, *,
-                 state_hz: float = 30.0, vision: Any | None = None) -> None:
+                 state_hz: float = 30.0, vision: Any | None = None,
+                 auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None) -> None:
         self.robot = robot
         self.host = host
         self.port = port
@@ -85,6 +96,15 @@ class GameServer:
         self._log_handler: logging.Handler | None = None
         self._log_loop_ref: asyncio.AbstractEventLoop | None = None
         self._last_tx_jog = ""
+        # One-button auto catch. The real robot uses the "real" profile (refused until
+        # measured and confirmed), anything else the "dry_run" profile.
+        ac = auto_catch or AutoCatchConfig.from_raw({})
+        self.auto = AutoCatchSequencer(
+            robot, ac.real if robot.name == "real" else ac.dry_run,
+            getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits()),
+            backend_cfg, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            on_change=self._on_auto_change)
+        self._auto_owner: ServerConnection | None = None
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -97,6 +117,9 @@ class GameServer:
         log.info("websocket listening on ws://%s:%d", self.host, self.port)
 
     async def stop(self) -> None:
+        if self.auto.active:
+            await self.auto.abort("backend shutting down during auto catch")
+            await self.auto.wait()
         self._stop_log_feed()
         for t in self._tasks:
             t.cancel()
@@ -207,8 +230,9 @@ class GameServer:
         next_t = loop.time()
         while True:
             try:
-                snap = self.robot.snapshot()
-                await self.broadcast(snap.to_message())
+                msg = self.robot.snapshot().to_message()
+                msg["data"]["auto_catch"] = self.auto.status()
+                await self.broadcast(msg)
             except Exception:  # pragma: no cover
                 log.exception("state loop")
             next_t += self.state_interval
@@ -216,6 +240,13 @@ class GameServer:
             if next_t < now:
                 next_t = now + self.state_interval
             await asyncio.sleep(max(next_t - now, 0.0))
+
+    def _on_auto_change(self, status: dict) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover
+            return
+        loop.create_task(self.broadcast({"type": "auto_catch", "timestamp": now_ms(), "data": status}))
 
     def _on_vision_event(self, event: dict) -> None:
         asyncio.get_event_loop().create_task(self.broadcast({"type": "vision_event", "timestamp": now_ms(), "data": event}))
@@ -259,6 +290,10 @@ class GameServer:
             if self._jog_owner is ws:
                 log.warning("the jogging client disconnected: stopping the jog")
                 await self._end_jog()
+            if self._auto_owner is ws and self.auto.active:
+                # nobody left who could press stop: end the sequence in the safe state
+                log.warning("the client running the auto catch disconnected: aborting it")
+                await self.auto.abort("operator disconnected during auto catch")
 
     async def _ordered_worker(self, ws: ServerConnection, queue: asyncio.Queue) -> None:
         while True:
@@ -291,6 +326,8 @@ class GameServer:
             await ws.send(json.dumps({**cached, "timestamp": now_ms(), "duplicate": True}))
             return
         reply = await self.execute(name, params)
+        if name == "auto_catch" and reply.get("type") == "ack":
+            self._auto_owner = ws
         if name == "jog" and reply.get("type") == "ack":
             moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
             self._jog_owner = ws if moving else None
@@ -308,10 +345,19 @@ class GameServer:
         if name not in COMMANDS:
             return self._nack(name, f"unknown command {name!r}")
         try:
+            if self.auto.active and name not in AUTO_CATCH_ALLOWED and not self._allowed_during_auto(name, params):
+                return self._nack(name, "busy: auto catch running (stop to abort)")
             if name in MOTION_COMMANDS and self._motion_lock.locked():
                 return self._nack(name, "busy: another motion command is running")
             if name == "get_state":
-                return self._ack(name, self.robot.snapshot().to_message()["data"])
+                data = self.robot.snapshot().to_message()["data"]
+                data["auto_catch"] = self.auto.status()
+                return self._ack(name, data)
+            if name == "auto_catch_status":
+                return self._ack(name, self.auto.status())
+            if name == "auto_catch":
+                await self.auto.start()
+                return self._ack(name, self.auto.status())
             if name == "gesture_config":
                 # pinch thresholds of the hand joystick (vision only, never moves the robot)
                 cfg = self.vision.configure_hands(params) if self.vision is not None else None
@@ -322,12 +368,20 @@ class GameServer:
                 from ..serial_service.transport import list_serial_ports
                 return self._ack(name, {"ports": list_serial_ports()})
             if name == "enable_motors":
+                if not bool(params.get("enable", False)):
+                    await self.auto.abort("motors disabled during auto catch")
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
+                # flag first (no new step can start), then ABORT without any wait in between
+                await self.auto.abort("emergency stop (stop)", send_stop=False)
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
+                if self.auto.active:
+                    # STOP does not stop the servos (Z drum, claw): end the sequence with ABORT
+                    await self.auto.abort("stopped (soft_stop) during auto catch")
+                    return self._ack(name, self.robot.snapshot().to_message()["data"])
                 # outside the motion lock: it must reach a running move
                 await self.robot.soft_stop()
             elif name == "jog":
@@ -368,6 +422,14 @@ class GameServer:
         except Exception as e:  # pragma: no cover
             log.exception("command %s failed", name)
             return self._nack(name, f"internal error: {e}")
+
+    @staticmethod
+    def _allowed_during_auto(name: str, params: dict) -> bool:
+        if name == "jog":  # a zero jog (key release) is harmless
+            return not any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
+        if name == "enable_motors":
+            return not bool(params.get("enable", False))
+        return False
 
     @staticmethod
     def _ack(name: str, data: dict) -> dict:

@@ -114,6 +114,13 @@ var arm_step_deg := 5.0
 ## Held on-screen Z buttons in the debug panel: +1 = like W (arm up), -1 = like S.
 ## Dead-man: cleared as soon as the left mouse button is up.
 var ui_jog_z := 0.0
+## Catch button (C / the hardware tab): one press = one `auto_catch` request. The
+## backend runs the sequence and guards it (preconditions, its own debounce); here
+## a press is also ignored within the debounce time, while one is running, or
+## while the last request has no answer yet.
+var _auto_catch_last_ms := -1.0e9
+var _auto_catch_rid := ""
+var auto_catch_hint := ""
 var _overview_flip_v := false
 
 func _ready() -> void:
@@ -594,6 +601,10 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if rid != "" and rid == _auto_catch_rid:
+		_auto_catch_rid = ""
+		auto_catch_hint = "" if ok else auto_catch_hint_for(str(data.get("reason", "")))
+		return
 	if str(data.get("command", "")) != "jog":
 		return
 	var moving := _moving_jog_rids.has(rid)
@@ -620,6 +631,82 @@ static func jog_hint_for(reason: String) -> String:
 	if r.contains("busy"):
 		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
 	return "JOG が拒否された: " + reason
+
+## Catch button debounce (ms) from config/game_config.json auto_catch.<profile>.button_debounce_ms.
+func auto_catch_debounce_ms() -> float:
+	var ac = GameConfig.data.get("auto_catch", {})
+	var prof = ac.get("real" if ws.server_robot == "real" else "dry_run", {}) if ac is Dictionary else {}
+	var v = prof.get("button_debounce_ms") if prof is Dictionary else null
+	return float(v) if v != null else 500.0
+
+## A press counts only when nothing is running or waiting and the debounce time has passed.
+static func auto_catch_press_ok(now_ms: float, last_ms: float, debounce_ms: float, active: bool, pending: bool) -> bool:
+	return not active and not pending and now_ms - last_ms >= debounce_ms
+
+## The catch button. Every press (accepted or not) restarts the debounce window,
+## so a chattering button gives one request.
+func request_auto_catch() -> void:
+	var now := float(Time.get_ticks_msec())
+	var ok := auto_catch_press_ok(now, _auto_catch_last_ms, auto_catch_debounce_ms(), RobotState.auto_catch_active(),
+		_auto_catch_rid != "")
+	_auto_catch_last_ms = now
+	if not ok:
+		return
+	if RobotState.source != "websocket" or not ws.enabled or not ws.is_open():
+		auto_catch_hint = "自動キャッチはバックエンド接続時だけ（実機なしなら ./start.sh mock でドライラン）"
+		return
+	if _jog_input() != Vector3.ZERO or gesture.is_active():
+		auto_catch_hint = "手動操作を止めてから（キーを離す / 指を開く）"
+		return
+	auto_catch_hint = ""
+	_auto_catch_rid = ws.send_command("auto_catch")
+
+## Phase names for the status line.
+const AUTO_CATCH_PHASE_JA := {
+	"IDLE": "待機", "OPEN_CLAW": "爪を開く", "LOWER_TO_CATCH": "キャッチ位置へ下降", "CLOSE_CLAW": "爪を閉じる",
+	"RAISE_WITH_ITEM": "安全高さへ上昇", "MOVE_TO_BOX": "救出ボックスへ移動", "LOWER_TO_RELEASE": "リリース高さへ下降",
+	"RELEASE": "爪を開いて落とす", "RAISE_EMPTY": "安全高さへ戻る", "CLAW_STANDBY": "爪を待機位置へ", "FAULT": "異常停止",
+}
+
+## One line (or two) about the auto catch for the debug panel: what it is doing, or why it stopped.
+static func auto_catch_status_text(ac: Dictionary) -> String:
+	if ac.is_empty():
+		return "自動キャッチ: 状態なし（バックエンド未接続）"
+	var phase := str(ac.get("phase", ""))
+	var name := str(AUTO_CATCH_PHASE_JA.get(phase, phase))
+	var prof := "ドライラン" if str(ac.get("profile", "")) == "dry_run" else "実機"
+	if bool(ac.get("active", false)):
+		return "自動キャッチ [%s] %d/%d %s（%s）  %.1f s" % [prof, int(ac.get("step", 0)), int(ac.get("steps", 0)), name, phase,
+			float(ac.get("elapsed_s", 0.0))]
+	match str(ac.get("last_result", "")):
+		"done":
+			return "自動キャッチ [%s]: 完了（手動操作に戻った）" % prof
+		"fault":
+			return "自動キャッチ [%s]: 異常停止 — %s\n→ ABORT 済み。原因を確かめてから「アラーム解除」→「原点復帰」" % [prof, str(ac.get("error", ""))]
+	return "自動キャッチ [%s]: 待機（C で開始）" % prof
+
+## A refused auto catch, said as what to do next.
+static func auto_catch_hint_for(reason: String) -> String:
+	var r := reason.to_lower()
+	if r.is_empty() or r.contains("debounced"):
+		return ""
+	if r.contains("not confirmed") or r.contains("is not set"):
+		return "自動キャッチ: 校正値が未設定・未確認（config/game_config.json の auto_catch.real）。実機では動かさない"
+	if r.contains("alarm"):
+		return "自動キャッチ: アラーム中 →「アラーム解除」→「原点復帰 (home)」"
+	if r.contains("not homed"):
+		return "自動キャッチ: 先に「原点復帰 (home)」"
+	if r.contains("motors not enabled"):
+		return "自動キャッチ: 先に「モーター有効」"
+	if r.contains("z reference"):
+		return "自動キャッチ: Z の基準が未設定（アームを一番上にして z_zero）"
+	if r.contains("claw open / closed"):
+		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 3）"
+	if r.contains("below safe_z"):
+		return "自動キャッチ: アームを安全高さまで上げてから（W）"
+	if r.contains("busy") or r.contains("already running"):
+		return "自動キャッチ: ほかの動作中"
+	return "自動キャッチ拒否: " + reason
 
 ## Velocity (mm/s, robot X/Y) for the arrow keys: diagonals keep the same speed.
 static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
@@ -725,6 +812,13 @@ func _handle_input(dt: float) -> void:
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
+	# the auto catch owns the crane: no manual jog until it ends (Space / E-STOP still stop it)
+	if RobotState.auto_catch_active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "自動キャッチ中は手動操作できない（Space で中断）"
+		if gesture.is_active():
+			gesture.stop("auto_catch")
 	# gesture Z is "+ = arm up", like W: the same z_up_is_positive sign as the keys
 	var gz := gesture.velocity_z * (1.0 if GameConfig.robot().z_up_is_positive else -1.0)
 	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
@@ -808,6 +902,8 @@ static func gesture_demo_event(t: float) -> Dictionary:
 ## gets `arm_step` (SERVO_TURN 2; one step at a time, refused while another
 ## move runs); the game's own MockRobot just changes its angle.
 func arm_step(deg: float) -> void:
+	if RobotState.auto_catch_active():
+		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
 			ws.send_command("arm_step", {"deg": deg})
@@ -835,6 +931,8 @@ func arm_set(which: String) -> void:
 
 ## Turn the claw to its recorded "closed" or "open" position.
 func arm_goto(which: String) -> void:
+	if RobotState.auto_catch_active():
+		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
 			var rid := ws.send_command("arm_goto", {"which": which})
@@ -929,7 +1027,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 					_hand_cue_ms = now
 					sfx.play_cue("hand")
 	# control was cut (not a plain release, not a stop asked for by hand)
-	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled"]:
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled", "auto_catch"]:
 		sfx.play_cue("lost")
 	# lost track / stale / camera gone while driving the real robot: besides the
 	# zero jog, a decelerating STOP (no alarm)
@@ -988,6 +1086,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				arm_goto("open")
 			KEY_A:
 				arm_goto("closed")
+			KEY_C:
+				request_auto_catch()
 			KEY_G:
 				GameState.post_event("result_success")
 			KEY_F:

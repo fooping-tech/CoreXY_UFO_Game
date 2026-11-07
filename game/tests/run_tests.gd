@@ -45,6 +45,7 @@ func _ready() -> void:
 	_test_vfx_manager()
 	_test_vfx_follows_the_game(rs)
 	_test_debug_panel_tabs_and_z_buttons(rs)
+	_test_auto_catch_controls(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -1198,3 +1199,54 @@ func _test_gesture_z_has_its_own_sound(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
+
+## Auto catch (runs in the backend): the catch button's debounce, the refusal hints,
+## the status line, and the manual lock while the backend reports it active.
+func _test_auto_catch_controls(rs: Node) -> void:
+	var m: GDScript = load("res://scripts/game/main.gd")
+	_ok(m.auto_catch_press_ok(1000.0, 0.0, 500.0, false, false) and not m.auto_catch_press_ok(1300.0, 1000.0, 500.0, false, false)
+		and not m.auto_catch_press_ok(5000.0, 0.0, 500.0, true, false) and not m.auto_catch_press_ok(5000.0, 0.0, 500.0, false, true),
+		"auto catch: a press within the debounce, while running, or while waiting for an answer is ignored")
+	var cases := {"auto catch refused: catch_z is not set; not confirmed on the real machine: z_scale": "未設定",
+		"auto catch refused: alarm active (abort requested): clear_alarm, then home": "アラーム解除",
+		"auto catch refused: not homed": "原点復帰", "auto catch refused: Z 40.0 below safe_z 95: raise the claw first": "安全高さ",
+		"busy: auto catch already running": "ほかの動作中"}
+	var all_ok := true
+	for reason in cases:
+		if not str(m.auto_catch_hint_for(reason)).contains(cases[reason]):
+			all_ok = false
+			print("      hint for %s: %s" % [reason, m.auto_catch_hint_for(reason)])
+	_ok(all_ok and m.auto_catch_hint_for("debounced: pressed again too soon") == "", "auto catch: refusals are shown as the next step")
+	var running: String = m.auto_catch_status_text({"active": true, "phase": "MOVE_TO_BOX", "step": 5, "steps": 9, "profile": "dry_run", "elapsed_s": 3.2})
+	var fault: String = m.auto_catch_status_text({"active": false, "phase": "FAULT", "last_result": "fault", "error": "LOWER_TO_CATCH timeout (8 s, Z -> 30)", "profile": "real"})
+	_ok(running.contains("5/9") and running.contains("救出ボックス") and running.contains("ドライラン")
+		and fault.contains("異常停止") and fault.contains("LOWER_TO_CATCH timeout") and fault.contains("ABORT"),
+		"auto catch: the status line shows the state, or why it stopped", running + " | " + fault)
+
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": true, "motors_enabled": true,
+		"state": "Z_LOWERING", "x": 120.0, "y": 100.0, "z": 60.0, "auto_catch": {"active": true, "phase": "LOWER_TO_CATCH", "step": 2, "steps": 9, "profile": "dry_run"}}})
+	var active: bool = rs.auto_catch_active()
+	game._handle_input(1.0 / 60.0)
+	var src: String = game.control_source
+	var before: float = rs.arm_deg
+	game.arm_goto("open")
+	game.arm_step(10.0)
+	_ok(active and src == "halt" and (is_nan(before) and is_nan(rs.arm_deg) or rs.arm_deg == before),
+		"auto catch: while the backend runs it, no manual jog or claw command is made", "%s %s" % [active, src])
+	game.ws._handle({"type": "auto_catch", "data": {"active": false, "phase": "FAULT", "last_result": "fault", "error": "emergency stop (stop)", "profile": "dry_run"}})
+	game._handle_input(1.0 / 60.0)
+	game.debug_ui._update_robot_test()
+	_ok(not rs.auto_catch_active() and game.control_source != "halt" and str(game.debug_ui._auto_label.text).contains("emergency stop"),
+		"auto catch: a FAULT message unlocks manual control and the panel shows the cause", str(game.debug_ui._auto_label.text))
+	game._auto_catch_last_ms = -1.0e9
+	game.request_auto_catch()  # no backend link in the test
+	_ok(game._auto_catch_rid == "" and str(game.auto_catch_hint).contains("バックエンド"),
+		"auto catch: without a backend the button explains instead of sending", game.auto_catch_hint)
+	remove_child(game)
+	game.free()
+	rs.auto_catch = {}
+	rs.source = "mock"
+	rs.connected = false
+	rs.clear_samples()

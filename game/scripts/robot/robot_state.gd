@@ -51,6 +51,14 @@ var arm_span_deg: float = NAN
 ## True when the position is the firmware's reported value, false when it is
 ## estimated by the host from commanded targets.
 var position_is_measured: bool = true
+## One-button auto catch, as the backend reports it (robot_state.auto_catch /
+## {"type": "auto_catch"}): active, phase, step, steps, error, last_result, profile.
+## The sequence itself runs in the backend; the game only shows it and locks its
+## manual controls while it is active. {} = no backend / not reported.
+var auto_catch: Dictionary = {}
+
+func auto_catch_active() -> bool:
+	return source == "websocket" and bool(auto_catch.get("active", false))
 
 ## Playback runs behind the newest sample by a delay that covers the longest
 ## recent gap between samples, so it always interpolates between two real
