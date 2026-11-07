@@ -145,6 +145,8 @@ func _handle(msg: Dictionary) -> void:
 				RobotState.set(k, float(data[k]) if data.get(k) != null else NAN)
 			if data.has("error") and str(data.error) != "":
 				RobotState.last_error = str(data.error)
+			if data.get("auto_catch") is Dictionary:
+				RobotState.auto_catch = data.auto_catch
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),
 				str(data.get("state", "UNKNOWN")), int(msg.get("timestamp", 0)), bool(data.get("measured", true)))
 			if not was and RobotState.connected:
@@ -173,6 +175,11 @@ func _handle(msg: Dictionary) -> void:
 				GameState.post_event(str(data.get("event", "vision")), data)
 		"log":
 			log_line.emit(str(data.get("line", "")))
+		"auto_catch":
+			if not listen_only:
+				RobotState.auto_catch = data
+				log_line.emit("auto_catch: %s%s" % [str(data.get("phase", "")),
+					(" (%s)" % str(data.error)) if str(data.get("error", "")) != "" else ""])
 		_:
 			pass
 
