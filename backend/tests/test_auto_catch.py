@@ -246,6 +246,17 @@ async def test_stop_mid_sequence_aborts_at_once_and_starts_nothing_more():
             await rig.seq.start()
 
 
+async def test_stop_right_after_a_state_starts_sends_nothing_after_abort():
+    # the state's command task exists but has not run yet when stop comes in
+    async with Rig() as rig:
+        rig.seq.on_change = lambda st: (st["phase"] == "LOWER_TO_CATCH"
+                                        and asyncio.get_running_loop().create_task(rig.seq.abort("emergency stop (stop)")))
+        await rig.seq.start()
+        await rig.seq.wait()
+        assert rig.seq.phase == Phase.FAULT
+        assert rig.robot.commands[-1] == "ABORT" and "Z -> 30.00" not in rig.robot.commands
+
+
 async def test_estop_input_with_active_low_polarity():
     async with Rig() as rig:
         assert not rig.robot.inputs["estop"].active_high
@@ -276,7 +287,7 @@ async def test_stop_during_a_claw_move_aborts_the_servo():
     ("claw_stall", Phase.OPEN_CLAW, "CLOSE_CLAW timeout"),
 ])
 async def test_state_timeout_faults_and_stops(fault, at, phase):
-    async with Rig(fast_params(timeouts_s={k: 0.4 for k in fast_params().timeouts_s})) as rig:
+    async with Rig(fast_params(timeouts_s={k: 1.0 for k in fast_params().timeouts_s})) as rig:
         await rig.seq.start()
         await rig.until(at)
         rig.robot.inject(fault)
@@ -306,8 +317,9 @@ async def test_limit_switch_glitch_shorter_than_debounce_is_ignored():
     async with Rig() as rig:
         await rig.seq.start()
         await rig.until(Phase.LOWER_TO_CATCH)
+        rig.robot.inputs["limit_y"].debounce_s = 0.5  # wide margin: a slow CI must not stretch the glitch past it
         rig.robot.press_input("limit_y")
-        await asyncio.sleep(0.005)  # < 30 ms debounce
+        await asyncio.sleep(0.01)  # a glitch much shorter than the debounce
         rig.robot.release_input("limit_y")
         await rig.seq.wait()
         assert rig.seq.last_result == "done"

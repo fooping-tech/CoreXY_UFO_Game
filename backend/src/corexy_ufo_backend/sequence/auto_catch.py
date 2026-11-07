@@ -326,14 +326,20 @@ class AutoCatchSequencer:
                     and s.state not in (MachineState.Z_LOWERING, MachineState.Z_RAISING))
         return True  # claw: the servo command itself reported PASS
 
-    def _start_action(self, step: Step) -> asyncio.Task:
+    async def _action_body(self, step: Step) -> None:
+        # A task runs only after the current one yields: a stop that came in between
+        # creating it and its first step must not let the command out after the ABORT.
+        if self._abort_reason:
+            raise RobotCommandError(f"not sent ({self._abort_reason})")
         if step.kind == "claw":
-            coro = self.robot.arm_goto(step.claw)
+            await self.robot.arm_goto(step.claw)
         elif step.kind == "z":
-            coro = self.robot.move_z(step.z)
+            await self.robot.move_z(step.z)
         else:
-            coro = self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
-        return asyncio.get_running_loop().create_task(coro)
+            await self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
+
+    def _start_action(self, step: Step) -> asyncio.Task:
+        return asyncio.get_running_loop().create_task(self._action_body(step))
 
     async def _do_step(self, step: Step) -> None:
         self._set_phase(step.phase, step.describe())
