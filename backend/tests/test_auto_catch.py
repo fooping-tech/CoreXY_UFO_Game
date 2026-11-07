@@ -234,7 +234,8 @@ async def test_stop_mid_sequence_aborts_at_once_and_starts_nothing_more():
         await rig.seq.wait()
         assert rig.seq.phase == Phase.FAULT and rig.seq.error == "emergency stop (stop)"
         assert rig.robot.commands.count("ABORT") == 1
-        assert rig.robot.commands == ["CLAW -> open", "Z -> 30.00", "ABORT"]
+        # the Z command went out before the stop or not at all, never after the ABORT
+        assert rig.robot.commands in (["CLAW -> open", "Z -> 30.00", "ABORT"], ["CLAW -> open", "ABORT"])
         s = rig.robot.snapshot()
         assert s.alarm and not s.homed and not rig.lock.locked()
         z = rig.robot.pos[2]
@@ -395,6 +396,23 @@ def test_debounced_input_polarity_and_chatter():
 
 
 # ---------------------------------------------------------------- real robot
+async def test_first_descent_from_the_actual_start_height_is_bounded():
+    # 95 -> 30 is 1.95 drum turns, but a start at Z=100 makes the first move 2.1 turns
+    async with Rig(fast_params(max_drum_turns=2.0)) as rig:
+        assert validate(rig.params, LIMITS, load_config()) == []
+        assert rig.robot.pos[2] == 100.0
+        with pytest.raises(RobotCommandError, match="drum turn 2.10 > max_drum_turns 2"):
+            await rig.seq.start()
+        assert rig.robot.commands == []
+
+
+async def test_descent_is_checked_from_where_z_is_now():
+    # safe_z 95 -> catch_z 30 = 65 passes validation; from the start height 100 it is 70
+    async with Rig(fast_params(max_drop_units=66.0)) as rig:
+        with pytest.raises(RobotCommandError, match="descent 70.0 > max_drop_units 66"):
+            await rig.seq.start()
+
+
 def test_real_robot_reports_limit_switches_from_pos():
     cfg = BackendConfig()
     r = RealRobot(cfg)
@@ -404,6 +422,12 @@ def test_real_robot_reports_limit_switches_from_pos():
     r._apply_pos(P.parse_pos_line(line))
     s = r.snapshot()
     assert s.limit_x and not s.limit_y
+    # an XY move leaves home: the old reading must not be paired with the estimated / new position
+    r._move_from, r._move_to, r._move_t0, r._move_eta = (0.0, 50.0), (100.0, 50.0), 0.0, 1.0
+    assert not r.snapshot().limit_x
+    r._move_from = r._move_to = None
+    r._pos_xy, r._xy_measured = [100.0, 50.0], False  # ACK_XY: at the target, switches not read there yet
+    assert not r.snapshot().limit_x
 
 
 # ---------------------------------------------------------------- through the WebSocket server

@@ -76,7 +76,11 @@ class RealRobot(RobotInterface):
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
-        self._limits_active = (False, False)  # POS LIMIT_X / LIMIT_Y
+        # POS LIMIT_X / LIMIT_Y and the XY of that same POS: the switches are only
+        # reported while the machine is still there (not paired with a later or
+        # estimated position: the firmware does not answer POS during a move)
+        self._limits_active = (False, False)
+        self._limits_xy: tuple[float, float] | None = None
         self._jogging = False
         self._jog_requested = False  # a non-zero JOG was sent and not yet ended
         self._last_jog_t = 0.0  # when the last non-zero JOG was written
@@ -217,6 +221,7 @@ class RealRobot(RobotInterface):
         self.alarm = pos.alarm
         self.test_mode = pos.test_mode
         self._limits_active = (pos.limit_x, pos.limit_y)
+        self._limits_xy = (pos.x, pos.y)
         if pos.alarm:
             self.error = pos.alarm_reason
         elif self.error.startswith("alarm") or self.error == "abort requested":
@@ -703,5 +708,11 @@ class RealRobot(RobotInterface):
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
-            limit_x=self._limits_active[0], limit_y=self._limits_active[1],
+            limit_x=self._limits_active[0] and self._limits_current(x, y, measured),
+            limit_y=self._limits_active[1] and self._limits_current(x, y, measured),
         )
+
+    def _limits_current(self, x: float, y: float, measured: bool) -> bool:
+        """The last switch reading still describes where the machine is."""
+        return (measured and self._limits_xy is not None
+                and abs(self._limits_xy[0] - x) < 0.01 and abs(self._limits_xy[1] - y) < 0.01)

@@ -33,7 +33,7 @@ from enum import StrEnum
 from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
 from ..robot.state import MachineState, RobotSnapshot
-from .params import AutoCatchParams, height, validate
+from .params import COUNTS_PER_TURN, AutoCatchParams, height, validate
 
 log = logging.getLogger(__name__)
 
@@ -164,6 +164,20 @@ class AutoCatchSequencer:
             return f"Y limit switch active away from home (y={s.y:.1f})"
         return ""
 
+    def z_move_errors(self, z_from: float, z_to: float) -> list[str]:
+        """Bounds of one actual Z move (from where Z is now): descent and drum turns."""
+        errs: list[str] = []
+        p = self.params
+        dz = abs(height(z_from, self.limits) - height(z_to, self.limits))
+        drop = height(z_from, self.limits) - height(z_to, self.limits)
+        if p.max_drop_units is not None and drop > p.max_drop_units:
+            errs.append(f"Z {z_from:.1f} -> {z_to:g}: descent {drop:.1f} > max_drop_units {p.max_drop_units:g}")
+        if self.backend is not None and p.max_drum_turns is not None:
+            turns = dz * self.backend.z_counts_per_unit / COUNTS_PER_TURN
+            if turns > p.max_drum_turns:
+                errs.append(f"Z {z_from:.1f} -> {z_to:g}: drum turn {turns:.2f} > max_drum_turns {p.max_drum_turns:g}")
+        return errs
+
     def preconditions(self) -> list[str]:
         """Why the sequence cannot start now (empty = it can)."""
         errs = list(validate(self.params, self.limits, self.backend))
@@ -205,6 +219,8 @@ class AutoCatchSequencer:
         lf = self._limit_fault(s)
         if lf:
             errs.append(lf)
+        if self.params.catch_z is not None:
+            errs += self.z_move_errors(s.z, self.params.catch_z)  # the first descent starts from here
         return errs
 
     # ------------------------------------------------------------------ control
@@ -345,6 +361,10 @@ class AutoCatchSequencer:
         self._set_phase(step.phase, step.describe())
         t0 = self.clock()
         self._check(step, t0)  # an abort that came in between: no new action
+        if step.kind == "z":
+            errs = self.z_move_errors(self.robot.snapshot().z, step.z)
+            if errs:
+                raise SequenceFault("; ".join(errs))
         action = self._action = self._start_action(step)
         settled_since: float | None = None
         while True:
@@ -354,6 +374,10 @@ class AutoCatchSequencer:
                 if exc is not None:
                     raise SequenceFault(f"{step.phase} failed: {exc}")
                 if self._reached(step):
+                    if step.kind == "xy":
+                        await self._refresh_after_move()
+                        self._check(step, t0)  # switches read where the move ended
+                        return
                     if step.kind != "claw":
                         return
                     now = self.clock()
@@ -361,6 +385,15 @@ class AutoCatchSequencer:
                     if now - settled_since >= float(self.params.claw_settle_s):  # type: ignore[arg-type]
                         return
             await asyncio.sleep(self.poll_s)
+
+    async def _refresh_after_move(self) -> None:
+        refresh = getattr(self.robot, "refresh_status", None)
+        if refresh is None:
+            return
+        try:
+            await refresh()
+        except RobotCommandError as e:
+            raise SequenceFault(f"status read after the move failed: {e}") from e
 
     def _finish_ok(self) -> None:
         self.last_result = "done"
