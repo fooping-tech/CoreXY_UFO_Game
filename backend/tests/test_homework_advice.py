@@ -120,6 +120,10 @@ async def ready_robot() -> MockRobot:
     await r.enable_motors(True)
     await r.home()
     await r.move_z(100.0)
+    await r.arm_set("closed")  # the claw's positions (the approach stands the arm on its open claws)
+    await r.arm_step(60.0)
+    await r.arm_set("open")
+    await r.arm_goto("closed")
     await settle(r)
     return r
 
@@ -169,7 +173,8 @@ async def test_approach_goes_down_waits_for_the_capture_and_comes_back():
     s = r.snapshot()
     assert seq.last_result == "done" and abs(s.z - 100) < 3 and abs(s.x - 10) < 2 and not lock.locked()
     order = [p for i, p in enumerate(phases) if i == 0 or phases[i - 1] != p]
-    assert order == ["RAISE", "MOVE_XY", "LOWER", "HOLD", "RAISE_BACK", "RETURN_XY", "IDLE"]
+    assert order == ["RAISE", "MOVE_XY", "OPEN_CLAW", "LOWER", "HOLD", "RAISE_BACK", "RETURN_XY", "IDLE"]
+    assert r.arm_deg == 60.0  # still open (close_claw_after is off by default)
 
 
 async def test_hold_times_out_and_still_goes_back_up():

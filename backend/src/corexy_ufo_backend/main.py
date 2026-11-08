@@ -29,6 +29,7 @@ from .websocket import GameServer
 from .config import REPO_ROOT
 from .homework import HomeworkConfig, HomeworkService
 from .homework.approach import ApproachParams
+from .homework.camera_map import CameraMapParams
 from .study import StudyConfig, StudyService, make_adapter
 
 log = logging.getLogger("corexy_ufo_backend")
@@ -131,7 +132,8 @@ async def run(args: argparse.Namespace) -> int:
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,
-                        auto_catch=auto_cfg, backend_cfg=cfg, study=study, homework=homework, approach=ApproachParams.from_raw(cfg.raw))
+                        auto_catch=auto_cfg, backend_cfg=cfg, study=study, homework=homework, approach=ApproachParams.from_raw(cfg.raw),
+                        camera_map=CameraMapParams.from_raw(cfg.raw))
     try:
         await robot.connect()
     except Exception as e:

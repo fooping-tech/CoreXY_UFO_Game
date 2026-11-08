@@ -44,7 +44,10 @@ var _hw_status: Label
 var _hw_elapsed: Label
 var _hw_bar: ProgressBar
 var _hw_detail: Label
-var _hw_preview: TextureRect
+var _hw_preview: OverviewPicker
+var _hw_focus: OverviewPicker
+var _hw_click_mode: OptionButton
+var _hw_calib: Label
 var _hw_stall: Label
 var _hw_spot: Label
 var _hw_advice_status: Label
@@ -267,7 +270,7 @@ func _build_homework() -> void:
 	_hw_stall.add_theme_color_override("font_color", Color(1.0, 0.7, 0.3))
 	_vbox.add_child(_hw_stall)
 	_header("アドバイス（止まったとき）")
-	_note("進捗が %d 秒（約 %d 分）伸びないと知らせる。「近づいてアドバイス」で、アームのカメラを記録した位置へ下ろして撮影し、すぐ上へ戻る。全体と拡大の画像から Claude / Codex（study.provider）が止まっている問題を見つけ、答えは言わずにヒントを出す。位置は、アームをプリントの上の見たい高さまで JOG で動かしてから「ここを宿題の位置に記録」。動いている間は Space / STOP で止まる（止めたらアラーム解除と原点復帰）。実機では未検証。" % [int(GameConfig.get_value("homework", "stall_s", 180.0)), int(GameConfig.get_value("homework", "stall_s", 180.0)) / 60])
+	_note("進捗が %d 秒（約 %d 分）伸びないと知らせる。「近づいてアドバイス」で、アームのカメラを記録した位置へ下ろして撮影し、すぐ上へ戻る。全体と拡大の画像から Claude / Codex（study.provider）が止まっている問題を見つけ、答えは言わずにヒントを出す。位置は、爪を開いてアームを JOG でプリントの上へ下ろし、開いた爪がプリントに立つ高さ（カメラが真下を向く）で「ここを宿題の位置に記録」。近づくときも爪を開いてからその高さへ下ろす。動いている間は Space / STOP で止まる（止めたらアラーム解除と原点復帰）。実機では未検証。" % [int(GameConfig.get_value("homework", "stall_s", 180.0)), int(GameConfig.get_value("homework", "stall_s", 180.0)) / 60])
 	var adv_row := HBoxContainer.new()
 	_vbox.add_child(adv_row)
 	_button(adv_row, "近づいてアドバイス", func(): main.homework.approach_and_advise()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -288,13 +291,46 @@ func _build_homework() -> void:
 	_hw_advice.custom_minimum_size.y = 200
 	_hw_advice.add_theme_font_size_override("normal_font_size", 13)
 	_vbox.add_child(_hw_advice)
-	_hw_preview = TextureRect.new()
+	# stage 2 (#78): overview image <-> CoreXY XY calibration, and looking at a clicked point
+	_note("カメラの校正（俯瞰カメラの画像 → CoreXY の XY）。①「校正点を記録」を選ぶ ② 爪を開いてアームを下ろし、開いた爪でプリントに立たせる（吊ったままだとカメラの線に引かれて傾く）③ JOG で動かし、下のアームのカメラの十字をプリントの目印（解答欄の角など）に合わせる（動かすときは少し上げ、合わせたら下ろして立たせる）④ 俯瞰の映像でその目印をクリック。プリントの四隅と中ほどなど、広く散らして 4 点以上（6 点以上がよい）。宿題の位置も同じく爪で立つ高さで記録する。俯瞰カメラを動かしたら記録し直す。「そこを見に行く」では、クリックした場所の上へアームのカメラを動かす（宿題の位置の高さ、Space / STOP で中止）。実機では未検証。")
+	_hw_click_mode = OptionButton.new()
+	_hw_click_mode.focus_mode = Control.FOCUS_NONE
+	_hw_click_mode.add_item("俯瞰の映像をクリックすると: 何もしない", 0)
+	_hw_click_mode.add_item("俯瞰の映像をクリックすると: 校正点を記録", 1)
+	_hw_click_mode.add_item("俯瞰の映像をクリックすると: そこを見に行く", 2)
+	_hw_click_mode.item_selected.connect(func(_i): _update_homework())
+	_vbox.add_child(_hw_click_mode)
+	var cal_row := HBoxContainer.new()
+	_vbox.add_child(cal_row)
+	_button(cal_row, "最後の点を取り消す", func(): main.homework.calib_undo()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(cal_row, "校正を全部消す", func(): main.homework.calib_clear()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(cal_row, "戻る", func(): main.homework.look_done()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hw_calib = Label.new()
+	_hw_calib.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_calib.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_hw_calib)
+	_hw_preview = OverviewPicker.new()
+	_hw_preview.hw = main.homework
 	_hw_preview.texture = main.cameras.texture(main.homework.camera_role)
-	_hw_preview.material = main.cameras.view_material(false)
-	_hw_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_hw_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_hw_preview.use_material(main.cameras.view_material(false))
 	_hw_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.75)
+	_hw_preview.picked.connect(_on_overview_picked)
 	_vbox.add_child(_hw_preview)
+	_hw_focus = OverviewPicker.new()
+	_hw_focus.center_cross = true
+	_hw_focus.texture = main.cameras.texture("focus")
+	_hw_focus.use_material(main.cameras.view_material(false))
+	_hw_focus.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hw_focus.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.5)
+	_vbox.add_child(_hw_focus)
+	main.homework.request_camera_map()
+
+func _on_overview_picked(uv: Vector2) -> void:
+	match _hw_click_mode.selected:
+		1:
+			main.homework.calib_add(uv)
+		2:
+			main.homework.look_at(uv)
 
 func _update_homework() -> void:
 	if main == null or main.homework == null or _hw_status == null:
@@ -320,6 +356,12 @@ func _update_homework() -> void:
 	_hw_advice_status.text = hw.advice_status + ("（アーム: %s）" % phase if moving else "")
 	_hw_advice_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if hw.advice_state == "error" else Color(0.65, 0.9, 1.0))
 	_hw_advice.text = hw.advice_text
+	if _hw_calib != null:
+		_hw_preview.clickable = _hw_click_mode.selected != 0
+		_hw_calib.text = hw.calib_summary() + ("\n" + hw.calib_status if hw.calib_status != "" else "")
+		var calib_bad := hw.calib_status.begins_with("校正できません") or hw.calib_status.begins_with("動かせません") or hw.calib_status.begins_with("アームを止め")
+		_hw_calib.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if calib_bad else Color(0.65, 0.9, 1.0))
+		_hw_focus.custom_minimum_size = Vector2(_inner_w(), _inner_w() / main.cameras.feed_aspect("focus") * 0.6)
 
 func _update_study() -> void:
 	if main == null or main.study == null or _study_status == null:

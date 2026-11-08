@@ -1156,6 +1156,7 @@ func _test_homework_watch(rs: Node) -> void:
 		"%s %s %s %s %s" % [notice, advice_ok, hold_ok, spot_ok, fault_ok])
 	hw.approach_and_advise()  # the game's own mock (no backend robot link): refused with a reason
 	_ok(hw.advice_status.contains("バックエンド"), "homework: approaching needs the backend's robot link")
+	_test_homework_camera_map(game, hw)
 	hw.stop()
 	remove_child(game)
 	game.free()
@@ -1163,6 +1164,48 @@ func _test_homework_watch(rs: Node) -> void:
 	RobotState.source = "mock"
 	RobotState.connected = false
 	rs.clear_samples()
+
+## Stage 2 (#78): the backend's camera calibration in the panel, the clickable overview,
+## the arm camera's aim marker from h_inv, and a look's states.
+func _test_homework_camera_map(game: Node, hw: HomeworkClient) -> void:
+	# homography rows: XY mm -> image (u, v); here u = x / 400, v = y / 300
+	var h_inv := [[1.0 / 400.0, 0.0, 0.0], [0.0, 1.0 / 300.0, 0.0], [0.0, 0.0, 1.0]]
+	var mapped = HomeworkClient.map_point(h_inv, 200.0, 75.0)
+	var persp = HomeworkClient.map_point([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.5, 0.0, 1.0]], 2.0, 4.0)
+	var map_ok: bool = mapped is Vector2 and mapped.is_equal_approx(Vector2(0.5, 0.25)) \
+		and persp is Vector2 and persp.is_equal_approx(Vector2(1.0, 2.0))
+	var r := OverviewPicker.fit_rect(Vector2(400, 400), Vector2(1280, 720))
+	var fit_ok := r.position.is_equal_approx(Vector2(0, 87.5)) and r.size.is_equal_approx(Vector2(400, 225))
+	_ok(map_ok and fit_ok, "camera map: homography point and the picker's drawn rect", "%s %s" % [mapped, r])
+	# the marks are drawn on a child without the camera shader (it would recolour them)
+	var picker: OverviewPicker = game.debug_ui._hw_preview
+	_ok(picker.material != null and picker.overlay.get_parent() == picker and picker.overlay.material == null
+		and not picker.overlay.use_parent_material, "camera map: marks drawn outside the camera shader")
+	hw._on_robot_message({"type": "ack", "data": {"command": "camera_map_add", "usable": true, "problem": "",
+		"points": [{"u": 0.1, "v": 0.2, "x": 40.0, "y": 60.0}], "rms_mm": 0.8, "max_mm": 1.4, "h_inv": h_inv}})
+	RobotState.x_mm = 200.0
+	RobotState.y_mm = 75.0
+	var aim = hw.arm_view_uv()
+	game.debug_ui._update_homework()
+	var ui_ok: bool = game.debug_ui._hw_calib.text.contains("最大 1.4 mm") and game.debug_ui._hw_calib.text.contains("点を記録しました")
+	hw._on_robot_message({"type": "nack", "data": {"command": "camera_map_add", "reason": "not homed"}})
+	var nack_ok := hw.calib_status.contains("not homed") and hw.calibration_usable()
+	_ok(aim is Vector2 and aim.is_equal_approx(Vector2(0.5, 0.25)) and ui_ok and nack_ok,
+		"camera map: status from the backend, panel summary, aim marker, refusal shown", "%s %s %s" % [aim, ui_ok, nack_ok])
+	# a look: stale IDLE / FAULT from robot_state must not end it before it moves
+	hw.looking = true
+	hw._look_moving = false
+	hw._on_robot_message({"type": "robot_state", "data": {"homework_approach": {"active": false, "phase": "FAULT", "error": "old"}}})
+	var stale_ok := hw.looking
+	hw._on_robot_message({"type": "homework_approach", "data": {"active": true, "phase": "MOVE_XY"}})
+	hw._on_robot_message({"type": "homework_approach", "data": {"active": true, "phase": "HOLD"}})
+	var hold_ok := hw.looking and hw.calib_status.contains("見ています")
+	hw._on_robot_message({"type": "homework_approach", "data": {"active": false, "phase": "IDLE"}})
+	var back_ok := not hw.looking and hw.calib_status == "戻りました"
+	hw.look_at(Vector2(0.5, 0.5))  # no backend robot link in the tests
+	var refused_ok := not hw.looking and hw.calib_status.contains("バックエンド")
+	_ok(stale_ok and hold_ok and back_ok and refused_ok, "camera map: look states (stale status ignored, hold, back, refused offline)",
+		"%s %s %s %s" % [stale_ok, hold_ok, back_ok, refused_ok])
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;
 ## spawn_fx honours the options; one-shots free themselves; off = nothing spawns.

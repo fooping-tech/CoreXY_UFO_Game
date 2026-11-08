@@ -174,7 +174,16 @@
       "xy_tolerance_mm": 2.0,
       "z_tolerance": 3.0,
       "return_xy": true,
-      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top, XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+      "open_claw": true,
+      "close_claw_after": false,
+      "claw_settle_s": 0.5,
+      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+    },
+    "camera_map": {
+      "min_points": 4,
+      "max_error_mm": 5.0,
+      "margin_mm": 20.0,
+      "_note": "Overview camera image -> CoreXY XY (#78): a homography fitted to points recorded in the 宿題 tab (arm camera centred on a mark, the mark clicked in the overview image), saved in config/camera_xy_calibration.json. Not used to move when the fit's largest error is over max_error_mm, when the camera's size / flips changed since calibration, or for a point more than margin_mm outside the calibrated points. Not yet run on the real robot."
     },
     "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
