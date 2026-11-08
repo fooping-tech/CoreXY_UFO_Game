@@ -34,7 +34,12 @@ var _active := ""  # the confirmed shape ("" = none)
 var _miss_since := -1.0  # when the confirmed shape stopped showing
 var _cand := ""  # a shape waiting for its confirmation
 var _cand_since := 0.0
-var _last_sign_ms := -1.0  # when a direction shape was last seen
+## What the latch watches: the direction shape being shown, when it was last
+## seen, and another direction shape taking over from it.
+var _shown := ""
+var _last_shown_ms := -1.0
+var _other := ""
+var _other_since := 0.0
 var _seen := false
 var _armed := ""  # the shape the steer armed with
 var _out := Vector3.ZERO  # smoothed output
@@ -68,9 +73,7 @@ func configure(c: Dictionary) -> void:
 
 func engaged(g, now_ms: float) -> bool:
 	var p: String = g.pose if directions.has(g.pose) else ""
-	if p != "":
-		_last_sign_ms = now_ms
-	_seen = p != "" or (_last_sign_ms >= 0.0 and now_ms - _last_sign_ms < pose_release_ms)
+	_track_shown(p, now_ms)
 	if _active != "":
 		if p == _active:
 			_miss_since = -1.0
@@ -93,6 +96,35 @@ func engaged(g, now_ms: float) -> bool:
 		_miss_since = -1.0
 		return true
 	return false
+
+## The sign the latch waits on: the shape shown, kept through a flicker shorter
+## than pose_release_ms. It is let go when no direction shape has been seen for
+## that long, or when another direction shape has been held for that long (a
+## new sign: the latch lifts for that tick, the new shape then confirms as usual).
+## A one-frame misread of another shape lifts nothing.
+func _track_shown(p: String, now_ms: float) -> void:
+	_seen = true
+	if p != "" and (_shown == "" or p == _shown):
+		_shown = p
+		_last_shown_ms = now_ms
+		_other = ""
+		return
+	if p != "":
+		if p != _other:
+			_other = p
+			_other_since = now_ms
+		if now_ms - _other_since >= pose_release_ms:
+			_shown = p  # held long enough: another sign, not a misread
+			_last_shown_ms = now_ms
+			_other = ""
+			_seen = false
+			_active = ""  # the old shape is over too (its flicker grace must not hide this tick)
+			_miss_since = -1.0
+		return
+	_other = ""
+	if _shown == "" or now_ms - _last_shown_ms >= pose_release_ms:
+		_shown = ""
+		_seen = false
 
 func sign_seen(_g) -> bool:
 	return _seen

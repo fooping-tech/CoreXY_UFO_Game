@@ -1306,6 +1306,17 @@ func _test_pose_direction_scheme() -> void:
 	_ok(latched and lifted and g.is_active(), "pose scheme: after a stop the same shape does not restart it; letting go does",
 		"%s %s %s" % [latched, lifted, g.state_name()])
 
+	# after a stop, going straight to another direction shape also lets go (held, not a misread)
+	g.stop("stop_key")
+	step.call("peace", 5)
+	step.call("open", 1)  # a one-frame misread of another shape
+	step.call("peace", 5)
+	var misread_kept := g.state == S.WAITING_RELEASE
+	step.call("open", 30)
+	_ok(misread_kept and g.is_active() and g.velocity == Vector2(20.0, 0.0),
+		"pose scheme: after a stop, holding another direction shape lets go and moves that way; a one-frame misread does not",
+		"%s %s %s" % [misread_kept, g.state_name(), g.velocity])
+
 	step.call("other", 10)
 	step.call("fist", 40)
 	_ok(claws == ["closed"], "pose scheme: the claw shape still works (fist = close)", str(claws))
