@@ -13,20 +13,45 @@ import asyncio
 import base64
 import binascii
 import logging
+import tempfile
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from .jev import JevClient, JevError, JevResult, load_credentials
-from .progress import ProgressTracker, build_input, parse
+from .progress import STALL_MIN_GAIN, STALL_S, ProgressTracker, build_input, parse
 
 log = logging.getLogger(__name__)
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 # 4xx answers in a row (other than 429) before a session stops by itself
 FATAL_LIMIT = 3
+
+ADVICE_SYSTEM_PROMPT = (
+    "あなたは小学生の宿題を見守る、やさしい家庭教師です。答えそのものは言わず、"
+    "考え方のヒントを、小学生にわかる短い日本語で伝えてください。画像から読み取れないことは推測と明記してください。")
+
+
+def advice_prompt(context: dict[str, Any]) -> str:
+    parts = ["宿題プリントの画像です。"]
+    if context.get("composite"):
+        parts.append("左は机の上から撮った全体、右はアームのカメラで近づいて撮った拡大です。")
+    if context.get("elapsed_s") is not None:
+        parts.append(f"始めてから約{int(context['elapsed_s'] // 60)}分")
+        if context.get("progress_pct") is not None:
+            parts.append(f"、進み具合は約{int(context['progress_pct'])}%")
+        if context.get("stalled_for_s"):
+            parts.append(f"で、ここ{max(int(context['stalled_for_s'] // 60), 1)}分ほど進んでいません")
+        parts.append("。")
+    parts.append(
+        "\n1. 手が止まっていそうな問題を特定してください（途中まで書いてある問題。なければ最初の空欄の問題）。"
+        "\n2. その問題の内容を読み取ってください。"
+        "\n3. 答えは言わずに、考え方のヒントを2〜3文で伝えてください。"
+        "\n最後の行に「止まっている問題: （番号や位置）」と書いてください。")
+    return "".join(parts)
 
 
 class JevRunner(Protocol):
@@ -41,6 +66,9 @@ class HomeworkConfig:
     max_image_edge: int = 1024  # the jev repo measured tokens at 1024 px (about 8.8k per call)
     max_image_bytes: int = 700_000
     camera_role: str = "overview"
+    stall_s: float = STALL_S
+    stall_min_gain: float = STALL_MIN_GAIN
+    advice_timeout_s: float = 120.0
     env_path: Path | None = None
 
     @classmethod
@@ -52,14 +80,17 @@ class HomeworkConfig:
                    max_image_edge=max(int(d.get("max_image_edge", 1024)), 64),
                    max_image_bytes=max(int(d.get("max_image_bytes", 700_000)), 1024),
                    camera_role=str(d.get("camera_role", "overview")),
+                   stall_s=max(float(d.get("stall_s", STALL_S)), 10.0),
+                   stall_min_gain=max(float(d.get("stall_min_gain", STALL_MIN_GAIN)), 0.0),
+                   advice_timeout_s=max(float(d.get("advice_timeout_s", 120.0)), 5.0),
                    env_path=env_path)
 
 
 @dataclass
 class _Session:
     client: JevRunner
+    tracker: ProgressTracker
     started: float = field(default_factory=time.monotonic)
-    tracker: ProgressTracker = field(default_factory=ProgressTracker)
     task: asyncio.Task | None = None
     count: int = 0
     skipped: int = 0
@@ -73,9 +104,11 @@ class _Session:
         return time.monotonic() - self.started
 
     def summary(self) -> dict[str, Any]:
-        return {"elapsed_s": round(self.elapsed(), 1), "count": self.count, "skipped": self.skipped,
+        t = self.elapsed()
+        return {"elapsed_s": round(t, 1), "count": self.count, "skipped": self.skipped,
                 "errors": self.errors, "input_tokens": self.input_tokens,
-                "cost_usd": round(self.cost_usd, 6), "smoothed_pct": self.tracker.smoothed_pct}
+                "cost_usd": round(self.cost_usd, 6), "smoothed_pct": self.tracker.smoothed_pct,
+                "stalled": self.tracker.stalled(t), "stalled_for_s": round(self.tracker.stalled_for(t), 1)}
 
 
 def decode_jpeg(value: str, limit: int) -> bytes:
@@ -94,17 +127,23 @@ def decode_jpeg(value: str, limit: int) -> bytes:
 
 class HomeworkService:
     def __init__(self, config: HomeworkConfig,
-                 client_factory: Callable[[], JevRunner] | None = None) -> None:
+                 client_factory: Callable[[], JevRunner] | None = None,
+                 advice_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
         # credentials are read when a session starts, so a fixed .env needs no restart
         self._client_factory = client_factory or (lambda: JevClient(load_credentials(config.env_path)))
+        # a study adapter (Claude Code / Codex, study.provider): start_session / ask / close_session / close
+        self._advice_factory = advice_factory
+        self._advice_task: asyncio.Task | None = None
         self.sessions: dict[str, _Session] = {}
 
     async def start(self, session_id: str) -> dict[str, Any]:
         if not session_id or len(session_id) > 128:
             raise ValueError("invalid session_id")
         if session_id not in self.sessions:
-            self.sessions[session_id] = _Session(client=self._client_factory())  # JevError("config") if no key
+            self.sessions[session_id] = _Session(  # JevError("config") if no key
+                client=self._client_factory(),
+                tracker=ProgressTracker(stall_s=self.config.stall_s, stall_min_gain=self.config.stall_min_gain))
             log.info("homework session %s started", session_id)
         s = self.sessions[session_id]
         return {"session_id": session_id, "state": "running", "interval_s": self.config.interval_s,
@@ -154,6 +193,66 @@ class HomeworkService:
             "occluded_prob": reading.occluded_prob, "top_level_prob": reading.top_level_prob,
             "latency_ms": round(res.latency_s * 1000), **s.summary()}})
 
+    # ------------------------------------------------------------------ advice
+    @property
+    def advice_available(self) -> bool:
+        return self._advice_factory is not None
+
+    async def advise(self, session_id: str, request_id: str, image_b64: str, composite: bool, emit: Emit) -> None:
+        """Ask the study assistant which problem the child is stuck on and for a hint.
+        The answer streams as homework_advice_delta, then homework_advice_result /
+        homework_advice_error. One at a time."""
+        if self._advice_factory is None:
+            raise ValueError("no assistant for advice (study.provider)")
+        if self._advice_task is not None and not self._advice_task.done():
+            raise ValueError("an advice is already being written")
+        if not request_id:
+            raise ValueError("request_id is required")
+        image = decode_jpeg(image_b64, self.config.max_image_bytes * 2)
+        s = self.sessions.get(session_id)
+        context: dict[str, Any] = {"composite": composite}
+        if s is not None:
+            t = s.elapsed()
+            context.update(elapsed_s=t, progress_pct=s.tracker.smoothed_pct, stalled_for_s=s.tracker.stalled_for(t))
+        self._advice_task = asyncio.create_task(self._advise(s, request_id, image, context, emit))
+
+    async def _advise(self, s: _Session | None, request_id: str, image: bytes, context: dict, emit: Emit) -> None:
+        temp = tempfile.TemporaryDirectory(prefix="corexy-ufo-homework-")
+        path = Path(temp.name) / f"{uuid.uuid4().hex}.jpg"
+        path.write_bytes(image)
+        adapter = None
+        thread = None
+
+        async def delta(text: str) -> None:
+            if text:
+                await emit({"type": "homework_advice_delta", "request_id": request_id, "data": {"text": text}})
+
+        try:
+            adapter = self._advice_factory()  # type: ignore[misc]  # a bad study.provider fails here
+            thread = await adapter.start_session(Path(temp.name), ADVICE_SYSTEM_PROMPT)
+            await asyncio.wait_for(adapter.ask(thread, advice_prompt(context), path, delta),
+                                   self.config.advice_timeout_s)
+            if s is not None:
+                s.tracker.reset_stall(s.elapsed())
+            await emit({"type": "homework_advice_result", "request_id": request_id, "data": context})
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            await emit({"type": "homework_advice_error", "request_id": request_id,
+                        "data": {"code": "timeout", "message": "アドバイスの作成がタイムアウトしました"}})
+        except Exception as e:
+            await emit({"type": "homework_advice_error", "request_id": request_id,
+                        "data": {"code": "assistant_error", "message": str(e)}})
+        finally:
+            try:
+                if adapter is not None and thread is not None:
+                    await adapter.close_session(thread)
+                if adapter is not None:
+                    await adapter.close()
+            except Exception:  # pragma: no cover - cleanup must not hide the answer
+                log.exception("homework advice cleanup")
+            temp.cleanup()
+
     async def stop(self, session_id: str) -> dict[str, Any] | None:
         s = self.sessions.pop(session_id, None)
         if s is None:
@@ -168,3 +267,6 @@ class HomeworkService:
     async def close(self) -> None:
         for session_id in list(self.sessions):
             await self.stop(session_id)
+        if self._advice_task is not None and not self._advice_task.done():
+            self._advice_task.cancel()
+            await asyncio.gather(self._advice_task, return_exceptions=True)

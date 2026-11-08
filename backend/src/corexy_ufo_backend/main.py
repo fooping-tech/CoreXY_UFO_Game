@@ -28,6 +28,7 @@ from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
 from .config import REPO_ROOT
 from .homework import HomeworkConfig, HomeworkService
+from .homework.approach import ApproachParams
 from .study import StudyConfig, StudyService, make_adapter
 
 log = logging.getLogger("corexy_ufo_backend")
@@ -125,11 +126,12 @@ async def run(args: argparse.Namespace) -> int:
     elif args.study:
         log.warning("--study ignored because study.enabled is false in config")
     hw_cfg = HomeworkConfig.from_raw(cfg.raw, env_path=REPO_ROOT / ".env")
-    homework = HomeworkService(hw_cfg) if hw_cfg.enabled else None
+    # the advice uses the study assistant's provider (Claude Code / Codex) without needing --study
+    homework = HomeworkService(hw_cfg, advice_factory=lambda: make_adapter(study_cfg)) if hw_cfg.enabled else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,
-                        auto_catch=auto_cfg, backend_cfg=cfg, study=study, homework=homework)
+                        auto_catch=auto_cfg, backend_cfg=cfg, study=study, homework=homework, approach=ApproachParams.from_raw(cfg.raw))
     try:
         await robot.connect()
     except Exception as e:

@@ -106,13 +106,26 @@ def parse(output: dict) -> Reading:
                    probabilities=prog.get("probabilities") if is_score else None)
 
 
+STALL_S = 180.0  # no gain of STALL_MIN_GAIN points for this long = stalled
+STALL_MIN_GAIN = 5.0
+
+
 @dataclass
 class ProgressTracker:
     """The shown value: median of the last SMOOTH_WINDOW updated readings (held ones skipped).
-    Not forced to grow (an answer can be erased). `history` keeps every reading for later
-    use (spotting a stall)."""
+    Not forced to grow (an answer can be erased). `history` keeps every reading.
+
+    Stall: the shown value has not grown by stall_min_gain points for stall_s (time
+    since the last such gain, or since the start / the last advice). Not at 100%,
+    and not while the last reading was held because a hand covers the answers
+    (the child is likely writing)."""
+    stall_s: float = STALL_S
+    stall_min_gain: float = STALL_MIN_GAIN
     window: deque = field(default_factory=lambda: deque(maxlen=SMOOTH_WINDOW))
     history: list[dict[str, Any]] = field(default_factory=list)
+    _base_t: float = 0.0
+    _base_pct: float | None = None
+    _last_reason: str = ""
 
     @property
     def smoothed_pct(self) -> float | None:
@@ -122,6 +135,30 @@ class ProgressTracker:
         if not reading.held and reading.progress_pct is not None:
             self.window.append(reading.progress_pct)
         smoothed = self.smoothed_pct
+        self._last_reason = reading.held_reason
+        if smoothed is not None:
+            if self._base_pct is None:
+                self._base_pct = smoothed  # the clock runs from the start (_base_t = 0)
+            elif smoothed >= self._base_pct + self.stall_min_gain:
+                self._base_t, self._base_pct = elapsed_s, smoothed  # progress: restart the clock
+            elif smoothed < self._base_pct:
+                self._base_pct = smoothed  # erased: compare later gains from here, keep the clock
         self.history.append({"elapsed_s": round(elapsed_s, 1), "progress_pct": reading.progress_pct,
                              "smoothed_pct": smoothed, "held": reading.held_reason})
         return smoothed
+
+    def stalled_for(self, elapsed_s: float) -> float:
+        """Seconds without progress (0 when not counted: no value yet, 100%, a hand over the sheet)."""
+        smoothed = self.smoothed_pct
+        if smoothed is None or smoothed >= 100.0 or self._last_reason == "occluded":
+            return 0.0
+        return max(elapsed_s - self._base_t, 0.0)
+
+    def stalled(self, elapsed_s: float) -> bool:
+        return self.stalled_for(elapsed_s) >= self.stall_s
+
+    def reset_stall(self, elapsed_s: float) -> None:
+        """After an advice: wait stall_s again before the next one."""
+        self._base_t = elapsed_s
+        if self.smoothed_pct is not None:
+            self._base_pct = self.smoothed_pct

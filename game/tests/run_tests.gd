@@ -1123,6 +1123,39 @@ func _test_homework_watch(rs: Node) -> void:
 	RobotState.connected = true
 	hw.link._on_closed()
 	_ok(RobotState.connected, "homework: its link never touches RobotState")
+	# advice (#76): side-by-side image, stall notice, streamed advice, HOLD -> capture + release, FAULT
+	var a := Image.create(40, 30, false, Image.FORMAT_RGB8)
+	a.fill(Color.RED)
+	var b := Image.create(20, 20, false, Image.FORMAT_RGBA8)
+	b.fill(Color.BLUE)
+	var both := HomeworkClient.compose_side_by_side([a, b] as Array[Image], 60)
+	_ok(both.get_width() == 80 + 60 and both.get_height() == 60 and both.get_pixel(10, 10).r > 0.9
+		and both.get_pixel(100, 10).b > 0.9, "homework: overview and close-up side by side at one height", "%dx%d" % [both.get_width(), both.get_height()])
+	hw.start()
+	hw._on_message({"type": "homework_status", "data": {"state": "running"}})
+	hw._on_message({"type": "homework_progress", "data": {"progress_pct": 20.0, "smoothed_pct": 20.0, "held_reason": "",
+		"count": 5, "stalled": true, "stalled_for_s": 200.0}})
+	game.debug_ui._update_homework()
+	var notice: bool = hw.stalled and game.debug_ui._hw_stall.text.contains("3 分ほど進んでいません")
+	hw._on_message({"type": "homework_status", "data": {"state": "advising"}})
+	hw._on_message({"type": "homework_advice_delta", "data": {"text": "3番の"}})
+	hw._on_message({"type": "homework_advice_delta", "data": {"text": "問題で止まっています"}})
+	hw._on_message({"type": "homework_advice_result", "data": {}})
+	game.debug_ui._update_homework()
+	var advice_ok: bool = hw.advice_state == "done" and game.debug_ui._hw_advice.text == "3番の問題で止まっています"
+	hw.advice_state = "approaching"
+	hw._captured = false
+	hw._on_robot_message({"type": "homework_approach", "data": {"active": true, "phase": "HOLD", "spot": {"x": 1, "y": 2, "z": 3}}})
+	var hold_ok: bool = hw._captured and hw.advice_state == "error" and hw.advice_status.contains("カメラの映像がない")  # headless: no camera
+	game.debug_ui._update_homework()
+	var spot_ok: bool = game.debug_ui._hw_spot.text.contains("X 1.0 / Y 2.0 / Z 3.0")
+	hw.advice_state = "approaching"
+	hw._on_robot_message({"type": "robot_state", "data": {"homework_approach": {"active": false, "phase": "FAULT", "error": "emergency stop (stop)"}}})
+	var fault_ok: bool = hw.advice_state == "error" and hw.advice_status.contains("emergency stop")
+	_ok(notice and advice_ok and hold_ok and spot_ok and fault_ok, "homework: stall notice, advice, capture at HOLD, fault",
+		"%s %s %s %s %s" % [notice, advice_ok, hold_ok, spot_ok, fault_ok])
+	hw.approach_and_advise()  # the game's own mock (no backend robot link): refused with a reason
+	_ok(hw.advice_status.contains("バックエンド"), "homework: approaching needs the backend's robot link")
 	hw.stop()
 	remove_child(game)
 	game.free()

@@ -4,11 +4,19 @@ extends Node
 ## send it to the backend, which estimates the worksheet's progress with Jev.
 ## Own WebSocket link (aux: hello + homework_* only); never touches the robot.
 ## Keeps running when the panel or tab changes: only stop() ends it.
+##
+## Stage 1 of the advice (#76): when the backend reports a stall, the panel offers
+## "近づいてアドバイス": the robot link (the game's main connection) starts the
+## backend's approach sequence (arm camera down to the recorded spot); at HOLD this
+## client captures the overview + focus frames side by side, asks for advice on the
+## aux link and releases the arm (it goes back up while the advice is written).
 
 signal state_changed
 
 var cameras: CameraHub
 var link: UfoWebSocketClient
+## The game's robot connection (commands + homework_approach status); null without one.
+var robot_ws: UfoWebSocketClient
 var session_id := ""
 ## stopped | connecting | running | unavailable | error
 var state := "stopped"
@@ -28,14 +36,30 @@ var errors := 0
 var cost_usd := 0.0
 ## Every reading of this session: {elapsed_s, progress_pct, smoothed_pct, held}
 var history: Array[Dictionary] = []
+## The backend's stall verdict (no gain of stall_min_gain points for stall_s).
+var stalled := false
+var stalled_for_s := 0.0
+## "" | approaching | thinking | done | error
+var advice_state := ""
+var advice_text := ""
+var advice_status := ""
+## The backend's approach sequence: {active, phase, error, last_result, spot}
+var approach: Dictionary = {}
+var advice_available := false
+var _approach_rid := ""
+var _captured := false
 var _started_ms := 0
 var _stopped_elapsed := 0.0
 var _next_ms := 0
 var _waiting := false  # a frame was sent and its answer has not come back
 var _seq := 0
 
-func setup(hub: CameraHub) -> void:
+func setup(hub: CameraHub, robot_link: UfoWebSocketClient = null) -> void:
 	cameras = hub
+	robot_ws = robot_link
+	if robot_ws != null:
+		robot_ws.message_received.connect(_on_robot_message)
+		robot_ws.ack.connect(_on_robot_ack)
 	camera_role = str(GameConfig.get_value("homework", "camera_role", "overview"))
 	interval_s = maxf(float(GameConfig.get_value("homework", "interval_s", 10.0)), 2.0)
 	max_image_edge = int(GameConfig.get_value("homework", "max_image_edge", 1024))
@@ -126,6 +150,7 @@ func _on_message(msg: Dictionary) -> void:
 	var t := str(msg.get("type", ""))
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
 	if t == "hello":
+		advice_available = bool(data.get("homework_advice", false))
 		if state != "connecting" and state != "running":
 			return
 		if not bool(data.get("homework", false)):
@@ -133,7 +158,18 @@ func _on_message(msg: Dictionary) -> void:
 			status_text = "バックエンドで宿題の見守りが無効です（config の homework.enabled）"
 		else:
 			_send_start()
+	elif t == "homework_advice_delta":
+		advice_text += str(data.get("text", ""))
+	elif t == "homework_advice_result":
+		advice_state = "done"
+		advice_status = "アドバイスを出しました"
+	elif t == "homework_advice_error":
+		advice_state = "error"
+		advice_status = "アドバイスを作れませんでした: " + str(data.get("message", ""))
 	elif t == "homework_status":
+		if str(data.get("state", "")) == "advising":
+			advice_state = "thinking"
+			advice_status = "Claude / Codex が読み取っています…"
 		if str(data.get("state", "")) == "running" and state == "connecting":
 			state = "running"
 			_next_ms = Time.get_ticks_msec()  # the first frame right away
@@ -169,6 +205,8 @@ func _on_message(msg: Dictionary) -> void:
 	state_changed.emit()
 
 func _apply_summary(data: Dictionary) -> void:
+	stalled = bool(data.get("stalled", stalled))
+	stalled_for_s = float(data.get("stalled_for_s", stalled_for_s))
 	count = int(data.get("count", count))
 	skipped = maxi(skipped, int(data.get("skipped", 0)))
 	cost_usd = float(data.get("cost_usd", cost_usd))
@@ -178,6 +216,140 @@ func _on_disconnected() -> void:
 		_waiting = false
 		state = "connecting"
 		status_text = "バックエンドとの接続が切れました。再接続中…"
+		state_changed.emit()
+
+# ------------------------------------------------------------------ advice (#76)
+## The robot link can take commands (a backend runs the robot, not the game's own mock).
+func robot_link_ready() -> bool:
+	return robot_ws != null and robot_ws.enabled and robot_ws.is_open() and RobotState.source == "websocket"
+
+func advice_busy() -> bool:
+	return advice_state in ["approaching", "thinking"]
+
+## Record where the arm is now as the homework spot (jog it above the worksheet first).
+func record_spot() -> void:
+	if not robot_link_ready():
+		advice_status = "位置の記録にはバックエンド（実機 / モック）への接続が要る"
+		state_changed.emit()
+		return
+	robot_ws.send_command("homework_spot_set")
+
+## Take the arm's camera down to the spot, capture, ask for advice, go back.
+func approach_and_advise() -> void:
+	if advice_busy():
+		return
+	if not robot_link_ready():
+		advice_status = "近づくにはバックエンド（実機 / モック）への接続が要る"
+		state_changed.emit()
+		return
+	_ensure_link()
+	advice_state = "approaching"
+	advice_text = ""
+	advice_status = "アームを宿題の位置へ動かしています…（Space / STOP で中止）"
+	_captured = false
+	_approach_rid = robot_ws.send_command("homework_approach")
+	state_changed.emit()
+
+## Advice from the cameras as they are now (no motion).
+func advise_now() -> void:
+	if advice_busy():
+		return
+	_ensure_link()
+	advice_text = ""
+	_send_advice()
+
+func _ensure_link() -> void:
+	if not link.enabled:
+		link.enabled = true  # the aux link may be off when no watch is running
+
+## Overview (whole sheet) and focus (close-up) side by side; the overview alone without a focus feed.
+func _capture_advice_image() -> Dictionary:
+	var parts: Array[Image] = []
+	for role in ["overview", "focus"]:
+		if cameras != null and cameras.has_feed(role):
+			var img := cameras.texture(role).get_image()
+			if img != null and not img.is_empty():
+				parts.append(img)
+	if parts.is_empty():
+		return {}
+	var image := compose_side_by_side(parts, 720)
+	return {"jpeg": StudyClient.encode_jpeg(image, 1600, max_image_bytes), "composite": parts.size() > 1}
+
+## Images scaled to one height and put left to right.
+static func compose_side_by_side(parts: Array[Image], height: int) -> Image:
+	var scaled: Array[Image] = []
+	var width := 0
+	for p in parts:
+		var img := p.duplicate() as Image
+		img.convert(Image.FORMAT_RGB8)
+		var w := maxi(1, int(round(float(img.get_width()) * height / float(img.get_height()))))
+		img.resize(w, height, Image.INTERPOLATE_BILINEAR)
+		scaled.append(img)
+		width += w
+	var out := Image.create(width, height, false, Image.FORMAT_RGB8)
+	var x := 0
+	for img in scaled:
+		out.blit_rect(img, Rect2i(0, 0, img.get_width(), height), Vector2i(x, 0))
+		x += img.get_width()
+	return out
+
+func _send_advice() -> void:
+	var cap := _capture_advice_image()
+	if cap.is_empty() or (cap.jpeg as PackedByteArray).is_empty():
+		advice_state = "error"
+		advice_status = "カメラの映像がないため、アドバイスを頼めませんでした"
+		state_changed.emit()
+		return
+	_seq += 1
+	var err := link.send_aux({"type": "homework_advice", "request_id": "hwa-%d" % _seq, "data": {
+		"session_id": session_id, "composite": cap.composite,
+		"image_jpeg_base64": Marshalls.raw_to_base64(cap.jpeg)}})
+	if err == OK:
+		advice_state = "thinking"
+		advice_status = "Claude / Codex が読み取っています…"
+	else:
+		advice_state = "error"
+		advice_status = "画像を送れませんでした（WebSocket error %d）" % err
+	state_changed.emit()
+
+func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:
+	if rid != _approach_rid:
+		return
+	_approach_rid = ""
+	if not ok and advice_state == "approaching":
+		advice_state = "error"
+		advice_status = "近づけませんでした: " + str(payload.get("reason", ""))
+		state_changed.emit()
+
+func _on_robot_message(msg: Dictionary) -> void:
+	var t := str(msg.get("type", ""))
+	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
+	if t == "homework_approach":
+		_on_approach(data)
+	elif t == "robot_state" and data.get("homework_approach") is Dictionary:
+		_on_approach(data.homework_approach)
+	elif t == "ack" and str(data.get("command", "")) == "homework_spot_set":
+		_on_approach(data)
+		advice_status = "宿題の位置を記録しました"
+		state_changed.emit()
+	elif t == "nack" and str(data.get("command", "")) == "homework_spot_set":
+		advice_status = "位置を記録できませんでした: " + str(data.get("reason", ""))
+		state_changed.emit()
+
+func _on_approach(status: Dictionary) -> void:
+	var before := str(approach.get("phase", ""))
+	approach = status
+	var phase := str(status.get("phase", ""))
+	if advice_state == "approaching":
+		if phase == "HOLD" and not _captured:
+			_captured = true
+			_send_advice()  # frames now, while the arm is down
+			if robot_link_ready():
+				robot_ws.send_command("homework_approach_release")  # back up while the advice is written
+		elif phase == "FAULT":
+			advice_state = "error"
+			advice_status = "アームを止めました: %s（アラーム解除と原点復帰が必要なことがある）" % str(status.get("error", ""))
+	if phase != before:
 		state_changed.emit()
 
 static func _num(v) -> float:

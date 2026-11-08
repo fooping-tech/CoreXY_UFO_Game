@@ -164,7 +164,19 @@
     "max_image_edge": 1024,
     "max_image_bytes": 700000,
     "camera_role": "overview",
-    "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here."
+    "stall_s": 180.0,
+    "stall_min_gain": 5.0,
+    "advice_timeout_s": 120.0,
+    "approach": {
+      "hold_timeout_s": 15.0,
+      "step_timeout_s": 30.0,
+      "total_timeout_s": 150.0,
+      "xy_tolerance_mm": 2.0,
+      "z_tolerance": 3.0,
+      "return_xy": true,
+      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top, XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+    },
+    "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
   "backend": {
     "serial_port": "",

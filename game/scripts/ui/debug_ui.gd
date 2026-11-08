@@ -45,6 +45,10 @@ var _hw_elapsed: Label
 var _hw_bar: ProgressBar
 var _hw_detail: Label
 var _hw_preview: TextureRect
+var _hw_stall: Label
+var _hw_spot: Label
+var _hw_advice_status: Label
+var _hw_advice: RichTextLabel
 var _study_status: Label
 var _study_question: TextEdit
 var _study_answer: RichTextLabel
@@ -257,6 +261,33 @@ func _build_homework() -> void:
 	_hw_detail.add_theme_font_size_override("font_size", 10)
 	_hw_detail.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
 	_vbox.add_child(_hw_detail)
+	_hw_stall = Label.new()
+	_hw_stall.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_stall.add_theme_font_size_override("font_size", 13)
+	_hw_stall.add_theme_color_override("font_color", Color(1.0, 0.7, 0.3))
+	_vbox.add_child(_hw_stall)
+	_header("アドバイス（止まったとき）")
+	_note("進捗が %d 秒（約 %d 分）伸びないと知らせる。「近づいてアドバイス」で、アームのカメラを記録した位置へ下ろして撮影し、すぐ上へ戻る。全体と拡大の画像から Claude / Codex（study.provider）が止まっている問題を見つけ、答えは言わずにヒントを出す。位置は、アームをプリントの上の見たい高さまで JOG で動かしてから「ここを宿題の位置に記録」。動いている間は Space / STOP で止まる（止めたらアラーム解除と原点復帰）。実機では未検証。" % [int(GameConfig.get_value("homework", "stall_s", 180.0)), int(GameConfig.get_value("homework", "stall_s", 180.0)) / 60])
+	var adv_row := HBoxContainer.new()
+	_vbox.add_child(adv_row)
+	_button(adv_row, "近づいてアドバイス", func(): main.homework.approach_and_advise()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(adv_row, "今の画像でアドバイス", func(): main.homework.advise_now()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(_vbox, "ここを宿題の位置に記録", func(): main.homework.record_spot())
+	_hw_spot = Label.new()
+	_hw_spot.add_theme_font_size_override("font_size", 10)
+	_hw_spot.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
+	_vbox.add_child(_hw_spot)
+	_hw_advice_status = Label.new()
+	_hw_advice_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_advice_status.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_hw_advice_status)
+	_hw_advice = RichTextLabel.new()
+	_hw_advice.bbcode_enabled = false
+	_hw_advice.selection_enabled = true
+	_hw_advice.focus_mode = Control.FOCUS_NONE
+	_hw_advice.custom_minimum_size.y = 200
+	_hw_advice.add_theme_font_size_override("normal_font_size", 13)
+	_vbox.add_child(_hw_advice)
 	_hw_preview = TextureRect.new()
 	_hw_preview.texture = main.cameras.texture(main.homework.camera_role)
 	_hw_preview.material = main.cameras.view_material(false)
@@ -281,6 +312,14 @@ func _update_homework() -> void:
 		hw.cost_usd, hw.cost_usd * 156.0]
 	if _hw_preview != null:
 		_hw_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() / main.cameras.feed_aspect(hw.camera_role))
+	_hw_stall.text = ("⚠ %d 分ほど進んでいません。「近づいてアドバイス」でヒントを出せます" % maxi(int(hw.stalled_for_s / 60.0), 1)) if hw.stalled else ""
+	var spot = hw.approach.get("spot")
+	_hw_spot.text = ("宿題の位置: X %.1f / Y %.1f / Z %.1f" % [float(spot.x), float(spot.y), float(spot.z)]) if spot is Dictionary else "宿題の位置: 未記録"
+	var phase := str(hw.approach.get("phase", ""))
+	var moving := bool(hw.approach.get("active", false))
+	_hw_advice_status.text = hw.advice_status + ("（アーム: %s）" % phase if moving else "")
+	_hw_advice_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if hw.advice_state == "error" else Color(0.65, 0.9, 1.0))
+	_hw_advice.text = hw.advice_text
 
 func _update_study() -> void:
 	if main == null or main.study == null or _study_status == null:
@@ -896,8 +935,8 @@ func _process(_dt: float) -> void:
 	_update_gesture_status()
 	_update_robot_test()
 	_update_vfx()
-	if main.homework != null and visible and main.homework.running():
-		_update_homework()  # the elapsed time ticks
+	if main.homework != null and visible and (main.homework.running() or main.homework.advice_busy()):
+		_update_homework()  # the elapsed time ticks, the advice streams in
 	_refresh_log()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
