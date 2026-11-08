@@ -99,7 +99,8 @@ class CodexStudyAdapter:
                     await asyncio.sleep(0)
                     continue
                 method, params = message.get("method"), message.get("params") or {}
-                turn_id = str(params.get("turnId", ""))
+                turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+                turn_id = str(params.get("turnId") or turn.get("id") or "")
                 tracked = self._turns.get(turn_id)
                 if method == "item/agentMessage/delta" and tracked:
                     await tracked[0](str(params.get("delta", "")))
@@ -152,6 +153,10 @@ class CodexStudyAdapter:
         try:
             await done
             return turn_id
+        except asyncio.CancelledError:
+            # Keep the mapping alive until turn/interrupt has the ID it requires.
+            await asyncio.shield(self.cancel(thread_id, turn_id))
+            raise
         finally:
             self._turns.pop(turn_id, None)
             self._active_turn_by_thread.pop(thread_id, None)

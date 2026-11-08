@@ -1134,9 +1134,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 					_jog_active = false
 					ws.send_command("soft_stop")
 			KEY_F1, KEY_TAB:
-				if debug_ui.visible and study != null:
-					study.end_session()
 				debug_ui.visible = not debug_ui.visible
+				debug_ui.study_panel_visibility_changed(debug_ui.visible)
 				_layout()
 			KEY_V:
 				scope_trigger.toggle()

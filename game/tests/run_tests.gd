@@ -1009,7 +1009,9 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		titles.append(tabs.get_tab_title(i))
 	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
 	var d: Vector3 = game._jog_input()
-	_ok(titles[0] == "実機" and titles.size() == 7 and game.ui_jog_z == 0.0 and d.z == 0.0,
+	var expected_tabs := 8 if bool(GameConfig.data.study.enabled) else 7
+	var study_matches_config: bool = titles.has("Study") == bool(GameConfig.data.study.enabled)
+	_ok(titles[0] == "実機" and titles.size() == expected_tabs and study_matches_config and game.ui_jog_z == 0.0 and d.z == 0.0,
 		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
 	# backend / serial lines and game lines land in one log; the copy has the state on top
 	game.ws._handle({"type": "log", "data": {"line": "[serial] RX JOG servo id=1 disabled test"}})
@@ -1030,11 +1032,25 @@ func _test_study_is_optional(rs: Node) -> void:
 	var titles := []
 	for i in game.debug_ui._tabs.get_tab_count():
 		titles.append(game.debug_ui._tabs.get_tab_title(i))
-	_ok(game.study != null and titles.has("Study") and titles.size() == 8,
-		"study: enabled creates the isolated client and F1 tab", str(titles))
+	var study_tab: int = titles.find("Study")
+	var buffer_ok: bool = game.study.link.outbound_buffer_size >= int(GameConfig.data.study.max_image_bytes) * 2
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.machine_state = "READY"
+	game.study.link._on_closed()
+	var isolated: bool = RobotState.connected and RobotState.machine_state == "READY"
+	game.debug_ui._tabs.current_tab = study_tab
+	game.study.end_session()
+	game.debug_ui.study_panel_visibility_changed(true)
+	var reopened: bool = game.study.session_id != "" and game.study.state == "connecting"
+	game.study.end_session()
+	_ok(game.study != null and study_tab >= 0 and titles.size() == 8 and buffer_ok and isolated and reopened,
+		"study: optional client is isolated, sized for images, and restarts on reopen", "%s buffer=%s isolated=%s reopened=%s" % [titles, buffer_ok, isolated, reopened])
 	remove_child(game)
 	game.free()
 	GameConfig.data.study.enabled = previous
+	RobotState.source = "mock"
+	RobotState.connected = false
 	rs.clear_samples()
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;

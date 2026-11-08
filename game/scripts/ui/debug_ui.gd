@@ -169,6 +169,14 @@ func _on_tab_changed(index: int) -> void:
 	elif main.study.session_id != "":
 		main.study.end_session()
 
+func study_panel_visibility_changed(is_visible: bool) -> void:
+	if main.study == null or _study_tab < 0:
+		return
+	if is_visible and _tabs.current_tab == _study_tab:
+		main.study.start_session()
+	elif not is_visible and main.study.session_id != "":
+		main.study.end_session()
+
 func _build_study() -> void:
 	_note("表示中のカメラを手動撮影し、ローカルCodexに質問します。画像や会話はセッション終了時に破棄されます。")
 	_study_status = Label.new()

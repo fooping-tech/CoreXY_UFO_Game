@@ -26,6 +26,9 @@ func setup(hub: CameraHub) -> void:
 	link.name = "StudyLink"
 	link.study_only = true
 	link.auto_reconnect = true
+	# Base64 expands JPEGs by 4/3 and the JSON envelope adds a little more.
+	# Keep margin for one complete queued message (WebSocketPeer rejects it otherwise).
+	link.outbound_buffer_size = maxi(1048576, max_image_bytes * 2)
 	link.study_message.connect(_on_message)
 	link.disconnected.connect(_on_disconnected)
 	add_child(link)
@@ -75,9 +78,13 @@ func ask(question: String) -> void:
 	answer = ""
 	state = "thinking"
 	status_text = "Codexが画像を確認しています…"
-	link.send_aux({"type": "study_request", "request_id": request_id, "data": {
+	var error := link.send_aux({"type": "study_request", "request_id": request_id, "data": {
 		"session_id": session_id, "question": question, "camera_role": camera_role,
 		"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
+	if error != OK:
+		state = "ready"
+		request_id = ""
+		status_text = "画像を送信できませんでした（WebSocket error %d）" % error
 	state_changed.emit()
 
 func cancel() -> void:

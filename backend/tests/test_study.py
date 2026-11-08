@@ -9,7 +9,7 @@ import pytest
 import websockets
 
 from corexy_ufo_backend.robot.mock_robot import MockRobot
-from corexy_ufo_backend.study import StudyConfig, StudyService
+from corexy_ufo_backend.study import CodexStudyAdapter, StudyConfig, StudyService
 from corexy_ufo_backend.websocket import GameServer
 
 
@@ -139,3 +139,46 @@ async def test_disabled_server_reports_study_error():
     finally:
         await server.stop()
         await robot.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_codex_completion_uses_nested_turn_id():
+    adapter = CodexStudyAdapter()
+    reader = asyncio.StreamReader()
+    adapter._proc = type("Proc", (), {"stdout": reader})()
+    deltas = []
+    async def on_delta(text):
+        deltas.append(text)
+    done = asyncio.get_running_loop().create_future()
+    adapter._turns["turn-nested"] = (on_delta, done)
+    reader.feed_data(json.dumps({"method": "turn/completed", "params": {
+        "turn": {"id": "turn-nested", "status": "completed"}}}).encode() + b"\n")
+    reader.feed_eof()
+    await adapter._read_loop()
+    assert done.result() == "completed"
+
+
+@pytest.mark.asyncio
+async def test_codex_cancel_keeps_active_turn_until_interrupt():
+    class CancelAdapter(CodexStudyAdapter):
+        def __init__(self):
+            super().__init__()
+            self.interrupted = None
+
+        async def _request(self, method, _params):
+            assert method == "turn/start"
+            return {"turn": {"id": "turn-1"}}
+
+        async def cancel(self, thread_id, turn_id=None):
+            self.interrupted = (thread_id, turn_id, self._active_turn_by_thread.get(thread_id))
+
+    adapter = CancelAdapter()
+    async def on_delta(_text):
+        return
+    task = asyncio.create_task(adapter.ask("thread-1", "q", Path("/tmp/image.jpg"), on_delta))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert adapter.interrupted == ("thread-1", "turn-1", "turn-1")
+    assert "thread-1" not in adapter._active_turn_by_thread

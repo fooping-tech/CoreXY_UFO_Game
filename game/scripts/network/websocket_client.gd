@@ -21,6 +21,9 @@ var listen_only := false
 ## Auxiliary connection used by StudyClient. It receives hello + study_* only
 ## and can never write RobotState or send robot commands.
 var study_only := false
+## libwebsockets queues a complete message before sending it. StudyClient raises
+## this for the base64 JPEG; ordinary robot links keep the small default.
+var outbound_buffer_size := 0
 ## What the backend drives ("mock", "real", ...), from its hello.
 var server_robot := ""
 
@@ -52,6 +55,8 @@ func _ready() -> void:
 
 func _connect() -> void:
 	_peer = WebSocketPeer.new()
+	if outbound_buffer_size > 0:
+		_peer.outbound_buffer_size = outbound_buffer_size
 	var err := _peer.connect_to_url(url)
 	if err != OK:
 		log_line.emit("connect error %d" % err)
@@ -102,7 +107,7 @@ func _process(dt: float) -> void:
 func _on_closed() -> void:
 	log_line.emit("disconnected (code %d)" % _peer.get_close_code())
 	server_robot = ""
-	if RobotState.source == "websocket" and not listen_only:
+	if RobotState.source == "websocket" and not listen_only and not study_only:
 		RobotState.connected = false
 		RobotState.machine_state = "UNKNOWN"
 	for rid in _pending.keys():
@@ -118,7 +123,7 @@ func _check_timeouts() -> void:
 			log_line.emit("timeout " + rid)
 			ack.emit(rid, false, {"reason": "timeout"})
 	# Backend alive but robot samples stale -> treat as link problem.
-	if not listen_only and RobotState.source == "websocket" and RobotState.connected and now - _last_state_ms > state_timeout_ms:
+	if not listen_only and not study_only and RobotState.source == "websocket" and RobotState.connected and now - _last_state_ms > state_timeout_ms:
 		RobotState.report_error("robot_state timeout")
 		RobotState.connected = false
 		RobotState.machine_state = "UNKNOWN"
@@ -199,16 +204,17 @@ func _handle(msg: Dictionary) -> void:
 		_:
 			pass
 
-func send(msg: Dictionary) -> void:
+func send(msg: Dictionary) -> Error:
 	if not is_open():
-		return
+		return ERR_UNAVAILABLE
 	if not msg.has("timestamp"):
 		msg["timestamp"] = Time.get_ticks_msec()
-	_peer.send_text(JSON.stringify(msg))
+	return _peer.send_text(JSON.stringify(msg))
 
-func send_aux(msg: Dictionary) -> void:
+func send_aux(msg: Dictionary) -> Error:
 	if study_only:
-		send(msg)
+		return send(msg)
+	return ERR_UNAUTHORIZED
 
 ## A home / move / grab command is still waiting for its answer.
 func has_pending_motion() -> bool:
