@@ -105,6 +105,7 @@ var _jog_latched := false
 ## debug log gets one line per change instead of one per tick.
 var _kb_logged := Vector3.ZERO
 var _unfocused_logged := false
+var _typing_logged := false
 ## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
 var jog_hint := ""
 ## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
@@ -735,21 +736,35 @@ func _jog_input() -> Vector3:
 			_unfocused_logged = true
 		return d  # keys of an unfocused window must not keep the robot moving
 	_unfocused_logged = false
-	if Input.is_key_pressed(KEY_RIGHT):
-		d.x += 1
-	if Input.is_key_pressed(KEY_LEFT):
-		d.x -= 1
-	if Input.is_key_pressed(KEY_UP):
-		d.y += 1
-	if Input.is_key_pressed(KEY_DOWN):
-		d.y -= 1
 	var zsign := 1.0 if GameConfig.robot().z_up_is_positive else -1.0
-	if Input.is_key_pressed(KEY_W):
-		d.z += zsign
-	if Input.is_key_pressed(KEY_S):
-		d.z -= zsign
+	if text_entry_focused():
+		# typing (the Study question): arrows move the caret, W / S are letters
+		if not _typing_logged and _any_jog_key():
+			debug_log.emit("keys: ignored while typing in a text field (click the game area to jog)")
+			_typing_logged = true
+	else:
+		_typing_logged = false
+		if Input.is_key_pressed(KEY_RIGHT):
+			d.x += 1
+		if Input.is_key_pressed(KEY_LEFT):
+			d.x -= 1
+		if Input.is_key_pressed(KEY_UP):
+			d.y += 1
+		if Input.is_key_pressed(KEY_DOWN):
+			d.y -= 1
+		if Input.is_key_pressed(KEY_W):
+			d.z += zsign
+		if Input.is_key_pressed(KEY_S):
+			d.z -= zsign
 	d.z = clampf(d.z + ui_jog_z * zsign, -1.0, 1.0)
 	return d
+
+## A text field has the keyboard: its keys are typing, never jog or hand-shape keys.
+func text_entry_focused() -> bool:
+	return is_text_entry(get_viewport().gui_get_focus_owner())
+
+static func is_text_entry(c: Control) -> bool:
+	return c is TextEdit or c is LineEdit
 
 func _any_jog_key() -> bool:
 	for k in [KEY_RIGHT, KEY_LEFT, KEY_UP, KEY_DOWN, KEY_W, KEY_S]:
@@ -885,7 +900,7 @@ func _feed_sim_hand() -> void:
 	var sim_point := (m - Vector2(_play_w, vs.y) * 0.5).normalized()  # image axes: x right, y down
 	_sim_seq += 1
 	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
-		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": sim_pose(gesture.scheme.uses_stick()),
+		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": sim_pose(gesture.scheme.uses_stick(), not text_entry_focused()),
 		"point_dx": sim_point.x, "point_dy": sim_point.y, "point_len": 1.0 if sim_point != Vector2.ZERO else 0.0,
 		"thumb_dx": sim_point.x, "thumb_dy": sim_point.y, "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
 		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
@@ -895,7 +910,9 @@ func _feed_sim_hand() -> void:
 ## The mouse simulation's hand shape: keys 1 / 2 / 3 / 4 / 5 held = open / peace / fist / point / thumb.
 ## Without a key: an open hand for the pinch stick (its resting hand), "other"
 ## for a shape scheme (so the crane does not move just because the mouse is there).
-static func sim_pose(stick: bool) -> String:
+static func sim_pose(stick: bool, keys := true) -> String:
+	if not keys:
+		return "open" if stick else "other"
 	if Input.is_physical_key_pressed(KEY_1):
 		return "open"
 	if Input.is_physical_key_pressed(KEY_2):
@@ -1122,6 +1139,9 @@ func _update_gesture_presentation(dt: float) -> void:
 	ufo.steer = steer
 
 func _unhandled_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton and ev.pressed and text_entry_focused():
+		# a click on the game area ends typing, so the jog keys work again
+		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		match ev.keycode:
 			KEY_SPACE:
