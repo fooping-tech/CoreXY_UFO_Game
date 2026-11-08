@@ -14,7 +14,8 @@ import websockets
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.study import (ClaudeCodeStudyAdapter, CodexStudyAdapter, StudyAdapterError, StudyConfig,
                                       StudyService, make_adapter)
-from corexy_ufo_backend.study.claude_adapter import RESTARTED_NOTE, claude_argv
+from corexy_ufo_backend.study import claude_adapter
+from corexy_ufo_backend.study.claude_adapter import RESTARTED_NOTE, claude_argv, find_claude, resolve_claude
 from corexy_ufo_backend.websocket import GameServer
 
 FAKE = Path(__file__).with_name("fake_claude_cli.py")
@@ -41,7 +42,7 @@ async def ask(adapter, thread, text, image):
 
 def test_command_line_has_no_tools_mcp_settings_or_history():
     argv = claude_argv("claude", "教える")
-    assert argv[0] == "claude" and argv[argv.index("--tools") + 1] == ""
+    assert Path(argv[0]).name == "claude" and argv[argv.index("--tools") + 1] == ""
     assert argv[argv.index("--setting-sources") + 1] == ""
     assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
     for flag in ("-p", "--strict-mcp-config", "--no-session-persistence", "--include-partial-messages"):
@@ -176,3 +177,35 @@ async def test_hello_names_the_provider():
             assert hello["data"]["study_provider"] == "claude"
     finally:
         await srv.stop()
+
+
+def _exe(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_find_claude_takes_the_newest_editor_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_adapter, "_SYSTEM_CANDIDATES", ())
+    ext = tmp_path / ".vscode/extensions"
+    assert find_claude(tmp_path) is None
+    _exe(ext / "anthropic.claude-code-2.1.9-darwin-arm64/resources/native-binary/claude")
+    newest = _exe(ext / "anthropic.claude-code-2.1.319-darwin-arm64/resources/native-binary/claude")
+    stale = ext / "anthropic.claude-code-2.2.0-darwin-arm64/resources/native-binary/claude"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("")  # not executable (a half-removed update): skipped
+    assert find_claude(tmp_path) == str(newest)  # 319 > 9: by number, not by text
+    installed = _exe(tmp_path / ".local/bin/claude")
+    assert find_claude(tmp_path) == str(installed)  # an installed CLI comes first
+
+
+def test_resolve_claude(monkeypatch):
+    monkeypatch.setattr(claude_adapter.shutil, "which", lambda _p: None)
+    monkeypatch.setattr(claude_adapter, "find_claude", lambda: "/found/claude")
+    assert resolve_claude("claude") == "/found/claude"  # not on PATH: looked for
+    assert resolve_claude("/opt/x/claude") == "/opt/x/claude"  # a path is kept as written
+    assert resolve_claude("~/bin/claude") == str(Path.home() / "bin/claude")  # no user name in config
+    assert resolve_claude("other-cli") == "other-cli"
+    monkeypatch.setattr(claude_adapter.shutil, "which", lambda _p: "/usr/bin/claude")
+    assert resolve_claude("claude") == "claude"  # on PATH: left to the OS

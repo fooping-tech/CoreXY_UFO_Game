@@ -105,7 +105,11 @@ cd CoreXY_UFO_Game/game
 
 - `config/game_config.json` の `study.enabled` を `true` にし、`./start.sh mock --study`（または実機起動に `--study` を追加）で起動すると、F1 パネルに **Study** タブが現れる。既定は OFF で、OFF のときは UI・専用 WebSocket・回答役のプロセスを作らない。
 - **回答役は `study.provider` で選ぶ。** `"claude"`（既定）= Claude Code CLI、`"codex"` = `codex app-server`。
-  - Claude Code は、手元でログイン済みの `claude` を使う。PATH に無いときは `study.claude_command` にフルパスを書く。例: VS Code 拡張に入っている `~/.vscode/extensions/anthropic.claude-code-<版>-darwin-arm64/resources/native-binary/claude`。拡張を更新するとパスの版が変わる。
+  - Claude Code は、手元でログイン済みの `claude` を使う。設定は既定の `"claude"` のままでよい。PATH に無ければ、バックエンドが次の順に探す。
+    1. `~/.local/bin/claude`、`~/.claude/local/claude`
+    2. `/opt/homebrew/bin/claude`、`/usr/local/bin/claude`
+    3. VS Code / Cursor 拡張に入っている CLI（`~/.vscode/extensions/anthropic.claude-code-<版>-.../native-binary/claude`）。入っている中で一番新しい版を、セッションを始めるたびに選ぶので、拡張を更新しても書き換えは要らない。
+  - 別の場所の CLI を使うときだけ `study.claude_command` を書く。`~/...` が使えるので、ユーザー名を設定ファイルに書かずに済む。
   - `study.claude_model` でモデルを指定できる。空なら CLI の既定のモデルを使う。
   - Claude Code はセッションごとに `claude -p --input-format stream-json ...` を 1 つ起動する。組み込みツールなし（`--tools ""`）、MCP なし、ユーザー・プロジェクトの設定やフック・CLAUDE.md を読まない（`--setting-sources ""`）、会話をディスクに残さない（`--no-session-persistence`）。
 - Study タブを開き、Overview / Focus、質問を選んで「撮影して質問」を押す。表示用に反転済みの現在フレームだけを JPEG にして、選んだ回答役へ送る。自動監視・自動撮影はしない。

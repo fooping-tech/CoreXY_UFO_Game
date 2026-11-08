@@ -22,7 +22,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
+import re
 import shlex
+import shutil
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -37,10 +40,60 @@ RESTARTED_NOTE = "（前の会話が途切れたため、新しい会話とし�
 _STDERR_KEEP = 2000
 
 
+# Where the CLI is when `claude` is not on PATH (relative to the home directory,
+# so no user name is written anywhere). Editor extensions carry their own copy
+# under a versioned directory: the newest one is taken each time a session
+# starts, so an extension update needs no config change.
+_HOME_CANDIDATES = (".local/bin/claude", ".claude/local/claude")
+_SYSTEM_CANDIDATES = ("/opt/homebrew/bin/claude", "/usr/local/bin/claude")
+_EXTENSION_GLOBS = (
+    ".vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude",
+    ".vscode-insiders/extensions/anthropic.claude-code-*/resources/native-binary/claude",
+    ".cursor/extensions/anthropic.claude-code-*/resources/native-binary/claude",
+)
+
+
+def _version_key(path: Path) -> tuple[int, ...]:
+    """anthropic.claude-code-2.1.319-darwin-arm64 -> (2, 1, 319)."""
+    for part in path.parts:
+        m = re.match(r"anthropic\.claude-code-(\d+(?:\.\d+)*)", part)
+        if m:
+            return tuple(int(x) for x in m.group(1).split("."))
+    return ()
+
+
+def find_claude(home: Path | None = None) -> str | None:
+    """The Claude Code CLI when `claude` is not on PATH, or None."""
+    home = home if home is not None else Path.home()
+    for rel in _HOME_CANDIDATES:
+        p = home / rel
+        if os.access(p, os.X_OK):
+            return str(p)
+    for c in _SYSTEM_CANDIDATES:
+        if os.access(c, os.X_OK):
+            return c
+    found = [p for g in _EXTENSION_GLOBS for p in home.glob(g) if os.access(p, os.X_OK)]
+    if found:
+        return str(max(found, key=_version_key))
+    return None
+
+
+def resolve_claude(program: str) -> str:
+    """claude_command's program: `~` expanded; a bare `claude` that is not on PATH
+    is looked for in the usual places (find_claude)."""
+    program = os.path.expanduser(program)
+    if os.sep in program or shutil.which(program):
+        return program
+    if program == "claude":
+        return find_claude() or program
+    return program
+
+
 def claude_argv(command: str, system_prompt: str, model: str = "") -> list[str]:
     argv = shlex.split(command)
     if not argv:
         raise StudyAdapterError("claude_command is empty")
+    argv[0] = resolve_claude(argv[0])
     argv += [
         "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
         "--include-partial-messages",
@@ -97,7 +150,8 @@ class ClaudeCodeStudyAdapter:
             )
         except FileNotFoundError as exc:
             raise StudyAdapterError(
-                f"Claude Code CLI not found: {argv[0]} (set study.claude_command to its path)") from exc
+                f"Claude Code CLI not found: {argv[0]} (install Claude Code, or set "
+                "study.claude_command to its path; ~ is allowed)") from exc
         s.stderr.clear()
         s.reader = asyncio.create_task(self._read_loop(s))
         s.stderr_task = asyncio.create_task(self._drain_stderr(s))
