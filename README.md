@@ -135,6 +135,7 @@ cd CoreXY_UFO_Game/game
 - 表示の向き: C270 の映像は上下左右に反転して表示している（`camera.overview.flip_h` / `flip_v` = true）。HUD の輪の四角と矢印は、この表示の上の手と同じ向きに動く（クレーンの向きは上の invert で決まり、表示の反転とは別）。
 - 止まった理由: 操縦が終わるたびに、ゲームを起動したターミナルに `gesture: ACTIVE -> WAITING_RELEASE (no_hand)  hands 0 pinch_ratio … latency …` のような行が出る。デバッグパネルの Log にも出る。
 - 主な初期値（`config/game_config.json` の `gesture`）: ピンチ開始 1.0 / 解除 1.5（指先の距離 ÷ 手の大きさ = 人差し指〜小指の付け根の幅と 0.75 × 手首〜中指の付け根の長さの大きいほう。C270 で手で調整した値。つまんでいた指がまっすぐ伸びていれば、比率が開始の 1.0 を超えた時点でも解除する。普通のパーは比率 1.0〜1.3 くらいで、1.5 には親指を大きく広げないと届かないため）、確定 0 ms、見失いの猶予 300 ms（素早く動かした手のブレ対策）、MediaPipe の追跡の信頼度 0.3（いずれもデバッグパネルのスライダーで、動かしながら調整できる）、スティック半径 = 画像短辺の 15%、デッドゾーン 12%、最大速度に達する位置 80%、最大 30 mm/s、カーブ 1.5 乗、スムージング 80 ms、期限 350 ms、ARMED の表示 120 ms。認識は GPU（Metal）で行う（`gesture.delegate`。CPU だとゲームと CPU を取り合って認識が途切れやすい）。MediaPipe 1.1.1 の GPU 処理は 1 フレームごとに画像 1 枚分のメモリを抱え込み、約 8 分で「Error creating pixel buffer: -6662」で異常終了するので、`gesture.gpu_recreate_s`（10 秒）ごとに認識器を裏で作り直して入れ替える（入れ替えの間も認識は止まらない）。
+- 操作方式の切り替え: ゲームが手をどう読むか（つまみ・手の形など）は「方式」として分けてある（`gesture.scheme`、今は `pinch_joystick` = 上のつまみジョイスティックだけ）。止まる条件・ラッチ・実機の条件・キーボード優先などの安全の仕組みは方式によらず共通（`game/scripts/input/gesture_control.gd`）。方式を足すときは `GestureScheme`（`game/scripts/input/gesture_scheme.gd`）を継承し、`GestureControl.make_scheme` と `SCHEME_IDS` に登録する。方式ごとの設定は `gesture.schemes.<方式名>`。方式を切り替えると必ず停止し、操縦の合図をいったんやめるまで再開しない。
 
 コマンドラインから直接シナリオを再生することもできます。
 

@@ -38,6 +38,7 @@ func _ready() -> void:
 	_test_hand_joystick()
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
+	_test_gesture_schemes()
 	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
@@ -1181,6 +1182,79 @@ func _test_gesture_z_and_claw() -> void:
 	for i in 40:
 		step.call(open_hand.call("fist"))
 	_ok(held_after_stop and claws.size() == 3, "gesture: a stop latches a claw pose being held; a new fist works again", str(claws))
+
+## The safety frame runs any GestureScheme: the scheme decides the sign, the
+## velocity and the claw poses; the frame keeps the latch and the switch stop.
+func _test_gesture_schemes() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pinch_joystick", "joystick": {"smoothing_ms": 0.0}})
+	var default_ok := g.scheme.id() == PinchJoystickScheme.ID and GestureControl.SCHEME_IDS.has(PinchJoystickScheme.ID)
+	var unknown_kept := not g.set_scheme("no_such_scheme") and g.scheme.id() == PinchJoystickScheme.ID
+	_ok(default_ok and unknown_kept, "gesture scheme: the pinch joystick by default; an unknown name keeps the current one",
+		"%s %s" % [default_ok, unknown_kept])
+
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(pose: String) -> void:
+		t[0] += 1000.0 / 60.0
+		seq[0] += 1
+		g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose}), t[0])
+		g.tick(t[0], 1.0 / 60.0, "")
+	# the pinch joystick steering, then switched to a scheme of the test's own
+	for i in 3:
+		step.call("open")
+	for i in 3:
+		g.on_event(_hev(seq[0] + 1, true, true, 0.5, 0.5, {"pose": "open"}), t[0])
+		seq[0] += 1
+		g.tick(t[0], 1.0 / 60.0, "")
+	var was_active := g.is_active()
+	var fake := _PoseScheme.new()
+	g.use_scheme(fake)
+	var switched_stop := g.state == S.WAITING_RELEASE and g.reason == "scheme_changed" and g.velocity == Vector2.ZERO
+	_ok(was_active and switched_stop, "gesture scheme: switching while steering is a forced stop", "%s %s %s" % [was_active, g.state_name(), g.reason])
+
+	for i in 5:
+		step.call("open")  # the new sign held across the switch: latched
+	var latched := g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	step.call("other")
+	for i in 3:
+		step.call("open")
+	var steers := g.is_active() and g.velocity == Vector2(12.0, 0.0) and g.velocity_z == 0.0
+	step.call("peace")  # another sign: let go first, never straight into the reverse
+	var let_go := g.state == S.HAND_DETECTED and g.velocity == Vector2.ZERO
+	for i in 3:
+		step.call("peace")  # ARMED, ACTIVE, then the velocity
+	var reverse := g.is_active() and g.velocity == Vector2(-12.0, 0.0)
+	_ok(latched and steers and let_go and reverse,
+		"gesture scheme: a scheme's own sign arms the frame; latched after a stop; another sign lets go before reversing",
+		"%s %s %s %s %s" % [latched, steers, let_go, reverse, g.velocity])
+
+	for i in 3:
+		step.call("other")
+	for i in 60:
+		step.call("fist")  # not a claw pose of this scheme
+	_ok(claws.is_empty() and g.claw_pose == "", "gesture scheme: only the scheme's claw poses move the claw", str(claws))
+
+## A test scheme: "open" steers +X, "peace" -X, no claw.
+class _PoseScheme extends GestureScheme:
+	var armed_pose := ""
+	func id() -> String:
+		return "test_pose"
+	func engaged(g, _now_ms: float) -> bool:
+		return g.pose in ["open", "peace"]
+	func same_engagement(g) -> bool:
+		return g.pose == armed_pose
+	func on_arm(g, _now_ms: float) -> void:
+		armed_pose = g.pose
+		g.mode = "xy"
+	func velocity(_g, _dt: float) -> Vector3:
+		return Vector3(12.0 if armed_pose == "open" else -12.0, 0.0, 0.0)
+	func reset(_g) -> void:
+		armed_pose = ""
 
 ## The Z pinch is told apart by ear: its own cue, different from the XY pinch.
 func _test_gesture_z_has_its_own_sound(rs: Node) -> void:

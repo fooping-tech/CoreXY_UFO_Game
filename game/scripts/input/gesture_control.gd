@@ -1,25 +1,27 @@
 class_name GestureControl
 extends RefCounted
-## The pinch hand joystick's own state machine (separate from GameState and
-## RobotState). Fed with `hand_control` events (backend or simulated) and ticked
-## with the physics; returns the XY velocity it asks for (mm/s, 0 unless ACTIVE).
+## The hand gesture's own state machine (separate from GameState and
+## RobotState): the safety frame around a GestureScheme. Fed with `hand_control`
+## events (backend or simulated) and ticked with the physics; returns the XY
+## velocity it asks for (mm/s, 0 unless ACTIVE; Z in `velocity_z`).
 ##
-##   DISABLED -> WAITING_HAND -> HAND_DETECTED --pinch--> ARMED --> ACTIVE
-##   ACTIVE --release--> HAND_DETECTED (a normal stop)
-##   any forced stop --> WAITING_RELEASE --(hand seen, not pinching)--> HAND_DETECTED
+##   DISABLED -> WAITING_HAND -> HAND_DETECTED --engaged--> ARMED --> ACTIVE
+##   ACTIVE --released (or another sign)--> HAND_DETECTED (a normal stop)
+##   any forced stop --> WAITING_RELEASE --(hand seen, not engaged)--> HAND_DETECTED
 ##
+## "Engaged" is the scheme's sign to steer (a pinch for the pinch joystick).
 ## Forced stops (stop()): hand lost, two hands, stale events, camera lost,
 ## WebSocket gone, window unfocused, Space, alarm, keyboard taking over, the
-## robot not ready, gesture mode off. They latch: a pinch still held (or held
-## again when tracking comes back) does nothing until the fingers open and a
-## NEW pinch starts. Events are judged by the receive time on this side's
-## monotonic clock and by their sequence number; an old or reordered event is
-## dropped and can never lift a stop.
+## robot not ready, gesture mode off, the scheme switched. They latch: a sign
+## still held (or held again when tracking comes back) does nothing until the
+## hand lets go of it and gives a NEW one. Events are judged by the receive time
+## on this side's monotonic clock and by their sequence number; an old or
+## reordered event is dropped and can never lift a stop.
 ##
-## The palm picks the axis when the pinch starts (thumb + index, middle or
-## ring finger): palm up steers XY, the back of the hand up (palm down) steers Z (the stick's vertical). Not pinching, a fist held for claw_hold_ms
-## asks to close the claw and a peace sign to open it, once per pose: the same
-## pose again does nothing until the hand shows another shape.
+## Not steering, a hand shape the scheme maps to the claw (`claw_poses`, the
+## pinch joystick: fist = close, peace = open) held for claw_hold_ms asks for
+## the claw once per pose: the same pose again does nothing until the hand
+## shows another shape.
 
 signal state_changed(from: int, to: int, reason: String)
 ## The claw should turn to its recorded "closed" / "open" position.
@@ -28,7 +30,15 @@ signal claw_requested(which: String)
 enum State { DISABLED, WAITING_HAND, HAND_DETECTED, ARMED, ACTIVE, WAITING_RELEASE }
 const STATE_NAMES := ["DISABLED", "WAITING_HAND", "HAND_DETECTED", "ARMED", "ACTIVE", "WAITING_RELEASE"]
 
+## The pinch joystick's stick (config `gesture.joystick`); kept here so its
+## settings and view flips survive switching schemes.
 var joystick := HandJoystick.new()
+## How the hand is read as a steer (config `gesture.scheme`).
+var scheme: GestureScheme = PinchJoystickScheme.new()
+## Per-scheme settings (config `gesture.schemes`), applied when switching.
+var scheme_configs: Dictionary = {}
+## True while the scheme sees its sign to steer (this tick).
+var engaged := false
 ## An event older than this (receive time) no longer counts: stop.
 var stale_ms := 350.0
 ## How long ARMED shows "操縦開始！" before the stick goes live.
@@ -44,7 +54,8 @@ var enabled := false:
 		enabled = v
 		if not v:
 			_set_state(State.DISABLED, "disabled")
-			joystick.reset()
+			scheme.reset(self)
+			engaged = false
 			velocity = Vector2.ZERO
 			velocity_z = 0.0
 var state: int = State.DISABLED
@@ -100,6 +111,41 @@ func configure(c: Dictionary) -> void:
 	var j = c.get("joystick", {})
 	if j is Dictionary:
 		joystick.configure(j)
+	var sc = c.get("schemes", {})
+	if sc is Dictionary:
+		scheme_configs = sc
+	set_scheme(str(c.get("scheme", scheme.id())))
+
+## The schemes that can be chosen (config `gesture.scheme`).
+const SCHEME_IDS := [PinchJoystickScheme.ID]
+
+static func make_scheme(id: String) -> GestureScheme:
+	match id:
+		PinchJoystickScheme.ID:
+			return PinchJoystickScheme.new()
+	return null
+
+## Switch how the hand is read. Always a forced stop (a sign held across the
+## switch must be let go first); an unknown id keeps the current scheme.
+## Returns false for an unknown id.
+func set_scheme(id: String) -> bool:
+	var s := make_scheme(id)
+	if s == null:
+		push_warning("gesture: unknown scheme '%s', keeping '%s'" % [id, scheme.id()])
+		return false
+	var cfg = scheme_configs.get(id, {})
+	s.configure(cfg if cfg is Dictionary else {})
+	use_scheme(s)
+	return true
+
+## Install a configured scheme (tests can pass their own). Stops the gesture
+## when it is another scheme than the current one.
+func use_scheme(s: GestureScheme) -> void:
+	var changed := s.id() != scheme.id()
+	scheme.reset(self)
+	scheme = s
+	if changed:
+		stop("scheme_changed")
 
 func state_name() -> String:
 	return STATE_NAMES[state]
@@ -148,17 +194,18 @@ func on_event(ev: Dictionary, recv_ms: float) -> bool:
 	palm = str(ev.get("palm", "")) if detected else ""
 	return true
 
-## 0..1 of the fist / peace hold before the claw moves (0 when none is building up).
+## 0..1 of the claw-pose hold before the claw moves (0 when none is building up).
 func claw_progress(now_ms: float) -> float:
 	if claw_pose == "" or claw_pose == _claw_fired:
 		return 0.0
 	return clampf((now_ms - _claw_since_ms) / maxf(claw_hold_ms, 1.0), 0.0, 1.0)
 
-## Not pinching, hand in view: a fist / peace held long enough asks for the claw.
+## Not steering, hand in view: a claw pose of the scheme held long enough asks for the claw.
 func _claw_tick(now_ms: float, gate: String) -> void:
-	if pose not in ["fist", "peace"]:
+	var poses := scheme.claw_poses()
+	if not poses.has(pose):
 		claw_pose = ""
-		_claw_fired = ""  # another shape: the next fist / peace counts again
+		_claw_fired = ""  # another shape: the next claw pose counts again
 		return
 	if pose != claw_pose:
 		claw_pose = pose
@@ -167,7 +214,7 @@ func _claw_tick(now_ms: float, gate: String) -> void:
 		return
 	if now_ms - _claw_since_ms >= claw_hold_ms:
 		_claw_fired = pose
-		claw_requested.emit("closed" if pose == "fist" else "open")
+		claw_requested.emit(str(poses[pose]))
 
 ## Which frame edges `n` (normalised image coords) is within `margin` of:
 ## x -1 left / +1 right, y -1 top / +1 bottom.
@@ -192,15 +239,16 @@ func reset_stream(why: String) -> void:
 	left_view = false
 	detected = false
 	pinch = false
+	engaged = false
 	stop(why)
 
-## Forced stop: zero velocity and, unless off, wait for the fingers to open.
-## A fist / peace sign being held is latched too: the claw needs a new shape.
+## Forced stop: zero velocity and, unless off, wait for the sign to be let go.
+## A claw pose being held is latched too: the claw needs a new shape.
 func stop(why: String) -> void:
-	joystick.reset()
+	scheme.reset(self)
 	velocity = Vector2.ZERO
 	velocity_z = 0.0
-	if pose in ["fist", "peace"]:
+	if scheme.claw_poses().has(pose):
 		_claw_fired = pose
 	claw_pose = ""
 	if state == State.DISABLED:
@@ -219,6 +267,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 		_set_state(State.WAITING_HAND, "")
 	var fresh := _last_recv_ms >= 0.0 and now_ms - _last_recv_ms <= stale_ms
 	if not fresh or not camera_ok:
+		engaged = false
 		var why := "camera_lost" if fresh and not camera_ok else ("no_events" if _last_recv_ms < 0.0 else "stale")
 		if state in [State.ARMED, State.ACTIVE]:
 			stop(why)
@@ -227,8 +276,9 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 		elif state == State.WAITING_HAND and reason != why:
 			reason = why
 		return velocity
-	if not detected or pinch or state != State.HAND_DETECTED:
-		claw_pose = ""  # a claw pose only builds up on a seen, open (not pinching) hand
+	engaged = detected and scheme.engaged(self, now_ms)
+	if not detected or engaged or state != State.HAND_DETECTED:
+		claw_pose = ""  # a claw pose only builds up on a seen hand that is not steering
 	if not detected:
 		var lost := str(last_event.get("reason", "")) if not bool(last_event.get("detected", false)) else "outside_roi"
 		if lost == "":
@@ -242,41 +292,40 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 		return velocity
 	match state:
 		State.WAITING_HAND:
-			if pinch:
-				stop("release_first")  # it was already pinching when it came into view
+			if engaged:
+				stop("release_first")  # it was already giving the sign when it came into view
 			else:
 				_set_state(State.HAND_DETECTED, "")
 		State.HAND_DETECTED:
-			if pinch:
+			if engaged:
 				if gate != "":
 					stop(gate)
 				else:
-					joystick.set_anchor(hand)
-					mode = "z" if palm == "down" else "xy"
+					scheme.on_arm(self, now_ms)
 					_armed_ms = now_ms
 					_set_state(State.ARMED, "")
 			else:
 				_claw_tick(now_ms, gate)
 		State.ARMED:
-			if not pinch:
+			if not engaged or not scheme.same_engagement(self):
+				scheme.reset(self)
 				_set_state(State.HAND_DETECTED, "released")
-				joystick.reset()
 			elif gate != "":
 				stop(gate)
 			elif now_ms - _armed_ms >= arm_delay_ms:
 				_set_state(State.ACTIVE, "")
 		State.ACTIVE:
-			if not pinch:
-				joystick.reset()
+			if not engaged or not scheme.same_engagement(self):
+				scheme.reset(self)
 				_set_state(State.HAND_DETECTED, "released")
 			elif gate != "":
 				stop(gate)
-			elif mode == "z":
-				velocity_z = joystick.update_z(hand, dt)
 			else:
-				velocity = joystick.update(hand, dt)
+				var v := scheme.velocity(self, dt)
+				velocity = Vector2(v.x, v.y)
+				velocity_z = v.z
 		State.WAITING_RELEASE:
-			if not pinch:
+			if not engaged:
 				_set_state(State.HAND_DETECTED, reason)
 	return velocity
 
