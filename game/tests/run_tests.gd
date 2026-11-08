@@ -288,6 +288,17 @@ func _test_real_jog_velocity() -> void:
 	latched = main_script.jog_latch(latched, false)
 	_ok(not latched, "jog: releasing the arrows clears the stop latch")
 	_ok(not main_script.jog_latch(false, true), "jog: no latch without Space")
+	# typing in a text field (the Study question) is not jogging (#68)
+	var te := TextEdit.new()
+	var le := LineEdit.new()
+	var bt := Button.new()
+	_ok(main_script.is_text_entry(te) and main_script.is_text_entry(le), "jog: text fields take the keys")
+	_ok(not main_script.is_text_entry(bt) and not main_script.is_text_entry(null), "jog: buttons / no focus do not")
+	_ok(main_script.sim_pose(true, false) == "open" and main_script.sim_pose(false, false) == "other",
+		"jog: hand-shape keys ignored while typing")
+	te.free()
+	le.free()
+	bt.free()
 	# a refused jog is explained as the next thing to press
 	var cases := {
 		"motors not enabled (send enable_motors first)": "モーター有効",
@@ -1020,9 +1031,23 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 	_ok(report.begins_with("CoreXY UFO debug log") and report.contains("robot: source=") and report.contains("window_focus=")
 		and report.contains("[serial] RX JOG servo id=1 disabled test") and report.contains("keys: jog vx 0 vy 0 vz 15"),
 		"debug panel: the log collects backend, serial and key lines; the copy starts with the state", report.left(300))
+	# a focused text field (the Study question) holds the keys; a click on the game releases it (#68)
+	var field := TextEdit.new()
+	game.debug_ui.add_child(field)
+	field.grab_focus()
+	var typing: bool = game.text_entry_focused()
+	game._unhandled_input(_mouse_press())
+	_ok(typing and not game.text_entry_focused(), "debug panel: typing holds the jog keys until the game is clicked")
+	field.queue_free()
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+func _mouse_press() -> InputEventMouseButton:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	return ev
 
 func _test_study_is_optional(rs: Node) -> void:
 	var previous: bool = bool(GameConfig.data.study.enabled)
