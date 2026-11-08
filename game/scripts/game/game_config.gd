@@ -32,7 +32,8 @@ const DEFAULTS := {
 	"study": {"enabled": false, "timeout_s": 90.0, "max_image_bytes": 700000,
 		"max_image_edge": 1280, "camera_role": "overview"},
 	"homework": {"enabled": false, "interval_s": 10.0, "timeout_s": 30.0, "max_image_edge": 1024,
-		"max_image_bytes": 700000, "camera_role": "overview"},
+		"max_image_bytes": 700000, "camera_role": "overview", "stall_s": 180.0, "stall_min_gain": 5.0,
+		"advice_timeout_s": 120.0},
 }
 
 var data: Dictionary = {}

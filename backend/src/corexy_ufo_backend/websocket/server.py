@@ -21,7 +21,12 @@ Command names and safety rules:
   arm_set {which: closed|open} (record the claw's current angle as that position; saved),
   arm_goto {which} (turn the claw there, on the closed..open arc; a motion command),
   auto_catch (start the one-button catch sequence; ACK = started, progress in robot_state.auto_catch
-  and {"type": "auto_catch"} messages), auto_catch_status
+  and {"type": "auto_catch"} messages), auto_catch_status,
+  homework_spot_set (record where the arm is now as the homework spot), homework_approach
+  (take the arm's camera down to the spot and back; ACK = started, progress in
+  robot_state.homework_approach and {"type": "homework_approach"} messages; holds the
+  motion lock like the auto catch), homework_approach_release (the frames are captured:
+  go back up), homework_approach_status
 While the auto catch runs it holds the motion lock: every command except stop, soft_stop,
 get_state, auto_catch_status, list_ports, gesture_config, a zero jog and enable_motors false is
 refused (busy). stop / soft_stop / enable_motors false end it with ABORT.
@@ -49,6 +54,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
+from ..homework.approach import ApproachParams, ApproachSequencer
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 
 log = logging.getLogger(__name__)
@@ -59,14 +65,19 @@ LOG_QUEUE_MAX = 500
 
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
-            "arm_set", "arm_goto", "auto_catch", "auto_catch_status")
+            "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
+            "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
-PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status")
+PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+                     "homework_approach_release", "homework_approach_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
 AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
-                      "gesture_config")
+                      "gesture_config", "homework_approach_status")
+# Accepted while the arm approaches the homework (anything else is refused as busy).
+APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
+                    "homework_approach", "homework_approach_release", "homework_approach_status")
 
 
 def now_ms() -> int:
@@ -77,7 +88,8 @@ class GameServer:
     def __init__(self, robot: RobotInterface, host: str = "127.0.0.1", port: int = 8765, *,
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
-                 study: Any | None = None, homework: Any | None = None) -> None:
+                 study: Any | None = None, homework: Any | None = None,
+                 approach: ApproachParams | None = None) -> None:
         self.robot = robot
         self.host = host
         self.port = port
@@ -114,6 +126,14 @@ class GameServer:
             backend_cfg, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             on_change=self._on_auto_change)
         self._auto_owner: ServerConnection | None = None
+        # Homework approach (#76): the arm's camera down to a recorded spot and back.
+        self.approach = ApproachSequencer(
+            robot, getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits()),
+            approach, spot_path=(backend_cfg.z_calibration_path.parent / "homework_spot.json"
+                                 if backend_cfg is not None and backend_cfg.z_calibration_path is not None else None),
+            lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            other_active=lambda: self.auto.active, on_change=self._on_approach_change)
+        self._approach_owner: ServerConnection | None = None
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -129,6 +149,9 @@ class GameServer:
         if self.auto.active:
             await self.auto.abort("backend shutting down during auto catch")
             await self.auto.wait()
+        if self.approach.active:
+            await self.approach.abort("backend shutting down during the homework approach")
+            await self.approach.wait()
         if self.study is not None:
             await self.study.close()
         if self.homework is not None:
@@ -245,6 +268,7 @@ class GameServer:
             try:
                 msg = self.robot.snapshot().to_message()
                 msg["data"]["auto_catch"] = self.auto.status()
+                msg["data"]["homework_approach"] = self.approach.status()
                 await self.broadcast(msg)
             except Exception:  # pragma: no cover
                 log.exception("state loop")
@@ -261,6 +285,13 @@ class GameServer:
             return
         loop.create_task(self.broadcast({"type": "auto_catch", "timestamp": now_ms(), "data": status}))
 
+    def _on_approach_change(self, status: dict) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover
+            return
+        loop.create_task(self.broadcast({"type": "homework_approach", "timestamp": now_ms(), "data": status}))
+
     def _on_vision_event(self, event: dict) -> None:
         asyncio.get_event_loop().create_task(self.broadcast({"type": "vision_event", "timestamp": now_ms(), "data": event}))
 
@@ -269,7 +300,8 @@ class GameServer:
         self.clients.add(ws)
         log.info("client connected (%d)", len(self.clients))
         try:
-            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None}}))
+            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None,
+                "homework_advice": self.homework is not None and self.homework.advice_available}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -313,6 +345,9 @@ class GameServer:
                 # nobody left who could press stop: end the sequence in the safe state
                 log.warning("the client running the auto catch disconnected: aborting it")
                 await self.auto.abort("operator disconnected during auto catch")
+            if self._approach_owner is ws and self.approach.active:
+                log.warning("the client running the homework approach disconnected: aborting it")
+                await self.approach.abort("operator disconnected during the homework approach")
 
     async def _ordered_worker(self, ws: ServerConnection, queue: asyncio.Queue) -> None:
         while True:
@@ -358,6 +393,12 @@ class GameServer:
                                                     lambda reply: self._study_send(ws, reply))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "session_id": session_id, "state": "estimating" if started else "skipped"}})
+            elif msg["type"] == "homework_advice":
+                await self.homework.advise(session_id, rid, str(data.get("image_jpeg_base64", "")),
+                                           bool(data.get("composite", False)),
+                                           lambda reply: self._study_send(ws, reply))
+                await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
+                    "session_id": session_id, "state": "advising"}})
             elif msg["type"] == "homework_stop":
                 result = await self.homework.stop(session_id)
                 self._homework_sessions.get(ws, set()).discard(session_id)
@@ -424,6 +465,8 @@ class GameServer:
         reply = await self.execute(name, params)
         if name == "auto_catch" and reply.get("type") == "ack":
             self._auto_owner = ws
+        if name == "homework_approach" and reply.get("type") == "ack":
+            self._approach_owner = ws
         if name == "jog" and reply.get("type") == "ack":
             moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
             self._jog_owner = ws if moving else None
@@ -443,12 +486,26 @@ class GameServer:
         try:
             if self.auto.active and name not in AUTO_CATCH_ALLOWED and not self._allowed_during_auto(name, params):
                 return self._nack(name, "busy: auto catch running (stop to abort)")
+            if self.approach.active and name not in APPROACH_ALLOWED and not self._allowed_during_auto(name, params):
+                return self._nack(name, "busy: the arm is approaching the homework (stop to abort)")
             if name in MOTION_COMMANDS and self._motion_lock.locked():
                 return self._nack(name, "busy: another motion command is running")
             if name == "get_state":
                 data = self.robot.snapshot().to_message()["data"]
                 data["auto_catch"] = self.auto.status()
+                data["homework_approach"] = self.approach.status()
                 return self._ack(name, data)
+            if name == "homework_approach_status":
+                return self._ack(name, self.approach.status())
+            if name == "homework_approach":
+                await self.approach.start()
+                return self._ack(name, self.approach.status())
+            if name == "homework_approach_release":
+                self.approach.release()
+                return self._ack(name, self.approach.status())
+            if name == "homework_spot_set":
+                self.approach.set_spot()
+                return self._ack(name, self.approach.status())
             if name == "auto_catch_status":
                 return self._ack(name, self.auto.status())
             if name == "auto_catch":
@@ -466,17 +523,22 @@ class GameServer:
             if name == "enable_motors":
                 if not bool(params.get("enable", False)):
                     await self.auto.abort("motors disabled during auto catch")
+                    await self.approach.abort("motors disabled during the homework approach")
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
                 # flag first (no new step can start), then ABORT without any wait in between
                 await self.auto.abort("emergency stop (stop)", send_stop=False)
+                await self.approach.abort("emergency stop (stop)", send_stop=False)
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
                 if self.auto.active:
                     # STOP does not stop the servos (Z drum, claw): end the sequence with ABORT
                     await self.auto.abort("stopped (soft_stop) during auto catch")
+                    return self._ack(name, self.robot.snapshot().to_message()["data"])
+                if self.approach.active:  # it moves the Z drum too: ABORT as well
+                    await self.approach.abort("stopped (soft_stop) during the homework approach")
                     return self._ack(name, self.robot.snapshot().to_message()["data"])
                 # outside the motion lock: it must reach a running move
                 await self.robot.soft_stop()

@@ -212,7 +212,7 @@ func _ready() -> void:
 		homework = HomeworkClientScript.new()
 		homework.name = "HomeworkClient"
 		add_child(homework)
-		homework.setup(cameras)
+		homework.setup(cameras, ws)
 	gesture.state_changed.connect(_on_gesture_state)
 	gesture.claw_requested.connect(_on_gesture_claw)
 	var hud_layer := CanvasLayer.new()
