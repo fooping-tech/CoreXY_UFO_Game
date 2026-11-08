@@ -76,13 +76,16 @@ def now_ms() -> int:
 class GameServer:
     def __init__(self, robot: RobotInterface, host: str = "127.0.0.1", port: int = 8765, *,
                  state_hz: float = 30.0, vision: Any | None = None,
-                 auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None) -> None:
+                 auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
+                 study: Any | None = None) -> None:
         self.robot = robot
         self.host = host
         self.port = port
         self.state_interval = 1.0 / state_hz
         self.vision = vision
+        self.study = study
         self.clients: set[ServerConnection] = set()
+        self._study_sessions: dict[ServerConnection, set[str]] = {}
         self._handled: OrderedDict[str, dict] = OrderedDict()
         self._server = None
         self._tasks: list[asyncio.Task] = []
@@ -124,6 +127,8 @@ class GameServer:
         if self.auto.active:
             await self.auto.abort("backend shutting down during auto catch")
             await self.auto.wait()
+        if self.study is not None:
+            await self.study.close()
         self._stop_log_feed()
         for t in self._tasks:
             t.cancel()
@@ -260,7 +265,7 @@ class GameServer:
         self.clients.add(ws)
         log.info("client connected (%d)", len(self.clients))
         try:
-            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS)}}))
+            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -290,6 +295,9 @@ class GameServer:
             pass
         finally:
             self.clients.discard(ws)
+            for session_id in self._study_sessions.pop(ws, set()):
+                if self.study is not None:
+                    await self.study.end_session(session_id)
             log.info("client disconnected (%d)", len(self.clients))
             if self._jog_owner is ws:
                 log.warning("the jogging client disconnected: stopping the jog")
@@ -317,8 +325,47 @@ class GameServer:
             pass
         elif t == "command":
             await self._handle_command(ws, msg)
+        elif t and t.startswith("study_"):
+            await self._handle_study(ws, msg)
         else:
             await ws.send(json.dumps({"type": "error", "timestamp": now_ms(), "data": {"message": f"unknown type {t}"}}))
+
+    async def _study_send(self, ws: ServerConnection, message: dict) -> None:
+        message.setdefault("timestamp", now_ms())
+        await ws.send(json.dumps(message))
+
+    async def _handle_study(self, ws: ServerConnection, msg: dict) -> None:
+        rid = str(msg.get("request_id", ""))
+        data = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+        if self.study is None:
+            await self._study_send(ws, {"type": "study_error", "request_id": rid,
+                "data": {"code": "disabled", "message": "学習機能は無効です。configと--studyを確認してください"}})
+            return
+        try:
+            if msg["type"] == "study_session_start":
+                session_id = str(data.get("session_id", ""))
+                result = await self.study.start_session(session_id)
+                self._study_sessions.setdefault(ws, set()).add(session_id)
+                await self._study_send(ws, {"type": "study_status", "data": {"available": True, **result}})
+            elif msg["type"] == "study_request":
+                await self.study.ask(str(data.get("session_id", "")), rid,
+                    str(data.get("question", "")), str(data.get("image_jpeg_base64", "")),
+                    lambda reply: self._study_send(ws, reply))
+                await self._study_send(ws, {"type": "study_status", "request_id": rid,
+                    "data": {"available": True, "state": "thinking"}})
+            elif msg["type"] == "study_cancel":
+                if not await self.study.cancel(rid):
+                    raise ValueError("unknown or completed study request")
+            elif msg["type"] == "study_session_end":
+                session_id = str(data.get("session_id", ""))
+                await self.study.end_session(session_id)
+                self._study_sessions.get(ws, set()).discard(session_id)
+                await self._study_send(ws, {"type": "study_status", "data": {"available": True, "state": "closed"}})
+            else:
+                raise ValueError(f"unknown study message {msg['type']}")
+        except Exception as exc:
+            await self._study_send(ws, {"type": "study_error", "request_id": rid,
+                "data": {"code": "invalid_request", "message": str(exc)}})
 
     async def _handle_command(self, ws: ServerConnection, msg: dict) -> None:
         rid = str(msg.get("request_id", ""))

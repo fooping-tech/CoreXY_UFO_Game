@@ -5,6 +5,7 @@ extends Node
 
 var _fails := 0
 var _passes := 0
+const StudyClientScript := preload("res://scripts/study/study_client.gd")
 
 func _ok(cond: bool, name: String, detail: String = "") -> void:
 	if cond:
@@ -35,6 +36,7 @@ func _ready() -> void:
 	_test_ufo_metadata()
 	_test_ufo_faces_and_pose_effects()
 	_test_camera_scope()
+	_test_study_image_encoding()
 	_test_hand_joystick()
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
@@ -49,6 +51,7 @@ func _ready() -> void:
 	_test_vfx_manager()
 	_test_vfx_follows_the_game(rs)
 	_test_debug_panel_tabs_and_z_buttons(rs)
+	_test_study_is_optional(rs)
 	_test_auto_catch_controls(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -59,6 +62,17 @@ func _make() -> RopeSimulator:
 	s.target_rope_length = 40.0
 	s.reset()
 	return s
+
+func _test_study_image_encoding() -> void:
+	var image := Image.create(2000, 1000, false, Image.FORMAT_RGB8)
+	image.fill(Color(0.2, 0.4, 0.8))
+	var jpeg: PackedByteArray = StudyClientScript.encode_jpeg(image, 1280, 700000)
+	var decoded := Image.new()
+	var err := decoded.load_jpg_from_buffer(jpeg)
+	var too_small: PackedByteArray = StudyClientScript.encode_jpeg(image, 1280, 8)
+	_ok(not jpeg.is_empty() and jpeg.size() <= 700000 and err == OK
+		and maxi(decoded.get_width(), decoded.get_height()) <= 1280 and too_small.is_empty(),
+		"study: the camera frame is resized and JPEG-capped", "%d %dx%d" % [jpeg.size(), decoded.get_width(), decoded.get_height()])
 
 func _max_stretch(s: RopeSimulator) -> float:
 	var seg := s.segment_length()
@@ -1006,6 +1020,21 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		"debug panel: the log collects backend, serial and key lines; the copy starts with the state", report.left(300))
 	remove_child(game)
 	game.free()
+	rs.clear_samples()
+
+func _test_study_is_optional(rs: Node) -> void:
+	var previous: bool = bool(GameConfig.data.study.enabled)
+	GameConfig.data.study.enabled = true
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var titles := []
+	for i in game.debug_ui._tabs.get_tab_count():
+		titles.append(game.debug_ui._tabs.get_tab_title(i))
+	_ok(game.study != null and titles.has("Study") and titles.size() == 8,
+		"study: enabled creates the isolated client and F1 tab", str(titles))
+	remove_child(game)
+	game.free()
+	GameConfig.data.study.enabled = previous
 	rs.clear_samples()
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;

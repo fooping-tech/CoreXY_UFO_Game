@@ -13,10 +13,14 @@ signal log_line(text: String)
 ## A hand joystick event and when it arrived (Time.get_ticks_msec(), this side's
 ## monotonic clock: freshness is judged by it, never by the sender's timestamp).
 signal hand_control(data: Dictionary, recv_ms: float)
+signal study_message(msg: Dictionary)
 
 ## Only listen (vision events): never touch RobotState. Used to get the hand
 ## gesture from the backend while the game drives its own MockRobot.
 var listen_only := false
+## Auxiliary connection used by StudyClient. It receives hello + study_* only
+## and can never write RobotState or send robot commands.
+var study_only := false
 ## What the backend drives ("mock", "real", ...), from its hello.
 var server_robot := ""
 
@@ -123,6 +127,13 @@ func _handle(msg: Dictionary) -> void:
 	message_received.emit(msg)
 	var t := str(msg.get("type", ""))
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
+	if study_only:
+		if t == "hello":
+			server_robot = str(data.get("robot", ""))
+			study_message.emit(msg)
+		elif t.begins_with("study_"):
+			study_message.emit(msg)
+		return
 	if listen_only and t != "vision_event":
 		if t == "hello":
 			server_robot = str(data.get("robot", ""))
@@ -194,6 +205,10 @@ func send(msg: Dictionary) -> void:
 	if not msg.has("timestamp"):
 		msg["timestamp"] = Time.get_ticks_msec()
 	_peer.send_text(JSON.stringify(msg))
+
+func send_aux(msg: Dictionary) -> void:
+	if study_only:
+		send(msg)
 
 ## A home / move / grab command is still waiting for its answer.
 func has_pending_motion() -> bool:

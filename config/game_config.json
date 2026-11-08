@@ -144,6 +144,16 @@
     "state_timeout_ms": 1500,
     "command_timeout_ms": 3000
   },
+  "study": {
+    "enabled": false,
+    "timeout_s": 90.0,
+    "max_image_bytes": 700000,
+    "max_image_edge": 1280,
+    "camera_role": "overview",
+    "system_prompt": "あなたは画像を見ながら学習を支援する家庭教師です。答えだけでなく、考え方を段階的に日本語で説明してください。画像にない事実は推測と明記してください。",
+    "codex_command": "codex app-server --listen stdio://",
+    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. No credentials are stored here."
+  },
   "backend": {
     "serial_port": "",
     "baudrate": 115200,

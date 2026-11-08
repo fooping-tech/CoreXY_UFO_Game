@@ -29,6 +29,8 @@ const DEFAULTS := {
 		"focus": {"match": "Innomaker", "flip_h": false, "flip_v": false},
 		"scope": {"enabled": true, "settle_s": 0.7, "hold_s": 10.0, "zoom": 1.0}},
 	"network": {"websocket_url": "ws://127.0.0.1:8765", "state_timeout_ms": 1500, "command_timeout_ms": 3000},
+	"study": {"enabled": false, "timeout_s": 90.0, "max_image_bytes": 700000,
+		"max_image_edge": 1280, "camera_role": "overview"},
 }
 
 var data: Dictionary = {}
