@@ -468,3 +468,30 @@ def test_point_pose_and_where_the_index_finger_points():
     # other shapes keep their names; a lost camera carries no direction
     assert frames(ctrl, [shaped_hand(folded=("ring", "pinky"))])[-1]["pose"] == "peace"
     assert ctrl.camera_lost()["point_len"] == 0.0
+
+
+def thumbs_up(cx=0.5, cy=0.5, size=0.2, down=False):
+    """A fist with the thumb sticking out towards the top of the image (or the bottom)."""
+    s = size * H
+    pts = shaped_hand(folded=("index", "middle", "ring", "pinky"), cx=cx, cy=cy, size=size)
+    sign = 1.0 if down else -1.0
+
+    def px(dx, dy):
+        return (cx + dx * s / W, cy + dy * s / H, 0.0)
+    pts[2] = px(-0.8, 0.3)
+    pts[3] = px(-0.85, 0.3 + sign * 0.5)
+    pts[4] = px(-0.9, 0.3 + sign * 1.0)
+    return pts
+
+
+def test_thumbs_up_is_told_from_a_fist_and_reports_where_the_thumb_points():
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, pinch_start=1.0, pinch_release=1.5))
+    up = frames(ctrl, [thumbs_up()] * 2)[-1]
+    assert up["pose"] == "thumb" and not up["pinch"]
+    assert up["thumb_dy"] < -0.9 and abs(up["thumb_dx"]) < 0.2  # towards the top of the image
+    down = frames(ctrl, [thumbs_up(down=True)])[-1]
+    assert down["pose"] == "thumb" and down["thumb_dy"] > 0.9
+    # the thumb tucked over the folded fingers: still a fist
+    fist = shaped_hand(folded=("index", "middle", "ring", "pinky"), thumb_at="index")
+    assert frames(ctrl, [fist])[-1]["pose"] == "fist"
+    assert ctrl.camera_lost()["thumb_dy"] == 0.0
