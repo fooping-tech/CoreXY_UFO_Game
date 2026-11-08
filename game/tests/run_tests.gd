@@ -1177,6 +1177,10 @@ func _test_homework_camera_map(game: Node, hw: HomeworkClient) -> void:
 	var r := OverviewPicker.fit_rect(Vector2(400, 400), Vector2(1280, 720))
 	var fit_ok := r.position.is_equal_approx(Vector2(0, 87.5)) and r.size.is_equal_approx(Vector2(400, 225))
 	_ok(map_ok and fit_ok, "camera map: homography point and the picker's drawn rect", "%s %s" % [mapped, r])
+	# the marks are drawn on a child without the camera shader (it would recolour them)
+	var picker: OverviewPicker = game.debug_ui._hw_preview
+	_ok(picker.material != null and picker.overlay.get_parent() == picker and picker.overlay.material == null
+		and not picker.overlay.use_parent_material, "camera map: marks drawn outside the camera shader")
 	hw._on_robot_message({"type": "ack", "data": {"command": "camera_map_add", "usable": true, "problem": "",
 		"points": [{"u": 0.1, "v": 0.2, "x": 40.0, "y": 60.0}], "rms_mm": 0.8, "max_mm": 1.4, "h_inv": h_inv}})
 	RobotState.x_mm = 200.0

@@ -32,6 +32,10 @@ log = logging.getLogger(__name__)
 MAX_POINTS = 16
 MIN_SPACING_MM = 5.0  # two pairs this close in XY add nothing (and an error if clicked apart)
 MIN_SPREAD = 0.12  # smallest / largest spread of the points (0 = on one line)
+# 8th / 1st singular value of the normalised DLT system. Below it the points do not fix one
+# homography (e.g. 3 of 4 points on a line: rank 7, many maps fit exactly and disagree by
+# centimetres). Well spread sets measure about 0.2..0.3; 3 of 4 points 1 % off a line, 0.008.
+MIN_DLT_CONDITION = 0.03
 
 
 class CameraMapError(ValueError):
@@ -83,8 +87,9 @@ def _normalizer(pts: np.ndarray) -> np.ndarray:
     return np.array([[s, 0, -s * c[0]], [0, s, -s * c[1]], [0, 0, 1]])
 
 
-def fit_homography(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
-    """3x3 H with dst ~ H @ [src, 1] (normalised DLT, least squares for > 4 points)."""
+def fit_homography(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, float]:
+    """3x3 H with dst ~ H @ [src, 1] (normalised DLT, least squares for > 4 points), and the
+    system's condition (8th / 1st singular value: ~0 when the points do not fix one H)."""
     ts, td = _normalizer(src), _normalizer(dst)
     s = (ts @ np.c_[src, np.ones(len(src))].T).T
     d = (td @ np.c_[dst, np.ones(len(dst))].T).T
@@ -92,10 +97,11 @@ def fit_homography(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
     for (x, y, _), (X, Y, _) in zip(s, d):
         rows.append([-x, -y, -1, 0, 0, 0, X * x, X * y, X])
         rows.append([0, 0, 0, -x, -y, -1, Y * x, Y * y, Y])
-    _, _, vt = np.linalg.svd(np.asarray(rows))
+    _, sv, vt = np.linalg.svd(np.asarray(rows))
+    condition = float(sv[7] / sv[0]) if len(sv) >= 8 and sv[0] > 0 else 0.0
     hn = vt[-1].reshape(3, 3)
     h = np.linalg.inv(td) @ hn @ ts
-    return h / h[2, 2]
+    return h / h[2, 2], condition
 
 
 def apply(h: np.ndarray, x: float, y: float) -> tuple[float, float]:
@@ -238,10 +244,14 @@ class CameraXYMap:
             self.problem = "点が一直線に近い（プリントの四隅のように広く散らして記録する）"
             return
         try:
-            h = fit_homography(uv, xy)
+            h, condition = fit_homography(uv, xy)
             h_inv = np.linalg.inv(h)
         except np.linalg.LinAlgError:
             self.problem = "当てはめに失敗した（点を散らして記録し直す）"
+            return
+        if condition < MIN_DLT_CONDITION:
+            self.problem = ("点の配置で対応が 1 つに決まらない（3 点以上が一直線に並んでいる）: "
+                            "一直線から外れた所に点を足す")
             return
         # the map must not fold: the same orientation at every point
         signs = {np.sign(np.linalg.det(self._jacobian(h, u, v))) for u, v in uv}

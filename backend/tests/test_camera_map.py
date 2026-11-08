@@ -57,6 +57,13 @@ def test_too_few_or_collinear_or_folded_points_are_not_fitted():
     assert "あと 1 点" in calibrated(GRID[:3]).problem
     line = calibrated([(0.1, 0.1), (0.3, 0.3), (0.5, 0.5), (0.7, 0.7), (0.9, 0.9)])
     assert not line.usable and "一直線" in line.problem
+    # 3 of 4 points on a line (Codex review on #80): the spread looks fine but many maps fit
+    three = calibrated([(0.1, 0.2), (0.5, 0.2), (0.9, 0.2), (0.5, 0.8)])
+    assert not three.usable and "一直線" in three.problem
+    four = calibrated([(0.1, 0.2), (0.4, 0.2), (0.6, 0.2), (0.9, 0.2), (0.5, 0.8)])
+    assert not four.usable
+    four.add(0.2, 0.7, *apply(H_TRUE, 0.2, 0.7), CAM)  # one more point off the line fixes it
+    assert four.usable
     # two clicks swapped (the second mark clicked where the first was, and back): the map folds
     m = CameraXYMap()
     for i, (u, v) in enumerate(GRID[:5]):
@@ -172,3 +179,41 @@ async def test_server_refuses_points_before_homing():
             assert m["type"] == "nack" and "not usable" in m["data"]["reason"]
     finally:
         await srv.stop()
+
+
+# ------------------------------------------------------------------ standing on the open claws
+async def test_claws_open_before_lowering_and_close_after_when_asked():
+    from corexy_ufo_backend.homework.approach import ApproachParams
+    r = await ready_robot()
+    seq = ApproachSequencer(r, RobotLimits(), ApproachParams(close_claw_after=True, claw_settle_s=0.05))
+    seq.spot = HomeworkSpot(150, 90, 30)
+    seen = []
+    seq.on_change = lambda st: seen.append((st["phase"], r.arm_deg, round(r.snapshot().z)))
+    await seq.start()
+    await wait_phase(seq, ApproachPhase.HOLD)
+    assert r.arm_deg == 60.0  # open while standing on the worksheet
+    lower = next(z for ph, _, z in seen if ph == "LOWER")
+    assert lower > 90 and next(a for ph, a, _ in seen if ph == "LOWER") == 60.0  # opened up high, then lowered
+    seq.release()
+    await seq.wait()
+    assert seq.last_result == "done" and r.arm_deg == 0.0
+    assert [p for p, _, _ in seen].count("CLOSE_CLAW") >= 1
+
+
+async def test_claw_positions_are_needed_unless_open_claw_is_off():
+    from corexy_ufo_backend.homework.approach import ApproachParams
+    r = fast_mock()
+    await r.connect()
+    await r.enable_motors(True)
+    await r.home()
+    await r.move_z(100.0)
+    await settle(r)
+    seq = ApproachSequencer(r, RobotLimits())
+    seq.spot = HomeworkSpot(50, 50, 50)
+    assert any("claw open / closed" in e for e in seq.preconditions())
+    seq = ApproachSequencer(r, RobotLimits(), ApproachParams(open_claw=False, hold_timeout_s=0.1))
+    seq.spot = HomeworkSpot(50, 50, 50)
+    assert seq.preconditions() == []
+    await seq.start()
+    await seq.wait()
+    assert seq.last_result == "done"

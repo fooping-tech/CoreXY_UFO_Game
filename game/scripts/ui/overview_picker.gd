@@ -5,18 +5,28 @@ extends TextureRect
 ## Jev / Claude and as the calibration uses it.
 ## Draws the calibration points and, when calibrated, where the arm's camera looks.
 ## `center_cross` draws a crosshair in the middle instead (the arm camera's aim).
+## The marks are drawn on a child without the camera shader: the shader on this node
+## would replace their colours with the camera's.
 
 signal picked(uv: Vector2)
 
 var hw: HomeworkClient
 var clickable := false
 var center_cross := false
+## The marks' layer (no material, so the drawing keeps its own colours).
+var overlay := Control.new()
 
 func _init() -> void:
 	expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	focus_mode = Control.FOCUS_NONE
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.name = "Marks"
+	overlay.use_parent_material = false
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.draw.connect(_draw_marks)
+	add_child(overlay)
 
 ## The material shows the whole frame stretched over the drawn rect (fit 0, no disc).
 func use_material(m: ShaderMaterial) -> void:
@@ -54,16 +64,17 @@ func _gui_input(event: InputEvent) -> void:
 
 func _process(_dt: float) -> void:
 	if is_visible_in_tree():
-		queue_redraw()
+		overlay.queue_redraw()
 
-func _draw() -> void:
+func _draw_marks() -> void:
+	var o := overlay
 	var r := image_rect()
 	if center_cross:
 		var c := r.get_center()
 		var col := Color(1.0, 0.25, 0.25, 0.9)
-		draw_line(c - Vector2(14, 0), c + Vector2(14, 0), col, 2.0)
-		draw_line(c - Vector2(0, 14), c + Vector2(0, 14), col, 2.0)
-		draw_arc(c, 6.0, 0, TAU, 20, col, 1.0)
+		o.draw_line(c - Vector2(14, 0), c + Vector2(14, 0), col, 2.0)
+		o.draw_line(c - Vector2(0, 14), c + Vector2(0, 14), col, 2.0)
+		o.draw_arc(c, 6.0, 0, TAU, 20, col, 1.0)
 		return
 	if hw == null:
 		return
@@ -73,12 +84,12 @@ func _draw() -> void:
 		for p in pts:
 			i += 1
 			var at := r.position + Vector2(float(p.u), float(p.v)) * r.size
-			draw_circle(at, 4.0, Color(0.2, 1.0, 1.0, 0.9))
-			draw_string(ThemeDB.fallback_font, at + Vector2(5, -5), str(i), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.2, 1.0, 1.0))
+			o.draw_circle(at, 4.0, Color(0.2, 1.0, 1.0, 0.9))
+			o.draw_string(ThemeDB.fallback_font, at + Vector2(5, -5), str(i), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.2, 1.0, 1.0))
 	var aim = hw.arm_view_uv()
 	if aim is Vector2 and Rect2(Vector2.ZERO, Vector2.ONE).grow(0.05).has_point(aim):
 		var c2: Vector2 = r.position + aim * r.size
 		var col2 := Color(1.0, 0.3, 0.3, 0.95)
-		draw_arc(c2, 9.0, 0, TAU, 24, col2, 2.0)
-		draw_line(c2 - Vector2(14, 0), c2 + Vector2(14, 0), col2, 1.5)
-		draw_line(c2 - Vector2(0, 14), c2 + Vector2(0, 14), col2, 1.5)
+		o.draw_arc(c2, 9.0, 0, TAU, 24, col2, 2.0)
+		o.draw_line(c2 - Vector2(14, 0), c2 + Vector2(14, 0), col2, 1.5)
+		o.draw_line(c2 - Vector2(0, 14), c2 + Vector2(0, 14), col2, 1.5)
