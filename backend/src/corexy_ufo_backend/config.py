@@ -54,6 +54,12 @@ class BackendConfig:
     arm_calibration_path: Path | None = None
     # where the Z calibration from the top / bottom points is kept (None: not saved)
     z_calibration_path: Path | None = None
+    # the real robot homes XY only with a Z reference and the arm wound up (within
+    # home_z_tolerance of its top): a lowered arm would hit things on the way. On
+    # when loaded from the config file (backend.home_requires_z_top, default true);
+    # off for a bare BackendConfig (tests)
+    home_requires_z_top: bool = False
+    home_z_tolerance: float = 5.0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -88,6 +94,8 @@ def load_config(path: Path | None = None) -> BackendConfig:
     cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
+    cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))
+    cfg.home_z_tolerance = float(b.get("home_z_tolerance", 5.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))
     hostport = url.split("://", 1)[-1].rstrip("/")
     if ":" in hostport:

@@ -40,6 +40,7 @@ from .claw import WHICH as CLAW_WHICH
 from .claw import ClawCalibration, deg_in_turn
 from .interface import RobotCommandError, RobotInterface
 from .state import MachineState, RobotSnapshot
+from .z_calibration import CLEAR as Z_CLEAR
 from .z_calibration import WHICH as Z_WHICH
 from .z_calibration import ZCalibration
 
@@ -79,6 +80,7 @@ class RealRobot(RobotInterface):
         self.test_mode = False
         self.claw = ClawCalibration.load(cfg.arm_calibration_path)
         self._claw_marks: dict[str, int] = {}  # multi-turn counts of this session's marks
+        self._z_cfg_default = (cfg.z_counts_per_unit, cfg.z_sign)  # the config's guess, for z_set clear
         self.z_cal = ZCalibration.load(cfg.z_calibration_path)
         if self.z_cal.complete():
             self._apply_z_cal()
@@ -275,8 +277,23 @@ class RealRobot(RobotInterface):
         if not enable and self._busy:
             await self.stop()
 
+    def _home_z_refusal(self) -> str:
+        """Why XY may not home now ("" = it may): the arm must be wound up first."""
+        if not self.cfg.home_requires_z_top:
+            return ""
+        if self._z_reference() is None:
+            return "Z reference not set: wind the arm up and record its top (z_set top) before homing"
+        top = self._z_point_units("top")
+        if abs(self._z_units_est - top) > self.cfg.home_z_tolerance:
+            return (f"the arm is not wound up (Z {self._z_units_est:.1f}, top {top:.0f}): "
+                    "raise it to the top before homing")
+        return ""
+
     async def home(self) -> None:
         self._require(homed=False)
+        why = self._home_z_refusal()
+        if why:
+            raise RobotCommandError(why)
         self._busy = True
         self._state = MachineState.HOMING
         try:
@@ -376,12 +393,27 @@ class RealRobot(RobotInterface):
         """Define the current drum position as 'arm at top' (Z reference)."""
         await self.set_z_point("top")
 
+    def _z_limits_apply(self) -> bool:
+        """The 0..z_max range stops a Z jog only once it is known in drum counts:
+        a reference AND a measured calibration. Before that the range is the config's
+        guess, and stopping there would keep the arm from reaching its real top /
+        bottom while they are being recorded (the jog is hold-to-move anyway)."""
+        return self._z_reference() is not None and self.z_cal.complete()
+
     async def set_z_point(self, which: str) -> None:
         """Record the current drum position as the arm's top or bottom. With both
         recorded in this session, measure counts per unit and direction from them
-        (and save them); points too close together are refused."""
+        (and save them); points too close together are refused. "clear" forgets the
+        points and the measured calibration (back to the config's values)."""
+        if which == Z_CLEAR:
+            self._forget_z_points()
+            self.z_cal = ZCalibration()
+            ZCalibration.delete(self.cfg.z_calibration_path)
+            self.cfg.z_counts_per_unit, self.cfg.z_sign = self._z_cfg_default
+            log.info("Z points and calibration cleared")
+            return
         if which not in Z_WHICH:
-            raise RobotCommandError(f"z_set: which must be one of {Z_WHICH}")
+            raise RobotCommandError(f"z_set: which must be one of {Z_WHICH + (Z_CLEAR,)}")
         if not self.serial.connected:
             raise RobotCommandError("not connected")
         st = await self.serial.servo_status(Z_SERVO_ID)
@@ -629,7 +661,7 @@ class RealRobot(RobotInterface):
 
     async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
         at_z_limit = False
-        if vz_units_s and self._z_reference() is not None:
+        if vz_units_s and self._z_limits_apply():
             # with a Z reference, never jog out of the 0..100 range
             z = self._z_units_est
             if (vz_units_s > 0 and z >= self.limits.z_max) or (vz_units_s < 0 and z <= self.limits.z_min):

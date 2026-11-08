@@ -7,8 +7,8 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
-  z_set {which: top|bottom} (record the arm's height as its top / bottom; both = measured
-  counts per unit, saved), grab {close}, stop (ABORT, emergency),
+  z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
+  measured counts per unit, saved; clear = start over), grab {close}, stop (ABORT, emergency),
   soft_stop (decelerate, no alarm), jog {vx,vy,vz?} (mm/s; vz = Z value/s; dead-man: resend ~20 Hz while
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than

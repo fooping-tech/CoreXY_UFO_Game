@@ -20,6 +20,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 WHICH = ("top", "bottom")
+# z_set {which: "clear"}: forget the points and the measured calibration (start over)
+CLEAR = "clear"
 # the two points must be at least this far apart (half a drum turn): closer ones
 # are a mistake (e.g. "bottom" pressed without lowering the arm)
 MIN_SPAN_COUNTS = 2048
@@ -68,3 +70,8 @@ class ZCalibration:
         if path is None:
             return
         path.write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def delete(path: Path | None) -> None:
+        if path is not None:
+            path.unlink(missing_ok=True)

@@ -9,6 +9,7 @@ import websockets
 from conftest import FakeFirmware
 from corexy_ufo_backend.config import BackendConfig, RobotLimits
 from corexy_ufo_backend.robot import MockRobot, RealRobot, RobotCommandError
+from corexy_ufo_backend.robot.z_calibration import ZCalibration
 from corexy_ufo_backend.serial_service import protocol as P
 from corexy_ufo_backend.serial_service.service import SerialService
 from corexy_ufo_backend.websocket import GameServer
@@ -83,11 +84,17 @@ async def test_z_jog_direction_follows_z_sign():
         await robot.disconnect()
 
 
-async def test_z_jog_stays_inside_the_range_once_referenced():
+def measured(robot):
+    """As if top and bottom had been recorded once (the config's own values)."""
+    robot.z_cal = ZCalibration(counts_per_unit=122.88, sign=1)
+
+
+async def test_z_jog_stays_inside_the_range_once_referenced_and_measured():
     robot = await make_robot()
     try:
         await robot.enable_motors(True)
         await robot.set_z_zero()  # z = 100 = top
+        measured(robot)
         await robot.jog(0, 0, 10)  # further up: nothing to send but a stop
         assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
         await robot.jog(0, 0, -10)  # down is fine
@@ -211,6 +218,7 @@ async def test_no_ramp_at_the_end_of_the_range():
     try:
         await robot.enable_motors(True)
         await robot.set_z_zero()  # z = 100
+        measured(robot)
         robot._z_units_est = 99.0
         await robot.jog(0, 0, 15)
         robot._z_units_est = 100.0  # reached the top
@@ -347,3 +355,70 @@ async def test_server_z_set_reaches_the_robot():
             assert (await cmd("t", "z_zero"))["type"] == "ack"
     finally:
         await srv.stop()
+
+
+async def test_before_the_range_is_measured_the_jog_goes_past_the_guessed_ends():
+    """Recording the points: the config's 0..100 is a guess, so it must not stop the
+    arm short of its real top / bottom (it did: the drum stopped 3 turns down)."""
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.set_z_point("top")  # z = 100, not measured yet
+        await robot.jog(0, 0, 10)  # further up is allowed: this "top" may not be the real one
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 1229 0"
+        robot._z_units_est = -20.0  # below the guessed bottom
+        await robot.jog(0, 0, -10)
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 -1229 0"
+        await robot.jog(0, 0, 0)
+    finally:
+        await robot.disconnect()
+
+
+async def test_clear_forgets_points_and_calibration(tmp_path):
+    path = tmp_path / "z_calibration.json"
+    robot = await make_cal_robot(path)
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("top")
+        fw.servo_abs[1] -= 2 * 4096
+        await robot.set_z_point("bottom")
+        assert path.exists() and robot.cfg.z_counts_per_unit == pytest.approx(81.92)
+        await robot.set_z_point("clear")
+        s = robot.snapshot()
+        assert not (s.z_reference_set or s.z_top_set or s.z_bottom_set or s.z_calibrated)
+        assert not path.exists() and robot.cfg.z_counts_per_unit == 122.88 and robot.cfg.z_sign == 1
+    finally:
+        await robot.disconnect()
+
+
+async def test_home_waits_for_the_arm_to_be_wound_up():
+    cfg = BackendConfig(limits=RobotLimits(z_max=100.0, z_up_is_positive=True), home_requires_z_top=True)
+    robot = RealRobot(cfg, SerialService("fake", transport_factory=FakeFirmware))
+    await robot.connect()
+    fw = robot.serial.transport
+    try:
+        await robot.enable_motors(True)
+        with pytest.raises(RobotCommandError, match="Z reference not set"):
+            await robot.home()
+        await robot.set_z_point("top")
+        fw.servo_abs[1] -= 4096  # lowered a turn: about Z 67
+        await poll_z(robot)
+        with pytest.raises(RobotCommandError, match="not wound up"):
+            await robot.home()
+        assert not robot.homed
+        fw.servo_abs[1] += 4096 - 200  # back up, within the tolerance
+        await poll_z(robot)
+        await robot.home()
+        assert robot.homed
+    finally:
+        await robot.disconnect()
+
+
+def test_the_config_file_turns_the_home_check_on(tmp_path):
+    from corexy_ufo_backend.config import load_config
+    p = tmp_path / "game_config.json"
+    p.write_text(json.dumps({"backend": {}}))
+    cfg = load_config(p)
+    assert cfg.home_requires_z_top and cfg.z_calibration_path == tmp_path / "z_calibration.json"
+    p.write_text(json.dumps({"backend": {"home_requires_z_top": False}}))
+    assert not load_config(p).home_requires_z_top
