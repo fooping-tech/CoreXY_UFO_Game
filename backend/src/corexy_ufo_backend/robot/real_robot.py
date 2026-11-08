@@ -18,8 +18,12 @@ Position: XY is read from `POS` when the machine is idle (measured). During
 an XY move the firmware does not answer POS, so the position is estimated by
 linear interpolation from start to target (measured=False). During a jog the
 firmware reports `JOG_POS` every 50 ms (measured). Z is tracked from
-the drum servo's absolute count (`SERVO_STATUS 1 abs=`), relative to the
-count captured by `set_z_zero` (the firmware has no Z homing).
+the drum servo's absolute count (`SERVO_STATUS 1 abs=`), relative to a point
+recorded by hand (the firmware has no Z homing): `set_z_point("top")` (= z_zero,
+the arm wound up) and / or `set_z_point("bottom")` (the arm lowered). With both,
+the counts per unit and the drum's direction are measured (ZCalibration, saved)
+instead of taken from the config. The recorded counts only hold for one firmware
+session: a reboot, a new link or a lost one forgets them.
 """
 
 from __future__ import annotations
@@ -36,6 +40,8 @@ from .claw import WHICH as CLAW_WHICH
 from .claw import ClawCalibration, deg_in_turn
 from .interface import RobotCommandError, RobotInterface
 from .state import MachineState, RobotSnapshot
+from .z_calibration import WHICH as Z_WHICH
+from .z_calibration import ZCalibration
 
 log = logging.getLogger(__name__)
 
@@ -73,6 +79,9 @@ class RealRobot(RobotInterface):
         self.test_mode = False
         self.claw = ClawCalibration.load(cfg.arm_calibration_path)
         self._claw_marks: dict[str, int] = {}  # multi-turn counts of this session's marks
+        self.z_cal = ZCalibration.load(cfg.z_calibration_path)
+        if self.z_cal.complete():
+            self._apply_z_cal()
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
@@ -95,7 +104,9 @@ class RealRobot(RobotInterface):
         self._z_counts: int | None = None  # servo abs counts, last known
         self._arm_counts: int | None = None  # claw servo abs counts, last read
         self._arm_zero_counts: int | None = None  # arm_zero reference
-        self._z_zero_counts: int | None = None
+        # drum counts of this session's Z points: arm at its top / at its bottom
+        self._z_top_counts: int | None = None
+        self._z_bottom_counts: int | None = None
         self._z_units_est: float = cfg.limits.z_max if cfg.limits.z_up_is_positive else cfg.limits.z_min
         self._z_measured = False
         self._busy = False
@@ -108,6 +119,7 @@ class RealRobot(RobotInterface):
     # ---------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
         self._claw_marks.clear()  # a new link may mean a restarted firmware count
+        self._forget_z_points()
         await self.serial.connect()
         try:
             pos = await self.serial.query_pos()
@@ -140,6 +152,7 @@ class RealRobot(RobotInterface):
 
     def _on_serial_lost(self) -> None:
         self._claw_marks.clear()
+        self._forget_z_points()
         self.motors_enabled = False
         self._state = MachineState.UNKNOWN
         self.error = self.serial.last_error
@@ -167,14 +180,15 @@ class RealRobot(RobotInterface):
             # before are not comparable any more (a claw span from them could point
             # the wrong way round); the recorded angles and direction stay valid
             self._claw_marks.clear()
+            self._forget_z_points()  # same for Z: the recorded points no longer match
             self._arm_counts = None
             self._arm_zero_counts = None
             self.error = "firmware rebooted"
 
     def _apply_z_counts(self, counts: int) -> None:
-        """Drum servo absolute counts -> Z (only meaningful once z_zero is set)."""
+        """Drum servo absolute counts -> Z (only meaningful once a Z point is set)."""
         self._z_counts = counts
-        if self._z_zero_counts is not None:
+        if self._z_reference() is not None:
             self._z_units_est = self._z_units_from_counts(counts)
             self._z_measured = True
 
@@ -318,32 +332,84 @@ class RealRobot(RobotInterface):
             self._move_from = self._move_to = None
             self._state = MachineState.IDLE
 
+    def _z_point_units(self, which: str) -> float:
+        """Z of the arm at its top / bottom."""
+        top = self.limits.z_max if self.limits.z_up_is_positive else self.limits.z_min
+        bottom = self.limits.z_min if self.limits.z_up_is_positive else self.limits.z_max
+        return top if which == "top" else bottom
+
+    def _z_reference(self) -> tuple[int, float] | None:
+        """(counts, Z) of the point Z is counted from: the top if recorded, else the bottom."""
+        if self._z_top_counts is not None:
+            return self._z_top_counts, self._z_point_units("top")
+        if self._z_bottom_counts is not None:
+            return self._z_bottom_counts, self._z_point_units("bottom")
+        return None
+
+    @property
+    def _z_zero_counts(self) -> int | None:
+        """The reference counts (kept for the tests and logs written against z_zero)."""
+        ref = self._z_reference()
+        return ref[0] if ref else None
+
+    def _forget_z_points(self) -> None:
+        self._z_top_counts = self._z_bottom_counts = None
+
+    def _apply_z_cal(self) -> None:
+        """Measured counts per unit / direction replace the config's (shared with the auto catch)."""
+        assert self.z_cal.counts_per_unit is not None and self.z_cal.sign is not None
+        self.cfg.z_counts_per_unit = self.z_cal.counts_per_unit
+        self.cfg.z_sign = self.z_cal.sign
+
     def _z_units_from_counts(self, counts: int) -> float:
-        if self._z_zero_counts is None:
+        ref = self._z_reference()
+        if ref is None:
             return self._z_units_est
-        base = self.limits.z_max if self.limits.z_up_is_positive else self.limits.z_min
-        delta_units = (counts - self._z_zero_counts) * self.cfg.z_sign / self.cfg.z_counts_per_unit
-        # z_zero is captured with the arm at its TOP (highest) position.
+        ref_counts, ref_units = ref
+        delta_units = (counts - ref_counts) * self.cfg.z_sign / self.cfg.z_counts_per_unit
+        # z_sign: + counts = arm up; Z grows upwards when z_up_is_positive
         if self.limits.z_up_is_positive:
-            return base + delta_units
-        return base - delta_units
+            return ref_units + delta_units
+        return ref_units - delta_units
 
     async def set_z_zero(self) -> None:
         """Define the current drum position as 'arm at top' (Z reference)."""
+        await self.set_z_point("top")
+
+    async def set_z_point(self, which: str) -> None:
+        """Record the current drum position as the arm's top or bottom. With both
+        recorded in this session, measure counts per unit and direction from them
+        (and save them); points too close together are refused."""
+        if which not in Z_WHICH:
+            raise RobotCommandError(f"z_set: which must be one of {Z_WHICH}")
         if not self.serial.connected:
             raise RobotCommandError("not connected")
         st = await self.serial.servo_status(Z_SERVO_ID)
         if not st.ok or st.abs_counts is None:
             raise RobotCommandError(f"SERVO_STATUS {Z_SERVO_ID} failed: {st.raw}")
-        self._z_counts = st.abs_counts
-        self._z_zero_counts = st.abs_counts
-        self._z_units_est = self.limits.z_max if self.limits.z_up_is_positive else self.limits.z_min
+        counts = st.abs_counts
+        top = counts if which == "top" else self._z_top_counts
+        bottom = counts if which == "bottom" else self._z_bottom_counts
+        if top is not None and bottom is not None:
+            try:
+                cal = ZCalibration.from_points(top, bottom, self.limits.z_max - self.limits.z_min)
+            except ValueError as e:
+                raise RobotCommandError(f"z_set {which}: {e}") from e
+            self.z_cal = cal
+            self._apply_z_cal()
+            self.z_cal.save(self.cfg.z_calibration_path)
+            log.info("Z calibrated from top %d / bottom %d: %.2f counts per unit, sign %+d",
+                     top, bottom, cal.counts_per_unit, cal.sign)
+        self._z_top_counts, self._z_bottom_counts = top, bottom
+        self._z_counts = counts
+        self._z_units_est = self._z_point_units(which)
         self._z_measured = True
+        log.info("Z %s set at %d counts", which, counts)
 
     async def move_z(self, z: float) -> None:
         self._require()
-        if self._z_zero_counts is None:
-            raise RobotCommandError("Z reference not set (send z_zero with the arm at the top)")
+        if self._z_reference() is None:
+            raise RobotCommandError("Z reference not set (z_set top with the arm wound up, or bottom with it lowered)")
         z = self.limits.clamp_z(z)
         delta_units = z - self._z_units_est
         if abs(delta_units) < 1e-3:
@@ -563,7 +629,7 @@ class RealRobot(RobotInterface):
 
     async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
         at_z_limit = False
-        if vz_units_s and self._z_zero_counts is not None:
+        if vz_units_s and self._z_reference() is not None:
             # with a Z reference, never jog out of the 0..100 range
             z = self._z_units_est
             if (vz_units_s > 0 and z >= self.limits.z_max) or (vz_units_s < 0 and z <= self.limits.z_min):
@@ -705,7 +771,9 @@ class RealRobot(RobotInterface):
             connected=self.serial.connected, homed=self.homed, motors_enabled=self.motors_enabled,
             state=self._state, x=x, y=y, z=self._z_units_est, measured=measured and self._z_measured,
             alarm=self.alarm, error=self.error, test_mode=self.test_mode,
-            timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_zero_counts is not None,
+            timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_reference() is not None,
+            z_top_set=self._z_top_counts is not None, z_bottom_set=self._z_bottom_counts is not None,
+            z_calibrated=self.z_cal.complete(),
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
             limit_x=self._limits_active[0] and self._limits_current(x, y, measured),

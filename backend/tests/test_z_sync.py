@@ -237,3 +237,113 @@ async def test_releasing_only_w_s_ramps_z_within_the_refreshes():
         await robot.jog(0, 0, 0)
     finally:
         await robot.disconnect()
+
+
+# ------------------------------------------------------------ top / bottom points
+async def make_cal_robot(path=None, z_sign=1, cpu=122.88):
+    cfg = BackendConfig(limits=RobotLimits(z_max=100.0, z_up_is_positive=True), z_counts_per_unit=cpu, z_sign=z_sign)
+    cfg.z_calibration_path = path
+    r = RealRobot(cfg, SerialService("fake", transport_factory=FakeFirmware))
+    await r.connect()
+    return r
+
+
+async def test_top_and_bottom_measure_counts_per_unit_and_are_saved(tmp_path):
+    path = tmp_path / "z_calibration.json"
+    robot = await make_cal_robot(path)
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("top")  # = z_zero
+        s = robot.snapshot()
+        assert s.z == 100.0 and s.z_top_set and not s.z_bottom_set and not s.z_calibrated
+        fw.servo_abs[1] -= 2 * 4096  # wound down two drum turns
+        await robot.set_z_point("bottom")
+        s = robot.snapshot()
+        assert s.z == 0.0 and s.z_top_set and s.z_bottom_set and s.z_calibrated
+        assert robot.cfg.z_counts_per_unit == pytest.approx(81.92) and robot.cfg.z_sign == 1
+        fw.servo_abs[1] += 4096  # half way up
+        await poll_z(robot)
+        assert robot.snapshot().z == pytest.approx(50.0, abs=0.01)
+        assert json.loads(path.read_text())["counts_per_unit"] == pytest.approx(81.92)
+    finally:
+        await robot.disconnect()
+    # next start (a power cycle: counts restart): the saved calibration, one point is enough
+    robot = await make_cal_robot(path)
+    fw = robot.serial.transport
+    try:
+        s = robot.snapshot()
+        assert s.z_calibrated and not s.z_reference_set and robot.cfg.z_counts_per_unit == pytest.approx(81.92)
+        await robot.set_z_point("top")
+        fw.servo_abs[1] -= 4096
+        await poll_z(robot)
+        assert robot.snapshot().z == pytest.approx(50.0, abs=0.01)
+    finally:
+        await robot.disconnect()
+
+
+async def test_the_drum_direction_is_measured_too_and_bottom_alone_is_a_reference():
+    robot = await make_cal_robot(z_sign=1)
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("bottom")  # bottom first: Z = 0 here, config counts per unit
+        assert robot.snapshot().z == 0.0 and robot.snapshot().z_reference_set
+        fw.servo_abs[1] -= 3 * 4096  # this drum winds up with falling counts
+        await robot.set_z_point("top")
+        assert robot.cfg.z_sign == -1 and robot.cfg.z_counts_per_unit == pytest.approx(122.88)
+        fw.servo_abs[1] += int(1.5 * 4096)  # half way down
+        await poll_z(robot)
+        assert robot.snapshot().z == pytest.approx(50.0, abs=0.01)
+    finally:
+        await robot.disconnect()
+
+
+async def test_points_too_close_are_refused_and_change_nothing():
+    robot = await make_cal_robot()
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("top")
+        fw.servo_abs[1] -= 100  # "bottom" pressed without lowering the arm
+        with pytest.raises(RobotCommandError, match="apart"):
+            await robot.set_z_point("bottom")
+        s = robot.snapshot()
+        assert s.z_top_set and not s.z_bottom_set and not s.z_calibrated and robot.cfg.z_counts_per_unit == 122.88
+        with pytest.raises(RobotCommandError, match="which"):
+            await robot.set_z_point("middle")
+    finally:
+        await robot.disconnect()
+
+
+async def test_a_firmware_reboot_forgets_the_points_but_not_the_calibration():
+    robot = await make_cal_robot()
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("top")
+        fw.servo_abs[1] -= 2 * 4096
+        await robot.set_z_point("bottom")
+        robot._on_line(P.BOOT_BANNER)  # power cycle while the backend keeps running
+        s = robot.snapshot()
+        assert not s.z_reference_set and not s.z_top_set and not s.z_bottom_set and s.z_calibrated
+        assert robot._z_reference() is None  # move_z and the Z jog limits wait for a new point
+    finally:
+        await robot.disconnect()
+
+
+async def test_server_z_set_reaches_the_robot():
+    robot = MockRobot()
+    await robot.connect()
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
+    await srv.start()
+    port = next(iter(srv._server.sockets)).getsockname()[1]
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            async def cmd(rid, name, **params):
+                await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params}}))
+                while True:
+                    m = json.loads(await asyncio.wait_for(ws.recv(), 2))
+                    if m.get("request_id") == rid:
+                        return m
+            assert (await cmd("b", "z_set", which="bottom"))["type"] == "ack"
+            assert (await cmd("s", "z_set", which="side"))["type"] == "nack"
+            assert (await cmd("t", "z_zero"))["type"] == "ack"
+    finally:
+        await srv.stop()

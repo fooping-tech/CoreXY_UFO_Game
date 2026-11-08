@@ -87,6 +87,11 @@ class MockRobot(RobotInterface):
     async def set_z_zero(self) -> None:
         self.z_reference_set = True
 
+    async def set_z_point(self, which: str) -> None:
+        if which not in ("top", "bottom"):
+            raise RobotCommandError("z_set: which must be top or bottom")
+        self.z_reference_set = True
+
     async def grab(self, close: bool) -> None:
         self._require()
         self._grabbing = close

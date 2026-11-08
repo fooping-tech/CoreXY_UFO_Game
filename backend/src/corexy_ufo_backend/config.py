@@ -52,6 +52,8 @@ class BackendConfig:
     limits: RobotLimits = field(default_factory=RobotLimits)
     # where the claw's open / closed angles are kept (None: not saved, e.g. tests)
     arm_calibration_path: Path | None = None
+    # where the Z calibration from the top / bottom points is kept (None: not saved)
+    z_calibration_path: Path | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -59,6 +61,7 @@ def load_config(path: Path | None = None) -> BackendConfig:
     path = path or DEFAULT_CONFIG_PATH
     cfg = BackendConfig()
     cfg.arm_calibration_path = path.parent / "arm_calibration.json"
+    cfg.z_calibration_path = path.parent / "z_calibration.json"
     if not path.exists():
         return cfg
     data = json.loads(path.read_text(encoding="utf-8"))
