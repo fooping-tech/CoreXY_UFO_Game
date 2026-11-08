@@ -155,7 +155,7 @@
     "claude_command": "claude",
     "claude_model": "",
     "codex_command": "codex app-server --listen stdio://",
-    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. provider: claude (Claude Code CLI, signed in; "claude" is looked for in ~/.local/bin, Homebrew and the newest VS Code / Cursor extension when not on PATH; ~ is allowed) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
+    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. provider: claude (Claude Code CLI, signed in; claude is looked for in ~/.local/bin, Homebrew and the newest VS Code / Cursor extension when not on PATH; ~ is allowed) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
   },
   "backend": {
     "serial_port": "",
