@@ -32,6 +32,10 @@ class StudyConfig:
     system_prompt: str = ("あなたは画像を見ながら学習を支援する家庭教師です。答えだけでなく、"
                           "考え方を段階的に日本語で説明してください。画像にない事実は推測と明記してください。")
     codex_command: str = "codex app-server --listen stdio://"
+    # who answers: "claude" (Claude Code CLI, the default) or "codex" (codex app-server)
+    provider: str = "claude"
+    claude_command: str = "claude"
+    claude_model: str = ""  # "" = the CLI's default model
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "StudyConfig":
@@ -41,7 +45,24 @@ class StudyConfig:
                    max_image_edge=max(int(data.get("max_image_edge", 1280)), 64),
                    camera_role=str(data.get("camera_role", "overview")),
                    system_prompt=str(data.get("system_prompt", cls.system_prompt)),
-                   codex_command=str(data.get("codex_command", "codex app-server --listen stdio://")))
+                   codex_command=str(data.get("codex_command", "codex app-server --listen stdio://")),
+                   provider=str(data.get("provider", "claude")).strip().lower(),
+                   claude_command=str(data.get("claude_command", "claude")),
+                   claude_model=str(data.get("claude_model", "")))
+
+
+PROVIDERS = ("claude", "codex")
+
+
+def make_adapter(config: StudyConfig) -> StudyAdapter:
+    """The adapter for study.provider (imported lazily: each one is optional)."""
+    if config.provider == "claude":
+        from .claude_adapter import ClaudeCodeStudyAdapter
+        return ClaudeCodeStudyAdapter(config.claude_command, model=config.claude_model)
+    if config.provider == "codex":
+        from .codex_adapter import CodexStudyAdapter
+        return CodexStudyAdapter(config.codex_command)
+    raise ValueError(f"study.provider must be one of {PROVIDERS}, not {config.provider!r}")
 
 
 @dataclass
@@ -119,10 +140,10 @@ class StudyService:
             except asyncio.TimeoutError:
                 await self.adapter.cancel(session.thread_id, session.turn_id)
                 await emit({"type": "study_error", "request_id": request_id,
-                            "data": {"code": "timeout", "message": "Codexの応答がタイムアウトしました"}})
+                            "data": {"code": "timeout", "message": "回答がタイムアウトしました"}})
             except Exception as exc:
                 await emit({"type": "study_error", "request_id": request_id,
-                            "data": {"code": "codex_error", "message": str(exc)}})
+                            "data": {"code": "assistant_error", "message": str(exc)}})
             finally:
                 image_path.unlink(missing_ok=True)
                 session.turn_id = None

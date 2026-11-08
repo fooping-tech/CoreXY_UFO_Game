@@ -12,6 +12,8 @@ var state := "closed"
 var status_text := "学習セッションを開始してください"
 var answer := ""
 var server_available := false
+## Who answers, from the backend's hello (study.provider): "claude" or "codex".
+var provider := ""
 var camera_role := "overview"
 var max_image_edge := 1280
 var max_image_bytes := 700000
@@ -77,7 +79,7 @@ func ask(question: String) -> void:
 	request_id = "study-r%d-%d" % [Time.get_ticks_msec(), _seq]
 	answer = ""
 	state = "thinking"
-	status_text = "Codexが画像を確認しています…"
+	status_text = "%sが画像を確認しています…" % provider_label(provider)
 	var error := link.send_aux({"type": "study_request", "request_id": request_id, "data": {
 		"session_id": session_id, "question": question, "camera_role": camera_role,
 		"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
@@ -113,6 +115,7 @@ func _on_message(msg: Dictionary) -> void:
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
 	if t == "hello":
 		server_available = bool(data.get("study", false))
+		provider = str(data.get("study_provider", ""))
 		if not server_available:
 			state = "unavailable"
 			status_text = "バックエンドの学習機能が無効です（--study と config を確認）"
@@ -145,3 +148,13 @@ func _on_disconnected() -> void:
 		state = "connecting"
 		status_text = "バックエンドとの接続が切れました。再接続中…"
 		state_changed.emit()
+
+## The name shown for a study provider.
+static func provider_label(p: String) -> String:
+	match p:
+		"claude":
+			return "Claude Code"
+		"codex":
+			return "Codex"
+		_:
+			return "アシスタント"

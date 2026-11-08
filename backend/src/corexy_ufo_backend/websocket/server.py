@@ -265,7 +265,7 @@ class GameServer:
         self.clients.add(ws)
         log.info("client connected (%d)", len(self.clients))
         try:
-            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None}}))
+            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider()}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -329,6 +329,10 @@ class GameServer:
             await self._handle_study(ws, msg)
         else:
             await ws.send(json.dumps({"type": "error", "timestamp": now_ms(), "data": {"message": f"unknown type {t}"}}))
+
+    def _study_provider(self) -> str:
+        cfg = getattr(self.study, "config", None)
+        return str(getattr(cfg, "provider", "")) if self.study is not None else ""
 
     async def _study_send(self, ws: ServerConnection, message: dict) -> None:
         message.setdefault("timestamp", now_ms())

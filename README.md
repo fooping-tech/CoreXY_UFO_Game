@@ -103,11 +103,19 @@ cd CoreXY_UFO_Game/game
 
 ### カメラ学習アシスタント（任意）
 
-- `config/game_config.json` の `study.enabled` を `true` にし、`./start.sh mock --study`（または実機起動に `--study` を追加）で起動すると、F1 パネルに **Study** タブが現れる。既定は OFF で、OFF のときは UI・専用 WebSocket・Codex プロセスを作らない。
-- Study タブを開き、Overview / Focus、質問を選んで「撮影して質問」を押す。表示用に反転済みの現在フレームだけを JPEG にして、ローカルの `codex app-server` へ送る。自動監視・自動撮影はしない。
-- タブを離れる、F1 パネルを閉じる、または「終了」を押すとセッションを終了する。会話はそのセッション内だけ継続し、一時画像は各回答後に削除する。Codex CLI の認証情報はこの設定ファイルには保存しない。
-- Codex CLI が未導入・未ログイン・停止中でもゲームと実機制御は継続する。`Study` の通信はロボットコマンドとは別メッセージで、Codex thread は一時ディレクトリ、読み取り専用、承認なし、動的外部ツールなしで開始する。
-- 通常のカメラ表示とスコープは映像を保存・送信しない。Studyで「撮影して質問」を明示的に押した場合だけ、その静止画を一時保存してCodexへ送る。スコープの映像は実機の制御に使わない（ジェスチャー認識は下記）。
+- `config/game_config.json` の `study.enabled` を `true` にし、`./start.sh mock --study`（または実機起動に `--study` を追加）で起動すると、F1 パネルに **Study** タブが現れる。既定は OFF で、OFF のときは UI・専用 WebSocket・回答役のプロセスを作らない。
+- **回答役は `study.provider` で選ぶ。** `"claude"`（既定）= Claude Code CLI、`"codex"` = `codex app-server`。
+  - Claude Code は、手元でログイン済みの `claude` を使う。設定は既定の `"claude"` のままでよい。PATH に無ければ、バックエンドが次の順に探す。
+    1. `~/.local/bin/claude`、`~/.claude/local/claude`
+    2. `/opt/homebrew/bin/claude`、`/usr/local/bin/claude`
+    3. VS Code / Cursor 拡張に入っている CLI（`~/.vscode/extensions/anthropic.claude-code-<版>-.../native-binary/claude`）。入っている中で一番新しい版を、セッションを始めるたびに選ぶので、拡張を更新しても書き換えは要らない。
+  - 別の場所の CLI を使うときだけ `study.claude_command` を書く。`~/...` が使えるので、ユーザー名を設定ファイルに書かずに済む。
+  - `study.claude_model` でモデルを指定できる。空なら CLI の既定のモデルを使う。
+  - Claude Code はセッションごとに `claude -p --input-format stream-json ...` を 1 つ起動する。組み込みツールなし（`--tools ""`）、MCP なし、ユーザー・プロジェクトの設定やフック・CLAUDE.md を読まない（`--setting-sources ""`）、会話をディスクに残さない（`--no-session-persistence`）。
+- Study タブを開き、Overview / Focus、質問を選んで「撮影して質問」を押す。表示用に反転済みの現在フレームだけを JPEG にして、選んだ回答役へ送る。自動監視・自動撮影はしない。
+- タブを離れる、F1 パネルを閉じる、または「終了」を押すとセッションを終了する。会話はそのセッション内だけ継続し、一時画像は各回答後に削除する。CLI の認証情報はこの設定ファイルには保存しない。キャンセルに CLI が応じないときはプロセスを止める。その場合、次の質問は新しい会話になる（回答の先頭にそう出る）。
+- CLI が未導入・未ログイン・停止中でもゲームと実機制御は継続する。`Study` の通信はロボットコマンドとは別メッセージで、別の WebSocket を使う。Codex thread は一時ディレクトリ、読み取り専用、承認なし、動的外部ツールなしで開始する。
+- 通常のカメラ表示とスコープは映像を保存・送信しない。Studyで「撮影して質問」を明示的に押した場合だけ、その静止画を一時保存して回答役（Claude / Codex のサービス）へ送る。スコープの映像は実機の制御に使わない（ジェスチャー認識は下記）。
 
 ### ハンドジェスチャー・ジョイスティック
 
