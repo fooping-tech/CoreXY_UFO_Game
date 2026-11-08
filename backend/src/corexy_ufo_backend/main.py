@@ -26,7 +26,7 @@ from .vision_service import CameraConfig, VisionService
 from .vision_service.cameras import list_cameras_macos, resolve_camera
 from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
-from .study import CodexStudyAdapter, StudyConfig, StudyService
+from .study import StudyConfig, StudyService, make_adapter
 
 log = logging.getLogger("corexy_ufo_backend")
 
@@ -115,8 +115,11 @@ async def run(args: argparse.Namespace) -> int:
     study_cfg = StudyConfig.from_raw(cfg.raw)
     study = None
     if args.study and study_cfg.enabled:
-        study = StudyService(study_cfg, CodexStudyAdapter(study_cfg.codex_command))
-        log.info("study assistant enabled (Codex starts lazily on the first session)")
+        try:
+            study = StudyService(study_cfg, make_adapter(study_cfg))
+            log.info("study assistant enabled: %s (starts on the first session)", study_cfg.provider)
+        except ValueError as e:
+            log.error("study assistant disabled: %s", e)
     elif args.study:
         log.warning("--study ignored because study.enabled is false in config")
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,

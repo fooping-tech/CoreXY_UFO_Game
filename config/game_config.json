@@ -151,8 +151,11 @@
     "max_image_edge": 1280,
     "camera_role": "overview",
     "system_prompt": "あなたは画像を見ながら学習を支援する家庭教師です。答えだけでなく、考え方を段階的に日本語で説明してください。画像にない事実は推測と明記してください。",
+    "provider": "claude",
+    "claude_command": "claude",
+    "claude_model": "",
     "codex_command": "codex app-server --listen stdio://",
-    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. No credentials are stored here."
+    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. provider: claude (Claude Code CLI, signed in; claude_command may be a full path) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
   },
   "backend": {
     "serial_port": "",

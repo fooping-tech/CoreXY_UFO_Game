@@ -178,7 +178,7 @@ func study_panel_visibility_changed(is_visible: bool) -> void:
 		main.study.end_session()
 
 func _build_study() -> void:
-	_note("表示中のカメラを手動撮影し、ローカルCodexに質問します。画像や会話はセッション終了時に破棄されます。")
+	_note("表示中のカメラを手動撮影し、ローカルの Claude Code / Codex（config の study.provider）に質問します。画像や会話はセッション終了時に破棄されます。")
 	_study_status = Label.new()
 	_study_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_study_status.add_theme_font_size_override("font_size", 11)
@@ -223,7 +223,7 @@ func _build_study() -> void:
 func _update_study() -> void:
 	if main == null or main.study == null or _study_status == null:
 		return
-	_study_status.text = "状態: %s\n%s" % [main.study.state, main.study.status_text]
+	_study_status.text = "状態: %s（%s）\n%s" % [main.study.state, StudyClient.provider_label(main.study.provider), main.study.status_text]
 	_study_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if main.study.state == "unavailable" else Color(0.65, 0.9, 1.0))
 	_study_answer.text = main.study.answer
 	if _study_preview != null:

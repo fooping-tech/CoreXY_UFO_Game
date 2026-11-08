@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Any
 
 
-class CodexAdapterError(RuntimeError):
+from .errors import StudyAdapterError
+
+
+class CodexAdapterError(StudyAdapterError):
     pass
 
 

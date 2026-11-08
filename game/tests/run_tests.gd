@@ -1069,6 +1069,9 @@ func _test_study_is_optional(rs: Node) -> void:
 	game.debug_ui.study_panel_visibility_changed(true)
 	var reopened: bool = game.study.session_id != "" and game.study.state == "connecting"
 	game.study.end_session()
+	var labels_ok: bool = StudyClient.provider_label("claude") == "Claude Code" and StudyClient.provider_label("codex") == "Codex" \
+		and StudyClient.provider_label("") == "アシスタント"
+	_ok(labels_ok, "study: the provider from the backend's hello names who answers")
 	_ok(game.study != null and study_tab >= 0 and titles.size() == 8 and buffer_ok and isolated and reopened,
 		"study: optional client is isolated, sized for images, and restarts on reopen", "%s buffer=%s isolated=%s reopened=%s" % [titles, buffer_ok, isolated, reopened])
 	remove_child(game)
