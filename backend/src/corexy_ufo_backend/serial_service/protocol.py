@@ -235,6 +235,9 @@ class ServoStatus:
     moving: bool = False
     torque: bool = False
     tracking: bool = False
+    # the servo's angle limit registers (min, max): (0, 0) = multi-turn, (0, 4095) =
+    # one turn (its power-up default); None when the line has no limits=
+    limits: tuple[int, int] | None = None
     voltage: float | None = None
     temp: int | None = None
     extra: dict[str, str] = field(default_factory=dict)
@@ -243,6 +246,12 @@ class ServoStatus:
     @property
     def ok(self) -> bool:
         return self.result == "OK"
+
+    @property
+    def multi_turn_lost(self) -> bool:
+        """The firmware still tracks turns but the servo is back to one turn: its
+        power was cut on its own. Jogs then stop at the end of that turn silently."""
+        return self.tracking and self.limits is not None and self.limits != (0, 0)
 
 
 _SERVO_STATUS_RE = re.compile(r"^SERVO_STATUS id=(?P<id>\d+) result=(?P<res>\w+)(?P<rest>.*)$")
@@ -262,6 +271,9 @@ def parse_servo_status(line: str) -> ServoStatus | None:
         st.moving = rest.get("moving", "0") not in ("0", "NO")
         st.torque = rest.get("torque", "0") not in ("0", "NO")
         st.tracking = rest.get("tracking", "NO") == "YES"
+        if "limits" in rest and "/" in rest["limits"]:
+            lo, hi = rest["limits"].split("/", 1)
+            st.limits = (int(lo), int(hi))
         if "voltage" in rest:
             st.voltage = float(rest["voltage"])
         if "temp" in rest:

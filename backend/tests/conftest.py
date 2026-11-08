@@ -22,6 +22,9 @@ class FakeFirmware(SerialTransport):
         self.alarm_reason = "none"
         self.test_mode = False
         self.servo_abs = {1: 1000, 2: 0}
+        # multi-turn tracking per servo: the firmware's flag and the servo's limits
+        self.servo_tracking = {1: True, 2: True}
+        self.servo_limits = {1: "0/0", 2: "0/0"}
         self.move_delay = 0.01
         self.queue_full_once = False
         self.reject_next_xy = False
@@ -31,6 +34,11 @@ class FakeFirmware(SerialTransport):
         self._xy_task: asyncio.Task | None = None
         self._open = False
         self._tasks: list[asyncio.Task] = []
+
+    def cut_servo_power(self, sid: int = 1) -> None:
+        """The servo alone lost power: back to one turn, the firmware does not notice."""
+        self.servo_limits[sid] = "0/4095"
+        self.servo_abs[sid] = 0
 
     @property
     def is_open(self) -> bool:
@@ -123,6 +131,8 @@ class FakeFirmware(SerialTransport):
                 self.y = min(max(self.y + vy * 0.05, 0.0), 200.0)
                 zc = int(float(parts[3])) if len(parts) > 3 else 0
                 self.servo_abs[1] += int(zc * 0.05)
+                if self.servo_limits[1] != "0/0":  # one turn only: stuck at its ends, no error
+                    self.servo_abs[1] = min(max(self.servo_abs[1], 0), 4095)
                 self._emit(f"JOG_POS X={self.x:.3f} Y={self.y:.3f} VX={vx:.1f} VY={vy:.1f} Z_ABS={self.servo_abs[1]} ARM_ABS=NA")
             elif self.jog_rejected:
                 pass
@@ -134,6 +144,8 @@ class FakeFirmware(SerialTransport):
                     self._emit(f"NACK_JOG reason={reason}")
                 else:
                     self.jogging = True
+                    if not self.servo_tracking[1]:  # beginJog -> enableTracking: multi-turn again
+                        self.servo_tracking[1], self.servo_limits[1] = True, "0/0"
                     self._emit(f"JOG start vx={vx:.1f} vy={vy:.1f} z=0 arm=0 src=SERIAL HOMED={self._homed_s()}")
         elif name == "STOP":
             self._emit("ACK QUEUED STOP")
@@ -158,6 +170,10 @@ class FakeFirmware(SerialTransport):
             turns = float(turns)
             if self.jogging:
                 self._emit("NACK_SERVO_TURN reason=jog_active")
+            elif self.test_mode and self.servo_tracking[sid] and self.servo_limits[sid] != "0/0":
+                # like moveRelative: the servo lost its multi-turn limits, nothing moves
+                self.servo_tracking[sid] = False
+                self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=multi_turn_lost (retry)")
             elif not self.test_mode:
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=test_mode_off")
             elif abs(turns) > 3.0:
@@ -169,7 +185,8 @@ class FakeFirmware(SerialTransport):
         elif name == "SERVO_STATUS":
             self._emit("ACK QUEUED SERVO_STATUS")
             sid = int(line.split()[1])
-            self._emit(f"SERVO_STATUS id={sid} result=OK flags=0x00 mode=0 torque=1 raw=100 goal=100 limits=0/4095 tracking=YES abs={self.servo_abs[sid]} turns={self.servo_abs[sid]/4096:.2f} voltage=7.4 temp=31 moving=0")
+            tracking = "YES" if self.servo_tracking[sid] else "NO"
+            self._emit(f"SERVO_STATUS id={sid} result=OK flags=0x00 mode=0 torque=1 raw=100 goal=100 limits={self.servo_limits[sid]} tracking={tracking} abs={self.servo_abs[sid]} turns={self.servo_abs[sid]/4096:.2f} voltage=7.4 temp=31 moving=0")
         elif name == "ABORT":
             self._emit("ACK QUEUED ABORT")
             self.alarm = True

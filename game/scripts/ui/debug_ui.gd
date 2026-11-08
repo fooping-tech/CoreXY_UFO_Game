@@ -172,6 +172,7 @@ func _build_robot_test() -> void:
 	_button(hzp, "ここを巻き上げ点（上）に", func(): main.ws.send_command("z_set", {"which": "top"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(hzp, "ここを下げ点（下）に", func(): main.ws.send_command("z_set", {"which": "bottom"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_button(_vbox, "Z の上下をやり直す（記録と実測をすべて消す）", func(): main.ws.send_command("z_set", {"which": "clear"}))
+	_button(_vbox, "巻き上げサーボを復帰（サーボだけ電源を入れ直した後）", func(): main.ws.send_command("z_servo_recover"))
 	_note("▲ / ▼ は押している間だけ動く。アームを一番上まで巻き上げて「巻き上げ点（上）に」を押すと高さが画面に出る（上 = %d）。初回は続けて一番下まで下げて「下げ点（下）に」を押すと、2 点から 1 単位あたりのサーボの回転と回転の向きを測って保存する（下 = %d。次回からは電源を入れ直しても上か下の 1 点だけでよい）。上と下を測るまでは %d〜%d で止まらない（本当の上 / 下まで動かせる。見ながら操作する）。測った後はこの範囲で止まる。測り直すときは「やり直す」。最後に一番上まで巻き上げてから 3 の原点復帰へ。" % [int(GameConfig.robot().z_max_mm), int(GameConfig.robot().z_min_mm), int(GameConfig.robot().z_min_mm), int(GameConfig.robot().z_max_mm)])
 	_slider("z_speed", "上げ下げの速さ (z/s, 実機)", 3.0, 40.0, main.jog_speed_real_z, 1.0, func(v): main.jog_speed_real_z = v)
 
@@ -387,6 +388,9 @@ func _update_robot_test() -> void:
 			zref = ("基準: %s を記録" % "・".join(pts)) if not pts.is_empty() else "基準: 未設定（一番上で「巻き上げ点（上）に」）"
 			zref += "  換算: " + ("実測" if RobotState.z_calibrated else "設定値（上と下を記録すると実測になる）")
 		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
+		if RobotState.source == "websocket" and RobotState.z_servo_reset:
+			_z_label.text += "\n⚠ 巻き上げサーボの電源が切れて戻った（1 回転分しか動けず、▲ / ▼ が途中で止まる）。「巻き上げサーボを復帰」を押してから、上下の点を記録し直す"
+		_z_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4) if RobotState.source == "websocket" and RobotState.z_servo_reset else Color(0.85, 0.9, 1.0))
 	if _claw_marks_label != null:
 		var c: float = RobotState.arm_closed_deg
 		var o: float = RobotState.arm_open_deg
@@ -761,7 +765,9 @@ func _process(_dt: float) -> void:
 	var hint: String = main.jog_hint
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
-	if RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
+	if RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset:
+		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。「実機」タブの「巻き上げサーボを復帰」を押す"
+	elif RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
 		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「巻き上げ点（上）に」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint

@@ -45,6 +45,9 @@ var z_reference_set: bool = false
 var z_top_set: bool = false
 var z_bottom_set: bool = false
 var z_calibrated: bool = false
+## The drum servo's power was cut on its own: it only turns one turn (jogs stop
+## silently at its ends) and its turn count is lost until recovered.
+var z_servo_reset: bool = false
 ## Claw servo (ID 2): degrees from its arm_zero reference (the raw angle in its
 ## turn before one is set); NAN = not read yet.
 var arm_deg: float = NAN
