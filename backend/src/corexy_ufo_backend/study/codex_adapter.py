@@ -20,8 +20,11 @@ class CodexAdapterError(RuntimeError):
 
 
 class CodexStudyAdapter:
-    def __init__(self, command: str = "codex app-server --listen stdio://") -> None:
+    def __init__(self, command: str = "codex app-server --listen stdio://", *,
+                 rpc_timeout_s: float = 15.0, cleanup_timeout_s: float = 2.0) -> None:
         self.command = command
+        self.rpc_timeout_s = rpc_timeout_s
+        self.cleanup_timeout_s = cleanup_timeout_s
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task | None = None
         self._pending: dict[int, asyncio.Future] = {}
@@ -38,9 +41,15 @@ class CodexStudyAdapter:
         if not argv:
             raise CodexAdapterError("codex_command is empty")
         try:
+            # Keep the process cwd stable: a session directory is deleted when
+            # its tab closes, while this process can serve later sessions.
+            # Only the Codex thread uses the disposable working directory.
             self._proc = await asyncio.create_subprocess_exec(
                 *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, cwd=workdir,
+                stderr=asyncio.subprocess.DEVNULL,
+                # Image-related notifications can exceed asyncio's 64 KiB
+                # default line limit. Keep a finite, image-sized bound.
+                limit=16 * 1024 * 1024,
             )
         except FileNotFoundError as exc:
             raise CodexAdapterError(f"Codex CLI not found: {argv[0]}") from exc
@@ -70,9 +79,12 @@ class CodexStudyAdapter:
         request_id = self._next_id
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
-        await self._send({"id": request_id, "method": method, "params": params})
         try:
-            return await future
+            async with asyncio.timeout(self.rpc_timeout_s):
+                await self._send({"id": request_id, "method": method, "params": params})
+                return await future
+        except TimeoutError as exc:
+            raise CodexAdapterError(f"Codex RPC timed out: {method}") from exc
         finally:
             self._pending.pop(request_id, None)
 
@@ -88,6 +100,12 @@ class CodexStudyAdapter:
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     continue
                 if "id" in message:
+                    if "method" in message:
+                        # Never execute tools or approvals requested by the
+                        # server. Respond so it cannot wait indefinitely.
+                        await self._send({"id": message["id"], "error": {
+                            "code": -32601, "message": "Study does not support server requests"}})
+                        continue
                     future = self._pending.get(message["id"])
                     if future is not None and not future.done():
                         if message.get("error"):
@@ -115,6 +133,11 @@ class CodexStudyAdapter:
                             future.set_exception(CodexAdapterError(f"Codex turn ended: {status}"))
         except asyncio.CancelledError:
             return
+        except Exception as exc:
+            error = CodexAdapterError(f"Codex protocol reader failed: {exc}")
+            for future in list(self._pending.values()) + [entry[1] for entry in self._turns.values()]:
+                if not future.done():
+                    future.set_exception(error)
         finally:
             error = CodexAdapterError("codex app-server stopped unexpectedly")
             for future in list(self._pending.values()):
@@ -129,6 +152,11 @@ class CodexStudyAdapter:
         result = await self._request("thread/start", {
             "cwd": str(workdir), "ephemeral": True, "approvalPolicy": "never",
             "sandbox": "read-only", "environments": [], "dynamicTools": [],
+            # Study runs in a disposable directory and must not inherit the
+            # user's project MCP servers.  Besides keeping the feature
+            # isolated, this avoids relative MCP commands in config.toml being
+            # resolved against the temporary directory.
+            "config": {"mcp_servers": {}},
             "developerInstructions": instructions,
         })
         thread = (result or {}).get("thread") or {}
@@ -169,9 +197,11 @@ class CodexStudyAdapter:
             return
         params: dict[str, Any] = {"threadId": thread_id, "turnId": turn_id}
         try:
-            await self._request("turn/interrupt", params)
-        except CodexAdapterError:
-            pass
+            async with asyncio.timeout(self.cleanup_timeout_s):
+                await self._request("turn/interrupt", params)
+        except (CodexAdapterError, TimeoutError):
+            # A wedged server must not hold the caller's timeout/cancel path.
+            await self.close()
 
     async def close_session(self, thread_id: str) -> None:
         # Ephemeral prevents durable history; delete also releases the live
@@ -179,11 +209,12 @@ class CodexStudyAdapter:
         if self._proc is None or self._proc.returncode is not None:
             return
         try:
-            await self._request("thread/delete", {"threadId": thread_id})
-        except CodexAdapterError:
-            # Older experimental servers may not expose delete. The process is
-            # still closed with the service and no local image remains.
-            pass
+            async with asyncio.timeout(self.cleanup_timeout_s):
+                await self._request("thread/delete", {"threadId": thread_id})
+        except (CodexAdapterError, TimeoutError):
+            # Ephemeral threads leave no durable history. Closing the process
+            # releases live state when this experimental method is absent.
+            await self.close()
 
     async def close(self) -> None:
         if self._reader_task:

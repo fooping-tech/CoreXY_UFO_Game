@@ -11,6 +11,7 @@ import websockets
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.study import CodexStudyAdapter, StudyConfig, StudyService
 from corexy_ufo_backend.websocket import GameServer
+from corexy_ufo_backend.study.codex_adapter import CodexAdapterError
 
 
 JPEG = b"\xff\xd8study-test\xff\xd9"
@@ -182,3 +183,94 @@ async def test_codex_cancel_keeps_active_turn_until_interrupt():
         await task
     assert adapter.interrupted == ("thread-1", "turn-1", "turn-1")
     assert "thread-1" not in adapter._active_turn_by_thread
+
+
+@pytest.mark.asyncio
+async def test_codex_rpc_timeout_cleans_pending_request():
+    adapter = CodexStudyAdapter(rpc_timeout_s=0.01)
+    async def discard(_message):
+        pass
+    adapter._send = discard
+    with pytest.raises(CodexAdapterError, match="timed out: initialize"):
+        await adapter._request("initialize", {})
+    assert adapter._pending == {}
+
+
+@pytest.mark.asyncio
+async def test_codex_unresponsive_interrupt_does_not_block_timeout(tmp_path):
+    class WedgedAdapter(CodexStudyAdapter):
+        def __init__(self):
+            super().__init__(cleanup_timeout_s=0.01)
+            self._proc = type("Proc", (), {"returncode": None})()
+            self.closed = False
+        async def _request(self, method, params):
+            if method == "turn/start":
+                return {"turn": {"id": "t1"}}
+            await asyncio.Event().wait()
+        async def close(self):
+            self.closed = True
+            self._proc = None
+
+    adapter = WedgedAdapter()
+    async def discard(_text):
+        pass
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(adapter.ask("s1", "q", tmp_path / "image.jpg", discard), 0.01)
+    assert adapter.closed
+    assert adapter._active_turn_by_thread == {}
+
+
+@pytest.mark.asyncio
+async def test_codex_large_notification_followed_by_delta_and_completion():
+    adapter = CodexStudyAdapter()
+    reader = asyncio.StreamReader(limit=16 * 1024 * 1024)
+    adapter._proc = type("Proc", (), {"stdout": reader})()
+    deltas = []
+    async def on_delta(text):
+        deltas.append(text)
+    done = asyncio.get_running_loop().create_future()
+    adapter._turns["t1"] = (on_delta, done)
+    for event in [
+        {"method": "item/started", "params": {"image": "x" * 100_000}},
+        {"method": "item/agentMessage/delta", "params": {"turnId": "t1", "delta": "回答"}},
+        {"method": "turn/completed", "params": {"turn": {"id": "t1", "status": "completed"}}},
+    ]:
+        reader.feed_data(json.dumps(event).encode() + b"\n")
+    reader.feed_eof()
+    await adapter._read_loop()
+    assert done.result() == "completed"
+    assert deltas == ["回答"]
+
+
+@pytest.mark.asyncio
+async def test_study_timeout_reports_error_and_removes_image():
+    adapter = FakeAdapter(wait=True)
+    service = StudyService(StudyConfig(enabled=True, timeout_s=0.01), adapter)
+    events = []
+    async def emit(event):
+        events.append(event)
+    await service.start_session("s1")
+    await service.ask("s1", "r1", "q", base64.b64encode(JPEG).decode(), emit)
+    await asyncio.wait_for(service.sessions["s1"].task, 1)
+    assert events[-1]["data"]["code"] == "timeout"
+    assert not list(adapter.started[0].glob("*.jpg"))
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_codex_server_request_cannot_complete_client_rpc():
+    adapter = CodexStudyAdapter()
+    reader = asyncio.StreamReader()
+    adapter._proc = type("Proc", (), {"stdout": reader})()
+    sent = []
+    async def send(message):
+        sent.append(message)
+    adapter._send = send
+    pending = asyncio.get_running_loop().create_future()
+    adapter._pending[1] = pending
+    reader.feed_data(b'{"id":1,"method":"item/commandExecution/requestApproval","params":{}}\n')
+    reader.feed_data(b'{"id":1,"result":{"ok":true}}\n')
+    reader.feed_eof()
+    await adapter._read_loop()
+    assert pending.result() == {"ok": True}
+    assert sent[0]["error"]["code"] == -32601
