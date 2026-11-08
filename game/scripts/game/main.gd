@@ -6,6 +6,7 @@ extends Node2D
 const UfoScene := preload("res://scenes/ufo.tscn")
 const DebugScene := preload("res://scenes/debug.tscn")
 const StudyClientScript := preload("res://scripts/study/study_client.gd")
+const HomeworkClientScript := preload("res://scripts/study/homework_client.gd")
 
 ## A line for the debug panel's log (keyboard jog start/stop, ignored keys...).
 signal debug_log(text: String)
@@ -26,6 +27,7 @@ var sfx: Sfx
 var shake: ScreenShake
 var cameras: CameraHub
 var study: Node
+var homework: Node
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -206,6 +208,11 @@ func _ready() -> void:
 		study.name = "StudyClient"
 		add_child(study)
 		study.setup(cameras)
+	if bool(GameConfig.get_value("homework", "enabled", false)):
+		homework = HomeworkClientScript.new()
+		homework.name = "HomeworkClient"
+		add_child(homework)
+		homework.setup(cameras)
 	gesture.state_changed.connect(_on_gesture_state)
 	gesture.claw_requested.connect(_on_gesture_claw)
 	var hud_layer := CanvasLayer.new()

@@ -18,8 +18,8 @@ signal study_message(msg: Dictionary)
 ## Only listen (vision events): never touch RobotState. Used to get the hand
 ## gesture from the backend while the game drives its own MockRobot.
 var listen_only := false
-## Auxiliary connection used by StudyClient. It receives hello + study_* only
-## and can never write RobotState or send robot commands.
+## Auxiliary connection used by StudyClient / HomeworkClient. It receives hello +
+## study_* / homework_* only and can never write RobotState or send robot commands.
 var study_only := false
 ## libwebsockets queues a complete message before sending it. StudyClient raises
 ## this for the base64 JPEG; ordinary robot links keep the small default.
@@ -136,7 +136,7 @@ func _handle(msg: Dictionary) -> void:
 		if t == "hello":
 			server_robot = str(data.get("robot", ""))
 			study_message.emit(msg)
-		elif t.begins_with("study_"):
+		elif t.begins_with("study_") or t.begins_with("homework_"):
 			study_message.emit(msg)
 		return
 	if listen_only and t != "vision_event":

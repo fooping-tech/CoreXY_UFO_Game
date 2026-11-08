@@ -157,6 +157,15 @@
     "codex_command": "codex app-server --listen stdio://",
     "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. provider: claude (Claude Code CLI, signed in; claude is looked for in ~/.local/bin, Homebrew and the newest VS Code / Cursor extension when not on PATH; ~ is allowed) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
   },
+  "homework": {
+    "enabled": false,
+    "interval_s": 10.0,
+    "timeout_s": 30.0,
+    "max_image_edge": 1024,
+    "max_image_bytes": 700000,
+    "camera_role": "overview",
+    "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here."
+  },
   "backend": {
     "serial_port": "",
     "baudrate": 115200,

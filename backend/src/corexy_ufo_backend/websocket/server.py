@@ -77,7 +77,7 @@ class GameServer:
     def __init__(self, robot: RobotInterface, host: str = "127.0.0.1", port: int = 8765, *,
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
-                 study: Any | None = None) -> None:
+                 study: Any | None = None, homework: Any | None = None) -> None:
         self.robot = robot
         self.host = host
         self.port = port
@@ -86,6 +86,8 @@ class GameServer:
         self.study = study
         self.clients: set[ServerConnection] = set()
         self._study_sessions: dict[ServerConnection, set[str]] = {}
+        self.homework = homework
+        self._homework_sessions: dict[ServerConnection, set[str]] = {}
         self._handled: OrderedDict[str, dict] = OrderedDict()
         self._server = None
         self._tasks: list[asyncio.Task] = []
@@ -129,6 +131,8 @@ class GameServer:
             await self.auto.wait()
         if self.study is not None:
             await self.study.close()
+        if self.homework is not None:
+            await self.homework.close()
         self._stop_log_feed()
         for t in self._tasks:
             t.cancel()
@@ -265,7 +269,7 @@ class GameServer:
         self.clients.add(ws)
         log.info("client connected (%d)", len(self.clients))
         try:
-            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider()}}))
+            await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -298,6 +302,9 @@ class GameServer:
             for session_id in self._study_sessions.pop(ws, set()):
                 if self.study is not None:
                     await self.study.end_session(session_id)
+            for session_id in self._homework_sessions.pop(ws, set()):
+                if self.homework is not None:
+                    await self.homework.stop(session_id)
             log.info("client disconnected (%d)", len(self.clients))
             if self._jog_owner is ws:
                 log.warning("the jogging client disconnected: stopping the jog")
@@ -327,8 +334,42 @@ class GameServer:
             await self._handle_command(ws, msg)
         elif t and t.startswith("study_"):
             await self._handle_study(ws, msg)
+        elif t and t.startswith("homework_"):
+            await self._handle_homework(ws, msg)
         else:
             await ws.send(json.dumps({"type": "error", "timestamp": now_ms(), "data": {"message": f"unknown type {t}"}}))
+
+    async def _handle_homework(self, ws: ServerConnection, msg: dict) -> None:
+        """Homework watch (optional, never touches the robot): start / frame / stop."""
+        rid = str(msg.get("request_id", ""))
+        data = msg.get("data") if isinstance(msg.get("data"), dict) else {}
+        session_id = str(data.get("session_id", ""))
+        if self.homework is None:
+            await self._study_send(ws, {"type": "homework_error", "request_id": rid, "data": {
+                "code": "disabled", "message": "宿題の見守りは無効です（config の homework.enabled）"}})
+            return
+        try:
+            if msg["type"] == "homework_start":
+                result = await self.homework.start(session_id)
+                self._homework_sessions.setdefault(ws, set()).add(session_id)
+                await self._study_send(ws, {"type": "homework_status", "data": result})
+            elif msg["type"] == "homework_frame":
+                started = await self.homework.frame(session_id, rid, str(data.get("image_jpeg_base64", "")),
+                                                    lambda reply: self._study_send(ws, reply))
+                await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
+                    "session_id": session_id, "state": "estimating" if started else "skipped"}})
+            elif msg["type"] == "homework_stop":
+                result = await self.homework.stop(session_id)
+                self._homework_sessions.get(ws, set()).discard(session_id)
+                await self._study_send(ws, {"type": "homework_status", "data": result or {
+                    "session_id": session_id, "state": "stopped"}})
+            else:
+                raise ValueError(f"unknown homework message {msg['type']}")
+        except Exception as exc:
+            describe = getattr(exc, "describe", None)
+            await self._study_send(ws, {"type": "homework_error", "request_id": rid, "data": {
+                "code": getattr(exc, "kind", "invalid_request"),
+                "message": describe() if callable(describe) else str(exc)}})
 
     def _study_provider(self) -> str:
         cfg = getattr(self.study, "config", None)

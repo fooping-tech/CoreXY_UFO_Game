@@ -40,6 +40,11 @@ var _arm_cam: Dictionary = {}
 var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
 var _study_tab := -1
+var _hw_status: Label
+var _hw_elapsed: Label
+var _hw_bar: ProgressBar
+var _hw_detail: Label
+var _hw_preview: TextureRect
 var _study_status: Label
 var _study_question: TextEdit
 var _study_answer: RichTextLabel
@@ -118,6 +123,10 @@ func _build() -> void:
 		_build_study()
 		main.study.state_changed.connect(_update_study)
 		_tabs.tab_changed.connect(_on_tab_changed)
+	if main.homework != null:
+		_tab("宿題")
+		_build_homework()
+		main.homework.state_changed.connect(_update_homework)
 	_tab("見た目")
 	_build_look()
 	_tab("VFX")
@@ -160,6 +169,8 @@ func _build() -> void:
 	root.add_child(help)
 	if main.study != null:
 		_update_study()
+	if main.homework != null:
+		_update_homework()
 
 func _on_tab_changed(index: int) -> void:
 	if main.study == null or _study_tab < 0:
@@ -219,6 +230,57 @@ func _build_study() -> void:
 	_study_answer.custom_minimum_size.y = 260
 	_study_answer.add_theme_font_size_override("normal_font_size", 12)
 	_vbox.add_child(_study_answer)
+
+## Homework watch: start / stop, elapsed time and progress (Jev, see HomeworkClient).
+func _build_homework() -> void:
+	_note("俯瞰カメラに映る宿題プリントを %d 秒ごとに撮影し、Cloudflare の Jev で回答の進捗を推定する（1 回 約 ¥0.06、1 時間 約 ¥21）。画像は Cloudflare に送られ、手元には保存しない。手やペンで解答欄が隠れている回は前の値のまま。タブを移ってもパネルを閉じても続く。" % int(main.homework.interval_s))
+	var actions := HBoxContainer.new()
+	_vbox.add_child(actions)
+	_button(actions, "宿題スタート", func(): main.homework.start()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(actions, "終了", func(): main.homework.stop()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hw_elapsed = Label.new()
+	_hw_elapsed.add_theme_font_size_override("font_size", 26)
+	_hw_elapsed.add_theme_color_override("font_color", Color(0.85, 0.95, 1.0))
+	_vbox.add_child(_hw_elapsed)
+	_hw_bar = ProgressBar.new()
+	_hw_bar.min_value = 0
+	_hw_bar.max_value = 100
+	_hw_bar.custom_minimum_size.y = 26
+	_hw_bar.show_percentage = false
+	_vbox.add_child(_hw_bar)
+	_hw_status = Label.new()
+	_hw_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_status.add_theme_font_size_override("font_size", 12)
+	_vbox.add_child(_hw_status)
+	_hw_detail = Label.new()
+	_hw_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_detail.add_theme_font_size_override("font_size", 10)
+	_hw_detail.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
+	_vbox.add_child(_hw_detail)
+	_hw_preview = TextureRect.new()
+	_hw_preview.texture = main.cameras.texture(main.homework.camera_role)
+	_hw_preview.material = main.cameras.view_material(false)
+	_hw_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_hw_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_hw_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.75)
+	_vbox.add_child(_hw_preview)
+
+func _update_homework() -> void:
+	if main == null or main.homework == null or _hw_status == null:
+		return
+	var hw: HomeworkClient = main.homework
+	var pct: float = hw.progress_pct
+	_hw_elapsed.text = "経過 %s   進捗 %s" % [HomeworkClient.format_elapsed(hw.elapsed_s()), "--" if is_nan(pct) else "%d%%" % roundi(pct)]
+	_hw_bar.value = 0.0 if is_nan(pct) else pct
+	_hw_status.text = "状態: %s\n%s" % [hw.state, hw.status_text]
+	var bad: bool = hw.state in ["unavailable", "error"]
+	_hw_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if bad else Color(0.65, 0.9, 1.0))
+	var age := "-" if hw.last_update_ms == 0 else "%d 秒前" % int((Time.get_ticks_msec() - hw.last_update_ms) / 1000)
+	_hw_detail.text = "最終更新 %s ／ 直近の推定 %s ／ 推定 %d 回・飛ばし %d 回・エラー %d 回 ／ 費用 約 $%.4f（約 ¥%.1f）" % [
+		age, "--" if is_nan(hw.last_pct) else "%d%%" % roundi(hw.last_pct), hw.count, hw.skipped, hw.errors,
+		hw.cost_usd, hw.cost_usd * 156.0]
+	if _hw_preview != null:
+		_hw_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() / main.cameras.feed_aspect(hw.camera_role))
 
 func _update_study() -> void:
 	if main == null or main.study == null or _study_status == null:
@@ -834,6 +896,8 @@ func _process(_dt: float) -> void:
 	_update_gesture_status()
 	_update_robot_test()
 	_update_vfx()
+	if main.homework != null and visible and main.homework.running():
+		_update_homework()  # the elapsed time ticks
 	_refresh_log()
 	var fps := Engine.get_frames_per_second()
 	var sim: RopeSimulator = main.sim
