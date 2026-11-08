@@ -87,12 +87,17 @@ static func view_offset(g: GestureControl, flip_h: bool, flip_v: bool) -> Vector
 	var off := (g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6)
 	return Vector2(-off.x if flip_h else off.x, -off.y if flip_v else off.y)
 
-## Where the pointing finger points in the camera view's screen axes (after
-## its flips); zero unless a "point" pose is seen.
+## Where the pointing finger (or a thumbs-up's thumb) points in the camera
+## view's screen axes (after its flips); zero for any other shape.
 static func point_view_dir(g: GestureControl, flip_h: bool, flip_v: bool) -> Vector2:
-	if not g.detected or g.pose != "point" or g.point_dir == Vector2.ZERO:
+	var d := Vector2.ZERO
+	if g.detected and g.pose == "point":
+		d = g.point_dir
+	elif g.detected and g.pose == "thumb":
+		d = g.thumb_dir
+	if d == Vector2.ZERO:
 		return Vector2.ZERO
-	var d := g.point_dir.normalized()
+	d = d.normalized()
 	return Vector2(-d.x if flip_h else d.x, -d.y if flip_v else d.y)
 
 ## Robot-axes direction in words (+X 右, +Y 奥).
@@ -125,7 +130,7 @@ func texts() -> Array[String]:
 			var p := g.scheme.prompt()
 			if gate != "":
 				return [gate, "準備ができたら、" + p[0].trim_prefix("🤏 ").trim_prefix("✋ ")]
-			if g.claw_pose != "" and g.claw_progress(float(Time.get_ticks_msec())) > 0.0:
+			if g.claw_pose != "" and g.claw_progress(float(Time.get_ticks_msec())) > 0.0:  # the scheme's claw shape
 				return ["爪を閉じるよ…" if g.scheme.claw_poses().get(g.claw_pose, "") == "closed" else "爪を開くよ…", "そのまま"]
 			return p
 		GestureControl.State.ARMED:
@@ -133,7 +138,7 @@ func texts() -> Array[String]:
 		GestureControl.State.ACTIVE:
 			if g.mode == "z":
 				var zt := "上げる ▲" if g.velocity_z > 0.2 else ("下げる ▼" if g.velocity_z < -0.2 else "上下")
-				return [zt, "手を上下に動かす / 離すと止まる"]
+				return [zt, "手を上下に動かす / 離すと止まる" if g.scheme.uses_stick() else g.scheme.steer_hint()]
 			var d := direction_text(g.velocity)
 			return [d if d != "" else "操縦中", "カメラの端に近いよ！" if g.edge != Vector2.ZERO else g.scheme.steer_hint()]
 		GestureControl.State.WAITING_RELEASE:

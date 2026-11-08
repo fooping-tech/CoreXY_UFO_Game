@@ -32,7 +32,8 @@ func reset(g) -> void:
 	g.joystick.reset()
 
 func claw_poses() -> Dictionary:
-	return {"fist": "closed", "peace": "open"}
+	# a fist with the thumb out was a fist until the backend told "thumb" apart: keep it closing
+	return {"fist": "closed", "thumb": "closed", "peace": "open"}
 
 func max_speed(g) -> float:
 	return g.joystick.max_speed

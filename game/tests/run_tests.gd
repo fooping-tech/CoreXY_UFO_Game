@@ -41,6 +41,7 @@ func _ready() -> void:
 	_test_gesture_schemes()
 	_test_pose_direction_scheme()
 	_test_pose_finger_direction()
+	_test_pose_thumb_and_claw()
 	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
@@ -1331,7 +1332,7 @@ func _test_pose_direction_scheme() -> void:
 	g.use_scheme(PinchJoystickScheme.new())
 	step.call("open", 3)
 	var ps2 := PoseDirectionScheme.new()
-	ps2.configure({"pose_confirm_ms": 0.0, "smoothing_ms": 0.0})
+	ps2.configure({"directions": {"open": [1, 0, 0]}, "pose_confirm_ms": 0.0, "smoothing_ms": 0.0})
 	g.use_scheme(ps2)  # a stop while パー is in view
 	step.call("open", 30)
 	_ok(switch_latched and g.state == S.WAITING_RELEASE and g.reason == "scheme_changed",
@@ -1382,7 +1383,55 @@ func _test_pose_finger_direction() -> void:
 	_ok(unsure == Vector2.ZERO and g.is_active() and near.call(inverted, Vector2(-20, 0)) and near.call(snapped, Vector2(14.142, 14.142)),
 		"pose scheme: no motion while the finger points at the camera; follows invert_x; can snap to 8 ways",
 		"%s %s %s" % [unsure, inverted, snapped])
-	_ok(ps.mapping_text() == "パー=右 チョキ=左 指差し=指の向き グー=爪閉", "pose scheme: the default mapping includes pointing", ps.mapping_text())
+	_ok(ps.mapping_text() == "指差し=指の向き いいね↑=上げる いいね↓=下げる パー=爪開 グー=爪閉",
+		"pose scheme: the default mapping (point, thumbs-up up / down, claw on パー / グー)", ps.mapping_text())
+
+## The default hand-shape mapping: a thumbs-up raises / lowers the arm by where
+## the thumb points in the shown view; パー opens the claw, グー closes it.
+func _test_pose_thumb_and_claw() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"joystick": {"invert_z": false},
+		"schemes": {"pose_direction": {"speed_z": 10.0, "pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0}}})
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(pose: String, thumb := Vector2.ZERO, n := 1) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose, "thumb_dx": thumb.x, "thumb_dy": thumb.y}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	step.call("other", Vector2.ZERO, 3)
+	step.call("thumb", Vector2(0, -1), 12)  # the thumb towards the top of the image
+	var up := g.is_active() and g.mode == "z" and is_equal_approx(g.velocity_z, 10.0) and g.velocity == Vector2.ZERO
+	var states: Array[int] = []
+	var rec := func(_f, to, _w): states.append(to)
+	g.state_changed.connect(rec)
+	step.call("thumb", Vector2(0, 1), 20)  # turned over: towards the bottom
+	g.state_changed.disconnect(rec)
+	var down := g.is_active() and is_equal_approx(g.velocity_z, -10.0)
+	_ok(up and down and states.has(S.HAND_DETECTED),
+		"pose scheme: thumbs-up up = arm up, down = arm down; turning the thumb over stops first",
+		"%s %s %s %.1f" % [up, down, states, g.velocity_z])
+
+	step.call("thumb", Vector2(1, 0.2).normalized(), 20)  # sideways: no sign
+	var sideways := not g.is_active() and g.velocity_z == 0.0
+	g.joystick.view_flip_v = true  # the view is shown upside down: the top of the image is the bottom of the screen
+	step.call("thumb", Vector2(0, -1), 20)
+	var flipped := g.is_active() and is_equal_approx(g.velocity_z, -10.0)
+	g.joystick.view_flip_v = false
+	_ok(sideways and flipped, "pose scheme: a sideways thumb does nothing; up / down follow the shown view",
+		"%s %s %.1f" % [sideways, flipped, g.velocity_z])
+
+	step.call("other", Vector2.ZERO, 10)
+	step.call("open", Vector2.ZERO, 40)  # 0.67 s of パー
+	var opened := claws == ["open"] and g.velocity_z == 0.0 and not g.is_active()
+	step.call("fist", Vector2.ZERO, 40)
+	_ok(opened and claws == ["open", "closed"], "pose scheme: パー opens the claw, グー closes it (and neither moves the crane)", str(claws))
 
 ## A test scheme: "open" steers +X, "peace" -X, no claw.
 class _PoseScheme extends GestureScheme:

@@ -866,9 +866,9 @@ func _on_gesture_claw(which: String) -> void:
 	arm_goto(which)
 
 ## Debug: a `hand_control` event from the mouse over the play area (left button
-## = pinch, right button = a pinch with the palm down (Z); keys 1 / 2 / 3 / 4 held =
-## パー / チョキ / グー / 指差し, the finger pointing from the play area's centre to
-## the mouse), through the same path as the camera's.
+## = pinch, right button = a pinch with the palm down (Z); keys 1 / 2 / 3 / 4 / 5
+## held = パー / チョキ / グー / 指差し / いいね, the finger or the thumb pointing
+## from the play area's centre to the mouse), through the same path as the camera's.
 func _feed_sim_hand() -> void:
 	var vs := get_viewport_rect().size
 	var m := get_viewport().get_mouse_position()
@@ -879,12 +879,13 @@ func _feed_sim_hand() -> void:
 	_sim_seq += 1
 	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
 		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": sim_pose(gesture.scheme.uses_stick()),
-		"point_dx": sim_point.x, "point_dy": sim_point.y, "point_len": 1.0 if sim_point != Vector2.ZERO else 0.0, "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
+		"point_dx": sim_point.x, "point_dy": sim_point.y, "point_len": 1.0 if sim_point != Vector2.ZERO else 0.0,
+		"thumb_dx": sim_point.x, "thumb_dy": sim_point.y, "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
 		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
 		"timestamp": int(Time.get_unix_time_from_system() * 1000.0), "sequence": _sim_seq, "latency_ms": 0.0},
 		float(Time.get_ticks_msec()))
 
-## The mouse simulation's hand shape: keys 1 / 2 / 3 / 4 held = open / peace / fist / point.
+## The mouse simulation's hand shape: keys 1 / 2 / 3 / 4 / 5 held = open / peace / fist / point / thumb.
 ## Without a key: an open hand for the pinch stick (its resting hand), "other"
 ## for a shape scheme (so the crane does not move just because the mouse is there).
 static func sim_pose(stick: bool) -> String:
@@ -896,6 +897,8 @@ static func sim_pose(stick: bool) -> String:
 		return "fist"
 	if Input.is_physical_key_pressed(KEY_4):
 		return "point"
+	if Input.is_physical_key_pressed(KEY_5):
+		return "thumb"
 	return "open" if stick else "other"
 
 ## The scripted hand of --gesture-demo at `t` seconds (a 7 s loop): open hand,
@@ -920,26 +923,32 @@ static func gesture_demo_event(t: float) -> Dictionary:
 		"pinch": pinch and seen, "hand_x": p.x, "hand_y": p.y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
 		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
 
-## --gesture-demo for a hand-shape scheme (a 10 s loop, the hand at rest in the
-## middle): パー, チョキ, then pointing with the finger turning a full circle
-## (diagonals included), グー, then out of the view; another shape in between.
+## --gesture-demo for a hand-shape scheme (a 12 s loop, the hand at rest in the
+## middle; another shape in between): pointing with the finger turning a full
+## circle, a thumbs-up towards the top of the image then the bottom, パー, グー,
+## then out of the view.
 static func gesture_pose_demo_event(t: float) -> Dictionary:
-	var k := fmod(t, 10.0)
+	var k := fmod(t, 12.0)
 	var pose := "other"
 	var dir := Vector2.ZERO
-	if k >= 0.8 and k < 2.0:
-		pose = "open"
-	elif k >= 2.6 and k < 3.8:
-		pose = "peace"
-	elif k >= 4.4 and k < 7.4:
+	var thumb := Vector2.ZERO
+	if k >= 0.8 and k < 3.8:
 		pose = "point"
-		dir = Vector2.from_angle(-PI / 2.0 + TAU * (k - 4.4) / 3.0)  # up in the image, then clockwise
-	elif k >= 7.8 and k < 8.6:
+		dir = Vector2.from_angle(-PI / 2.0 + TAU * (k - 0.8) / 3.0)  # up in the image, then clockwise
+	elif k >= 4.4 and k < 5.6:
+		pose = "thumb"
+		thumb = Vector2(0.0, -1.0)  # towards the top of the image
+	elif k >= 6.2 and k < 7.4:
+		pose = "thumb"
+		thumb = Vector2(0.0, 1.0)
+	elif k >= 8.0 and k < 8.8:
+		pose = "open"
+	elif k >= 9.4 and k < 10.2:
 		pose = "fist"
-	var seen := k < 9.2
+	var seen := k < 10.8
 	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,
 		"pinch": false, "pose": pose if seen else "", "hand_x": 0.45, "hand_y": 0.55, "pinch_ratio": 0.8, "confidence": 0.95,
-		"point_dx": dir.x, "point_dy": dir.y, "point_len": 1.0 if dir != Vector2.ZERO else 0.0,
+		"point_dx": dir.x, "point_dy": dir.y, "point_len": 1.0 if dir != Vector2.ZERO else 0.0, "thumb_dx": thumb.x, "thumb_dy": thumb.y,
 		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
 
 ## Claw test: turn the claw servo by `deg` degrees (relative). The real robot

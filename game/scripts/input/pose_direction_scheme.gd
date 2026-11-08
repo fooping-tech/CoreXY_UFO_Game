@@ -1,9 +1,13 @@
 class_name PoseDirectionScheme
 extends GestureScheme
 ## A hand shape per direction: holding a shape (the backend's `pose`: "open" =
-## パー, "peace" = チョキ, "fist" = グー) moves the crane one way at a set speed,
-## e.g. open -> +X, peace -> -X. No stick, no anchor: where the hand is does
-## not matter, only its shape.
+## パー, "peace" = チョキ, "fist" = グー, "point" = 指差し, "thumb" = いいね)
+## moves the crane one way at a set speed. No stick, no anchor: where the hand
+## is does not matter, only its shape. The default: pointing moves where the
+## finger points, a thumbs-up with the thumb towards the top of the camera view
+## (as shown, view_flip_v) raises the arm and towards the bottom lowers it
+## ("thumb_up" / "thumb_down": two signs, so turning the thumb over stops first),
+## パー opens the claw and グー closes it.
 ##
 ##   - a shape counts once it has been held for pose_confirm_ms (a hand passing
 ##     through it on the way to another shape does not move anything)
@@ -24,23 +28,27 @@ extends GestureScheme
 
 const ID := "pose_direction"
 ## Japanese names for the HUD.
-const POSE_NAMES := {"open": "パー", "peace": "チョキ", "fist": "グー", "point": "指差し"}
+const POSE_NAMES := {"open": "パー", "peace": "チョキ", "fist": "グー", "point": "指差し",
+	"thumb_up": "いいね↑", "thumb_down": "いいね↓"}
 ## A direction that follows the index finger.
 const FINGER := "finger"
 
 ## pose -> direction (robot axes, any length: normalised per part) or FINGER.
-var directions := {"open": Vector3(1, 0, 0), "peace": Vector3(-1, 0, 0), "point": FINGER}
+var directions := {"point": FINGER, "thumb_up": Vector3(0, 0, 1), "thumb_down": Vector3(0, 0, -1)}
 ## The finger's length (over the hand size) below which it points at the camera.
 var point_min_len := 0.4
 ## Snap the finger's direction to steps of this many degrees (0 = any angle; 45 = 8 ways).
 var point_snap_deg := 0.0
+## A thumbs-up counts as up / down only this close to vertical in the view
+## (|vertical part of the thumb's direction| >= this; 0.5 = within 60 degrees).
+var thumb_min_vertical := 0.5
 var speed_mm_s := 20.0
 var speed_z := 10.0  # z units/s
 var pose_confirm_ms := 150.0
 var pose_release_ms := 150.0
 var smoothing_ms := 80.0
 ## pose -> claw ("closed" / "open"); shapes used by `directions` are dropped.
-var claw := {"fist": "closed"}
+var claw := {"open": "open", "fist": "closed"}
 
 var _active := ""  # the confirmed shape ("" = none)
 var _miss_since := -1.0  # when the confirmed shape stopped showing
@@ -79,6 +87,7 @@ func configure(c: Dictionary) -> void:
 	smoothing_ms = float(c.get("smoothing_ms", smoothing_ms))
 	point_min_len = float(c.get("point_min_len", point_min_len))
 	point_snap_deg = float(c.get("point_snap_deg", point_snap_deg))
+	thumb_min_vertical = float(c.get("thumb_min_vertical", thumb_min_vertical))
 	var cl = c.get("claw", null)
 	if cl is Dictionary:
 		claw = cl.duplicate()
@@ -87,8 +96,25 @@ func configure(c: Dictionary) -> void:
 			push_warning("gesture pose_direction: '%s' moves the crane, so it does not move the claw" % k)
 			claw.erase(k)
 
+## The sign the hand gives: its pose, a thumbs-up told apart as "thumb_up" /
+## "thumb_down" by where the thumb points in the shown view ("" when sideways).
+func sign_of(g) -> String:
+	if g.pose != "thumb":
+		return g.pose
+	var up: float = -g.thumb_dir.y  # image y grows downwards
+	if g.joystick.view_flip_v:
+		up = -up  # shown upside down: up on the screen is down in the image
+	if g.joystick.invert_z:
+		up = -up
+	if up >= thumb_min_vertical:
+		return "thumb_up"
+	if up <= -thumb_min_vertical:
+		return "thumb_down"
+	return ""
+
 func engaged(g, now_ms: float) -> bool:
-	var p: String = g.pose if directions.has(g.pose) else ""
+	var sign := sign_of(g)
+	var p: String = sign if directions.has(sign) else ""
 	_track_shown(p, now_ms)
 	if _active != "":
 		if p == _active:
@@ -195,7 +221,7 @@ func claw_poses() -> Dictionary:
 func max_speed(_g) -> float:
 	return speed_mm_s
 
-## "パー=右 チョキ=左 指差し=指の向き" from the directions.
+## "指差し=指の向き いいね↑=上げる ... パー=爪開" from the directions and the claw shapes.
 func mapping_text() -> String:
 	var parts: Array[String] = []
 	for k in directions:
@@ -217,9 +243,9 @@ static func direction_word(d) -> String:
 	elif d.y < 0.0:
 		w += "手前"
 	if d.z > 0.0:
-		w += "上"
+		w += "上げる"
 	elif d.z < 0.0:
-		w += "下"
+		w += "下げる"
 	return w if w != "" else "-"
 
 func prompt() -> Array[String]:
