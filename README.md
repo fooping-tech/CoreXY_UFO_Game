@@ -204,6 +204,7 @@ Godot 側はデバッグパネルの「Robot source」を **WebSocket backend** 
    - 上と下を測るまでは、▲ / ▼ が Z 0〜100 で止まらない（設定の換算は推測なので、本当の上 / 下まで動かせるように。押している間だけ動くので見ながら操作する）。測った後は 0〜100 で止まる。測り直すときは「Z の上下をやり直す」（`z_set clear`。記録と保存した実測を消す）。
    - 次回からは、電源を入れ直しても上か下の 1 点を記録するだけでよい（カウントはファームウェアの起動ごとに振り直されるので、記録した点はファームウェアの再起動・再接続で消える）。
    - 最後にアームを一番上まで巻き上げる。
+   - **巻き上げサーボだけ電源が切れた（切った）とき**: サーボは 1 回転分しか動けない状態に戻り、ファームウェアはそれに気づかない。そのまま ▲ / ▼ を押しても途中（1 回転の端）で黙って止まる。バックエンドはサーボの状態報告（`tracking=YES` なのに `limits` が `0/0` でない）からこれを検知し、「実機」タブに警告を出す。検知中は Z の JOG を拒否し、ドラムの回転数が分からなくなるので記録した点も消す。「巻き上げサーボを復帰」（`z_servo_recover`）を押すと、ファームウェアがサーボを何回転でも回せる設定に戻す準備をする（動かさずに拒否される `SERVO_TURN 1 0.01` を 1 回送る）。そのあと ▲ / ▼ を押せば動くので、上下の点を記録し直す。ファームウェア側で自動で直す修正は [docs/HANDOFF_FIRMWARE_Z_SERVO.md](docs/HANDOFF_FIRMWARE_Z_SERVO.md) で依頼している。
 3. `原点復帰 (home)`（`HOME` → `HOME complete` 待ち）。実機は Z の基準があり、アームが巻き上げ点の近く（`backend.home_z_tolerance` = ±5）にあるときだけ受け付ける（`backend.home_requires_z_top`、既定 true）。
 4. 「位置を指定して移動」の X / Y / Z スライダー → `XY` / `SERVO_TURN 1` が送られ、`ACK`/`NACK` がログに出ます
 5. `E-STOP` → `ABORT`。以後は `clear_alarm` と `home` が必要です
@@ -216,7 +217,7 @@ WebSocket メッセージ例:
 {"type":"ack","request_id":"g12-3","timestamp":1730000000100,"data":{"command":"move_xy","x":120.0,"y":80.0}}
 ```
 
-コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_zero`, `z_set{which: top|bottom}`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`, `auto_catch`, `auto_catch_status`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
+コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_zero`, `z_set{which: top|bottom|clear}`, `z_servo_recover`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`, `auto_catch`, `auto_catch_status`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
 
 実機の座標系・コマンド・制約の詳細は [docs/firmware_protocol.md](docs/firmware_protocol.md) を参照してください。
 特に **`backend.z_sign`（どちらの回転でアームが上がるか）は実機で確認して `config/game_config.json` に設定**してください。

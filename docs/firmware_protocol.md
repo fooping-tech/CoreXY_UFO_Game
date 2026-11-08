@@ -68,6 +68,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `home` | `HOME` | `HOME complete` 待ち |
 | `move_xy {x,y}` | `XY x y F` | ホスト側でもソフトリミット検査 |
 | `z_zero` / `z_set {which: top\|bottom}` | `SERVO_STATUS 1` | 現在の `abs=` を「アーム最上位」（top、`z_zero` と同じ）/「最下位」（bottom）として記録。両方そろうとカウント差から `z_counts_per_unit`・`z_sign` を求めて `config/z_calibration.json` に保存。記録はファームウェアの再起動・再接続で消える |
+| `z_servo_recover` | `SERVO_STATUS 1` → （`tracking=YES` かつ `limits≠0/0` のときだけ）`SERVO_TURN 1 ±0.01` | 巻き上げサーボだけ電源が切れた後の復帰。`moveRelative` が動かす前に `result=REJECTED reason=multi_turn_lost (retry)` で拒否して追跡を無効にし、次の JOG の `beginJog` → `enableTracking` で多回転に戻る。`SERVO_STATUS` の `limits=` と `tracking=` の組み合わせで検知（[HANDOFF_FIRMWARE_Z_SERVO.md](HANDOFF_FIRMWARE_Z_SERVO.md)） |
 | （定期） | `SERVO_STATUS 1`（3 Hz、ジョグ中は `JOG_POS` の `Z_ABS`） | ジョイスティックなどで動いたアームを Z に反映 |
 | `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算 |
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |
