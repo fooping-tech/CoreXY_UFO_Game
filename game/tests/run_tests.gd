@@ -1212,6 +1212,14 @@ func _test_gesture_schemes() -> void:
 		seq[0] += 1
 		g.tick(t[0], 1.0 / 60.0, "")
 	var was_active := g.is_active()
+	var same := g.scheme
+	g.configure({"scheme": "pinch_joystick"})  # the same scheme again: settings only
+	var reselected := g.set_scheme(PinchJoystickScheme.ID) and g.scheme == same
+	g.on_event(_hev(seq[0] + 1, true, true, 0.7, 0.5, {"pose": "open"}), t[0])
+	seq[0] += 1
+	g.tick(t[0], 1.0 / 60.0, "")
+	_ok(reselected and g.is_active() and g.velocity.length() > 1.0,
+		"gesture scheme: choosing the current scheme again keeps the steer going", "%s %s %s" % [reselected, g.state_name(), g.velocity])
 	var fake := _PoseScheme.new()
 	g.use_scheme(fake)
 	var switched_stop := g.state == S.WAITING_RELEASE and g.reason == "scheme_changed" and g.velocity == Vector2.ZERO

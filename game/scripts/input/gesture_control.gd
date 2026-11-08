@@ -128,13 +128,19 @@ static func make_scheme(id: String) -> GestureScheme:
 ## Switch how the hand is read. Always a forced stop (a sign held across the
 ## switch must be let go first); an unknown id keeps the current scheme.
 ## Returns false for an unknown id.
+## The current scheme again only takes its settings: a steer in progress goes on.
 func set_scheme(id: String) -> bool:
+	var cfg = scheme_configs.get(id, {})
+	if not cfg is Dictionary:
+		cfg = {}
+	if id == scheme.id():
+		scheme.configure(cfg)
+		return true
 	var s := make_scheme(id)
 	if s == null:
 		push_warning("gesture: unknown scheme '%s', keeping '%s'" % [id, scheme.id()])
 		return false
-	var cfg = scheme_configs.get(id, {})
-	s.configure(cfg if cfg is Dictionary else {})
+	s.configure(cfg)
 	use_scheme(s)
 	return true
 
