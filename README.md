@@ -190,10 +190,22 @@ WebSocket メッセージ例:
 {"type":"ack","request_id":"g12-3","timestamp":1730000000100,"data":{"command":"move_xy","x":120.0,"y":80.0}}
 ```
 
-コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_zero`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
+コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_zero`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`, `auto_catch`, `auto_catch_status`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
 
 実機の座標系・コマンド・制約の詳細は [docs/firmware_protocol.md](docs/firmware_protocol.md) を参照してください。
 特に **`backend.z_sign`（どちらの回転でアームが上がるか）は実機で確認して `config/game_config.json` に設定**してください。
+
+### 1 ボタン自動キャッチ（C キー）
+
+待機中に XY を手動で合わせて **C**（または「実機」タブの「自動キャッチ開始」）を押すと、爪を開く → 下降 → 閉じる → 上昇 → 救出ボックスへ → 下降 → 開く → 上昇 → 待機、をバックエンドの状態機械が行います。実行中は手動操作を受け付けず、Space / E-STOP で中断（ABORT）します。
+**実機用の校正値（`config/game_config.json` の `auto_catch.real`）は未設定・未確認なので、実機では開始が拒否されます。** いまはドライランだけです:
+
+```bash
+cd backend && uv run corexy-ufo-backend --auto-catch-dry-run          # 仮想クレーンで 1 回（故障注入: stall_z, estop など）
+./start.sh mock                                                     # ゲームから C キー（仮想クレーン）
+```
+
+状態遷移、安全機構、校正パラメータ、実機前の確認項目は [docs/auto_catch.md](docs/auto_catch.md)。
 
 ## Phase 3: カメラ・認識（インターフェース + 実装）
 

@@ -78,6 +78,11 @@ class RobotInterface(ABC):
     @abstractmethod
     async def clear_alarm(self) -> None: ...
 
+    async def refresh_status(self) -> None:
+        """Read the machine's status now (alarm, homing, limit switches) if it can answer.
+        Used before deciding to start an automatic sequence."""
+        return None
+
     async def tick(self) -> None:
         """Called periodically by the server (status polling etc)."""
         return None

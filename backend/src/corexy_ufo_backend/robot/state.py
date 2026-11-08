@@ -50,6 +50,10 @@ class RobotSnapshot:
     arm_closed_deg: float | None = None
     arm_open_deg: float | None = None
     arm_span_deg: float | None = None
+    # home limit switches (firmware-debounced, POS LIMIT_X / LIMIT_Y = ACTIVE); the
+    # real robot can only read them between moves
+    limit_x: bool = False
+    limit_y: bool = False
 
     def to_message(self) -> dict:
         d = asdict(self)

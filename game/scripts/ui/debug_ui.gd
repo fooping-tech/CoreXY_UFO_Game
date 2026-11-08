@@ -27,6 +27,7 @@ var _cam_ui: Dictionary = {}
 var _gesture_status: Label
 var _claw_label: Label
 var _z_label: Label
+var _auto_label: Label
 var _claw_marks_label: Label
 ## VFX tab: the effect picked, how to play it, and the live count.
 var _vfx_option: OptionButton
@@ -140,7 +141,7 @@ func _build() -> void:
 	root.add_child(_mini_log)
 
 	var help := Label.new()
-	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  Q/A=open/close  space=stop  V=scope  H=gesture  G/F=result  F1=hide"
+	help.text = "Keys: arrows=XY  W/S=Z  [ ]=claw  Q/A=open/close  space=stop  C=auto catch  V=scope  H=gesture  G/F=result  F1=hide"
 	help.add_theme_font_size_override("font_size", 10)
 	help.add_theme_color_override("font_color", Color(0.6, 0.7, 0.85))
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -208,6 +209,14 @@ func _build_robot_test() -> void:
 	_vbox.add_child(_claw_marks_label)
 	_note("少しずつ回して閉じた所で「ここを閉じ位置に」、開いた所で「ここを開き位置に」。記録は保存され、掴む / 離す（grab）もこの角度を使う。")
 	_slider("arm_step", "[ / ] キー 1 回の角度 (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
+
+	_header("4. 自動キャッチ（1 ボタン）")
+	_auto_label = Label.new()
+	_auto_label.add_theme_font_size_override("font_size", 12)
+	_auto_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_vbox.add_child(_auto_label)
+	_button(_vbox, "自動キャッチ開始 (C)", func(): main.request_auto_catch())
+	_note("爪を開く→下降→閉じる→上昇→救出ボックスへ→下降→開く→上昇→待機。動作中は手動操作を受け付けない。Space / E-STOP で中断（ABORT）。実機は config の auto_catch.real が未設定・未確認の間は拒否される。")
 
 	var box := _fold("位置を指定して移動 (move_xy / move_z)")
 	var r := GameConfig.robot()
@@ -352,6 +361,13 @@ func _build_mock() -> void:
 		_button(grid, sc[0], func(): main.mock.run_scenario(sc[1])).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 func _update_robot_test() -> void:
+	if _auto_label != null:
+		var t: String = main.auto_catch_status_text(RobotState.auto_catch if RobotState.source == "websocket" else {})
+		if main.auto_catch_hint != "":
+			t += "\n" + main.auto_catch_hint
+		_auto_label.text = t
+		var fault: bool = str(RobotState.auto_catch.get("last_result", "")) == "fault" or main.auto_catch_hint != ""
+		_auto_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4) if fault else Color(0.85, 0.9, 1.0))
 	if _z_label != null:
 		var zref := "基準: モック" if RobotState.source != "websocket" else ("基準: 設定済み" if RobotState.z_reference_set else "基準: 未設定（一番上で z_zero）")
 		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
@@ -696,5 +712,7 @@ func _process(_dt: float) -> void:
 		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「z_zero」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
+	if RobotState.auto_catch_active() or (RobotState.source == "websocket" and str(RobotState.auto_catch.get("last_result", "")) == "fault"):
+		_state_chip.text += "\n" + main.auto_catch_status_text(RobotState.auto_catch)
 	var ok_color := Color(0.4, 1.0, 0.5) if RobotState.connected else Color(1.0, 0.5, 0.4)
 	_state_chip.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3) if hint != "" else ok_color)
