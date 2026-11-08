@@ -5,6 +5,7 @@ extends Node
 
 var _fails := 0
 var _passes := 0
+const StudyClientScript := preload("res://scripts/study/study_client.gd")
 
 func _ok(cond: bool, name: String, detail: String = "") -> void:
 	if cond:
@@ -35,6 +36,7 @@ func _ready() -> void:
 	_test_ufo_metadata()
 	_test_ufo_faces_and_pose_effects()
 	_test_camera_scope()
+	_test_study_image_encoding()
 	_test_hand_joystick()
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
@@ -49,6 +51,7 @@ func _ready() -> void:
 	_test_vfx_manager()
 	_test_vfx_follows_the_game(rs)
 	_test_debug_panel_tabs_and_z_buttons(rs)
+	_test_study_is_optional(rs)
 	_test_auto_catch_controls(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -59,6 +62,17 @@ func _make() -> RopeSimulator:
 	s.target_rope_length = 40.0
 	s.reset()
 	return s
+
+func _test_study_image_encoding() -> void:
+	var image := Image.create(2000, 1000, false, Image.FORMAT_RGB8)
+	image.fill(Color(0.2, 0.4, 0.8))
+	var jpeg: PackedByteArray = StudyClientScript.encode_jpeg(image, 1280, 700000)
+	var decoded := Image.new()
+	var err := decoded.load_jpg_from_buffer(jpeg)
+	var too_small: PackedByteArray = StudyClientScript.encode_jpeg(image, 1280, 8)
+	_ok(not jpeg.is_empty() and jpeg.size() <= 700000 and err == OK
+		and maxi(decoded.get_width(), decoded.get_height()) <= 1280 and too_small.is_empty(),
+		"study: the camera frame is resized and JPEG-capped", "%d %dx%d" % [jpeg.size(), decoded.get_width(), decoded.get_height()])
 
 func _max_stretch(s: RopeSimulator) -> float:
 	var seg := s.segment_length()
@@ -995,7 +1009,9 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		titles.append(tabs.get_tab_title(i))
 	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
 	var d: Vector3 = game._jog_input()
-	_ok(titles[0] == "実機" and titles.size() == 7 and game.ui_jog_z == 0.0 and d.z == 0.0,
+	var expected_tabs := 8 if bool(GameConfig.data.study.enabled) else 7
+	var study_matches_config: bool = titles.has("Study") == bool(GameConfig.data.study.enabled)
+	_ok(titles[0] == "実機" and titles.size() == expected_tabs and study_matches_config and game.ui_jog_z == 0.0 and d.z == 0.0,
 		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
 	# backend / serial lines and game lines land in one log; the copy has the state on top
 	game.ws._handle({"type": "log", "data": {"line": "[serial] RX JOG servo id=1 disabled test"}})
@@ -1006,6 +1022,35 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		"debug panel: the log collects backend, serial and key lines; the copy starts with the state", report.left(300))
 	remove_child(game)
 	game.free()
+	rs.clear_samples()
+
+func _test_study_is_optional(rs: Node) -> void:
+	var previous: bool = bool(GameConfig.data.study.enabled)
+	GameConfig.data.study.enabled = true
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var titles := []
+	for i in game.debug_ui._tabs.get_tab_count():
+		titles.append(game.debug_ui._tabs.get_tab_title(i))
+	var study_tab: int = titles.find("Study")
+	var buffer_ok: bool = game.study.link.outbound_buffer_size >= int(GameConfig.data.study.max_image_bytes) * 2
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.machine_state = "READY"
+	game.study.link._on_closed()
+	var isolated: bool = RobotState.connected and RobotState.machine_state == "READY"
+	game.debug_ui._tabs.current_tab = study_tab
+	game.study.end_session()
+	game.debug_ui.study_panel_visibility_changed(true)
+	var reopened: bool = game.study.session_id != "" and game.study.state == "connecting"
+	game.study.end_session()
+	_ok(game.study != null and study_tab >= 0 and titles.size() == 8 and buffer_ok and isolated and reopened,
+		"study: optional client is isolated, sized for images, and restarts on reopen", "%s buffer=%s isolated=%s reopened=%s" % [titles, buffer_ok, isolated, reopened])
+	remove_child(game)
+	game.free()
+	GameConfig.data.study.enabled = previous
+	RobotState.source = "mock"
+	RobotState.connected = false
 	rs.clear_samples()
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;

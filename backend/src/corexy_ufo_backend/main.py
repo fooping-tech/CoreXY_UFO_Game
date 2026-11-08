@@ -26,6 +26,7 @@ from .vision_service import CameraConfig, VisionService
 from .vision_service.cameras import list_cameras_macos, resolve_camera
 from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
+from .study import CodexStudyAdapter, StudyConfig, StudyService
 
 log = logging.getLogger("corexy_ufo_backend")
 
@@ -53,6 +54,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "default config gesture.camera)")
     p.add_argument("--gesture-landmarks", action="store_true", help="include the 21 landmarks in hand_control (debug)")
     p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS)")
+    p.add_argument("--study", action="store_true",
+                   help="enable the optional camera study assistant (also requires study.enabled in config)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -109,8 +112,15 @@ async def run(args: argparse.Namespace) -> int:
     else:
         robot = RealRobot(cfg)
     vision = make_vision(args, cfg.raw.get("gesture", {}))
+    study_cfg = StudyConfig.from_raw(cfg.raw)
+    study = None
+    if args.study and study_cfg.enabled:
+        study = StudyService(study_cfg, CodexStudyAdapter(study_cfg.codex_command))
+        log.info("study assistant enabled (Codex starts lazily on the first session)")
+    elif args.study:
+        log.warning("--study ignored because study.enabled is false in config")
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,
-                        auto_catch=auto_cfg, backend_cfg=cfg)
+                        auto_catch=auto_cfg, backend_cfg=cfg, study=study)
     try:
         await robot.connect()
     except Exception as e:

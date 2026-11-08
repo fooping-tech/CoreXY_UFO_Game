@@ -39,6 +39,12 @@ var _palm_invert: bool = bool(GameConfig.get_value("gesture", "palm_invert", fal
 var _arm_cam: Dictionary = {}
 var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
+var _study_tab := -1
+var _study_status: Label
+var _study_question: TextEdit
+var _study_answer: RichTextLabel
+var _study_preview: TextureRect
+var _study_camera: OptionButton
 
 func panel_width() -> float:
 	return PANEL_W if visible else 0.0
@@ -106,6 +112,12 @@ func _build() -> void:
 	_build_gesture()
 	_tab("カメラ")
 	_build_cameras()
+	if main.study != null:
+		_tab("Study")
+		_study_tab = _tabs.get_tab_count() - 1
+		_build_study()
+		main.study.state_changed.connect(_update_study)
+		_tabs.tab_changed.connect(_on_tab_changed)
 	_tab("見た目")
 	_build_look()
 	_tab("VFX")
@@ -146,6 +158,77 @@ func _build() -> void:
 	help.add_theme_color_override("font_color", Color(0.6, 0.7, 0.85))
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(help)
+	if main.study != null:
+		_update_study()
+
+func _on_tab_changed(index: int) -> void:
+	if main.study == null or _study_tab < 0:
+		return
+	if index == _study_tab:
+		main.study.start_session()
+	elif main.study.session_id != "":
+		main.study.end_session()
+
+func study_panel_visibility_changed(is_visible: bool) -> void:
+	if main.study == null or _study_tab < 0:
+		return
+	if is_visible and _tabs.current_tab == _study_tab:
+		main.study.start_session()
+	elif not is_visible and main.study.session_id != "":
+		main.study.end_session()
+
+func _build_study() -> void:
+	_note("表示中のカメラを手動撮影し、ローカルCodexに質問します。画像や会話はセッション終了時に破棄されます。")
+	_study_status = Label.new()
+	_study_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_study_status.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_study_status)
+	_study_camera = OptionButton.new()
+	_study_camera.add_item("Overview", 0)
+	_study_camera.add_item("Focus", 1)
+	_study_camera.select(1 if main.study.camera_role == "focus" else 0)
+	_study_camera.item_selected.connect(func(i): main.study.camera_role = "focus" if i == 1 else "overview"; _update_study())
+	_vbox.add_child(_study_camera)
+	_study_preview = TextureRect.new()
+	_study_preview.texture = main.cameras.texture(main.study.camera_role)
+	_study_preview.material = main.cameras.view_material(false)
+	_study_preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_study_preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_study_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.75)
+	_vbox.add_child(_study_preview)
+	var qlabel := Label.new()
+	qlabel.text = "質問"
+	_vbox.add_child(qlabel)
+	_study_question = TextEdit.new()
+	_study_question.placeholder_text = "例: この問題の考え方を、答えを急がず説明して"
+	_study_question.custom_minimum_size.y = 72
+	_study_question.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	_vbox.add_child(_study_question)
+	var actions := HBoxContainer.new()
+	_vbox.add_child(actions)
+	_button(actions, "撮影して質問", func(): main.study.ask(_study_question.text)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(actions, "キャンセル", func(): main.study.cancel())
+	_button(actions, "終了", func(): main.study.end_session())
+	var alabel := Label.new()
+	alabel.text = "回答"
+	_vbox.add_child(alabel)
+	_study_answer = RichTextLabel.new()
+	_study_answer.bbcode_enabled = false
+	_study_answer.fit_content = false
+	_study_answer.selection_enabled = true
+	_study_answer.custom_minimum_size.y = 260
+	_study_answer.add_theme_font_size_override("normal_font_size", 12)
+	_vbox.add_child(_study_answer)
+
+func _update_study() -> void:
+	if main == null or main.study == null or _study_status == null:
+		return
+	_study_status.text = "状態: %s\n%s" % [main.study.state, main.study.status_text]
+	_study_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if main.study.state == "unavailable" else Color(0.65, 0.9, 1.0))
+	_study_answer.text = main.study.answer
+	if _study_preview != null:
+		_study_preview.texture = main.cameras.texture(main.study.camera_role)
+		_study_preview.custom_minimum_size = Vector2(_inner_w(), _inner_w() / main.cameras.feed_aspect(main.study.camera_role))
 
 ## Hardware tests in the order to do them: get ready, the Z drum (servo 1) wound
 ## up first, then XY homing (a lowered arm would hit things), the claw (servo 2),

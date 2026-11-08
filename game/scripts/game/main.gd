@@ -5,6 +5,7 @@ extends Node2D
 
 const UfoScene := preload("res://scenes/ufo.tscn")
 const DebugScene := preload("res://scenes/debug.tscn")
+const StudyClientScript := preload("res://scripts/study/study_client.gd")
 
 ## A line for the debug panel's log (keyboard jog start/stop, ignored keys...).
 signal debug_log(text: String)
@@ -24,6 +25,7 @@ var ufo_fx: UfoFx
 var sfx: Sfx
 var shake: ScreenShake
 var cameras: CameraHub
+var study: Node
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -198,6 +200,11 @@ func _ready() -> void:
 	ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
 	ws.ack.connect(_on_claw_ack)
 	vision_ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
+	if bool(GameConfig.get_value("study", "enabled", false)):
+		study = StudyClientScript.new()
+		study.name = "StudyClient"
+		add_child(study)
+		study.setup(cameras)
 	gesture.state_changed.connect(_on_gesture_state)
 	gesture.claw_requested.connect(_on_gesture_claw)
 	var hud_layer := CanvasLayer.new()
@@ -1128,6 +1135,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 					ws.send_command("soft_stop")
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
+				debug_ui.study_panel_visibility_changed(debug_ui.visible)
 				_layout()
 			KEY_V:
 				scope_trigger.toggle()
