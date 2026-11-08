@@ -121,10 +121,10 @@ Python から直接叩く例は `websockets` で `{"type":"command","request_id"
 
 1. 既存 WebUI（`CoreXY_UFO/tools/webui`）を止める（同じポートは同時に開けない）。
 2. `uv run corexy-ufo-backend --list-ports` → `--port /dev/cu.usbserial-XXXX` で起動。
-3. Godot を `--source websocket` で起動。`enable motors` → `home`。
-4. **アームを最上位にして巻き上げ点（上）を記録**（`z_set top` = `z_zero`。ファームウェアに Z ホーミングは無い）。初回は最下位で下げ点（下）も記録して、`z_counts_per_unit` と `z_sign` を実測する（`config/z_calibration.json`）。
-5. Z スライダーを少し下げ、実機のアームが「下がる」ことを確認。逆なら `config/game_config.json` の `backend.z_sign` を `-1` にして再起動。
-6. ドラム 1 回転あたりの実際の上下量から `z_counts_per_unit` を決める（4096 count/回転、既定は 3 回転 = 100 単位）。
+3. Godot を `--source websocket` で起動。`enable motors`。
+4. **原点復帰の前に、アームを最上位にして巻き上げ点（上）を記録**（`z_set top` = `z_zero`。ファームウェアに Z ホーミングは無い）。初回は最下位まで下げて下げ点（下）も記録し、`z_counts_per_unit` と `z_sign` を実測する（`config/z_calibration.json`）。測るまでは W/S が Z 0〜100 で止まらない。最後に最上位まで巻き上げる。
+5. `home`（実機は Z の基準があってアームが最上位付近のときだけ。`backend.home_requires_z_top`）。
+6. W/S で上下が逆に動くなら `config/game_config.json` の `backend.z_sign` を `-1` にして再起動（2 点を記録すれば `z_sign` は実測値に置き換わる）。
 7. アーム開閉量 `arm_open_turns` を合わせる。
 8. デバッグパネルで重力・減衰・揺れ誇張を実機の見た目に合わせ、値を `config/game_config.json` に書き戻す。
 

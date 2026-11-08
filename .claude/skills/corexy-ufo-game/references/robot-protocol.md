@@ -23,7 +23,8 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 | 起動時はモーター無効 | `RealRobot.motors_enabled=False`、`_require()` | 起動時に自動で `enable_motors` を送る UI を作らない |
 | アーミングが必要 | `enable_motors`（何も送信しない、バックエンド側の状態） | 解除すると動作中なら `stop` |
 | XY 前のホーミング | `_require(homed=True)`、ファームウェアも拒否 | `ABORT` 後は HOMED が外れる |
-| Z の基準 | `set_z_point("top" / "bottom")`（`set_z_zero` = top。アームを最上位 / 最下位にしてから） | 未設定の `move_z` は NACK（意図的）。自動で記録しない。両方で換算を実測・保存。ファームウェアの再起動・再接続で記録は消える |
+| Z の基準 | `set_z_point("top" / "bottom")`（`set_z_zero` = top。アームを最上位 / 最下位にしてから） | 未設定の `move_z` は NACK（意図的）。自動で記録しない。両方で換算を実測・保存（`clear` でやり直し）。ファームウェアの再起動・再接続で記録は消える。Z の JOG を 0..z_max で止めるのは実測後だけ（実測前の範囲は推測なので、本当の上下まで動かせるように） |
+| 原点復帰の前提 | `RealRobot.home` は `home_requires_z_top`（設定ファイルから読むと既定 true）なら Z の基準があってアームが上端 ±`home_z_tolerance` のときだけ | 下がったアームで XY を動かすとぶつかる。素の `BackendConfig()`（テスト）では無効 |
 | ソフトリミット | ホスト側 `RobotLimits.xy_inside`、ファームウェア X 0..390 / Y 0..200 mm | Z はクランプのみ。範囲外の XY はクランプせず NACK |
 | ACK/NACK・タイムアウト | `SerialService`（Python）、`_check_timeouts`（Godot、既定 3000 ms） | タイムアウトは「失敗」であって「止まった」ではない |
 | `request_id` による重複防止 | `GameServer._handled` | クライアントはモーションを自動再送しない。再送するなら同じ `request_id` を使う |

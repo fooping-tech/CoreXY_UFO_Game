@@ -705,7 +705,7 @@ static func auto_catch_hint_for(reason: String) -> String:
 	if r.contains("z reference"):
 		return "自動キャッチ: Z の基準が未設定（アームを一番上にして「巻き上げ点（上）に」）"
 	if r.contains("claw open / closed"):
-		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 3）"
+		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 4）"
 	if r.contains("below safe_z"):
 		return "自動キャッチ: アームを安全高さまで上げてから（W）"
 	if r.contains("busy") or r.contains("already running"):
