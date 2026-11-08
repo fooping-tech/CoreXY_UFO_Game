@@ -6,6 +6,8 @@
 前提資料: [HANDOFF_FIRMWARE_JOG.md](HANDOFF_FIRMWARE_JOG.md)（シリアル JOG の依頼）、[firmware_protocol.md](firmware_protocol.md)
 調査したファームウェア: `../CoreXY_UFO` HEAD `bf70657`
 
+> **状況（2026-11-08）:** ファームウェア側 Issue #11 で対応済み。§3.1 は (a) を採用（`tracking=RESET`）、§3.2 は `SERVO_STATUS` の `tracking=LOST`。ゲーム側は Issue #64 で対応した（LOST の検知、LOST なら Z の JOG を拒否しない、RESET で Z の記録点・爪の基準を捨てる）。応答行は [firmware_protocol.md](firmware_protocol.md) §2。
+
 ## 1. 依頼の要点
 
 運用では、**STS3020 サーボ（特に巻き上げの ID 1）だけ電源が切れる（切る）ことがある**。M5 は動き続けるため、ファームウェアは「多回転で追跡中」（`Track::valid = true`）のままになる。ところがサーボ側は角度の制限が電源投入時の値（`MIN=0 / MAX=4095`、1 回転）に戻っている。

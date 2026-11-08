@@ -27,11 +27,11 @@
 | `HOME` / `G28` | `HOME complete X=.. Y=.. A=.. B=.. limitX=ON\|OFF limitY=..` / `HOMING error ...` |
 | `POS` / `M114` | `POS X=.. Y=.. ... HOMED=YES\|NO ... MOTION=YES\|NO ... ALARM=YES\|NO ALARM_REASON="..." TMC=READY\|NO LIMIT_X=.. TEST_MODE=ON\|OFF JOY=..` |
 | `SERVO_TURN id turns` | `SERVO_TURN id=N value=V result=PASS\|TIMEOUT\|ABORTED\|REJECTED\|FAILED target=.. actual=.. error=.. ms=..` |
-| `SERVO_STATUS id` | `SERVO_STATUS id=N result=OK ... abs=<counts> turns=<t> ... moving=0\|1` / `result=NO_REPLY` |
+| `SERVO_STATUS id` | `SERVO_STATUS id=N result=OK ... limits=<min>/<max> tracking=YES\|NO\|LOST abs=<counts> turns=<t> ... moving=0\|1` / `result=NO_REPLY`。`tracking=LOST`（CoreXY_UFO #11〜）= サーボだけ電源が切れて 1 回転モードに戻った（`abs` は古い値）。旧ファームウェアは同じ状態を `tracking=YES` + `limits≠0/0` で出す |
 | `TEST_MODE ON\|OFF` | `TEST_MODE result=ON (...)` / `result=OFF ...` / `result=REJECTED reason=..` |
 | `ABORT` | `ABORT complete`（アラーム発生 + HOMED解除） |
 | `ALARM_CLEAR` | `ALARM_CLEAR complete` |
-| `JOG vx vy [z arm]`（a49bc54〜） | 開始時に 1 回 `JOG start vx=.. vy=.. z=.. arm=.. src=SERIAL HOMED=..`、継続中は**応答なし**（`ACK QUEUED` もなし）、50 ms ごとに `JOG_POS X=.. Y=.. VX=.. VY=.. Z_ABS=.. ARM_ABS=..`、終了時 `JOG end reason=zero\|timeout\|command\|abort\|alarm\|limit_x\|limit_y X=.. Y=.. HOMED=..`、ソフトリミットでは `JOG soft_limit axis=X X=..`（終わらない）、拒否は `NACK_JOG reason=not_homed\|alarm\|homing\|job_active\|busy\|bad_args`（その押下の間は以後黙って無視） |
+| `JOG vx vy [z arm]`（a49bc54〜） | 開始時に 1 回 `JOG start vx=.. vy=.. z=.. arm=.. src=SERIAL HOMED=..`、継続中は**応答なし**（`ACK QUEUED` もなし）、50 ms ごとに `JOG_POS X=.. Y=.. VX=.. VY=.. Z_ABS=.. ARM_ABS=..`、終了時 `JOG end reason=zero\|timeout\|command\|abort\|alarm\|limit_x\|limit_y X=.. Y=.. HOMED=..`（#11〜: サーボが止まるまで最大 0.6 秒待ってから出る）、サーボを含む押下では開始時に `JOG servo id=N begin_ms=.. (hold check; XY waits) tracking=KEPT\|NEW\|RESET`（`RESET` = 電源断のあと多回転に設定し直した。`abs` は 1 回転内の位置から振り直し → バックエンドは Z の記録点・爪の基準を捨てる）、失敗時 `JOG servo id=N disabled reason=.. [multi_turn_lost=YES]` / `JOG servo id=N stopped reason=feedback_lost tracking=INVALID`、ソフトリミットでは `JOG soft_limit axis=X X=..`（終わらない）、拒否は `NACK_JOG reason=not_homed\|alarm\|homing\|job_active\|busy\|bad_args`（その押下の間は以後黙って無視） |
 | `STOP`（a49bc54〜） | `ACK QUEUED STOP` → （止めた XY）`NACK_XY target=(..) reason=stopped X=.. Y=..` → `STOP complete X=.. Y=.. HOMED=..`。減速停止、アラームにならず HOMED を保つ。`HOME` と `SERVO_*` は止めない |
 
 JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_JOG.md`（依頼は [HANDOFF_FIRMWARE_JOG.md](HANDOFF_FIRMWARE_JOG.md)）。最後の `JOG` から 250 ms 途絶えるとファームウェアが減速停止する（デッドマン）。ジョグ中も `POS` には即答する。ジョグ中の `XY` 等は `NACK_XY ... reason=jog_active`。
@@ -68,7 +68,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `home` | `HOME` | `HOME complete` 待ち |
 | `move_xy {x,y}` | `XY x y F` | ホスト側でもソフトリミット検査 |
 | `z_zero` / `z_set {which: top\|bottom}` | `SERVO_STATUS 1` | 現在の `abs=` を「アーム最上位」（top、`z_zero` と同じ）/「最下位」（bottom）として記録。両方そろうとカウント差から `z_counts_per_unit`・`z_sign` を求めて `config/z_calibration.json` に保存。記録はファームウェアの再起動・再接続で消える |
-| `z_servo_recover` | `SERVO_STATUS 1` → （`tracking=YES` かつ `limits≠0/0` のときだけ）`SERVO_TURN 1 ±0.01` | 巻き上げサーボだけ電源が切れた後の復帰。`moveRelative` が動かす前に `result=REJECTED reason=multi_turn_lost (retry)` で拒否して追跡を無効にし、次の JOG の `beginJog` → `enableTracking` で多回転に戻る。`SERVO_STATUS` の `limits=` と `tracking=` の組み合わせで検知（[HANDOFF_FIRMWARE_Z_SERVO.md](HANDOFF_FIRMWARE_Z_SERVO.md)） |
+| `z_servo_recover` | `SERVO_STATUS 1` → （多回転が失われているときだけ）`SERVO_TURN 1 ±0.01` | **旧ファームウェア向け。** #11 以降は `tracking=LOST` を出し、次の Z の JOG が自分で多回転に戻す（`tracking=RESET`）ので不要（送っても害はない）。バックエンドは LOST のときは Z の JOG を拒否しない。巻き上げサーボだけ電源が切れた後の復帰。`moveRelative` が動かす前に `result=REJECTED reason=multi_turn_lost (retry)` で拒否して追跡を無効にし、次の JOG の `beginJog` → `enableTracking` で多回転に戻る。`SERVO_STATUS` の `limits=` と `tracking=` の組み合わせで検知（[HANDOFF_FIRMWARE_Z_SERVO.md](HANDOFF_FIRMWARE_Z_SERVO.md)） |
 | （定期） | `SERVO_STATUS 1`（3 Hz、ジョグ中は `JOG_POS` の `Z_ABS`） | ジョイスティックなどで動いたアームを Z に反映 |
 | `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算 |
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |

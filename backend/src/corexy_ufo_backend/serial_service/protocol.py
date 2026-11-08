@@ -75,6 +75,8 @@ def classify_line(line: str) -> str:
         return "jog_start"
     if line.startswith("JOG end"):
         return "jog_end"
+    if line.startswith("JOG servo "):
+        return "jog_servo"
     if line.startswith("JOG soft_limit"):
         return "jog_soft_limit"
     if line.startswith("NACK_JOG"):
@@ -235,6 +237,9 @@ class ServoStatus:
     moving: bool = False
     torque: bool = False
     tracking: bool = False
+    # `tracking=LOST` (firmware with CoreXY_UFO #11): the firmware tracks turns but the
+    # servo is back to one turn; its next jog sets multi-turn again (JOG servo ... RESET)
+    tracking_lost: bool = False
     # the servo's angle limit registers (min, max): (0, 0) = multi-turn, (0, 4095) =
     # one turn (its power-up default); None when the line has no limits=
     limits: tuple[int, int] | None = None
@@ -250,8 +255,10 @@ class ServoStatus:
     @property
     def multi_turn_lost(self) -> bool:
         """The firmware still tracks turns but the servo is back to one turn: its
-        power was cut on its own. Jogs then stop at the end of that turn silently."""
-        return self.tracking and self.limits is not None and self.limits != (0, 0)
+        power was cut on its own. Newer firmware says so (`tracking=LOST`); older
+        firmware says `tracking=YES` with one-turn limits, and its jogs then stop at
+        the end of that turn silently."""
+        return self.tracking_lost or (self.tracking and self.limits is not None and self.limits != (0, 0))
 
 
 _SERVO_STATUS_RE = re.compile(r"^SERVO_STATUS id=(?P<id>\d+) result=(?P<res>\w+)(?P<rest>.*)$")
@@ -270,7 +277,9 @@ def parse_servo_status(line: str) -> ServoStatus | None:
             st.turns = float(rest["turns"])
         st.moving = rest.get("moving", "0") not in ("0", "NO")
         st.torque = rest.get("torque", "0") not in ("0", "NO")
-        st.tracking = rest.get("tracking", "NO") == "YES"
+        tracking = rest.get("tracking", "NO")
+        st.tracking = tracking in ("YES", "LOST")
+        st.tracking_lost = tracking == "LOST"
         if "limits" in rest and "/" in rest["limits"]:
             lo, hi = rest["limits"].split("/", 1)
             st.limits = (int(lo), int(hi))
@@ -325,6 +334,41 @@ def z_abs_from(line: str) -> int | None:
         return int(parse_kv(line)["Z_ABS"])
     except (KeyError, ValueError):
         return None
+
+
+@dataclass
+class JogServoLine:
+    """`JOG servo id=N ...` (CoreXY_UFO #11): the servo part of a jog press.
+
+    begin:    `JOG servo id=1 begin_ms=230 (hold check; XY waits) tracking=KEPT|NEW|RESET`
+    disabled: `JOG servo id=1 disabled reason=goal_mismatch ... multi_turn_lost=YES`
+    stopped:  `JOG servo id=1 stopped reason=feedback_lost tracking=INVALID`
+    RESET: multi-turn was set again after the servo's power was cut; its counts
+    restart from the angle in the turn, so points recorded in counts are gone."""
+    servo_id: int
+    event: str  # "begin" | "disabled" | "stopped" | other word
+    tracking: str | None = None
+    reason: str | None = None
+    raw: str = ""
+
+    @property
+    def reset(self) -> bool:
+        return self.event == "begin" and self.tracking == "RESET"
+
+
+_JOG_SERVO_RE = re.compile(r"^JOG servo id=(?P<id>\d+) (?P<rest>.*)$")
+
+
+def parse_jog_servo(line: str) -> JogServoLine | None:
+    m = _JOG_SERVO_RE.match(line)
+    if not m:
+        return None
+    rest = m.group("rest")
+    kv = parse_kv(rest)
+    first = rest.split(maxsplit=1)[0] if rest else ""
+    event = "begin" if first.startswith("begin_ms=") else first
+    return JogServoLine(servo_id=int(m.group("id")), event=event, tracking=kv.get("tracking"),
+                        reason=kv.get("reason"), raw=line)
 
 
 def parse_kv(line: str) -> dict[str, str]:

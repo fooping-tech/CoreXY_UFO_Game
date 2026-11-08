@@ -68,6 +68,13 @@ Z_RAMP_S = 0.35
 Z_SERVO_RESET_MSG = ("Z servo reset (its power was cut): a jog stops at the end of one turn "
                      "and the drum's turn count is lost; recover it (z_servo_recover), "
                      "then record the Z points again")
+# Newer firmware (CoreXY_UFO #11) reports the same state as `tracking=LOST` and sets
+# multi-turn again when the next jog starts (`JOG servo id=1 ... tracking=RESET`):
+# no recovery command is needed, but the turn count is still gone.
+Z_SERVO_LOST_MSG = ("Z servo reset (its power was cut): the drum's turn count is lost; "
+                    "jog Z (the first press sets multi-turn again), then record the Z points again")
+CLAW_SERVO_RESET_MSG = ("claw servo reset (its power was cut): its recorded counts are gone; "
+                        "press again (the firmware refused this one before moving)")
 # z_servo_recover: a SERVO_TURN this small (up), refused unmoved while the servo is reset
 Z_RECOVER_TURNS = 0.01
 Z_RAMP_STEP_S = 0.04
@@ -120,6 +127,8 @@ class RealRobot(RobotInterface):
         self._z_units_est: float = cfg.limits.z_max if cfg.limits.z_up_is_positive else cfg.limits.z_min
         self._z_measured = False
         self.z_servo_reset = False  # see Z_SERVO_RESET_MSG
+        # the firmware said LOST: its next Z jog sets multi-turn again by itself
+        self.z_servo_jog_recovers = False
         self._busy = False
         self._last_poll = 0.0
         self._last_z_poll = 0.0
@@ -177,6 +186,8 @@ class RealRobot(RobotInterface):
         kind = P.classify_line(line)
         if kind in ("jog_pos", "jog_start", "jog_end", "jog_rejected", "stop_done"):
             self._on_jog_line(kind, line)
+        elif kind == "jog_servo":
+            self._on_jog_servo(line)
         elif kind == "pos":
             pos = P.parse_pos_line(line)
             if pos:
@@ -191,10 +202,8 @@ class RealRobot(RobotInterface):
             # the multi-turn counts restart from the angle in the turn: counts taken
             # before are not comparable any more (a claw span from them could point
             # the wrong way round); the recorded angles and direction stay valid
-            self._claw_marks.clear()
             self._forget_z_points()  # same for Z: the recorded points no longer match
-            self._arm_counts = None
-            self._arm_zero_counts = None
+            self._forget_arm_counts()
             self.error = "firmware rebooted"
 
     def _apply_z_counts(self, counts: int) -> None:
@@ -382,6 +391,48 @@ class RealRobot(RobotInterface):
     def _forget_z_points(self) -> None:
         self._z_top_counts = self._z_bottom_counts = None
 
+    def _forget_arm_counts(self) -> None:
+        """The claw servo's multi-turn count restarted: counts taken before are not
+        comparable (a claw span from them could point the wrong way round). The
+        recorded angles in the turn and the direction stay valid."""
+        self._claw_marks.clear()
+        self._arm_counts = None
+        self._arm_zero_counts = None
+
+    def _claw_turn_result(self, r) -> None:
+        """Check a SERVO_TURN 2 reply; raise RobotCommandError when it failed."""
+        res = P.parse_servo_result(r.completion or "")
+        if res is not None and "multi_turn_lost" in res.raw:
+            # the servo's power was cut: refused unmoved; the next turn goes through
+            # but its counts restart from the angle in the turn
+            self._forget_arm_counts()
+            self.error = CLAW_SERVO_RESET_MSG
+            raise RobotCommandError(self.error)
+        if res is None or not res.ok:
+            self.error = r.completion or "arm servo failed"
+            raise RobotCommandError(self.error)
+
+    def _on_jog_servo(self, line: str) -> None:
+        js = P.parse_jog_servo(line)
+        if js is None:
+            return
+        if js.reset:
+            # the firmware set multi-turn again after the servo's power was cut:
+            # its counts restarted from the angle in the turn
+            log.warning("servo %d multi-turn set again by the jog (tracking=RESET): forgetting its points",
+                        js.servo_id)
+            if js.servo_id == Z_SERVO_ID:
+                self._forget_z_points()
+                if self.z_servo_reset:
+                    self.z_servo_reset = False
+                    if self.error in (Z_SERVO_RESET_MSG, Z_SERVO_LOST_MSG):
+                        self.error = ""
+            elif js.servo_id == ARM_SERVO_ID:
+                self._forget_arm_counts()
+        elif js.event in ("disabled", "stopped"):
+            # cleared by the next press, like the other "jog ended" errors
+            self.error = "jog ended: " + line.removeprefix("JOG ")
+
     def _note_z_status(self, st: P.ServoStatus) -> None:
         """Notice a drum servo whose power was cut on its own (and its recovery)."""
         if not st.ok:
@@ -391,11 +442,12 @@ class RealRobot(RobotInterface):
                 log.warning("Z servo reset detected (%s): forgetting the Z points", st.raw)
                 self._forget_z_points()  # the drum's turn count is gone
                 self.z_servo_reset = True
-            self.error = Z_SERVO_RESET_MSG
+            self.z_servo_jog_recovers = st.tracking_lost
+            self.error = Z_SERVO_LOST_MSG if st.tracking_lost else Z_SERVO_RESET_MSG
         elif self.z_servo_reset:
             log.info("Z servo multi-turn state recovered")
             self.z_servo_reset = False
-            if self.error == Z_SERVO_RESET_MSG:
+            if self.error in (Z_SERVO_RESET_MSG, Z_SERVO_LOST_MSG):
                 self.error = ""
 
     async def recover_z_servo(self) -> None:
@@ -527,6 +579,12 @@ class RealRobot(RobotInterface):
                 eta = abs(chunk) * COUNTS_PER_TURN / SERVO_SPEED_COUNTS_PER_S + 3.0
                 r = await self.serial.send(P.cmd_servo_turn(Z_SERVO_ID, chunk), timeout=eta + 5.0)
                 res = P.parse_servo_result(r.completion or "")
+                if res is not None and "multi_turn_lost" in res.raw:
+                    # the drum servo's power was cut: refused unmoved; the next turn
+                    # goes through but its counts restart, so the Z points are gone
+                    self._forget_z_points()
+                    self.error = Z_SERVO_RESET_MSG
+                    raise RobotCommandError(self.error)
                 if res is None or not res.ok:
                     self.error = r.completion or "SERVO_TURN failed"
                     if res and res.actual is not None:
@@ -561,10 +619,7 @@ class RealRobot(RobotInterface):
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
-            res = P.parse_servo_result(r.completion or "")
-            if res is None or not res.ok:
-                self.error = r.completion or "arm servo failed"
-                raise RobotCommandError(self.error)
+            self._claw_turn_result(r)
             await self._refresh_arm()  # the same servo as arm_step: keep its angle current
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -589,10 +644,7 @@ class RealRobot(RobotInterface):
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
-            res = P.parse_servo_result(r.completion or "")
-            if res is None or not res.ok:
-                self.error = r.completion or "arm servo failed"
-                raise RobotCommandError(self.error)
+            self._claw_turn_result(r)
             await self._read_arm()
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -639,10 +691,7 @@ class RealRobot(RobotInterface):
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
-            res = P.parse_servo_result(r.completion or "")
-            if res is None or not res.ok:
-                self.error = r.completion or "arm servo failed"
-                raise RobotCommandError(self.error)
+            self._claw_turn_result(r)
             await self._refresh_arm()
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -753,7 +802,8 @@ class RealRobot(RobotInterface):
             else:
                 self._end_jog_session()
             return
-        if z_counts_s and self.z_servo_reset:
+        if z_counts_s and self.z_servo_reset and not self.z_servo_jog_recovers:
+            # older firmware: the jog would stop at the end of one turn, silently
             raise RobotCommandError(Z_SERVO_RESET_MSG)
         # connected, motors enabled, no alarm, no move running; XY also needs homing
         self._require(homed=bool(vx_mm_s or vy_mm_s))
@@ -875,6 +925,7 @@ class RealRobot(RobotInterface):
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_reference() is not None,
             z_top_set=self._z_top_counts is not None, z_bottom_set=self._z_bottom_counts is not None,
             z_calibrated=self.z_cal.complete(), z_servo_reset=self.z_servo_reset,
+            z_servo_jog_recovers=self.z_servo_reset and self.z_servo_jog_recovers,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
             limit_x=self._limits_active[0] and self._limits_current(x, y, measured),
