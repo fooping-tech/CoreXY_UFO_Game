@@ -52,6 +52,7 @@ func _ready() -> void:
 	_test_vfx_follows_the_game(rs)
 	_test_debug_panel_tabs_and_z_buttons(rs)
 	_test_study_is_optional(rs)
+	_test_homework_watch(rs)
 	_test_auto_catch_controls(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -1020,7 +1021,7 @@ func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
 		titles.append(tabs.get_tab_title(i))
 	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
 	var d: Vector3 = game._jog_input()
-	var expected_tabs := 8 if bool(GameConfig.data.study.enabled) else 7
+	var expected_tabs := 7 + (1 if bool(GameConfig.data.study.enabled) else 0) + (1 if bool(GameConfig.data.homework.enabled) else 0)
 	var study_matches_config: bool = titles.has("Study") == bool(GameConfig.data.study.enabled)
 	_ok(titles[0] == "実機" and titles.size() == expected_tabs and study_matches_config and game.ui_jog_z == 0.0 and d.z == 0.0,
 		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
@@ -1072,11 +1073,60 @@ func _test_study_is_optional(rs: Node) -> void:
 	var labels_ok: bool = StudyClient.provider_label("claude") == "Claude Code" and StudyClient.provider_label("codex") == "Codex" \
 		and StudyClient.provider_label("") == "アシスタント"
 	_ok(labels_ok, "study: the provider from the backend's hello names who answers")
-	_ok(game.study != null and study_tab >= 0 and titles.size() == 8 and buffer_ok and isolated and reopened,
+	var study_tabs := 8 + (1 if bool(GameConfig.data.homework.enabled) else 0)
+	_ok(game.study != null and study_tab >= 0 and titles.size() == study_tabs and buffer_ok and isolated and reopened,
 		"study: optional client is isolated, sized for images, and restarts on reopen", "%s buffer=%s isolated=%s reopened=%s" % [titles, buffer_ok, isolated, reopened])
 	remove_child(game)
 	game.free()
 	GameConfig.data.study.enabled = previous
+	RobotState.source = "mock"
+	RobotState.connected = false
+	rs.clear_samples()
+
+## Homework watch: optional tab, aux link only, progress / held / errors from the backend's messages.
+func _test_homework_watch(rs: Node) -> void:
+	_ok(HomeworkClient.format_elapsed(0) == "00:00" and HomeworkClient.format_elapsed(754.9) == "12:34"
+		and HomeworkClient.format_elapsed(3723) == "1:02:03", "homework: elapsed time as mm:ss / h:mm:ss")
+	var previous: bool = bool(GameConfig.data.homework.enabled)
+	GameConfig.data.homework.enabled = true
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var hw: HomeworkClient = game.homework
+	var titles := []
+	for i in game.debug_ui._tabs.get_tab_count():
+		titles.append(game.debug_ui._tabs.get_tab_title(i))
+	_ok(hw != null and titles.has("宿題") and hw.link.study_only and hw.interval_s == 10.0,
+		"homework: optional tab and its own aux link", str(titles))
+	hw.start()
+	var started: bool = hw.state == "connecting" and hw.session_id != ""
+	hw._on_message({"type": "hello", "data": {"homework": true}})
+	hw._on_message({"type": "homework_status", "data": {"state": "running"}})
+	var running: bool = hw.state == "running"
+	hw._waiting = true
+	hw._on_message({"type": "homework_progress", "data": {"progress_pct": 40.0, "smoothed_pct": 30.0, "held": false,
+		"held_reason": "", "count": 2, "skipped": 1, "cost_usd": 0.0007}})
+	var shown: bool = is_equal_approx(hw.progress_pct, 30.0) and is_equal_approx(hw.last_pct, 40.0) and hw.count == 2 \
+		and not hw._waiting and hw.history.size() == 1
+	hw._on_message({"type": "homework_progress", "data": {"progress_pct": 100.0, "smoothed_pct": null, "held": true,
+		"held_reason": "occluded", "count": 3}})
+	var held: bool = is_equal_approx(hw.progress_pct, 30.0) and hw.status_text.contains("隠れている")
+	game.debug_ui._update_homework()
+	var ui_ok: bool = game.debug_ui._hw_elapsed.text.contains("30%") and is_equal_approx(game.debug_ui._hw_bar.value, 30.0)
+	hw._on_message({"type": "homework_error", "data": {"code": "auth", "message": "x", "stopped": true}})
+	var stopped: bool = hw.state == "stopped" and hw.status_text.contains("止めました") and is_equal_approx(hw.progress_pct, 30.0)
+	hw.start()
+	hw._on_message({"type": "homework_error", "data": {"code": "config", "message": "Jev の鍵が未設定です"}})
+	var no_key: bool = hw.state == "error" and hw.status_text.contains("未設定")
+	_ok(started and running and shown and held and ui_ok and stopped and no_key,
+		"homework: start, progress, held keeps the value, errors stop it", "%s %s %s %s %s %s %s" % [started, running, shown, held, ui_ok, stopped, no_key])
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	hw.link._on_closed()
+	_ok(RobotState.connected, "homework: its link never touches RobotState")
+	hw.stop()
+	remove_child(game)
+	game.free()
+	GameConfig.data.homework.enabled = previous
 	RobotState.source = "mock"
 	RobotState.connected = false
 	rs.clear_samples()

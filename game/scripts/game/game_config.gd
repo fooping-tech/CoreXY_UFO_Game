@@ -31,6 +31,8 @@ const DEFAULTS := {
 	"network": {"websocket_url": "ws://127.0.0.1:8765", "state_timeout_ms": 1500, "command_timeout_ms": 3000},
 	"study": {"enabled": false, "timeout_s": 90.0, "max_image_bytes": 700000,
 		"max_image_edge": 1280, "camera_role": "overview"},
+	"homework": {"enabled": false, "interval_s": 10.0, "timeout_s": 30.0, "max_image_edge": 1024,
+		"max_image_bytes": 700000, "camera_role": "overview"},
 }
 
 var data: Dictionary = {}
