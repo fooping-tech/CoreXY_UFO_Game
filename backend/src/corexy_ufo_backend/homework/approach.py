@@ -1,12 +1,19 @@
 """Take the arm's (focus) camera close to the worksheet, then back.
 
-    IDLE --start()--> RAISE -> MOVE_XY -> LOWER -> HOLD -> RAISE_BACK -> RETURN_XY -> IDLE
+    IDLE --start()--> RAISE -> MOVE_XY -> OPEN_CLAW -> LOWER -> HOLD -> RAISE_BACK
+                      [-> CLOSE_CLAW] -> RETURN_XY -> IDLE
     any state --fault / stop--> FAULT (stop sent: ABORT, alarm, homing lost)
 
 The place is a spot recorded by hand (`set_spot`: jog the arm above the worksheet
 at the height wanted, record it), or a target XY (`start(target=...)`, e.g. a point
 clicked in the overview image and mapped by camera_map.py, #78) looked at from the
 recorded spot's height.
+
+The arm hangs from the Z rope and its camera cable can tilt it, so a hanging camera may
+not look straight down. With open_claw (default) the claws are opened before lowering
+and the spot's Z is where the open claws stand on the worksheet: the arm rests on them,
+upright (lowering a little further only slackens the rope; it presses with no more than
+the arm's own weight). close_claw_after closes them again once back up.
 
 HOLD waits for the game to capture its frames (`release()`), at most hold_timeout_s,
 then the arm goes back up (and back to where it started). Same safety frame as
@@ -42,9 +49,11 @@ class ApproachPhase(StrEnum):
     IDLE = "IDLE"
     RAISE = "RAISE"
     MOVE_XY = "MOVE_XY"
+    OPEN_CLAW = "OPEN_CLAW"
     LOWER = "LOWER"
     HOLD = "HOLD"
     RAISE_BACK = "RAISE_BACK"
+    CLOSE_CLAW = "CLOSE_CLAW"
     RETURN_XY = "RETURN_XY"
     FAULT = "FAULT"
 
@@ -82,6 +91,9 @@ class ApproachParams:
     total_timeout_s: float = 150.0
     return_xy: bool = True  # back to where it started, out of the child's way
     xy_feed_mm_min: float | None = None
+    open_claw: bool = True  # stand the arm on its open claws: the camera looks straight down
+    close_claw_after: bool = False
+    claw_settle_s: float = 0.5  # after a claw turn, before the next step
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "ApproachParams":
@@ -91,13 +103,16 @@ class ApproachParams:
         return cls(xy_tolerance_mm=float(d.get("xy_tolerance_mm", 2.0)), z_tolerance=float(d.get("z_tolerance", 3.0)),
                    step_timeout_s=float(d.get("step_timeout_s", 30.0)), hold_timeout_s=float(d.get("hold_timeout_s", 15.0)),
                    total_timeout_s=float(d.get("total_timeout_s", 150.0)), return_xy=bool(d.get("return_xy", True)),
-                   xy_feed_mm_min=float(feed) if feed is not None else None)
+                   xy_feed_mm_min=float(feed) if feed is not None else None,
+                   open_claw=bool(d.get("open_claw", True)), close_claw_after=bool(d.get("close_claw_after", False)),
+                   claw_settle_s=float(d.get("claw_settle_s", 0.5)))
 
 
 @dataclass(frozen=True)
 class _Step:
     phase: ApproachPhase
-    kind: str  # "z" | "xy" | "hold"
+    kind: str  # "z" | "xy" | "hold" | "claw"
+    claw: str = ""
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -107,6 +122,8 @@ class _Step:
             return f"Z -> {self.z:g}"
         if self.kind == "xy":
             return f"XY -> ({self.x:g}, {self.y:g})"
+        if self.kind == "claw":
+            return f"claw -> {self.claw}"
         return "wait for the capture"
 
 
@@ -232,6 +249,9 @@ class ApproachSequencer:
             errs.append("busy: another motion command is running")
         if self.is_jogging():
             errs.append("busy: jog active (release the keys)")
+        if self.params.open_claw and (s.arm_closed_deg is None or s.arm_open_deg is None):
+            errs.append("claw open / closed positions not recorded (arm_set), needed to stand the arm on "
+                        "its open claws (or set homework.approach.open_claw false)")
         if not all(math.isfinite(v) for v in (s.x, s.y, s.z)):
             errs.append("sensor: position is not a number")
         elif not self.limits.xy_inside(s.x, s.y):
@@ -262,11 +282,16 @@ class ApproachSequencer:
         top, spot = self.top_z, self.spot
         self.target = (float(target[0]), float(target[1])) if target is not None else None
         gx, gy = self.target if self.target is not None else (spot.x, spot.y)
+        p = self.params
         steps = [_Step(ApproachPhase.RAISE, "z", z=top),
-                 _Step(ApproachPhase.MOVE_XY, "xy", x=gx, y=gy),
-                 _Step(ApproachPhase.LOWER, "z", z=spot.z),
-                 _Step(ApproachPhase.HOLD, "hold"),
-                 _Step(ApproachPhase.RAISE_BACK, "z", z=top)]
+                 _Step(ApproachPhase.MOVE_XY, "xy", x=gx, y=gy)]
+        if p.open_claw:
+            steps.append(_Step(ApproachPhase.OPEN_CLAW, "claw", claw="open"))
+        steps += [_Step(ApproachPhase.LOWER, "z", z=spot.z),
+                  _Step(ApproachPhase.HOLD, "hold"),
+                  _Step(ApproachPhase.RAISE_BACK, "z", z=top)]
+        if p.open_claw and p.close_claw_after:
+            steps.append(_Step(ApproachPhase.CLOSE_CLAW, "claw", claw="closed"))
         if self.params.return_xy and math.hypot(s.x - gx, s.y - gy) > self.params.xy_tolerance_mm:
             steps.append(_Step(ApproachPhase.RETURN_XY, "xy", x=s.x, y=s.y))
         self.active = True
@@ -365,6 +390,8 @@ class ApproachSequencer:
             raise RobotCommandError(f"not sent ({self._abort_reason})")
         if step.kind == "z":
             await self.robot.move_z(step.z)
+        elif step.kind == "claw":
+            await self.robot.arm_goto(step.claw)
         else:
             await self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
 
@@ -388,6 +415,13 @@ class ApproachSequencer:
                 exc = action.exception()
                 if exc is not None:
                     raise SequenceFault(f"{step.phase} failed: {exc}")
+                if step.kind == "claw":
+                    # the servo command reported PASS: let the claws settle, still checking
+                    t_done = self.clock()
+                    while self.clock() - t_done < self.params.claw_settle_s:
+                        self._check(step, t0)
+                        await asyncio.sleep(self.poll_s)
+                    return
                 if self._reached(step):
                     return
             await asyncio.sleep(self.poll_s)

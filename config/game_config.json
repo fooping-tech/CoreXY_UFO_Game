@@ -174,7 +174,10 @@
       "xy_tolerance_mm": 2.0,
       "z_tolerance": 3.0,
       "return_xy": true,
-      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top, XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+      "open_claw": true,
+      "close_claw_after": false,
+      "claw_settle_s": 0.5,
+      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
     },
     "camera_map": {
       "min_points": 4,

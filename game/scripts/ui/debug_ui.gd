@@ -270,7 +270,7 @@ func _build_homework() -> void:
 	_hw_stall.add_theme_color_override("font_color", Color(1.0, 0.7, 0.3))
 	_vbox.add_child(_hw_stall)
 	_header("アドバイス（止まったとき）")
-	_note("進捗が %d 秒（約 %d 分）伸びないと知らせる。「近づいてアドバイス」で、アームのカメラを記録した位置へ下ろして撮影し、すぐ上へ戻る。全体と拡大の画像から Claude / Codex（study.provider）が止まっている問題を見つけ、答えは言わずにヒントを出す。位置は、アームをプリントの上の見たい高さまで JOG で動かしてから「ここを宿題の位置に記録」。動いている間は Space / STOP で止まる（止めたらアラーム解除と原点復帰）。実機では未検証。" % [int(GameConfig.get_value("homework", "stall_s", 180.0)), int(GameConfig.get_value("homework", "stall_s", 180.0)) / 60])
+	_note("進捗が %d 秒（約 %d 分）伸びないと知らせる。「近づいてアドバイス」で、アームのカメラを記録した位置へ下ろして撮影し、すぐ上へ戻る。全体と拡大の画像から Claude / Codex（study.provider）が止まっている問題を見つけ、答えは言わずにヒントを出す。位置は、爪を開いてアームを JOG でプリントの上へ下ろし、開いた爪がプリントに立つ高さ（カメラが真下を向く）で「ここを宿題の位置に記録」。近づくときも爪を開いてからその高さへ下ろす。動いている間は Space / STOP で止まる（止めたらアラーム解除と原点復帰）。実機では未検証。" % [int(GameConfig.get_value("homework", "stall_s", 180.0)), int(GameConfig.get_value("homework", "stall_s", 180.0)) / 60])
 	var adv_row := HBoxContainer.new()
 	_vbox.add_child(adv_row)
 	_button(adv_row, "近づいてアドバイス", func(): main.homework.approach_and_advise()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -292,7 +292,7 @@ func _build_homework() -> void:
 	_hw_advice.add_theme_font_size_override("normal_font_size", 13)
 	_vbox.add_child(_hw_advice)
 	# stage 2 (#78): overview image <-> CoreXY XY calibration, and looking at a clicked point
-	_note("カメラの校正（俯瞰カメラの画像 → CoreXY の XY）。①「校正点を記録」を選ぶ ② アームを JOG で動かし、下のアームのカメラの十字をプリントの目印（解答欄の角など）に合わせる ③ 俯瞰の映像でその目印をクリック。プリントの四隅と中ほどなど、広く散らして 4 点以上（6 点以上がよい）。高さは宿題の位置と同じにする。俯瞰カメラを動かしたら記録し直す。「そこを見に行く」では、クリックした場所の上へアームのカメラを動かす（宿題の位置の高さ、Space / STOP で中止）。実機では未検証。")
+	_note("カメラの校正（俯瞰カメラの画像 → CoreXY の XY）。①「校正点を記録」を選ぶ ② 爪を開いてアームを下ろし、開いた爪でプリントに立たせる（吊ったままだとカメラの線に引かれて傾く）③ JOG で動かし、下のアームのカメラの十字をプリントの目印（解答欄の角など）に合わせる（動かすときは少し上げ、合わせたら下ろして立たせる）④ 俯瞰の映像でその目印をクリック。プリントの四隅と中ほどなど、広く散らして 4 点以上（6 点以上がよい）。宿題の位置も同じく爪で立つ高さで記録する。俯瞰カメラを動かしたら記録し直す。「そこを見に行く」では、クリックした場所の上へアームのカメラを動かす（宿題の位置の高さ、Space / STOP で中止）。実機では未検証。")
 	_hw_click_mode = OptionButton.new()
 	_hw_click_mode.focus_mode = Control.FOCUS_NONE
 	_hw_click_mode.add_item("俯瞰の映像をクリックすると: 何もしない", 0)
