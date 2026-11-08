@@ -396,6 +396,21 @@ func _build_gesture() -> void:
 	_vbox.add_child(hb)
 	_button(hb, "Gesture: ON/OFF", func(): main.set_gesture_enabled(not g.enabled))
 	_button(hb, "Sim hand (mouse): ON/OFF", func(): main.set_gesture_sim(not main.gesture_sim))
+	var srow := HBoxContainer.new()
+	_vbox.add_child(srow)
+	var sl := Label.new()
+	sl.text = "Scheme"
+	sl.add_theme_font_size_override("font_size", 11)
+	srow.add_child(sl)
+	var opt := OptionButton.new()
+	opt.add_theme_font_size_override("font_size", 11)
+	opt.focus_mode = Control.FOCUS_NONE
+	for i in GestureControl.SCHEME_IDS.size():
+		opt.add_item(GestureControl.SCHEME_IDS[i], i)
+		if GestureControl.SCHEME_IDS[i] == g.scheme.id():
+			opt.select(i)
+	opt.item_selected.connect(func(i): g.set_scheme(GestureControl.SCHEME_IDS[i]))  # a forced stop
+	srow.add_child(opt)
 	var hb2 := HBoxContainer.new()
 	_vbox.add_child(hb2)
 	_button(hb2, "Invert X", func(): j.invert_x = not j.invert_x)
@@ -427,6 +442,25 @@ func _build_gesture() -> void:
 	_slider("g_roi_x1", "ROI x1", 0.0, 1.0, g.roi.end.x, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(v - g.roi.position.x, g.roi.size.y)))
 	_slider("g_roi_y1", "ROI y1", 0.0, 1.0, g.roi.end.y, 0.01, func(v): g.roi = Rect2(g.roi.position, Vector2(g.roi.size.x, v - g.roi.position.y)))
 	_end_fold(box)
+	var pbox := _fold("手の形で操縦（pose_direction）")
+	var pc: Dictionary = g.scheme_configs.get(PoseDirectionScheme.ID, {})
+	var pd := PoseDirectionScheme.new()
+	_slider("g_pose_speed", "Pose speed mm/s", 5.0, 50.0, float(pc.get("speed_mm_s", pd.speed_mm_s)), 1.0, func(v): _set_pose_cfg("speed_mm_s", v))
+	_slider("g_pose_speed_z", "Pose Z speed (z/s)", 3.0, 40.0, float(pc.get("speed_z", pd.speed_z)), 1.0, func(v): _set_pose_cfg("speed_z", v))
+	_slider("g_pose_confirm", "Pose confirm ms", 0.0, 600.0, float(pc.get("pose_confirm_ms", pd.pose_confirm_ms)), 10.0, func(v): _set_pose_cfg("pose_confirm_ms", v))
+	_slider("g_pose_release", "Pose flicker grace ms", 0.0, 600.0, float(pc.get("pose_release_ms", pd.pose_release_ms)), 10.0, func(v): _set_pose_cfg("pose_release_ms", v))
+	_note("向きと手の形の対応は config の gesture.schemes.pose_direction.directions（例 open = [1, 0, 0] で パー = +X）。マウス模擬では 1 / 2 / 3 キーを押している間 パー / チョキ / グー")
+	_end_fold(pbox)
+
+## A pose_direction setting from the panel: kept for the next switch to it, and
+## applied now when it is the scheme in use.
+func _set_pose_cfg(key: String, v: float) -> void:
+	var g: GestureControl = main.gesture
+	var pc: Dictionary = g.scheme_configs.get(PoseDirectionScheme.ID, {}).duplicate()
+	pc[key] = v
+	g.scheme_configs[PoseDirectionScheme.ID] = pc
+	if g.scheme is PoseDirectionScheme:
+		g.scheme.configure(pc)
 
 func _update_gesture_status() -> void:
 	if _gesture_overlay != null:
@@ -438,10 +472,10 @@ func _update_gesture_status() -> void:
 	var now := float(Time.get_ticks_msec())
 	var ev: Dictionary = g.last_event
 	var src := "mouse (sim)" if main.gesture_sim else ("backend camera %s %dx%d" % [GameConfig.get_value("gesture", "camera", "?"), int(ev.get("frame_w", 0)), int(ev.get("frame_h", 0))])
-	_gesture_status.text = "mode %s  state %s%s\nsource: %s  control: %s\nhand %s pinch %s ratio %.2f (on <=%.2f off >=%.2f) conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s  mode %s vz %+.1f\nfinger %s pose %s palm %s %+.2f%s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s Z %s swap %s  ROI %s %s\ngate: %s" % [
-		"ON" if g.enabled else "off", g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
+	_gesture_status.text = "mode %s  scheme %s  state %s%s\nsource: %s  control: %s\nhand %s sign %s pinch %s ratio %.2f (on <=%.2f off >=%.2f) conf %.2f hands %d\nstick %+.2f %+.2f  v %+.1f %+.1f mm/s  mode %s vz %+.1f\nfinger %s pose %s palm %s %+.2f%s\nlatency %.0f ms  age %s  events %d dropped %d\ninvert X %s Y %s Z %s swap %s  ROI %s %s\ngate: %s" % [
+		"ON" if g.enabled else "off", g.scheme.id(), g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
 		src, main.control_source,
-		"yes" if g.detected else "no", "YES" if g.pinch else "no", g.pinch_ratio, float(GameConfig.get_value("gesture", "pinch_start", 0.45)), float(GameConfig.get_value("gesture", "pinch_release", 0.65)), float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
+		"yes" if g.detected else "no", "YES" if g.engaged else ("seen" if g.sign_seen else "no"), "YES" if g.pinch else "no", g.pinch_ratio, float(GameConfig.get_value("gesture", "pinch_start", 0.45)), float(GameConfig.get_value("gesture", "pinch_release", 0.65)), float(ev.get("confidence", 0.0)), int(ev.get("hand_count", 0)),
 		j.stick.x, j.stick.y, g.velocity.x, g.velocity.y, g.mode, g.velocity_z,
 		g.pinch_finger if g.pinch_finger != "" else "-", g.pose if g.pose != "" else "-",
 		g.palm if g.palm != "" else "-", float(g.last_event.get("palm_sin", 0.0)),

@@ -100,7 +100,7 @@ static func direction_text(v: Vector2) -> String:
 func texts() -> Array[String]:
 	var g := gesture
 	if _flash_left > 0.0:
-		return [_flash, "" if g.state != GestureControl.State.ACTIVE else "手を動かすと進むよ"]
+		return [_flash, "" if g.state != GestureControl.State.ACTIVE else ("手を動かすと進むよ" if g.scheme.uses_stick() else g.scheme.steer_hint())]
 	var out_of_view := g.left_view and not g.detected
 	match g.state:
 		GestureControl.State.WAITING_HAND:
@@ -114,11 +114,12 @@ func texts() -> Array[String]:
 				return ["カメラの外に出たよ", "矢印の方へ手を戻してね"]
 			return ["手が見えないよ", "カメラに手を見せてね"]
 		GestureControl.State.HAND_DETECTED:
+			var p := g.scheme.prompt()
 			if gate != "":
-				return [gate, "準備ができたら、つまんで操縦"]
+				return [gate, "準備ができたら、" + p[0].trim_prefix("🤏 ").trim_prefix("✋ ")]
 			if g.claw_pose != "" and g.claw_progress(float(Time.get_ticks_msec())) > 0.0:
-				return ["爪を閉じるよ…" if g.claw_pose == "fist" else "爪を開くよ…", "そのまま"]
-			return ["🤏 つまんで操縦", "手のひら上=移動 下=上下 グー=閉じる ピース=開く"]
+				return ["爪を閉じるよ…" if g.scheme.claw_poses().get(g.claw_pose, "") == "closed" else "爪を開くよ…", "そのまま"]
+			return p
 		GestureControl.State.ARMED:
 			return ["操縦開始！", ""]
 		GestureControl.State.ACTIVE:
@@ -126,7 +127,7 @@ func texts() -> Array[String]:
 				var zt := "上げる ▲" if g.velocity_z > 0.2 else ("下げる ▼" if g.velocity_z < -0.2 else "上下")
 				return [zt, "手を上下に動かす / 離すと止まる"]
 			var d := direction_text(g.velocity)
-			return [d if d != "" else "操縦中", "カメラの端に近いよ！" if g.edge != Vector2.ZERO else "離すと止まるよ"]
+			return [d if d != "" else "操縦中", "カメラの端に近いよ！" if g.edge != Vector2.ZERO else g.scheme.steer_hint()]
 		GestureControl.State.WAITING_RELEASE:
 			var title := "停止"
 			match g.reason:
@@ -148,7 +149,7 @@ func texts() -> Array[String]:
 					title = "停止"
 				_:
 					title = g.reason  # a gate reason, already a sentence
-			return [title, "指を離して、もう一度つまんでね"]
+			return [title, g.scheme.release_hint()]
 	return ["", ""]
 
 func _draw() -> void:
@@ -174,14 +175,17 @@ func _draw() -> void:
 			draw_line(Vector2(x, CAM_RECT.position.y), Vector2(x, CAM_RECT.end.y), Color(CYAN, 0.15), 1.0)
 			draw_line(Vector2(CAM_RECT.position.x, y), Vector2(CAM_RECT.end.x, y), Color(CYAN, 0.15), 1.0)
 
-	# stick ring
+	# stick ring (only for a scheme that steers with a stick)
 	var c0 := Vector2(CAM_RECT.end.x + 12.0 + RING_R, SIZE.y * 0.5)
 	var ring_col := Color(PINK if live else CYAN, 0.9 if live else 0.45)
-	for i in range(24):  # dashed, chunky
-		var a0 := TAU * i / 24.0
-		draw_arc(c0, RING_R, a0, a0 + TAU / 48.0, 3, ring_col, 3.0 if live else 2.0)
-	draw_arc(c0, RING_R * g.joystick.deadzone, 0.0, TAU, 16, Color(CYAN, 0.35), 1.0)
-	draw_arc(c0, RING_R * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
+	if g.scheme.uses_stick():
+		for i in range(24):  # dashed, chunky
+			var a0 := TAU * i / 24.0
+			draw_arc(c0, RING_R, a0, a0 + TAU / 48.0, 3, ring_col, 3.0 if live else 2.0)
+		draw_arc(c0, RING_R * g.joystick.deadzone, 0.0, TAU, 16, Color(CYAN, 0.35), 1.0)
+		draw_arc(c0, RING_R * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
+	else:
+		draw_arc(c0, RING_R * 0.55, 0.0, TAU, 32, ring_col, 3.0 if live else 2.0)
 	# The ring is the hand's motion as the mini camera view shows it (the view's
 	# flips included), so the square and the arrow move like the hand on it.
 	var off := view_offset(g, _overlay.flip_h, _overlay.flip_v)
@@ -191,7 +195,7 @@ func _draw() -> void:
 		var tip := c0 + dir * RING_R * 0.85
 		draw_line(c0, tip, Color(GOLD, 0.9), 3.0)
 		draw_colored_polygon(PackedVector2Array([tip + dir * 7.0, tip + dir.orthogonal() * 5.0, tip - dir.orthogonal() * 5.0]), Color(GOLD, 0.9))
-	var dot_col := GOLD if g.pinch else (CYAN if g.detected else Color(0.5, 0.55, 0.7))
+	var dot_col := GOLD if g.engaged else (CYAN if g.detected else Color(0.5, 0.55, 0.7))
 	var pulse := 1.0 + (0.25 * sin(_t * 10.0) if g.state == GestureControl.State.ARMED else 0.0)
 	draw_rect(Rect2(dot - Vector2(5, 5) * pulse, Vector2(10, 10) * pulse), Color(dot_col, a))
 
@@ -202,7 +206,7 @@ func _draw() -> void:
 	_text(f, Vector2(tx, 34), t[0], 18, Color(PINK if live else Color.WHITE, a))
 	_text(f, Vector2(tx, 56), t[1], 12, Color(CYAN, 0.85 * a))
 	# speed gauge: 10 chunky segments
-	var frac := clampf(g.velocity.length() / maxf(g.joystick.max_speed, 1e-6), 0.0, 1.0)
+	var frac := clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
 	var n := int(roundf(frac * 10.0))
 	for i in range(10):
 		var on := i < n

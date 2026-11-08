@@ -39,6 +39,9 @@ var scheme: GestureScheme = PinchJoystickScheme.new()
 var scheme_configs: Dictionary = {}
 ## True while the scheme sees its sign to steer (this tick).
 var engaged := false
+## True while the sign can still be seen (unconfirmed or flickering included):
+## what the forced-stop latch waits on.
+var sign_seen := false
 ## An event older than this (receive time) no longer counts: stop.
 var stale_ms := 350.0
 ## How long ARMED shows "操縦開始！" before the stick goes live.
@@ -56,6 +59,7 @@ var enabled := false:
 			_set_state(State.DISABLED, "disabled")
 			scheme.reset(self)
 			engaged = false
+			sign_seen = false
 			velocity = Vector2.ZERO
 			velocity_z = 0.0
 var state: int = State.DISABLED
@@ -113,16 +117,18 @@ func configure(c: Dictionary) -> void:
 		joystick.configure(j)
 	var sc = c.get("schemes", {})
 	if sc is Dictionary:
-		scheme_configs = sc
+		scheme_configs = sc.duplicate(true)  # the panel edits these; GameConfig stays as loaded
 	set_scheme(str(c.get("scheme", scheme.id())))
 
 ## The schemes that can be chosen (config `gesture.scheme`).
-const SCHEME_IDS := [PinchJoystickScheme.ID]
+const SCHEME_IDS := [PinchJoystickScheme.ID, PoseDirectionScheme.ID]
 
 static func make_scheme(id: String) -> GestureScheme:
 	match id:
 		PinchJoystickScheme.ID:
 			return PinchJoystickScheme.new()
+		PoseDirectionScheme.ID:
+			return PoseDirectionScheme.new()
 	return null
 
 ## Switch how the hand is read. Always a forced stop (a sign held across the
@@ -246,6 +252,7 @@ func reset_stream(why: String) -> void:
 	detected = false
 	pinch = false
 	engaged = false
+	sign_seen = false
 	stop(why)
 
 ## Forced stop: zero velocity and, unless off, wait for the sign to be let go.
@@ -274,6 +281,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 	var fresh := _last_recv_ms >= 0.0 and now_ms - _last_recv_ms <= stale_ms
 	if not fresh or not camera_ok:
 		engaged = false
+		sign_seen = false
 		var why := "camera_lost" if fresh and not camera_ok else ("no_events" if _last_recv_ms < 0.0 else "stale")
 		if state in [State.ARMED, State.ACTIVE]:
 			stop(why)
@@ -283,6 +291,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 			reason = why
 		return velocity
 	engaged = detected and scheme.engaged(self, now_ms)
+	sign_seen = detected and (engaged or scheme.sign_seen(self))
 	if not detected or engaged or state != State.HAND_DETECTED:
 		claw_pose = ""  # a claw pose only builds up on a seen hand that is not steering
 	if not detected:
@@ -298,7 +307,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 		return velocity
 	match state:
 		State.WAITING_HAND:
-			if engaged:
+			if sign_seen:
 				stop("release_first")  # it was already giving the sign when it came into view
 			else:
 				_set_state(State.HAND_DETECTED, "")
@@ -331,7 +340,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 				velocity = Vector2(v.x, v.y)
 				velocity_z = v.z
 		State.WAITING_RELEASE:
-			if not engaged:
+			if not sign_seen:
 				_set_state(State.HAND_DETECTED, reason)
 	return velocity
 

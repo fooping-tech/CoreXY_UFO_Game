@@ -15,6 +15,9 @@ func id() -> String:
 func engaged(g, _now_ms: float) -> bool:
 	return g.pinch
 
+func sign_seen(g) -> bool:
+	return g.pinch  # the backend already confirms the pinch and its release
+
 func on_arm(g, _now_ms: float) -> void:
 	g.joystick.set_anchor(g.hand)
 	g.mode = "z" if g.palm == "down" else "xy"
@@ -30,3 +33,18 @@ func reset(g) -> void:
 
 func claw_poses() -> Dictionary:
 	return {"fist": "closed", "peace": "open"}
+
+func max_speed(g) -> float:
+	return g.joystick.max_speed
+
+func uses_stick() -> bool:
+	return true
+
+func prompt() -> Array[String]:
+	return ["🤏 つまんで操縦", "手のひら上=移動 下=上下 グー=閉じる ピース=開く"]
+
+func steer_hint() -> String:
+	return "離すと止まるよ"
+
+func release_hint() -> String:
+	return "指を離して、もう一度つまんでね"

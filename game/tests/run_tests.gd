@@ -39,6 +39,7 @@ func _ready() -> void:
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
 	_test_gesture_schemes()
+	_test_pose_direction_scheme()
 	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
@@ -1246,6 +1247,86 @@ func _test_gesture_schemes() -> void:
 	for i in 60:
 		step.call("fist")  # not a claw pose of this scheme
 	_ok(claws.is_empty() and g.claw_pose == "", "gesture scheme: only the scheme's claw poses move the claw", str(claws))
+
+## The hand-shape scheme: パー / チョキ move the crane a set way, through the safety frame.
+func _test_pose_direction_scheme() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"schemes": {"pose_direction": {"directions": {"open": [1, 0, 0], "peace": [-1, 0, 0]}, "speed_mm_s": 20.0,
+			"pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0, "claw": {"fist": "closed", "open": "open"}}}})
+	var ps := g.scheme as PoseDirectionScheme
+	_ok(ps != null and ps.speed_mm_s == 20.0 and ps.claw_poses() == {"fist": "closed"} and ps.mapping_text() == "パー=右 チョキ=左 グー=爪閉",
+		"pose scheme: chosen by config with its settings; a shape used for a direction never moves the claw",
+		"%s %s" % [ps.claw_poses() if ps else null, ps.mapping_text() if ps else ""])
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(pose: String, n := 1) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	step.call("other", 3)
+	step.call("open", 3)  # 50 ms: passing through a shape moves nothing
+	var passing := g.state == S.HAND_DETECTED and g.velocity == Vector2.ZERO
+	step.call("other", 10)
+	step.call("open", 10)  # held past pose_confirm_ms
+	var right := g.is_active() and g.velocity == Vector2(20.0, 0.0) and g.velocity_z == 0.0
+	_ok(passing and right, "pose scheme: パー held = +X at the set speed; a passing shape does nothing", "%s %s %s" % [passing, g.state_name(), g.velocity])
+
+	step.call("other", 2)  # a flicker shorter than pose_release_ms
+	var kept := g.is_active() and g.velocity == Vector2(20.0, 0.0)
+	step.call("peace", 1)
+	step.call("open", 1)
+	kept = kept and g.is_active()
+	_ok(kept, "pose scheme: a short flicker of the shape does not stop it", g.state_name())
+
+	var states: Array[int] = []
+	var rec := func(_f, to, _w): states.append(to)
+	g.state_changed.connect(rec)
+	step.call("peace", 20)
+	g.state_changed.disconnect(rec)
+	var left := g.is_active() and g.velocity == Vector2(-20.0, 0.0)
+	_ok(left and states.has(S.HAND_DETECTED) and states.find(S.HAND_DETECTED) < states.find(S.ACTIVE),
+		"pose scheme: チョキ = -X; changing shape stops first, then arms the new way", "%s %s" % [states, g.velocity])
+
+	g.stop("stop_key")
+	step.call("peace", 30)  # still チョキ: latched
+	var latched := g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	step.call("other", 2)  # a flicker is not letting go
+	step.call("peace", 30)
+	latched = latched and g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	step.call("other", 10)  # gone for longer than pose_release_ms
+	var lifted := g.state == S.HAND_DETECTED
+	step.call("peace", 12)
+	_ok(latched and lifted and g.is_active(), "pose scheme: after a stop the same shape does not restart it; letting go does",
+		"%s %s %s" % [latched, lifted, g.state_name()])
+
+	step.call("other", 10)
+	step.call("fist", 40)
+	_ok(claws == ["closed"], "pose scheme: the claw shape still works (fist = close)", str(claws))
+
+	# switching the scheme while a shape is held: latched even though the new scheme has not confirmed it yet
+	g.set_scheme(PinchJoystickScheme.ID)
+	step.call("other", 3)
+	g.set_scheme(PoseDirectionScheme.ID)
+	step.call("open", 30)
+	var switch_latched := g.state != S.ACTIVE and g.velocity == Vector2.ZERO
+	g.use_scheme(PinchJoystickScheme.new())
+	step.call("open", 3)
+	var ps2 := PoseDirectionScheme.new()
+	ps2.configure({"pose_confirm_ms": 0.0, "smoothing_ms": 0.0})
+	g.use_scheme(ps2)  # a stop while パー is in view
+	step.call("open", 30)
+	_ok(switch_latched and g.state == S.WAITING_RELEASE and g.reason == "scheme_changed",
+		"pose scheme: a shape held across a scheme switch does not move", "%s %s %s" % [switch_latched, g.state_name(), g.reason])
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	_ok(main_script.sim_pose(true) == "open" and main_script.sim_pose(false) == "other",
+		"pose scheme: the mouse simulation shows no shape unless a key says so (an open hand for the pinch stick)")
 
 ## A test scheme: "open" steers +X, "peace" -X, no claw.
 class _PoseScheme extends GestureScheme:

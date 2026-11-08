@@ -250,6 +250,10 @@ func _apply_cmdline() -> void:
 					_open_motion_log(args[i + 1])
 			"--gesture":
 				set_gesture_enabled(true)
+			"--gesture-scheme":
+				# how the hand is read: pinch_joystick / pose_direction (config gesture.scheme)
+				if i + 1 < args.size():
+					gesture.set_scheme(args[i + 1])
 			"--gesture-demo":
 				# a scripted hand (pinch, steer, release, lose it) through the gesture path
 				_gesture_demo_t = 0.0
@@ -800,7 +804,7 @@ func _handle_input(dt: float) -> void:
 		_feed_sim_hand()
 	elif _gesture_demo_t >= 0.0:
 		_gesture_demo_t += dt
-		var ev := gesture_demo_event(_gesture_demo_t)
+		var ev := gesture_demo_event(_gesture_demo_t) if gesture.scheme.uses_stick() else gesture_pose_demo_event(_gesture_demo_t)
 		_sim_seq += 1
 		ev["sequence"] = _sim_seq
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
@@ -862,7 +866,8 @@ func _on_gesture_claw(which: String) -> void:
 	arm_goto(which)
 
 ## Debug: a `hand_control` event from the mouse over the play area (left button
-## = pinch, right button = a pinch with the palm down (Z)), through the same path as the camera's.
+## = pinch, right button = a pinch with the palm down (Z); keys 1 / 2 / 3 held =
+## パー / チョキ / グー), through the same path as the camera's.
 func _feed_sim_hand() -> void:
 	var vs := get_viewport_rect().size
 	var m := get_viewport().get_mouse_position()
@@ -871,10 +876,22 @@ func _feed_sim_hand() -> void:
 	var pinch := inside and (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or down)
 	_sim_seq += 1
 	gesture.on_event({"event": "hand_control", "camera_ok": true, "detected": inside, "hand_count": 1 if inside else 0,
-		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": "open", "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
+		"pinch": pinch, "pinch_finger": "index" if pinch else "", "pose": sim_pose(gesture.scheme.uses_stick()), "palm": "down" if down else "up", "hand_x": m.x / _play_w, "hand_y": m.y / vs.y, "pinch_ratio": 0.2 if pinch else 0.8,
 		"confidence": 1.0, "in_roi": inside, "reason": "" if inside else "no_hand", "frame_w": _play_w, "frame_h": vs.y,
 		"timestamp": int(Time.get_unix_time_from_system() * 1000.0), "sequence": _sim_seq, "latency_ms": 0.0},
 		float(Time.get_ticks_msec()))
+
+## The mouse simulation's hand shape: keys 1 / 2 / 3 held = open / peace / fist.
+## Without a key: an open hand for the pinch stick (its resting hand), "other"
+## for a shape scheme (so the crane does not move just because the mouse is there).
+static func sim_pose(stick: bool) -> String:
+	if Input.is_physical_key_pressed(KEY_1):
+		return "open"
+	if Input.is_physical_key_pressed(KEY_2):
+		return "peace"
+	if Input.is_physical_key_pressed(KEY_3):
+		return "fist"
+	return "open" if stick else "other"
 
 ## The scripted hand of --gesture-demo at `t` seconds (a 7 s loop): open hand,
 ## pinch, steer to the right and away, back to the centre, release, then pinch
@@ -896,6 +913,22 @@ static func gesture_demo_event(t: float) -> Dictionary:
 		seen = false
 	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,
 		"pinch": pinch and seen, "hand_x": p.x, "hand_y": p.y, "pinch_ratio": 0.2 if pinch else 0.8, "confidence": 0.95,
+		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
+
+## --gesture-demo for a hand-shape scheme (an 8 s loop, the hand at rest in the
+## middle): パー, another shape, チョキ, another shape, グー, then out of the view.
+static func gesture_pose_demo_event(t: float) -> Dictionary:
+	var k := fmod(t, 8.0)
+	var pose := "other"
+	if k >= 0.8 and k < 2.6:
+		pose = "open"
+	elif k >= 3.4 and k < 5.2:
+		pose = "peace"
+	elif k >= 5.8 and k < 6.8:
+		pose = "fist"
+	var seen := k < 7.4
+	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,
+		"pinch": false, "pose": pose if seen else "", "hand_x": 0.45, "hand_y": 0.55, "pinch_ratio": 0.8, "confidence": 0.95,
 		"in_roi": seen, "reason": "" if seen else "no_hand", "frame_w": 640, "frame_h": 480, "timestamp": 0, "latency_ms": 30.0}
 
 ## Claw test: turn the claw servo by `deg` degrees (relative). The real robot
@@ -1055,7 +1088,7 @@ func _update_gesture_presentation(dt: float) -> void:
 		elif gesture_gate_reason != "" and gesture_gate_reason != GATE_FOCUS and gesture.detected:
 			face = "blocked"
 		elif gesture.is_active():
-			steer = gesture.velocity / maxf(gesture.joystick.max_speed, 1e-6)
+			steer = gesture.velocity / maxf(gesture.scheme.max_speed(gesture), 1e-6)
 	ufo.gesture_face = face
 	ufo.steer = steer
 
