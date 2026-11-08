@@ -39,6 +39,9 @@ func _ready() -> void:
 	_test_gesture_states()
 	_test_gesture_z_and_claw()
 	_test_gesture_schemes()
+	_test_pose_direction_scheme()
+	_test_pose_finger_direction()
+	_test_pose_thumb_and_claw()
 	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
@@ -1246,6 +1249,192 @@ func _test_gesture_schemes() -> void:
 	for i in 60:
 		step.call("fist")  # not a claw pose of this scheme
 	_ok(claws.is_empty() and g.claw_pose == "", "gesture scheme: only the scheme's claw poses move the claw", str(claws))
+
+## The hand-shape scheme: パー / チョキ move the crane a set way, through the safety frame.
+func _test_pose_direction_scheme() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"schemes": {"pose_direction": {"directions": {"open": [1, 0, 0], "peace": [-1, 0, 0]}, "speed_mm_s": 20.0,
+			"pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0, "claw": {"fist": "closed", "open": "open"}}}})
+	var ps := g.scheme as PoseDirectionScheme
+	_ok(ps != null and ps.speed_mm_s == 20.0 and ps.claw_poses() == {"fist": "closed"} and ps.mapping_text() == "パー=右 チョキ=左 グー=爪閉",
+		"pose scheme: chosen by config with its settings; a shape used for a direction never moves the claw",
+		"%s %s" % [ps.claw_poses() if ps else null, ps.mapping_text() if ps else ""])
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(pose: String, n := 1) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	step.call("other", 3)
+	step.call("open", 3)  # 50 ms: passing through a shape moves nothing
+	var passing := g.state == S.HAND_DETECTED and g.velocity == Vector2.ZERO
+	step.call("other", 10)
+	step.call("open", 10)  # held past pose_confirm_ms
+	var right := g.is_active() and g.velocity == Vector2(20.0, 0.0) and g.velocity_z == 0.0
+	_ok(passing and right, "pose scheme: パー held = +X at the set speed; a passing shape does nothing", "%s %s %s" % [passing, g.state_name(), g.velocity])
+
+	step.call("other", 2)  # a flicker shorter than pose_release_ms
+	var kept := g.is_active() and g.velocity == Vector2(20.0, 0.0)
+	step.call("peace", 1)
+	step.call("open", 1)
+	kept = kept and g.is_active()
+	_ok(kept, "pose scheme: a short flicker of the shape does not stop it", g.state_name())
+
+	var states: Array[int] = []
+	var rec := func(_f, to, _w): states.append(to)
+	g.state_changed.connect(rec)
+	step.call("peace", 20)
+	g.state_changed.disconnect(rec)
+	var left := g.is_active() and g.velocity == Vector2(-20.0, 0.0)
+	_ok(left and states.has(S.HAND_DETECTED) and states.find(S.HAND_DETECTED) < states.find(S.ACTIVE),
+		"pose scheme: チョキ = -X; changing shape stops first, then arms the new way", "%s %s" % [states, g.velocity])
+
+	g.stop("stop_key")
+	step.call("peace", 30)  # still チョキ: latched
+	var latched := g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	step.call("other", 2)  # a flicker is not letting go
+	step.call("peace", 30)
+	latched = latched and g.state == S.WAITING_RELEASE and g.velocity == Vector2.ZERO
+	step.call("other", 10)  # gone for longer than pose_release_ms
+	var lifted := g.state == S.HAND_DETECTED
+	step.call("peace", 12)
+	_ok(latched and lifted and g.is_active(), "pose scheme: after a stop the same shape does not restart it; letting go does",
+		"%s %s %s" % [latched, lifted, g.state_name()])
+
+	# after a stop, going straight to another direction shape also lets go (held, not a misread)
+	g.stop("stop_key")
+	step.call("peace", 5)
+	step.call("open", 1)  # a one-frame misread of another shape
+	step.call("peace", 5)
+	var misread_kept := g.state == S.WAITING_RELEASE
+	step.call("open", 30)
+	_ok(misread_kept and g.is_active() and g.velocity == Vector2(20.0, 0.0),
+		"pose scheme: after a stop, holding another direction shape lets go and moves that way; a one-frame misread does not",
+		"%s %s %s" % [misread_kept, g.state_name(), g.velocity])
+
+	step.call("other", 10)
+	step.call("fist", 40)
+	_ok(claws == ["closed"], "pose scheme: the claw shape still works (fist = close)", str(claws))
+
+	# switching the scheme while a shape is held: latched even though the new scheme has not confirmed it yet
+	g.set_scheme(PinchJoystickScheme.ID)
+	step.call("other", 3)
+	g.set_scheme(PoseDirectionScheme.ID)
+	step.call("open", 30)
+	var switch_latched := g.state != S.ACTIVE and g.velocity == Vector2.ZERO
+	g.use_scheme(PinchJoystickScheme.new())
+	step.call("open", 3)
+	var ps2 := PoseDirectionScheme.new()
+	ps2.configure({"directions": {"open": [1, 0, 0]}, "pose_confirm_ms": 0.0, "smoothing_ms": 0.0})
+	g.use_scheme(ps2)  # a stop while パー is in view
+	step.call("open", 30)
+	_ok(switch_latched and g.state == S.WAITING_RELEASE and g.reason == "scheme_changed",
+		"pose scheme: a shape held across a scheme switch does not move", "%s %s %s" % [switch_latched, g.state_name(), g.reason])
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	_ok(main_script.sim_pose(true) == "open" and main_script.sim_pose(false) == "other",
+		"pose scheme: the mouse simulation shows no shape unless a key says so (an open hand for the pinch stick)")
+
+## Pointing: the crane goes where the index finger points (any angle), through
+## the camera calibration of the stick.
+func _test_pose_finger_direction() -> void:
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"joystick": {"invert_x": false, "invert_y": false, "swap_xy": false},
+		"schemes": {"pose_direction": {"speed_mm_s": 20.0, "pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0}}})
+	var ps := g.scheme as PoseDirectionScheme
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var step := func(pose: String, dir := Vector2.ZERO, n := 1, length := 1.0) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose, "point_dx": dir.x, "point_dy": dir.y, "point_len": length}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	var near := func(a: Vector2, b: Vector2) -> bool: return a.distance_to(b) < 0.05
+	step.call("other", Vector2.ZERO, 3)
+	step.call("point", Vector2(1, 0), 12)  # pointing right in the image
+	var right: Vector2 = g.velocity
+	step.call("point", Vector2(0, -1), 1)  # turned to point up in the image: away from the camera's bottom = +Y
+	var away: Vector2 = g.velocity
+	var d := Vector2(1, -1).normalized()
+	step.call("point", d, 1)  # a diagonal
+	var diag: Vector2 = g.velocity
+	var still_active := g.is_active()
+	_ok(near.call(right, Vector2(20, 0)) and near.call(away, Vector2(0, 20)) and near.call(diag, Vector2(14.142, 14.142)) and still_active,
+		"pose scheme: pointing moves the crane where the finger points, diagonals too; turning the finger turns it",
+		"%s %s %s %s" % [right, away, diag, still_active])
+	step.call("point", Vector2(1, 0), 1, 0.2)  # the finger points at the camera: too short to tell
+	var unsure: Vector2 = g.velocity
+	g.joystick.invert_x = true  # the camera's calibration applies to the finger as to the stick
+	step.call("point", Vector2(1, 0), 1)
+	var inverted: Vector2 = g.velocity
+	g.joystick.invert_x = false
+	ps.point_snap_deg = 45.0
+	step.call("point", Vector2.from_angle(deg_to_rad(-30.0)), 1)  # 30 deg up from right: snaps to 45
+	var snapped: Vector2 = g.velocity
+	_ok(unsure == Vector2.ZERO and g.is_active() and near.call(inverted, Vector2(-20, 0)) and near.call(snapped, Vector2(14.142, 14.142)),
+		"pose scheme: no motion while the finger points at the camera; follows invert_x; can snap to 8 ways",
+		"%s %s %s" % [unsure, inverted, snapped])
+	_ok(ps.mapping_text() == "指差し=指の向き いいね↑=上げる いいね↓=下げる パー=爪開 チョキ=爪閉",
+		"pose scheme: the default mapping (point, thumbs-up up / down, claw on パー / チョキ)", ps.mapping_text())
+
+## The default hand-shape mapping: a thumbs-up raises / lowers the arm by where
+## the thumb points in the shown view; パー opens the claw, チョキ closes it, グー rests.
+func _test_pose_thumb_and_claw() -> void:
+	var S := GestureControl.State
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"joystick": {"invert_z": false},
+		"schemes": {"pose_direction": {"speed_z": 10.0, "pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0}}})
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var claws: Array[String] = []
+	g.claw_requested.connect(func(w): claws.append(w))
+	var step := func(pose: String, thumb := Vector2.ZERO, n := 1) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose, "thumb_dx": thumb.x, "thumb_dy": thumb.y}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	step.call("other", Vector2.ZERO, 3)
+	step.call("thumb", Vector2(0, -1), 12)  # the thumb towards the top of the image
+	var up := g.is_active() and g.mode == "z" and is_equal_approx(g.velocity_z, 10.0) and g.velocity == Vector2.ZERO
+	var states: Array[int] = []
+	var rec := func(_f, to, _w): states.append(to)
+	g.state_changed.connect(rec)
+	step.call("thumb", Vector2(0, 1), 20)  # turned over: towards the bottom
+	g.state_changed.disconnect(rec)
+	var down := g.is_active() and is_equal_approx(g.velocity_z, -10.0)
+	_ok(up and down and states.has(S.HAND_DETECTED),
+		"pose scheme: thumbs-up up = arm up, down = arm down; turning the thumb over stops first",
+		"%s %s %s %.1f" % [up, down, states, g.velocity_z])
+
+	step.call("thumb", Vector2(1, 0.2).normalized(), 20)  # sideways: no sign
+	var sideways := not g.is_active() and g.velocity_z == 0.0
+	g.joystick.view_flip_v = true  # the view is shown upside down: the top of the image is the bottom of the screen
+	step.call("thumb", Vector2(0, -1), 20)
+	var flipped := g.is_active() and is_equal_approx(g.velocity_z, -10.0)
+	g.joystick.view_flip_v = false
+	_ok(sideways and flipped, "pose scheme: a sideways thumb does nothing; up / down follow the shown view",
+		"%s %s %.1f" % [sideways, flipped, g.velocity_z])
+
+	step.call("other", Vector2.ZERO, 10)
+	step.call("open", Vector2.ZERO, 40)  # 0.67 s of パー
+	var opened := claws == ["open"] and g.velocity_z == 0.0 and not g.is_active()
+	step.call("peace", Vector2.ZERO, 40)
+	var closed := claws == ["open", "closed"]
+	step.call("fist", Vector2.ZERO, 60)  # resting: nothing
+	_ok(opened and closed and claws == ["open", "closed"] and not g.is_active() and g.velocity_z == 0.0,
+		"pose scheme: パー opens the claw, チョキ closes it, グー does nothing (none moves the crane)", str(claws))
 
 ## A test scheme: "open" steers +X, "peace" -X, no claw.
 class _PoseScheme extends GestureScheme:

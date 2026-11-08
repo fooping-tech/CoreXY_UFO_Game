@@ -23,8 +23,15 @@ func configure(_c: Dictionary) -> void:
 	pass
 
 ## Called once per tick with a fresh, detected hand: true while the hand gives
-## the sign to steer. The forced-stop latch waits for this to go false.
+## the sign to steer (confirmed: a scheme may wait a moment before it counts).
 func engaged(_g, _now_ms: float) -> bool:
+	return false
+
+## After `engaged` in the same tick: true while the sign is still to be seen,
+## even before it is confirmed or within a short flicker of losing it. The
+## forced-stop latch and "already giving the sign when it came into view"
+## wait for this to go false, so a confirmation delay can never lift them.
+func sign_seen(_g) -> bool:
 	return false
 
 ## While ARMED / ACTIVE: false when the sign changed into another one (the
@@ -47,3 +54,23 @@ func reset(_g) -> void:
 ## Hand shape -> claw position ("closed" / "open") when held while not steering.
 func claw_poses() -> Dictionary:
 	return {}
+
+## Top XY speed (mm/s) for the HUD's gauge and the UFO's lean.
+func max_speed(_g) -> float:
+	return 1.0
+
+## True when the steer is a stick around an anchor (the HUD draws its ring).
+func uses_stick() -> bool:
+	return false
+
+## HUD words: how to start steering (title, hint).
+func prompt() -> Array[String]:
+	return ["", ""]
+
+## HUD words while steering: how to stop.
+func steer_hint() -> String:
+	return ""
+
+## HUD words after a forced stop: what lifts the latch.
+func release_hint() -> String:
+	return ""

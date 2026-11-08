@@ -439,3 +439,59 @@ def test_palm_facing_up_down_side_and_inverted_for_a_left_hand():
     ev = frames(ctrl, [shaped_hand(thumb_at="middle", palm_up=True)])[-1]
     assert ev["pinch"] and ev["palm"] == "up"
 
+
+
+def rotated(pts, deg, w=W, h=H):
+    """The hand turned by `deg` (clockwise on the screen, image y down) about its wrist, in pixels."""
+    a = math.radians(deg)
+    ox, oy = pts[0][0] * w, pts[0][1] * h
+    out = []
+    for x, y, z in pts:
+        dx, dy = x * w - ox, y * h - oy
+        out.append(((ox + dx * math.cos(a) - dy * math.sin(a)) / w, (oy + dx * math.sin(a) + dy * math.cos(a)) / h, z))
+    return out
+
+
+def test_point_pose_and_where_the_index_finger_points():
+    point = shaped_hand(folded=("middle", "ring", "pinky"))
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, pinch_start=1.0, pinch_release=1.5))
+    ev = frames(ctrl, [point] * 2)[-1]
+    # fingers up in the image: pointing up (dy -1); a finger about 0.8 hand widths long
+    assert ev["pose"] == "point" and not ev["pinch"]
+    assert ev["point_dx"] == pytest.approx(0.0, abs=1e-3) and ev["point_dy"] == pytest.approx(-1.0, abs=1e-3)
+    assert 0.5 < ev["point_len"] < 1.5
+    # turned: right, down-left (a diagonal), in true pixel angles whatever the aspect
+    for deg, want in ((90, (1.0, 0.0)), (225, (-math.sqrt(0.5), math.sqrt(0.5)))):
+        ev = frames(HandControl(HandControlConfig()), [rotated(point, deg)])[-1]
+        assert ev["pose"] == "point", deg
+        assert (ev["point_dx"], ev["point_dy"]) == pytest.approx(want, abs=1e-3), deg
+    # other shapes keep their names; a lost camera carries no direction
+    assert frames(ctrl, [shaped_hand(folded=("ring", "pinky"))])[-1]["pose"] == "peace"
+    assert ctrl.camera_lost()["point_len"] == 0.0
+
+
+def thumbs_up(cx=0.5, cy=0.5, size=0.2, down=False):
+    """A fist with the thumb sticking out towards the top of the image (or the bottom)."""
+    s = size * H
+    pts = shaped_hand(folded=("index", "middle", "ring", "pinky"), cx=cx, cy=cy, size=size)
+    sign = 1.0 if down else -1.0
+
+    def px(dx, dy):
+        return (cx + dx * s / W, cy + dy * s / H, 0.0)
+    pts[2] = px(-0.8, 0.3)
+    pts[3] = px(-0.85, 0.3 + sign * 0.5)
+    pts[4] = px(-0.9, 0.3 + sign * 1.0)
+    return pts
+
+
+def test_thumbs_up_is_told_from_a_fist_and_reports_where_the_thumb_points():
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, pinch_start=1.0, pinch_release=1.5))
+    up = frames(ctrl, [thumbs_up()] * 2)[-1]
+    assert up["pose"] == "thumb" and not up["pinch"]
+    assert up["thumb_dy"] < -0.9 and abs(up["thumb_dx"]) < 0.2  # towards the top of the image
+    down = frames(ctrl, [thumbs_up(down=True)])[-1]
+    assert down["pose"] == "thumb" and down["thumb_dy"] > 0.9
+    # the thumb tucked over the folded fingers: still a fist
+    fist = shaped_hand(folded=("index", "middle", "ring", "pinky"), thumb_at="index")
+    assert frames(ctrl, [fist])[-1]["pose"] == "fist"
+    assert ctrl.camera_lost()["thumb_dy"] == 0.0
