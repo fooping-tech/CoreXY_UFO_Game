@@ -87,6 +87,14 @@ static func view_offset(g: GestureControl, flip_h: bool, flip_v: bool) -> Vector
 	var off := (g.hand - g.joystick.anchor) / maxf(g.joystick.radius, 1e-6)
 	return Vector2(-off.x if flip_h else off.x, -off.y if flip_v else off.y)
 
+## Where the pointing finger points in the camera view's screen axes (after
+## its flips); zero unless a "point" pose is seen.
+static func point_view_dir(g: GestureControl, flip_h: bool, flip_v: bool) -> Vector2:
+	if not g.detected or g.pose != "point" or g.point_dir == Vector2.ZERO:
+		return Vector2.ZERO
+	var d := g.point_dir.normalized()
+	return Vector2(-d.x if flip_h else d.x, -d.y if flip_v else d.y)
+
 ## Robot-axes direction in words (+X 右, +Y 奥).
 static func direction_text(v: Vector2) -> String:
 	if v.length() < 0.5:
@@ -189,6 +197,8 @@ func _draw() -> void:
 	# The ring is the hand's motion as the mini camera view shows it (the view's
 	# flips included), so the square and the arrow move like the hand on it.
 	var off := view_offset(g, _overlay.flip_h, _overlay.flip_v)
+	if not g.scheme.uses_stick():
+		off = point_view_dir(g, _overlay.flip_h, _overlay.flip_v) * 0.55  # the finger, on the small ring
 	var dot := c0 + off.limit_length(1.15) * RING_R
 	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5 and off.length() > 1e-3:
 		var dir := off.normalized()

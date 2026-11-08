@@ -14,14 +14,26 @@ extends GestureScheme
 ##   - after a forced stop the shape must be gone for pose_release_ms before
 ##     anything moves again (`sign_seen`)
 ##   - a shape used for a direction never moves the claw
-## Directions are robot axes: [x, y, z] (+X right, +Y away, +Z arm up).
+## Directions are robot axes: [x, y, z] (+X right, +Y away, +Z arm up), or
+## "finger": where the index finger points (the backend's point_dx / point_dy,
+## image axes) turned into robot axes with the same camera calibration as the
+## pinch stick (`g.joystick.to_robot`: invert_x / invert_y / swap_xy), any
+## angle (diagonals too), or snapped to point_snap_deg. Turning the finger while
+## pointing turns the steer with it; a finger pointing at the camera (shorter
+## than point_min_len hand sizes) asks for nothing.
 
 const ID := "pose_direction"
 ## Japanese names for the HUD.
-const POSE_NAMES := {"open": "パー", "peace": "チョキ", "fist": "グー"}
+const POSE_NAMES := {"open": "パー", "peace": "チョキ", "fist": "グー", "point": "指差し"}
+## A direction that follows the index finger.
+const FINGER := "finger"
 
-## pose -> direction (robot axes, any length: normalised per part).
-var directions := {"open": Vector3(1, 0, 0), "peace": Vector3(-1, 0, 0)}
+## pose -> direction (robot axes, any length: normalised per part) or FINGER.
+var directions := {"open": Vector3(1, 0, 0), "peace": Vector3(-1, 0, 0), "point": FINGER}
+## The finger's length (over the hand size) below which it points at the camera.
+var point_min_len := 0.4
+## Snap the finger's direction to steps of this many degrees (0 = any angle; 45 = 8 ways).
+var point_snap_deg := 0.0
 var speed_mm_s := 20.0
 var speed_z := 10.0  # z units/s
 var pose_confirm_ms := 150.0
@@ -55,14 +67,18 @@ func configure(c: Dictionary) -> void:
 			var v = d[k]
 			if v is Array and v.size() == 3:
 				dirs[str(k)] = Vector3(float(v[0]), float(v[1]), float(v[2]))
+			elif str(v) == FINGER:
+				dirs[str(k)] = FINGER
 			else:
-				push_warning("gesture pose_direction: direction of '%s' must be [x, y, z]" % k)
+				push_warning("gesture pose_direction: direction of '%s' must be [x, y, z] or \"finger\"" % k)
 		directions = dirs
 	speed_mm_s = float(c.get("speed_mm_s", speed_mm_s))
 	speed_z = float(c.get("speed_z", speed_z))
 	pose_confirm_ms = float(c.get("pose_confirm_ms", pose_confirm_ms))
 	pose_release_ms = float(c.get("pose_release_ms", pose_release_ms))
 	smoothing_ms = float(c.get("smoothing_ms", smoothing_ms))
+	point_min_len = float(c.get("point_min_len", point_min_len))
+	point_snap_deg = float(c.get("point_snap_deg", point_snap_deg))
 	var cl = c.get("claw", null)
 	if cl is Dictionary:
 		claw = cl.duplicate()
@@ -135,19 +151,34 @@ func same_engagement(_g) -> bool:
 func on_arm(g, _now_ms: float) -> void:
 	_armed = _active
 	_out = Vector3.ZERO
-	var d: Vector3 = directions.get(_armed, Vector3.ZERO)
-	g.mode = "z" if d.z != 0.0 and d.x == 0.0 and d.y == 0.0 else "xy"
+	var d = directions.get(_armed, Vector3.ZERO)
+	g.mode = "z" if d is Vector3 and d.z != 0.0 and d.x == 0.0 and d.y == 0.0 else "xy"
 
-## The velocity a shape asks for: XY at speed_mm_s, Z at speed_z.
-func target_for(pose: String) -> Vector3:
-	var d: Vector3 = directions.get(pose, Vector3.ZERO)
+## The velocity a shape asks for: XY at speed_mm_s, Z at speed_z; a FINGER
+## direction along where the index finger points.
+func target_for(pose: String, g = null) -> Vector3:
+	var d = directions.get(pose, Vector3.ZERO)
+	if str(d) == FINGER:
+		var f := finger_robot_dir(g)
+		return Vector3(f.x, f.y, 0.0) * speed_mm_s
 	var xy := Vector2(d.x, d.y)
 	if xy.length() > 1e-6:
 		xy = xy.normalized() * speed_mm_s
 	return Vector3(xy.x, xy.y, signf(d.z) * speed_z)
 
-func velocity(_g, dt: float) -> Vector3:
-	var target := target_for(_armed)
+## Unit direction (robot X / Y) of the pointing finger, or zero when it points
+## at the camera (too short to tell) or there is none.
+func finger_robot_dir(g) -> Vector2:
+	if g == null or g.point_len < point_min_len or g.point_dir.length() < 0.5:
+		return Vector2.ZERO
+	var r: Vector2 = g.joystick.to_robot(g.point_dir.normalized())
+	if point_snap_deg > 0.0:
+		var step := deg_to_rad(point_snap_deg)
+		r = Vector2.from_angle(roundf(r.angle() / step) * step)
+	return r.normalized()
+
+func velocity(g, dt: float) -> Vector3:
+	var target := target_for(_armed, g)
 	var a := 1.0 if smoothing_ms <= 0.0 else 1.0 - exp(-dt * 1000.0 / smoothing_ms)
 	_out = _out.lerp(target, a)
 	return _out
@@ -164,7 +195,7 @@ func claw_poses() -> Dictionary:
 func max_speed(_g) -> float:
 	return speed_mm_s
 
-## "パー=右 チョキ=左" from the directions.
+## "パー=右 チョキ=左 指差し=指の向き" from the directions.
 func mapping_text() -> String:
 	var parts: Array[String] = []
 	for k in directions:
@@ -173,7 +204,9 @@ func mapping_text() -> String:
 		parts.append("%s=爪%s" % [POSE_NAMES.get(k, k), "閉" if claw[k] == "closed" else "開"])
 	return " ".join(parts)
 
-static func direction_word(d: Vector3) -> String:
+static func direction_word(d) -> String:
+	if str(d) == FINGER:
+		return "指の向き"
 	var w := ""
 	if d.x > 0.0:
 		w += "右"

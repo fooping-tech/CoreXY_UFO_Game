@@ -61,8 +61,11 @@
       "pose_direction": {
         "directions": {
           "open": [1, 0, 0],
-          "peace": [-1, 0, 0]
+          "peace": [-1, 0, 0],
+          "point": "finger"
         },
+        "point_min_len": 0.4,
+        "point_snap_deg": 0.0,
         "speed_mm_s": 20.0,
         "speed_z": 10.0,
         "pose_confirm_ms": 150.0,
@@ -71,7 +74,7 @@
         "claw": {
           "fist": "closed"
         },
-        "_note": "Hand shape per direction (robot axes [x, y, z]; +X right, +Y away, +Z arm up). open = パー, peace = チョキ, fist = グー. A shape counts after pose_confirm_ms; a confirmed one survives a flicker shorter than pose_release_ms; another shape stops first, then arms again. After a forced stop the shape must be gone for pose_release_ms. A shape used for a direction never moves the claw. Untested with the real camera / robot."
+        "_note": "Hand shape per direction (robot axes [x, y, z]; +X right, +Y away, +Z arm up). open = パー, peace = チョキ, fist = グー, point = 指差し (only the index out). \"finger\" = where the index finger points (any angle, or snapped to point_snap_deg; image -> robot axes with the joystick invert_x / invert_y / swap_xy; shorter than point_min_len hand sizes = pointing at the camera = no motion). A shape counts after pose_confirm_ms; a confirmed one survives a flicker shorter than pose_release_ms; another shape stops first, then arms again. After a forced stop the shape must be gone for pose_release_ms. A shape used for a direction never moves the claw. Untested with the real camera / robot."
       }
     },
     "palm_invert": false,

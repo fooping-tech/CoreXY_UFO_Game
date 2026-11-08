@@ -40,6 +40,7 @@ func _ready() -> void:
 	_test_gesture_z_and_claw()
 	_test_gesture_schemes()
 	_test_pose_direction_scheme()
+	_test_pose_finger_direction()
 	_test_gesture_z_has_its_own_sound(rs)
 	_test_gesture_with_mock_robot(rs)
 	_test_error_clears_when_the_machine_recovers(rs)
@@ -1338,6 +1339,50 @@ func _test_pose_direction_scheme() -> void:
 	var main_script: GDScript = load("res://scripts/game/main.gd")
 	_ok(main_script.sim_pose(true) == "open" and main_script.sim_pose(false) == "other",
 		"pose scheme: the mouse simulation shows no shape unless a key says so (an open hand for the pinch stick)")
+
+## Pointing: the crane goes where the index finger points (any angle), through
+## the camera calibration of the stick.
+func _test_pose_finger_direction() -> void:
+	var g := GestureControl.new()
+	g.configure({"stale_ms": 150.0, "arm_delay_ms": 0.0, "scheme": "pose_direction",
+		"joystick": {"invert_x": false, "invert_y": false, "swap_xy": false},
+		"schemes": {"pose_direction": {"speed_mm_s": 20.0, "pose_confirm_ms": 100.0, "pose_release_ms": 100.0, "smoothing_ms": 0.0}}})
+	var ps := g.scheme as PoseDirectionScheme
+	g.enabled = true
+	var t := [1000.0]
+	var seq := [0]
+	var step := func(pose: String, dir := Vector2.ZERO, n := 1, length := 1.0) -> void:
+		for i in n:
+			t[0] += 1000.0 / 60.0
+			seq[0] += 1
+			g.on_event(_hev(seq[0], true, false, 0.5, 0.5, {"pose": pose, "point_dx": dir.x, "point_dy": dir.y, "point_len": length}), t[0])
+			g.tick(t[0], 1.0 / 60.0, "")
+	var near := func(a: Vector2, b: Vector2) -> bool: return a.distance_to(b) < 0.05
+	step.call("other", Vector2.ZERO, 3)
+	step.call("point", Vector2(1, 0), 12)  # pointing right in the image
+	var right: Vector2 = g.velocity
+	step.call("point", Vector2(0, -1), 1)  # turned to point up in the image: away from the camera's bottom = +Y
+	var away: Vector2 = g.velocity
+	var d := Vector2(1, -1).normalized()
+	step.call("point", d, 1)  # a diagonal
+	var diag: Vector2 = g.velocity
+	var still_active := g.is_active()
+	_ok(near.call(right, Vector2(20, 0)) and near.call(away, Vector2(0, 20)) and near.call(diag, Vector2(14.142, 14.142)) and still_active,
+		"pose scheme: pointing moves the crane where the finger points, diagonals too; turning the finger turns it",
+		"%s %s %s %s" % [right, away, diag, still_active])
+	step.call("point", Vector2(1, 0), 1, 0.2)  # the finger points at the camera: too short to tell
+	var unsure: Vector2 = g.velocity
+	g.joystick.invert_x = true  # the camera's calibration applies to the finger as to the stick
+	step.call("point", Vector2(1, 0), 1)
+	var inverted: Vector2 = g.velocity
+	g.joystick.invert_x = false
+	ps.point_snap_deg = 45.0
+	step.call("point", Vector2.from_angle(deg_to_rad(-30.0)), 1)  # 30 deg up from right: snaps to 45
+	var snapped: Vector2 = g.velocity
+	_ok(unsure == Vector2.ZERO and g.is_active() and near.call(inverted, Vector2(-20, 0)) and near.call(snapped, Vector2(14.142, 14.142)),
+		"pose scheme: no motion while the finger points at the camera; follows invert_x; can snap to 8 ways",
+		"%s %s %s" % [unsure, inverted, snapped])
+	_ok(ps.mapping_text() == "パー=右 チョキ=左 指差し=指の向き グー=爪閉", "pose scheme: the default mapping includes pointing", ps.mapping_text())
 
 ## A test scheme: "open" steers +X, "peace" -X, no claw.
 class _PoseScheme extends GestureScheme:

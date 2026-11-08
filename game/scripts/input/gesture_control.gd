@@ -84,7 +84,11 @@ var camera_ok := false
 var pinch_ratio := 0.0
 var pinch_finger := ""  # "index" / "middle" / "ring" while pinching
 var palm := ""  # "up" / "down" / "side" from the backend
-var pose := ""  # "fist" / "peace" / "open" / "other" from the backend
+var pose := ""  # "fist" / "peace" / "point" / "open" / "other" from the backend
+## Where the index finger points (image axes, unit; zero when unknown) and its
+## length over the hand size (short: pointing at the camera), from the backend.
+var point_dir := Vector2.ZERO
+var point_len := 0.0
 ## Fist / peace being held now, since when, and the pose that already moved the claw.
 var claw_pose := ""
 var _claw_since_ms := 0.0
@@ -204,6 +208,8 @@ func on_event(ev: Dictionary, recv_ms: float) -> bool:
 		pinch_finger = "index"  # older backends / the simulator only know the index pinch
 	pose = str(ev.get("pose", "")) if detected else ""
 	palm = str(ev.get("palm", "")) if detected else ""
+	point_dir = Vector2(float(ev.get("point_dx", 0.0)), float(ev.get("point_dy", 0.0))) if detected else Vector2.ZERO
+	point_len = float(ev.get("point_len", 0.0)) if detected else 0.0
 	return true
 
 ## 0..1 of the claw-pose hold before the claw moves (0 when none is building up).
