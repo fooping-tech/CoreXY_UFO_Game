@@ -8,7 +8,9 @@ Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
-  measured counts per unit, saved; clear = start over), grab {close}, stop (ABORT, emergency),
+  measured counts per unit, saved; clear = start over), z_servo_recover (after the drum
+  servo's power was cut alone: a SERVO_TURN the firmware refuses unmoved, so the next jog
+  sets it to multi-turn again; a motion command), grab {close}, stop (ABORT, emergency),
   soft_stop (decelerate, no alarm), jog {vx,vy,vz?} (mm/s; vz = Z value/s; dead-man: resend ~20 Hz while
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than
@@ -55,10 +57,10 @@ log = logging.getLogger(__name__)
 SERIAL_LOG_SKIP = ("TX POS", "RX POS ", "RX JOG_POS ")
 LOG_QUEUE_MAX = 500
 
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "grab", "stop", "soft_stop", "jog",
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status")
-MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto")
+MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
 PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status")
@@ -400,6 +402,8 @@ class GameServer:
                 await self.robot.set_z_zero()
             elif name == "z_set":
                 await self.robot.set_z_point(str(params.get("which", "")))
+            elif name == "z_servo_recover":
+                await self.robot.recover_z_servo()
             elif name == "arm_zero":
                 await self.robot.arm_zero()
             elif name == "arm_set":

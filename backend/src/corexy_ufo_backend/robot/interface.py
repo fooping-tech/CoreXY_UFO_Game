@@ -39,6 +39,10 @@ class RobotInterface(ABC):
     @abstractmethod
     async def set_z_zero(self) -> None: ...
 
+    async def recover_z_servo(self) -> None:
+        """Bring the drum servo back after its power was cut alone (real robot only)."""
+        return None
+
     async def set_z_point(self, which: str) -> None:
         """Record the arm's current height as its top ("top") or bottom ("bottom")."""
         if which != "top":

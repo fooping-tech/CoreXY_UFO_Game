@@ -62,6 +62,14 @@ SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Ease-out (rate * f^2): the last steps are very slow, so the hanging arm is not
 # thrown up and does not drop back when a raise (W) stops.
 Z_RAMP_S = 0.35
+# The drum servo alone lost power (operators cut it): it is back to one turn
+# (limits 0/4095) while the firmware still tracks turns, so a jog stops silently
+# at the end of that turn and the turn count is gone.
+Z_SERVO_RESET_MSG = ("Z servo reset (its power was cut): a jog stops at the end of one turn "
+                     "and the drum's turn count is lost; recover it (z_servo_recover), "
+                     "then record the Z points again")
+# z_servo_recover: a SERVO_TURN this small (up), refused unmoved while the servo is reset
+Z_RECOVER_TURNS = 0.01
 Z_RAMP_STEP_S = 0.04
 
 
@@ -111,6 +119,7 @@ class RealRobot(RobotInterface):
         self._z_bottom_counts: int | None = None
         self._z_units_est: float = cfg.limits.z_max if cfg.limits.z_up_is_positive else cfg.limits.z_min
         self._z_measured = False
+        self.z_servo_reset = False  # see Z_SERVO_RESET_MSG
         self._busy = False
         self._last_poll = 0.0
         self._last_z_poll = 0.0
@@ -133,6 +142,7 @@ class RealRobot(RobotInterface):
             st = await self.serial.servo_status(Z_SERVO_ID)
             if st.ok and st.abs_counts is not None:
                 self._z_counts = st.abs_counts
+            self._note_z_status(st)
         except SerialError:
             pass
 
@@ -372,6 +382,59 @@ class RealRobot(RobotInterface):
     def _forget_z_points(self) -> None:
         self._z_top_counts = self._z_bottom_counts = None
 
+    def _note_z_status(self, st: P.ServoStatus) -> None:
+        """Notice a drum servo whose power was cut on its own (and its recovery)."""
+        if not st.ok:
+            return
+        if st.multi_turn_lost:
+            if not self.z_servo_reset:
+                log.warning("Z servo reset detected (%s): forgetting the Z points", st.raw)
+                self._forget_z_points()  # the drum's turn count is gone
+                self.z_servo_reset = True
+            self.error = Z_SERVO_RESET_MSG
+        elif self.z_servo_reset:
+            log.info("Z servo multi-turn state recovered")
+            self.z_servo_reset = False
+            if self.error == Z_SERVO_RESET_MSG:
+                self.error = ""
+
+    async def recover_z_servo(self) -> None:
+        """After the drum servo's power was cut alone: send the smallest SERVO_TURN.
+        The firmware refuses it before moving (multi_turn_lost) and drops its turn
+        tracking, so the next jog sets the servo to multi-turn again. Only sent while
+        the reset is seen in SERVO_STATUS (otherwise it would turn a hair, upwards)."""
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        try:
+            st = await self.serial.servo_status(Z_SERVO_ID)
+        except SerialError as e:
+            raise RobotCommandError(f"SERVO_STATUS {Z_SERVO_ID} failed: {e}") from e
+        self._note_z_status(st)
+        if not self.z_servo_reset:
+            log.info("z_servo_recover: the Z servo is not reset, nothing to do")
+            return
+        self._require(homed=False)
+        self._busy = True
+        try:
+            await self._wait_jog_ended()
+            await self._ensure_test_mode()
+            turns = Z_RECOVER_TURNS * (1 if self.cfg.z_sign >= 0 else -1)  # z_sign: + counts = arm up
+            r = await self.serial.send(P.cmd_servo_turn(Z_SERVO_ID, turns), timeout=10.0)
+            res = P.parse_servo_result(r.completion or "")
+            if res is None or not (res.ok or "multi_turn_lost" in res.raw):
+                self.error = r.completion or "SERVO_TURN failed"
+                raise RobotCommandError(self.error)
+            st = await self.serial.servo_status(Z_SERVO_ID)
+            self._note_z_status(st)
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            self.error = str(e)
+            raise RobotCommandError(str(e)) from e
+        finally:
+            self._busy = False
+            self._state = MachineState.IDLE
+        if self.z_servo_reset:
+            raise RobotCommandError("Z servo still reset after recovery: power-cycle the robot")
+
     def _apply_z_cal(self) -> None:
         """Measured counts per unit / direction replace the config's (shared with the auto catch)."""
         assert self.z_cal.counts_per_unit is not None and self.z_cal.sign is not None
@@ -419,6 +482,9 @@ class RealRobot(RobotInterface):
         st = await self.serial.servo_status(Z_SERVO_ID)
         if not st.ok or st.abs_counts is None:
             raise RobotCommandError(f"SERVO_STATUS {Z_SERVO_ID} failed: {st.raw}")
+        self._note_z_status(st)
+        if self.z_servo_reset:
+            raise RobotCommandError(Z_SERVO_RESET_MSG)
         counts = st.abs_counts
         top = counts if which == "top" else self._z_top_counts
         bottom = counts if which == "bottom" else self._z_bottom_counts
@@ -687,6 +753,8 @@ class RealRobot(RobotInterface):
             else:
                 self._end_jog_session()
             return
+        if z_counts_s and self.z_servo_reset:
+            raise RobotCommandError(Z_SERVO_RESET_MSG)
         # connected, motors enabled, no alarm, no move running; XY also needs homing
         self._require(homed=bool(vx_mm_s or vy_mm_s))
         speed = math.hypot(vx_mm_s, vy_mm_s)
@@ -762,6 +830,7 @@ class RealRobot(RobotInterface):
             self._last_z_poll = now
             try:
                 st = await self.serial.servo_status(Z_SERVO_ID, timeout=2.0)
+                self._note_z_status(st)
                 if st.ok and st.abs_counts is not None:
                     self._apply_z_counts(st.abs_counts)
             except SerialError:
@@ -805,7 +874,7 @@ class RealRobot(RobotInterface):
             alarm=self.alarm, error=self.error, test_mode=self.test_mode,
             timestamp_ms=int(time.time() * 1000), z_reference_set=self._z_reference() is not None,
             z_top_set=self._z_top_counts is not None, z_bottom_set=self._z_bottom_counts is not None,
-            z_calibrated=self.z_cal.complete(),
+            z_calibrated=self.z_cal.complete(), z_servo_reset=self.z_servo_reset,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
             limit_x=self._limits_active[0] and self._limits_current(x, y, measured),
