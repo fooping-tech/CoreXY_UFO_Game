@@ -703,7 +703,7 @@ static func auto_catch_hint_for(reason: String) -> String:
 	if r.contains("motors not enabled"):
 		return "自動キャッチ: 先に「モーター有効」"
 	if r.contains("z reference"):
-		return "自動キャッチ: Z の基準が未設定（アームを一番上にして z_zero）"
+		return "自動キャッチ: Z の基準が未設定（アームを一番上にして「巻き上げ点（上）に」）"
 	if r.contains("claw open / closed"):
 		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 3）"
 	if r.contains("below safe_z"):

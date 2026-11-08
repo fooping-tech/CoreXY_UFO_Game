@@ -167,8 +167,11 @@ func _build_robot_test() -> void:
 	_vbox.add_child(hz)
 	_hold_button(hz, "▲ 上げる (W)", 1.0)
 	_hold_button(hz, "▼ 下げる (S)", -1.0)
-	_button(hz, "z_zero", func(): main.ws.send_command("z_zero"))
-	_note("ボタンは押している間だけ動く。アームを一番上まで上げて z_zero を押すと高さが画面に出る。")
+	var hzp := HBoxContainer.new()
+	_vbox.add_child(hzp)
+	_button(hzp, "ここを巻き上げ点（上）に", func(): main.ws.send_command("z_set", {"which": "top"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hzp, "ここを下げ点（下）に", func(): main.ws.send_command("z_set", {"which": "bottom"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_note("ボタンは押している間だけ動く。アームを一番上まで巻き上げて「巻き上げ点（上）に」を押すと高さが画面に出る（上 = %d）。続けて一番下まで下げて「下げ点（下）に」を押すと、2 点から 1 単位あたりのサーボの回転と回転の向きを測って保存する（下 = %d。次回からは電源を入れ直しても上か下の 1 点だけでよい）。どちらか 1 点だけでも基準になる。" % [int(GameConfig.robot().z_max_mm), int(GameConfig.robot().z_min_mm)])
 	_slider("z_speed", "上げ下げの速さ (z/s, 実機)", 3.0, 40.0, main.jog_speed_real_z, 1.0, func(v): main.jog_speed_real_z = v)
 
 	_header("アーム先端カメラ")
@@ -369,7 +372,15 @@ func _update_robot_test() -> void:
 		var fault: bool = str(RobotState.auto_catch.get("last_result", "")) == "fault" or main.auto_catch_hint != ""
 		_auto_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4) if fault else Color(0.85, 0.9, 1.0))
 	if _z_label != null:
-		var zref := "基準: モック" if RobotState.source != "websocket" else ("基準: 設定済み" if RobotState.z_reference_set else "基準: 未設定（一番上で z_zero）")
+		var zref := "基準: モック"
+		if RobotState.source == "websocket":
+			var pts: Array[String] = []
+			if RobotState.z_top_set:
+				pts.append("上")
+			if RobotState.z_bottom_set:
+				pts.append("下")
+			zref = ("基準: %s を記録" % "・".join(pts)) if not pts.is_empty() else "基準: 未設定（一番上で「巻き上げ点（上）に」）"
+			zref += "  換算: " + ("実測" if RobotState.z_calibrated else "設定値（上と下を記録すると実測になる）")
 		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
 	if _claw_marks_label != null:
 		var c: float = RobotState.arm_closed_deg
@@ -746,7 +757,7 @@ func _process(_dt: float) -> void:
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
-		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「z_zero」を押す"
+		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「巻き上げ点（上）に」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
 	if RobotState.auto_catch_active() or (RobotState.source == "websocket" and str(RobotState.auto_catch.get("last_result", "")) == "fault"):

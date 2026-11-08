@@ -67,7 +67,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `enable_motors` | （送信なし） | バックエンド側のアーミング。これ以前の動作コマンドは NACK |
 | `home` | `HOME` | `HOME complete` 待ち |
 | `move_xy {x,y}` | `XY x y F` | ホスト側でもソフトリミット検査 |
-| `z_zero` | `SERVO_STATUS 1` | 現在の `abs=` を「アーム最上位」基準に設定 |
+| `z_zero` / `z_set {which: top\|bottom}` | `SERVO_STATUS 1` | 現在の `abs=` を「アーム最上位」（top、`z_zero` と同じ）/「最下位」（bottom）として記録。両方そろうとカウント差から `z_counts_per_unit`・`z_sign` を求めて `config/z_calibration.json` に保存。記録はファームウェアの再起動・再接続で消える |
 | （定期） | `SERVO_STATUS 1`（3 Hz、ジョグ中は `JOG_POS` の `Z_ABS`） | ジョイスティックなどで動いたアームを Z に反映 |
 | `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算 |
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |

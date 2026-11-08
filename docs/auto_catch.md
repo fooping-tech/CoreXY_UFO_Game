@@ -99,7 +99,7 @@ FAULT ─(アラーム解除・原点復帰の後に auto_catch・条件OK)→ O
 ## 4. 校正パラメータ（`config/game_config.json` の `auto_catch`）
 
 同じキーで 2 つのプロファイル: `real`（実機。未確認は null）と `dry_run`（`--mock` と `--auto-catch-dry-run` だけが使う仮の値）。
-XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm..z_max_mm`（Z 単位、`z_max` = `z_zero` を押したアーム最上位）をそのまま使う。
+XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm..z_max_mm`（Z 単位、`z_max` = 巻き上げ点（`z_set top` / `z_zero`）を記録したアーム最上位、`z_min` = 下げ点（`z_set bottom`）を記録したなら最下位）をそのまま使う。
 
 | キー | 意味 | real の現状 |
 |---|---|---|
