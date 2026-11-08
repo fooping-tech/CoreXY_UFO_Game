@@ -26,7 +26,12 @@ Command names and safety rules:
   (take the arm's camera down to the spot and back; ACK = started, progress in
   robot_state.homework_approach and {"type": "homework_approach"} messages; holds the
   motion lock like the auto catch), homework_approach_release (the frames are captured:
-  go back up), homework_approach_status
+  go back up), homework_approach_status.
+  homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
+  instead: mapped to XY by the camera calibration, at the recorded spot's height.
+  camera_map_add {u, v, camera: {width, height, flip_h, flip_v}} (pair the clicked overview
+  point with the arm's XY now: its own camera centred on that mark), camera_map_undo,
+  camera_map_clear, camera_map_status (never move the robot)
 While the auto catch runs it holds the motion lock: every command except stop, soft_stop,
 get_state, auto_catch_status, list_ports, gesture_config, a zero jog and enable_motors false is
 refused (busy). stop / soft_stop / enable_motors false end it with ABORT.
@@ -54,7 +59,9 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
+from ..robot.state import MachineState
 from ..homework.approach import ApproachParams, ApproachSequencer
+from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 
 log = logging.getLogger(__name__)
@@ -66,7 +73,8 @@ LOG_QUEUE_MAX = 500
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
-            "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status")
+            "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
+            "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
@@ -74,10 +82,11 @@ PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status
                      "homework_approach_release", "homework_approach_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
 AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
-                      "gesture_config", "homework_approach_status")
+                      "gesture_config", "homework_approach_status", "camera_map_status")
 # Accepted while the arm approaches the homework (anything else is refused as busy).
 APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                    "homework_approach", "homework_approach_release", "homework_approach_status")
+                    "homework_approach", "homework_approach_release", "homework_approach_status",
+                    "camera_map_status")
 
 
 def now_ms() -> int:
@@ -89,7 +98,7 @@ class GameServer:
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
                  study: Any | None = None, homework: Any | None = None,
-                 approach: ApproachParams | None = None) -> None:
+                 approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None) -> None:
         self.robot = robot
         self.host = host
         self.port = port
@@ -134,6 +143,10 @@ class GameServer:
             lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: self.auto.active, on_change=self._on_approach_change)
         self._approach_owner: ServerConnection | None = None
+        # Overview camera -> XY calibration (#78), next to the homework spot.
+        self.camera_map = CameraXYMap.load(
+            self.approach.spot_path.parent / "camera_xy_calibration.json" if self.approach.spot_path else None,
+            camera_map)
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -498,8 +511,14 @@ class GameServer:
             if name == "homework_approach_status":
                 return self._ack(name, self.approach.status())
             if name == "homework_approach":
-                await self.approach.start()
+                target = None
+                if "u" in params or "v" in params:
+                    target = self.camera_map.to_xy(params.get("u"), params.get("v"),
+                                                   camera_signature(params.get("camera")))
+                await self.approach.start(target)
                 return self._ack(name, self.approach.status())
+            if name.startswith("camera_map_"):
+                return self._camera_map_command(name, params)
             if name == "homework_approach_release":
                 self.approach.release()
                 return self._ack(name, self.approach.status())
@@ -577,6 +596,8 @@ class GameServer:
                     elif name == "arm_goto":
                         await self.robot.arm_goto(str(params["which"]))
             return self._ack(name, self.robot.snapshot().to_message()["data"])
+        except CameraMapError as e:
+            return self._nack(name, str(e))
         except (KeyError, ValueError, TypeError) as e:
             return self._nack(name, f"bad params: {e}")
         except RobotCommandError as e:
@@ -584,6 +605,24 @@ class GameServer:
         except Exception as e:  # pragma: no cover
             log.exception("command %s failed", name)
             return self._nack(name, f"internal error: {e}")
+
+    def _camera_map_command(self, name: str, params: dict) -> dict:
+        if name == "camera_map_add":
+            s = self.robot.snapshot()
+            if not s.connected:
+                raise RobotCommandError("robot not connected")
+            if not s.homed:
+                raise RobotCommandError("not homed: home first (XY must be known)")
+            if s.state != MachineState.IDLE or self._jog_owner is not None or self._motion_lock.locked():
+                raise RobotCommandError(f"the arm is moving ({s.state}): wait until it stops")
+            self.camera_map.add(params.get("u"), params.get("v"), s.x, s.y, camera_signature(params.get("camera")))
+            log.info("camera map: point %d at XY (%.1f, %.1f): %s", len(self.camera_map.points), s.x, s.y,
+                     self.camera_map.problem or f"fit ok, max {self.camera_map.max_error:.2f} mm")
+        elif name == "camera_map_undo":
+            self.camera_map.undo()
+        elif name == "camera_map_clear":
+            self.camera_map.clear()
+        return self._ack(name, self.camera_map.status())
 
     @staticmethod
     def _allowed_during_auto(name: str, params: dict) -> bool:

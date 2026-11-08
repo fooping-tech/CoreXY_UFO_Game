@@ -4,8 +4,9 @@
     any state --fault / stop--> FAULT (stop sent: ABORT, alarm, homing lost)
 
 The place is a spot recorded by hand (`set_spot`: jog the arm above the worksheet
-at the height wanted, record it). No camera-to-CoreXY mapping yet: that is a later
-step (then the spot can be the stuck problem itself).
+at the height wanted, record it), or a target XY (`start(target=...)`, e.g. a point
+clicked in the overview image and mapped by camera_map.py, #78) looked at from the
+recorded spot's height.
 
 HOLD waits for the game to capture its frames (`release()`), at most hold_timeout_s,
 then the arm goes back up (and back to where it started). Same safety frame as
@@ -141,6 +142,7 @@ class ApproachSequencer:
         self._abort_reason = ""
         self._stop_sent = False
         self._t_start = 0.0
+        self.target: tuple[float, float] | None = None  # XY of this run when not the spot's
 
     # ------------------------------------------------------------------ status
     @property
@@ -154,6 +156,7 @@ class ApproachSequencer:
         return {"active": self.active, "phase": str(self.phase), "error": self.error,
                 "last_result": self.last_result,
                 "spot": asdict(self.spot) if self.spot is not None else None,
+                "target": {"x": self.target[0], "y": self.target[1]} if self.target is not None else None,
                 "elapsed_s": round(self.clock() - self._t_start, 2) if self.active else 0.0}
 
     def _set_phase(self, phase: ApproachPhase, note: str = "") -> None:
@@ -235,13 +238,20 @@ class ApproachSequencer:
             errs.append(f"XY ({s.x:.1f},{s.y:.1f}) outside the soft limits")
         return errs
 
-    async def start(self) -> None:
+    async def start(self, target: tuple[float, float] | None = None) -> None:
+        """Approach the recorded spot, or `target` XY at the recorded spot's height."""
         if self.active:
             raise RobotCommandError("busy: already approaching")
         refresh = getattr(self.robot, "refresh_status", None)
         if refresh is not None:
             await refresh()
         errs = self.preconditions()
+        if target is not None:
+            tx, ty = float(target[0]), float(target[1])
+            if not (math.isfinite(tx) and math.isfinite(ty)):
+                errs.append("target XY is not a number")
+            elif not self.limits.xy_inside(tx, ty):
+                errs.append(f"target XY ({tx:.1f},{ty:.1f}) outside the soft limits")
         if errs:
             raise RobotCommandError("approach refused: " + "; ".join(errs))
         if self.lock.locked():
@@ -250,12 +260,14 @@ class ApproachSequencer:
         s = self.robot.snapshot()
         assert self.spot is not None
         top, spot = self.top_z, self.spot
+        self.target = (float(target[0]), float(target[1])) if target is not None else None
+        gx, gy = self.target if self.target is not None else (spot.x, spot.y)
         steps = [_Step(ApproachPhase.RAISE, "z", z=top),
-                 _Step(ApproachPhase.MOVE_XY, "xy", x=spot.x, y=spot.y),
+                 _Step(ApproachPhase.MOVE_XY, "xy", x=gx, y=gy),
                  _Step(ApproachPhase.LOWER, "z", z=spot.z),
                  _Step(ApproachPhase.HOLD, "hold"),
                  _Step(ApproachPhase.RAISE_BACK, "z", z=top)]
-        if self.params.return_xy and math.hypot(s.x - spot.x, s.y - spot.y) > self.params.xy_tolerance_mm:
+        if self.params.return_xy and math.hypot(s.x - gx, s.y - gy) > self.params.xy_tolerance_mm:
             steps.append(_Step(ApproachPhase.RETURN_XY, "xy", x=s.x, y=s.y))
         self.active = True
         self.error = ""

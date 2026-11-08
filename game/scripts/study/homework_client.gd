@@ -10,6 +10,12 @@ extends Node
 ## backend's approach sequence (arm camera down to the recorded spot); at HOLD this
 ## client captures the overview + focus frames side by side, asks for advice on the
 ## aux link and releases the arm (it goes back up while the advice is written).
+##
+## Stage 2 (#78): the overview image <-> CoreXY XY calibration lives in the backend
+## (camera_map_*). Calibrate: centre the arm's camera on a mark, click the mark in the
+## overview image (`calib_add`). Look: click a point (`look_at`): the backend maps it to
+## XY and runs the approach there (no advice); it stays down until `look_done` or the
+## hold timeout.
 
 signal state_changed
 
@@ -46,6 +52,12 @@ var advice_status := ""
 ## The backend's approach sequence: {active, phase, error, last_result, spot}
 var approach: Dictionary = {}
 var advice_available := false
+## The backend's camera calibration: {points, camera, usable, problem, rms_mm, max_mm, h_inv, ...}
+var camera_map: Dictionary = {}
+var calib_status := ""
+## true while a look (clicked point) runs: HOLD is not released by the advice
+var looking := false
+var _look_moving := false
 var _approach_rid := ""
 var _captured := false
 var _started_ms := 0
@@ -60,6 +72,7 @@ func setup(hub: CameraHub, robot_link: UfoWebSocketClient = null) -> void:
 	if robot_ws != null:
 		robot_ws.message_received.connect(_on_robot_message)
 		robot_ws.ack.connect(_on_robot_ack)
+		robot_ws.connected.connect(request_camera_map)
 	camera_role = str(GameConfig.get_value("homework", "camera_role", "overview"))
 	interval_s = maxf(float(GameConfig.get_value("homework", "interval_s", 10.0)), 2.0)
 	max_image_edge = int(GameConfig.get_value("homework", "max_image_edge", 1024))
@@ -236,7 +249,7 @@ func record_spot() -> void:
 
 ## Take the arm's camera down to the spot, capture, ask for advice, go back.
 func approach_and_advise() -> void:
-	if advice_busy():
+	if advice_busy() or looking:
 		return
 	if not robot_link_ready():
 		advice_status = "近づくにはバックエンド（実機 / モック）への接続が要る"
@@ -320,6 +333,10 @@ func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:
 		advice_state = "error"
 		advice_status = "近づけませんでした: " + str(payload.get("reason", ""))
 		state_changed.emit()
+	elif not ok and looking:
+		looking = false
+		calib_status = "動かせませんでした: " + str(payload.get("reason", ""))
+		state_changed.emit()
 
 func _on_robot_message(msg: Dictionary) -> void:
 	var t := str(msg.get("type", ""))
@@ -332,9 +349,107 @@ func _on_robot_message(msg: Dictionary) -> void:
 		_on_approach(data)
 		advice_status = "宿題の位置を記録しました"
 		state_changed.emit()
+	elif (t == "ack" or t == "nack") and str(data.get("command", "")).begins_with("camera_map_"):
+		_on_camera_map_reply(str(data.command), t == "ack", data)
 	elif t == "nack" and str(data.get("command", "")) == "homework_spot_set":
 		advice_status = "位置を記録できませんでした: " + str(data.get("reason", ""))
 		state_changed.emit()
+
+# ------------------------------------------------------------------ camera calibration (#78)
+## Size and flips of the overview image as shown (what the clicks and the frames refer to).
+func camera_signature() -> Dictionary:
+	var size := cameras.feed_size(camera_role) if cameras != null else Vector2.ZERO
+	var c = GameConfig.get_value("camera", camera_role, {})
+	var flips: Dictionary = c if c is Dictionary else {}
+	return {"width": int(size.x), "height": int(size.y),
+		"flip_h": bool(flips.get("flip_h", false)), "flip_v": bool(flips.get("flip_v", false))}
+
+func request_camera_map() -> void:
+	if robot_link_ready():
+		robot_ws.send_command("camera_map_status")
+
+## Pair the clicked overview point (u, v: 0..1) with where the arm is now.
+func calib_add(uv: Vector2) -> void:
+	if not robot_link_ready():
+		calib_status = "校正にはバックエンド（実機 / モック）への接続が要る"
+		state_changed.emit()
+		return
+	calib_status = "記録中…"
+	robot_ws.send_command("camera_map_add", {"u": uv.x, "v": uv.y, "camera": camera_signature()})
+	state_changed.emit()
+
+func calib_undo() -> void:
+	if robot_link_ready():
+		robot_ws.send_command("camera_map_undo")
+
+func calib_clear() -> void:
+	if robot_link_ready():
+		robot_ws.send_command("camera_map_clear")
+
+## Take the arm's camera above the clicked overview point (at the recorded spot's height).
+func look_at(uv: Vector2) -> void:
+	if advice_busy() or looking:
+		return
+	if not robot_link_ready():
+		calib_status = "動かすにはバックエンド（実機 / モック）への接続が要る"
+		state_changed.emit()
+		return
+	looking = true
+	_look_moving = false
+	calib_status = "クリックした場所へアームのカメラを動かしています…（Space / STOP で中止）"
+	_approach_rid = robot_ws.send_command("homework_approach", {"u": uv.x, "v": uv.y, "camera": camera_signature()})
+	state_changed.emit()
+
+## Done looking: the arm goes back up (and back).
+func look_done() -> void:
+	if robot_link_ready() and bool(approach.get("active", false)):
+		robot_ws.send_command("homework_approach_release")
+
+func _hold_timeout_s() -> float:
+	var a = GameConfig.get_value("homework", "approach", {})
+	return float(a.get("hold_timeout_s", 15.0)) if a is Dictionary else 15.0
+
+func calibration_usable() -> bool:
+	return bool(camera_map.get("usable", false))
+
+## Where the arm's camera looks, as an overview image point (u, v); null without a calibration.
+func arm_view_uv():
+	var h = camera_map.get("h_inv")
+	if not (h is Array) or h.size() != 3:
+		return null
+	return map_point(h, RobotState.x_mm, RobotState.y_mm)
+
+## 3x3 homography (rows) applied to (x, y); null at infinity.
+static func map_point(h: Array, x: float, y: float):
+	var w := float(h[2][0]) * x + float(h[2][1]) * y + float(h[2][2])
+	if absf(w) < 1e-12:
+		return null
+	return Vector2((float(h[0][0]) * x + float(h[0][1]) * y + float(h[0][2])) / w,
+		(float(h[1][0]) * x + float(h[1][1]) * y + float(h[1][2])) / w)
+
+## "3 点 / 誤差 平均 0.8 mm・最大 1.4 mm" or why it is not usable.
+func calib_summary() -> String:
+	var pts: Array = camera_map.get("points", []) if camera_map.get("points") is Array else []
+	if camera_map.is_empty():
+		return "校正: 状態をまだ受け取っていない"
+	if bool(camera_map.get("usable", false)):
+		return "校正: %d 点・誤差 平均 %.1f mm／最大 %.1f mm（使える）" % [pts.size(), float(camera_map.get("rms_mm", 0.0)), float(camera_map.get("max_mm", 0.0))]
+	return "校正: %d 点・%s" % [pts.size(), str(camera_map.get("problem", ""))]
+
+func _on_camera_map_reply(cmd: String, ok: bool, data: Dictionary) -> void:
+	if ok:
+		camera_map = data.duplicate()
+		camera_map.erase("command")
+		match cmd:
+			"camera_map_add":
+				calib_status = "点を記録しました（アームの XY と組にした）"
+			"camera_map_undo":
+				calib_status = "最後の点を取り消しました"
+			"camera_map_clear":
+				calib_status = "校正を消しました"
+	else:
+		calib_status = "校正できませんでした: " + str(data.get("reason", ""))
+	state_changed.emit()
 
 func _on_approach(status: Dictionary) -> void:
 	var before := str(approach.get("phase", ""))
@@ -349,6 +464,20 @@ func _on_approach(status: Dictionary) -> void:
 		elif phase == "FAULT":
 			advice_state = "error"
 			advice_status = "アームを止めました: %s（アラーム解除と原点復帰が必要なことがある）" % str(status.get("error", ""))
+	elif looking:
+		# robot_state may still carry the previous run's IDLE / FAULT: wait for this run to move
+		if phase not in ["", "IDLE", "FAULT"]:
+			_look_moving = true
+		if phase == "HOLD" and before != "HOLD":
+			calib_status = "アームのカメラがクリックした場所を見ています。「戻る」で上へ戻る（%d 秒たつと自動で戻る）" % int(_hold_timeout_s())
+		elif _look_moving and phase == "FAULT":
+			looking = false
+			_look_moving = false
+			calib_status = "アームを止めました: %s（アラーム解除と原点復帰が必要なことがある）" % str(status.get("error", ""))
+		elif _look_moving and phase == "IDLE" and not bool(status.get("active", false)):
+			looking = false
+			_look_moving = false
+			calib_status = "戻りました"
 	if phase != before:
 		state_changed.emit()
 
