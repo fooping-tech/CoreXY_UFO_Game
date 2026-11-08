@@ -1383,11 +1383,11 @@ func _test_pose_finger_direction() -> void:
 	_ok(unsure == Vector2.ZERO and g.is_active() and near.call(inverted, Vector2(-20, 0)) and near.call(snapped, Vector2(14.142, 14.142)),
 		"pose scheme: no motion while the finger points at the camera; follows invert_x; can snap to 8 ways",
 		"%s %s %s" % [unsure, inverted, snapped])
-	_ok(ps.mapping_text() == "指差し=指の向き いいね↑=上げる いいね↓=下げる パー=爪開 グー=爪閉",
-		"pose scheme: the default mapping (point, thumbs-up up / down, claw on パー / グー)", ps.mapping_text())
+	_ok(ps.mapping_text() == "指差し=指の向き いいね↑=上げる いいね↓=下げる パー=爪開 チョキ=爪閉",
+		"pose scheme: the default mapping (point, thumbs-up up / down, claw on パー / チョキ)", ps.mapping_text())
 
 ## The default hand-shape mapping: a thumbs-up raises / lowers the arm by where
-## the thumb points in the shown view; パー opens the claw, グー closes it.
+## the thumb points in the shown view; パー opens the claw, チョキ closes it, グー rests.
 func _test_pose_thumb_and_claw() -> void:
 	var S := GestureControl.State
 	var g := GestureControl.new()
@@ -1430,8 +1430,11 @@ func _test_pose_thumb_and_claw() -> void:
 	step.call("other", Vector2.ZERO, 10)
 	step.call("open", Vector2.ZERO, 40)  # 0.67 s of パー
 	var opened := claws == ["open"] and g.velocity_z == 0.0 and not g.is_active()
-	step.call("fist", Vector2.ZERO, 40)
-	_ok(opened and claws == ["open", "closed"], "pose scheme: パー opens the claw, グー closes it (and neither moves the crane)", str(claws))
+	step.call("peace", Vector2.ZERO, 40)
+	var closed := claws == ["open", "closed"]
+	step.call("fist", Vector2.ZERO, 60)  # resting: nothing
+	_ok(opened and closed and claws == ["open", "closed"] and not g.is_active() and g.velocity_z == 0.0,
+		"pose scheme: パー opens the claw, チョキ closes it, グー does nothing (none moves the crane)", str(claws))
 
 ## A test scheme: "open" steers +X, "peace" -X, no claw.
 class _PoseScheme extends GestureScheme:

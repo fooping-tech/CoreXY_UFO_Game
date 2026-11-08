@@ -452,7 +452,7 @@ func _build_gesture() -> void:
 	_slider("g_point_snap", "Point snap deg (0 = any)", 0.0, 90.0, float(pc.get("point_snap_deg", pd.point_snap_deg)), 15.0, func(v): _set_pose_cfg("point_snap_deg", v))
 	_slider("g_thumb_vert", "Thumb vertical min", 0.0, 1.0, float(pc.get("thumb_min_vertical", pd.thumb_min_vertical)), 0.05, func(v): _set_pose_cfg("thumb_min_vertical", v))
 	_slider("g_point_min", "Point min length (hand)", 0.0, 1.5, float(pc.get("point_min_len", pd.point_min_len)), 0.05, func(v): _set_pose_cfg("point_min_len", v))
-	_note("向きと手の形の対応は config の gesture.schemes.pose_direction.directions（既定: point = \"finger\" で 指差し = 指の向き、thumb_up / thumb_down = いいねの親指が画面の上 / 下 = アーム上げ / 下げ、claw でパー = 爪を開く・グー = 閉じる。指の向きは Invert X / Y・Swap XY、親指の上下は Invert Z で合わせる）。マウス模擬では 1 / 2 / 3 / 4 / 5 キーを押している間 パー / チョキ / グー / 指差し / いいね（指と親指は画面の中心からマウスへの向き）")
+	_note("向きと手の形の対応は config の gesture.schemes.pose_direction.directions（既定: point = \"finger\" で 指差し = 指の向き、thumb_up / thumb_down = いいねの親指が画面の上 / 下 = アーム上げ / 下げ、claw でパー = 爪を開く・チョキ = 閉じる、グー = 何もしない（休む）。指の向きは Invert X / Y・Swap XY、親指の上下は Invert Z で合わせる）。マウス模擬では 1 / 2 / 3 / 4 / 5 キーを押している間 パー / チョキ / グー / 指差し / いいね（指と親指は画面の中心からマウスへの向き）")
 	_end_fold(pbox)
 
 ## A pose_direction setting from the panel: kept for the next switch to it, and

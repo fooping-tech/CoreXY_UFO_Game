@@ -74,9 +74,9 @@
         "smoothing_ms": 80.0,
         "claw": {
           "open": "open",
-          "fist": "closed"
+          "peace": "closed"
         },
-        "_note": "Hand shape per direction (robot axes [x, y, z]; +X right, +Y away, +Z arm up). open = パー, peace = チョキ, fist = グー, point = 指差し (only the index out), thumb_up / thumb_down = いいね (index..pinky folded, thumb out) with the thumb towards the top / bottom of the camera view as shown (view flip_v and joystick invert_z apply; within thumb_min_vertical of vertical, else no sign). Default: point = where the finger points, thumbs-up up / down = arm up / down, claw: open (パー) = open, fist (グー) = closed, held claw_hold_ms. \"finger\" = where the index finger points (any angle, or snapped to point_snap_deg; image -> robot axes with the joystick invert_x / invert_y / swap_xy; shorter than point_min_len hand sizes = pointing at the camera = no motion). A shape counts after pose_confirm_ms; a confirmed one survives a flicker shorter than pose_release_ms; another shape stops first, then arms again. After a forced stop the shape must be gone for pose_release_ms. A shape used for a direction never moves the claw. Untested with the real camera / robot."
+        "_note": "Hand shape per direction (robot axes [x, y, z]; +X right, +Y away, +Z arm up). open = パー, peace = チョキ, fist = グー, point = 指差し (only the index out), thumb_up / thumb_down = いいね (index..pinky folded, thumb out) with the thumb towards the top / bottom of the camera view as shown (view flip_v and joystick invert_z apply; within thumb_min_vertical of vertical, else no sign). Default: point = where the finger points, thumbs-up up / down = arm up / down, claw: open (パー) = open, peace (チョキ) = closed, held claw_hold_ms; fist (グー) = nothing (rest the hand). \"finger\" = where the index finger points (any angle, or snapped to point_snap_deg; image -> robot axes with the joystick invert_x / invert_y / swap_xy; shorter than point_min_len hand sizes = pointing at the camera = no motion). A shape counts after pose_confirm_ms; a confirmed one survives a flicker shorter than pose_release_ms; another shape stops first, then arms again. After a forced stop the shape must be gone for pose_release_ms. A shape used for a direction never moves the claw. Untested with the real camera / robot."
       }
     },
     "palm_invert": false,

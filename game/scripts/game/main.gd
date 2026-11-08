@@ -925,8 +925,8 @@ static func gesture_demo_event(t: float) -> Dictionary:
 
 ## --gesture-demo for a hand-shape scheme (a 12 s loop, the hand at rest in the
 ## middle; another shape in between): pointing with the finger turning a full
-## circle, a thumbs-up towards the top of the image then the bottom, パー, グー,
-## then out of the view.
+## circle, a thumbs-up towards the top of the image then the bottom, パー (claw
+## open), チョキ (claw closed), グー (rest), then out of the view.
 static func gesture_pose_demo_event(t: float) -> Dictionary:
 	var k := fmod(t, 12.0)
 	var pose := "other"
@@ -944,6 +944,8 @@ static func gesture_pose_demo_event(t: float) -> Dictionary:
 	elif k >= 8.0 and k < 8.8:
 		pose = "open"
 	elif k >= 9.4 and k < 10.2:
+		pose = "peace"
+	elif k >= 10.2 and k < 10.8:
 		pose = "fist"
 	var seen := k < 10.8
 	return {"event": "hand_control", "camera_ok": true, "detected": seen, "hand_count": 1 if seen else 0,

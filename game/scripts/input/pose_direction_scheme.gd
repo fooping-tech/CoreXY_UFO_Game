@@ -7,7 +7,7 @@ extends GestureScheme
 ## finger points, a thumbs-up with the thumb towards the top of the camera view
 ## (as shown, view_flip_v) raises the arm and towards the bottom lowers it
 ## ("thumb_up" / "thumb_down": two signs, so turning the thumb over stops first),
-## パー opens the claw and グー closes it.
+## パー opens the claw and チョキ closes it; グー does nothing (a hand at rest).
 ##
 ##   - a shape counts once it has been held for pose_confirm_ms (a hand passing
 ##     through it on the way to another shape does not move anything)
@@ -48,7 +48,7 @@ var pose_confirm_ms := 150.0
 var pose_release_ms := 150.0
 var smoothing_ms := 80.0
 ## pose -> claw ("closed" / "open"); shapes used by `directions` are dropped.
-var claw := {"open": "open", "fist": "closed"}
+var claw := {"open": "open", "peace": "closed"}
 
 var _active := ""  # the confirmed shape ("" = none)
 var _miss_since := -1.0  # when the confirmed shape stopped showing
