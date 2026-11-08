@@ -28,8 +28,13 @@ Rules (all thresholds from config `gesture.*`):
     The winding is mirrored for the other hand: a right hand by default,
     `palm_invert` for a left one (the game uses it: palm up = XY, down = Z)
   - `pose`: "fist" (index..pinky folded), "peace" (index + middle out, ring +
-    pinky folded), "open", or "other". A finger is folded when its tip is nearer
-    the wrist than its PIP joint. No pinch starts in a fist or a peace sign (the
+    pinky folded), "point" (only the index out), "open", or "other". A finger is
+    folded when its tip is nearer the wrist than its PIP joint.
+  - `point_dx` / `point_dy`: where the index finger points in the image (unit
+    vector from its MCP (5) to its tip (8), in pixels so the aspect does not skew
+    it; x right, y down), and `point_len` its length over the hand size (short
+    when it points at the camera). Sent for every detected hand; the game uses
+    them only for a "point" pose. No pinch starts in a fist or a peace sign (the
     thumb lies near the fingertips there), nor with the pinching finger folded,
     and turning into one ends a running pinch
 
@@ -118,18 +123,36 @@ def _px(p: Landmark, w: int, h: int) -> tuple[float, float]:
     return (p[0] * w, p[1] * h)
 
 
-def pinch_ratio(lm: list[Landmark], w: int, h: int, tip: int = INDEX_TIP) -> float:
-    """Thumb-to-`tip` distance over the hand size (see the module doc), in pixels."""
-    tx, ty = _px(lm[THUMB_TIP], w, h)
-    ix, iy = _px(lm[tip], w, h)
+def hand_scale(lm: list[Landmark], w: int, h: int) -> float:
+    """The hand size in pixels: the larger of the hand width and PALM_TO_WIDTH x the palm length."""
     ax, ay = _px(lm[INDEX_MCP], w, h)
     bx, by = _px(lm[PINKY_MCP], w, h)
     wx, wy = _px(lm[WRIST], w, h)
     mx, my = _px(lm[MIDDLE_MCP], w, h)
-    scale = max(math.hypot(ax - bx, ay - by), PALM_TO_WIDTH * math.hypot(wx - mx, wy - my))
+    return max(math.hypot(ax - bx, ay - by), PALM_TO_WIDTH * math.hypot(wx - mx, wy - my))
+
+
+def pinch_ratio(lm: list[Landmark], w: int, h: int, tip: int = INDEX_TIP) -> float:
+    """Thumb-to-`tip` distance over the hand size (see the module doc), in pixels."""
+    tx, ty = _px(lm[THUMB_TIP], w, h)
+    ix, iy = _px(lm[tip], w, h)
+    scale = hand_scale(lm, w, h)
     if scale <= 1e-6:
         return math.inf
     return math.hypot(tx - ix, ty - iy) / scale
+
+
+def point_direction(lm: list[Landmark], w: int, h: int) -> tuple[float, float, float]:
+    """(dx, dy, length): the index finger's MCP -> tip direction in the image as a
+    unit vector (x right, y down), and its length over the hand size."""
+    ax, ay = _px(lm[INDEX_MCP], w, h)
+    tx, ty = _px(lm[INDEX_TIP], w, h)
+    dx, dy = tx - ax, ty - ay
+    n = math.hypot(dx, dy)
+    scale = hand_scale(lm, w, h)
+    if n <= 1e-9 or scale <= 1e-6:
+        return (0.0, 0.0, 0.0)
+    return (dx / n, dy / n, n / scale)
 
 
 def finger_folded(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
@@ -169,12 +192,14 @@ def finger_straight(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
 
 
 def hand_pose(lm: list[Landmark], w: int, h: int) -> str:
-    """"fist" / "peace" / "open" / "other" from which fingers are folded (thumb ignored)."""
+    """"fist" / "peace" / "point" / "open" / "other" from which fingers are folded (thumb ignored)."""
     f = {k: finger_folded(lm, k, w, h) for k in FINGERS}
     if all(f.values()):
         return "fist"
     if not f["index"] and not f["middle"] and f["ring"] and f["pinky"]:
         return "peace"
+    if not f["index"] and f["middle"] and f["ring"] and f["pinky"]:
+        return "point"
     if not any(f.values()):
         return "open"
     return "other"
@@ -224,6 +249,7 @@ class HandControl:
             "in_roi": False, "reason": "", "frame_w": frame_w, "frame_h": frame_h,
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
             "pinch_finger": "", "pose": "", "palm": "", "palm_sin": 0.0,
+            "point_dx": 0.0, "point_dy": 0.0, "point_len": 0.0,
         }
         conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
         lost = ""
@@ -240,11 +266,13 @@ class HandControl:
         ratios = {k: pinch_ratio(lm, frame_w, frame_h, t) for k, t in PINCH_TIPS.items()}
         pose = hand_pose(lm, frame_w, frame_h)
         palm, palm_sin = palm_facing(lm, frame_w, frame_h, self.cfg.palm_invert)
+        pdx, pdy, plen = point_direction(lm, frame_w, frame_h)
         # the finger that counts: the held one, else the closer of the two
         finger = self._finger or min(ratios, key=lambda k: ratios[k])
         ratio = ratios[finger]
         ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3),
-                  pose=pose, palm=palm, palm_sin=round(palm_sin, 3))
+                  pose=pose, palm=palm, palm_sin=round(palm_sin, 3),
+                  point_dx=round(pdx, 4), point_dy=round(pdy, 4), point_len=round(min(plen, 99.0), 3))
         if not self._in_roi(cx, cy):
             self.reset()
             ev["reason"] = "outside_roi"
@@ -287,7 +315,8 @@ class HandControl:
         ev["pinch"] = self._pinched
         ev["pinch_finger"] = self._finger if self._pinched else ""
         self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi",
-                                              "pinch_finger", "pose", "palm", "palm_sin")}
+                                              "pinch_finger", "pose", "palm", "palm_sin",
+                                              "point_dx", "point_dy", "point_len")}
         return ev
 
     def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:
@@ -311,4 +340,5 @@ class HandControl:
         return {"event": "hand_control", "camera_ok": False, "detected": False, "hand_count": 0, "pinch": False,
                 "hand_x": 0.0, "hand_y": 0.0, "pinch_ratio": 0.0, "confidence": 0.0, "in_roi": False,
                 "reason": "camera_lost", "frame_w": frame_w, "frame_h": frame_h,
-                "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": 0.0}
+                "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": 0.0,
+                "point_dx": 0.0, "point_dy": 0.0, "point_len": 0.0}
