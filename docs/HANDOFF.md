@@ -87,7 +87,7 @@ cd game
 - 「Test scenarios」の 1〜10 ボタン（X往復 / Y往復 / XY斜め / 急停止 / Z下降上昇 / XYZ同時 / 通信切断 / 再接続 / 上下限 / ロープ長急変）+ Grab cycle
 - 表情の固定（Character のドロップダウン）、Success / Failure / Error ボタン
 
-キー: ←→ X、↑↓ Y、W/S Z、Space 停止、G/F 成功/失敗、F1 パネル非表示。実機接続中（WebSocket）は矢印キーと W/S が押している間だけ動く JOG（W/S は原点復帰前でも可）、Space が減速停止（STOP）。Z を画面に反映するには、アームを一番上にして「z_zero」を押す。非常停止はデバッグパネルの E-STOP（ABORT）。
+キー: ←→ X、↑↓ Y、W/S Z、Space 停止、G/F 成功/失敗、F1 パネル非表示。実機接続中（WebSocket）は矢印キーと W/S が押している間だけ動く JOG（W/S は原点復帰前でも可）、Space が減速停止（STOP）。Z を画面に反映するには、アームを一番上にして「ここを巻き上げ点（上）に」を押す（一番下で「ここを下げ点（下）に」も押すと Z の換算を実測して保存）。非常停止はデバッグパネルの E-STOP（ABORT）。
 
 コマンドラインからシナリオ再生とフレーム保存:
 ```bash
@@ -109,7 +109,7 @@ cd backend && uv sync && uv run pytest                                          
 cd backend && uv run corexy-ufo-backend --mock          # ターミナル 1
 cd game && Godot --path . -- --source websocket          # ターミナル 2（またはパネルで Robot source を切替）
 ```
-パネルの「実機」タブで `モーター有効` → `原点復帰 (home)` → `z_zero` → スライダー操作。ログ欄に `ack` / `nack` が出る。
+パネルの「実機」タブで `モーター有効` → `原点復帰 (home)` → 巻き上げ点（上）の記録（`z_set top` = `z_zero`）→ スライダー操作。ログ欄に `ack` / `nack` が出る。
 `stop` を押すと ALARM（ファームウェア仕様を再現）になり、`clear_alarm` → `home` が必要。
 Python から直接叩く例は `websockets` で `{"type":"command","request_id":"1","data":{"name":"home","params":{}}}` を送るだけ（README 参照）。
 
@@ -121,10 +121,10 @@ Python から直接叩く例は `websockets` で `{"type":"command","request_id"
 
 1. 既存 WebUI（`CoreXY_UFO/tools/webui`）を止める（同じポートは同時に開けない）。
 2. `uv run corexy-ufo-backend --list-ports` → `--port /dev/cu.usbserial-XXXX` で起動。
-3. Godot を `--source websocket` で起動。`enable motors` → `home`。
-4. **アームを手で最上位にして `z_zero`**（ファームウェアに Z ホーミングは無い）。
-5. Z スライダーを少し下げ、実機のアームが「下がる」ことを確認。逆なら `config/game_config.json` の `backend.z_sign` を `-1` にして再起動。
-6. ドラム 1 回転あたりの実際の上下量から `z_counts_per_unit` を決める（4096 count/回転、既定は 3 回転 = 100 単位）。
+3. Godot を `--source websocket` で起動。`enable motors`。
+4. **原点復帰の前に、アームを最上位にして巻き上げ点（上）を記録**（`z_set top` = `z_zero`。ファームウェアに Z ホーミングは無い）。初回は最下位まで下げて下げ点（下）も記録し、`z_counts_per_unit` と `z_sign` を実測する（`config/z_calibration.json`）。測るまでは W/S が Z 0〜100 で止まらない。最後に最上位まで巻き上げる。
+5. `home`（実機は Z の基準があってアームが最上位付近のときだけ。`backend.home_requires_z_top`）。
+6. W/S で上下が逆に動くなら `config/game_config.json` の `backend.z_sign` を `-1` にして再起動（2 点を記録すれば `z_sign` は実測値に置き換わる）。
 7. アーム開閉量 `arm_open_turns` を合わせる。
 8. デバッグパネルで重力・減衰・揺れ誇張を実機の見た目に合わせ、値を `config/game_config.json` に書き戻す。
 

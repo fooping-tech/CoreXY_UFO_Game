@@ -147,18 +147,18 @@ func _build() -> void:
 	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(help)
 
-## Hardware tests: get ready, the Z drum (servo 1), the claw (servo 2), and
-## moving to a position.
+## Hardware tests in the order to do them: get ready, the Z drum (servo 1) wound
+## up first, then XY homing (a lowered arm would hit things), the claw (servo 2),
+## the auto catch, and moving to a position.
 func _build_robot_test() -> void:
 	_header("1. 準備")
 	var hb := HBoxContainer.new()
 	_vbox.add_child(hb)
 	_button(hb, "モーター有効", func(): main.ws.send_command("enable_motors", {"enable": true}))
-	_button(hb, "原点復帰 (home)", func(): main.ws.send_command("home"))
 	_button(hb, "アラーム解除", func(): main.ws.send_command("clear_alarm"))
-	_note("巻き上げと爪は「モーター有効」だけで動く。XY の移動には原点復帰が要る。")
+	_note("巻き上げと爪は「モーター有効」だけで動く。XY は 2 で巻き上げてから 3 の原点復帰の後。")
 
-	_header("2. 巻き上げ（Z・サーボ 1）")
+	_header("2. 巻き上げ（Z・サーボ 1）← 原点復帰の前に")
 	_z_label = Label.new()
 	_z_label.add_theme_font_size_override("font_size", 12)
 	_z_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -167,9 +167,17 @@ func _build_robot_test() -> void:
 	_vbox.add_child(hz)
 	_hold_button(hz, "▲ 上げる (W)", 1.0)
 	_hold_button(hz, "▼ 下げる (S)", -1.0)
-	_button(hz, "z_zero", func(): main.ws.send_command("z_zero"))
-	_note("ボタンは押している間だけ動く。アームを一番上まで上げて z_zero を押すと高さが画面に出る。")
+	var hzp := HBoxContainer.new()
+	_vbox.add_child(hzp)
+	_button(hzp, "ここを巻き上げ点（上）に", func(): main.ws.send_command("z_set", {"which": "top"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(hzp, "ここを下げ点（下）に", func(): main.ws.send_command("z_set", {"which": "bottom"})).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(_vbox, "Z の上下をやり直す（記録と実測をすべて消す）", func(): main.ws.send_command("z_set", {"which": "clear"}))
+	_note("▲ / ▼ は押している間だけ動く。アームを一番上まで巻き上げて「巻き上げ点（上）に」を押すと高さが画面に出る（上 = %d）。初回は続けて一番下まで下げて「下げ点（下）に」を押すと、2 点から 1 単位あたりのサーボの回転と回転の向きを測って保存する（下 = %d。次回からは電源を入れ直しても上か下の 1 点だけでよい）。上と下を測るまでは %d〜%d で止まらない（本当の上 / 下まで動かせる。見ながら操作する）。測った後はこの範囲で止まる。測り直すときは「やり直す」。最後に一番上まで巻き上げてから 3 の原点復帰へ。" % [int(GameConfig.robot().z_max_mm), int(GameConfig.robot().z_min_mm), int(GameConfig.robot().z_min_mm), int(GameConfig.robot().z_max_mm)])
 	_slider("z_speed", "上げ下げの速さ (z/s, 実機)", 3.0, 40.0, main.jog_speed_real_z, 1.0, func(v): main.jog_speed_real_z = v)
+
+	_header("3. 原点復帰（XY）")
+	_button(_vbox, "原点復帰 (home)", func(): main.ws.send_command("home"))
+	_note("アームが下がったまま XY を動かすとぶつかるので、実機は Z の基準があってアームが巻き上げ点（上）の近く（±%.0f）にあるときだけ原点復帰する（backend.home_requires_z_top）。" % float(GameConfig.get_value("backend", "home_z_tolerance", 5.0)))
 
 	_header("アーム先端カメラ")
 	var hub: CameraHub = main.cameras
@@ -185,7 +193,7 @@ func _build_robot_test() -> void:
 	_vbox.add_child(arm_info)
 	_arm_cam = {"view": arm_view, "info": arm_info}
 
-	_header("3. 爪（サーボ 2）")
+	_header("4. 爪（サーボ 2）")
 	_claw_label = Label.new()
 	_claw_label.add_theme_font_size_override("font_size", 12)
 	_claw_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -210,7 +218,7 @@ func _build_robot_test() -> void:
 	_note("少しずつ回して閉じた所で「ここを閉じ位置に」、開いた所で「ここを開き位置に」。記録は保存され、掴む / 離す（grab）もこの角度を使う。")
 	_slider("arm_step", "[ / ] キー 1 回の角度 (°)", 0.5, 30.0, main.arm_step_deg, 0.5, func(v): main.arm_step_deg = v)
 
-	_header("4. 自動キャッチ（1 ボタン）")
+	_header("5. 自動キャッチ（1 ボタン）")
 	_auto_label = Label.new()
 	_auto_label.add_theme_font_size_override("font_size", 12)
 	_auto_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -369,7 +377,15 @@ func _update_robot_test() -> void:
 		var fault: bool = str(RobotState.auto_catch.get("last_result", "")) == "fault" or main.auto_catch_hint != ""
 		_auto_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4) if fault else Color(0.85, 0.9, 1.0))
 	if _z_label != null:
-		var zref := "基準: モック" if RobotState.source != "websocket" else ("基準: 設定済み" if RobotState.z_reference_set else "基準: 未設定（一番上で z_zero）")
+		var zref := "基準: モック"
+		if RobotState.source == "websocket":
+			var pts: Array[String] = []
+			if RobotState.z_top_set:
+				pts.append("上")
+			if RobotState.z_bottom_set:
+				pts.append("下")
+			zref = ("基準: %s を記録" % "・".join(pts)) if not pts.is_empty() else "基準: 未設定（一番上で「巻き上げ点（上）に」）"
+			zref += "  換算: " + ("実測" if RobotState.z_calibrated else "設定値（上と下を記録すると実測になる）")
 		_z_label.text = "Z = %.1f  (%s)  %s" % [RobotState.z_mm, "測定" if RobotState.position_is_measured else "推定", zref]
 	if _claw_marks_label != null:
 		var c: float = RobotState.arm_closed_deg
@@ -746,7 +762,7 @@ func _process(_dt: float) -> void:
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if RobotState.source == "websocket" and RobotState.connected and not RobotState.z_reference_set:
-		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「z_zero」を押す"
+		hint += ("\n" if hint != "" else "") + "Z: 基準が未設定（アームが動いても画面に出ない）。W か「実機」タブの ▲ でアームを一番上まで上げて「巻き上げ点（上）に」を押す"
 	if hint != "":
 		_state_chip.text += "\nJOG: " + hint
 	if RobotState.auto_catch_active() or (RobotState.source == "websocket" and str(RobotState.auto_catch.get("last_result", "")) == "fault"):

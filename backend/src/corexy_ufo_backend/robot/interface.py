@@ -39,6 +39,12 @@ class RobotInterface(ABC):
     @abstractmethod
     async def set_z_zero(self) -> None: ...
 
+    async def set_z_point(self, which: str) -> None:
+        """Record the arm's current height as its top ("top") or bottom ("bottom")."""
+        if which != "top":
+            raise RobotCommandError("this robot only knows the top Z point")
+        await self.set_z_zero()
+
     @abstractmethod
     async def grab(self, close: bool) -> None: ...
 

@@ -23,7 +23,8 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 | 起動時はモーター無効 | `RealRobot.motors_enabled=False`、`_require()` | 起動時に自動で `enable_motors` を送る UI を作らない |
 | アーミングが必要 | `enable_motors`（何も送信しない、バックエンド側の状態） | 解除すると動作中なら `stop` |
 | XY 前のホーミング | `_require(homed=True)`、ファームウェアも拒否 | `ABORT` 後は HOMED が外れる |
-| Z の基準 | `set_z_zero`（アームを手で最上位にしてから） | 未設定の `move_z` は NACK（意図的）。自動で `z_zero` しない |
+| Z の基準 | `set_z_point("top" / "bottom")`（`set_z_zero` = top。アームを最上位 / 最下位にしてから） | 未設定の `move_z` は NACK（意図的）。自動で記録しない。両方で換算を実測・保存（`clear` でやり直し）。ファームウェアの再起動・再接続で記録は消える。Z の JOG を 0..z_max で止めるのは実測後だけ（実測前の範囲は推測なので、本当の上下まで動かせるように） |
+| 原点復帰の前提 | `RealRobot.home` は `home_requires_z_top`（設定ファイルから読むと既定 true）なら Z の基準があってアームが上端 ±`home_z_tolerance` のときだけ | 下がったアームで XY を動かすとぶつかる。素の `BackendConfig()`（テスト）では無効 |
 | ソフトリミット | ホスト側 `RobotLimits.xy_inside`、ファームウェア X 0..390 / Y 0..200 mm | Z はクランプのみ。範囲外の XY はクランプせず NACK |
 | ACK/NACK・タイムアウト | `SerialService`（Python）、`_check_timeouts`（Godot、既定 3000 ms） | タイムアウトは「失敗」であって「止まった」ではない |
 | `request_id` による重複防止 | `GameServer._handled` | クライアントはモーションを自動再送しない。再送するなら同じ `request_id` を使う |
@@ -44,7 +45,7 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 
 1. **ゲーム側は正しい前提で触らない**: `rope_length_for_z` と `z_up_is_positive` は Godot のテスト（`Z inverse`）で固定されている。
 2. **換算は `RealRobot`**: `move_z` は `delta_units * z_counts_per_unit / 4096 * z_sign` 回転を 3 回転ずつに分けて送り、`SERVO_TURN ... actual=` から `_z_units_est` を更新する。
-3. **実機での確認手順**（`docs/HANDOFF.md` §6）: `enable_motors` → `home` → アームを手で最上位にして `z_zero` → Z を少し下げる → 実機のアームが**下がる**ことを確認。逆なら `z_sign=-1`。ドラム 1 回転あたりの昇降量から `z_counts_per_unit` を決める。
+3. **実機での確認手順**（`docs/HANDOFF.md` §6）: `enable_motors` → `home` → アームを最上位にして `z_set top` → 最下位まで下げて `z_set bottom`（`z_sign` と `z_counts_per_unit` が実測される）→ Z を少し動かして実機と画面が合うことを確認。ドラム 1 回転あたりの昇降量から `z_counts_per_unit` を決める。
 4. 値を確定したら `config/game_config.json` の `_note` と `docs/test_report.md` に根拠（実測）を書く。確認するまでは「未校正」と書いておく。
 5. 移動中の Z は `move_z` の完了まで更新されない（サーボの結果行で更新）。画面のロープ長は `rope_length_rate` で滑らかに追従する。
 

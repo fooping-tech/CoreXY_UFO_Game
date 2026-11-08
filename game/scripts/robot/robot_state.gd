@@ -37,8 +37,14 @@ var machine_state: String = "UNKNOWN":
 var last_error: String = ""
 ## The backend's current `error` field, mirrored as-is (empty once it clears).
 var robot_error: String = ""
-## The backend has a Z reference (z_zero: arm at its top); without it Z is unknown.
+## The backend has a Z reference (z_set top = arm wound up, or bottom = lowered;
+## z_zero = top); without it Z is unknown.
 var z_reference_set: bool = false
+## Which Z points are recorded in this firmware session, and whether the counts
+## per unit / drum direction are measured from both (or saved from before).
+var z_top_set: bool = false
+var z_bottom_set: bool = false
+var z_calibrated: bool = false
 ## Claw servo (ID 2): degrees from its arm_zero reference (the raw angle in its
 ## turn before one is set); NAN = not read yet.
 var arm_deg: float = NAN

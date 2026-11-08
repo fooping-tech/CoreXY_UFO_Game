@@ -42,6 +42,11 @@ class RobotSnapshot:
     test_mode: bool = False
     timestamp_ms: int = 0
     z_reference_set: bool = False
+    # Z points recorded in this firmware session (top = arm wound up, bottom = lowered)
+    # and whether counts per unit / direction are measured (from both points, or saved)
+    z_top_set: bool = False
+    z_bottom_set: bool = False
+    z_calibrated: bool = False
     # claw servo (ID 2): degrees from the arm_zero reference (or the raw angle in
     # its turn, 0..360, before one is set); None = not read yet
     arm_deg: float | None = None

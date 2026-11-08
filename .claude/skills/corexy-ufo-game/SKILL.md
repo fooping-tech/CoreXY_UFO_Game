@@ -84,7 +84,7 @@ description: >
 3. ソルバーを変えるなら伸びなし・UFO がロープ長を超えない・減衰・性能のテストを全部通す。詳細は [rope-physics.md](references/rope-physics.md)。
 
 ### C. 「実機の Z 軸と同期して」
-1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_zero` = アーム最上位、ファームウェアに Z ホーミングなし）。
+1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/z_calibration.json` に保存、設定値より優先）。
 2. ゲーム側の逆マッピング（`rope_length_for_z`）は正しい前提で触らない。ずれは backend の換算（`z_sign`, `z_counts_per_unit`）か基準設定の手順で直す。
 3. 実機での確認が必要（§5）。手順は `docs/HANDOFF.md` §6。詳細は [robot-protocol.md](references/robot-protocol.md) §3。
 
@@ -112,7 +112,7 @@ description: >
 | 再接続でロープが鞭のように振れる | 25 cm 超の teleport 判定（`main.gd`） | `--scenario reconnect` |
 | 表情が変わらない | `manual_expression` 固定、mood の優先順位（panic > mood）、`_last_expr_shown` | デバッグパネル Character を `(auto)` に戻す |
 | 実機モードで ERROR から戻らない（驚き顔のまま、望遠鏡が出ない） | `GameState` は実機が正常な状態を報告したときか `error_cleared` で ERROR を抜ける。実機の状態が変わらないと残る | デバッグパネルの game= を見る。[robot-protocol.md](references/robot-protocol.md) §5 |
-| `move_z` が NACK になる | `z_zero` を送っていない（意図的） | ログの `Z reference not set` |
+| `move_z` が NACK になる | Z の点（`z_set top` / `bottom`、`z_zero`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
 | perf テストが 2 ms に近い | 初回起動のばらつき | 再実行する。安定して遅い場合のみ調べる |
