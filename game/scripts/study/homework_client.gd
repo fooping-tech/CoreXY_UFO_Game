@@ -16,6 +16,15 @@ extends Node
 ## overview image (`calib_add`). Look: click a point (`look_at`): the backend maps it to
 ## XY and runs the approach there (no advice); it stays down until `look_done` or the
 ## hold timeout.
+##
+## Stage 3 (#79), the helper: when the backend reports a stall, say "手伝おうか？" once
+## (again after offer_repeat_s while still stalled). The stuck key (Y) or, within
+## offer_window_s of the offer, a thumbs-up (only while the gesture control is off)
+## asks the backend which problem the child is stuck on; the next key (N) asks for the
+## next problem to solve. The backend names it and finds its answer box (the study
+## assistant, checked with Jev); only a box it calls usable is looked at (the look above,
+## so it needs the calibration). Otherwise nothing moves and the helper says so. The
+## voice is made by the backend (VOICEVOX / macOS say) and played here.
 
 signal state_changed
 
@@ -59,6 +68,31 @@ var calib_status := ""
 var looking := false
 var _look_moving := false
 var _approach_rid := ""
+## ---- helper (#79)
+var speech_available := false
+var voice_on := true
+var speech_status := ""
+## "VOICEVOX:<character>" of the last VOICEVOX line (the VOICEVOX terms ask for it to be shown)
+var speech_credit := ""
+var player: AudioStreamPlayer
+var helper_offer := true
+var offer_text := "手伝おうか？"
+var offer_repeat_s := 300.0
+var offer_window_s := 60.0
+var thumb_hold_ms := 800.0
+## kind ("stuck" / "next") -> keycode
+var focus_keys := {"stuck": KEY_Y, "next": KEY_N}
+## "" | locating | done | unsure | error
+var locate_state := ""
+var locate_status := ""
+var locate_kind := ""
+## The last homework_locate_result data.
+var last_locate: Dictionary = {}
+var _offer_until_ms := 0
+var _last_offer_ms := -1
+var _offered_this_stall := false
+var _thumb_since_ms := -1.0
+var _thumb_spent := false
 var _captured := false
 var _started_ms := 0
 var _stopped_elapsed := 0.0
@@ -82,9 +116,28 @@ func setup(hub: CameraHub, robot_link: UfoWebSocketClient = null) -> void:
 	link.study_only = true  # aux link: hello + study_* / homework_* only, no RobotState
 	link.auto_reconnect = true
 	link.outbound_buffer_size = maxi(1048576, max_image_bytes * 2)
+	link.inbound_buffer_size = 4194304  # the helper's voice comes as a WAV in base64
 	link.study_message.connect(_on_message)
 	link.disconnected.connect(_on_disconnected)
 	add_child(link)
+	var h = GameConfig.get_value("homework", "helper", {})
+	configure_helper(h if h is Dictionary else {})
+	player = AudioStreamPlayer.new()
+	player.name = "HelperVoice"
+	add_child(player)
+
+func configure_helper(c: Dictionary) -> void:
+	helper_offer = bool(c.get("offer", helper_offer))
+	offer_text = str(c.get("offer_text", offer_text))
+	offer_repeat_s = maxf(float(c.get("offer_repeat_s", offer_repeat_s)), 10.0)
+	offer_window_s = maxf(float(c.get("offer_window_s", offer_window_s)), 1.0)
+	thumb_hold_ms = maxf(float(c.get("thumb_hold_ms", thumb_hold_ms)), 0.0)
+	var keys = c.get("keys", {})
+	if keys is Dictionary:
+		for kind in ["stuck", "next"]:
+			var code := OS.find_keycode_from_string(str(keys.get(kind, "")))
+			if code != KEY_NONE:
+				focus_keys[kind] = code
 
 func running() -> bool:
 	return state == "running" or state == "connecting"
@@ -164,6 +217,7 @@ func _on_message(msg: Dictionary) -> void:
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
 	if t == "hello":
 		advice_available = bool(data.get("homework_advice", false))
+		speech_available = bool(data.get("homework_speech", false))
 		if state != "connecting" and state != "running":
 			return
 		if not bool(data.get("homework", false)):
@@ -171,6 +225,14 @@ func _on_message(msg: Dictionary) -> void:
 			status_text = "バックエンドで宿題の見守りが無効です（config の homework.enabled）"
 		else:
 			_send_start()
+	elif t == "homework_speech":
+		_play_speech(data)
+	elif t == "homework_speech_error":
+		speech_status = "声を出せませんでした: " + str(data.get("message", ""))
+	elif t == "homework_locate_result":
+		_on_locate_result(data)
+	elif t == "homework_locate_error":
+		_locate_failed("読み取れませんでした: " + str(data.get("message", "")), "うまく読み取れなかったよ。")
 	elif t == "homework_advice_delta":
 		advice_text += str(data.get("text", ""))
 	elif t == "homework_advice_result":
@@ -198,6 +260,7 @@ func _on_message(msg: Dictionary) -> void:
 		last_update_ms = Time.get_ticks_msec()
 		history.append({"elapsed_s": elapsed_s(), "progress_pct": last_pct, "smoothed_pct": progress_pct, "held": held_reason})
 		status_text = "見守り中" + ("" if held_reason == "" else "（%s のため前の値のまま）" % held_text(held_reason))
+		_maybe_offer()
 	elif t == "homework_error":
 		_waiting = false
 		errors += 1
@@ -480,6 +543,152 @@ func _on_approach(status: Dictionary) -> void:
 			calib_status = "戻りました"
 	if phase != before:
 		state_changed.emit()
+
+# ------------------------------------------------------------------ helper (#79)
+## The stall -> "手伝おうか？" once per stall (again after offer_repeat_s while it lasts).
+func _maybe_offer() -> void:
+	if not stalled:
+		_offered_this_stall = false
+		return
+	if not helper_offer or not running() or advice_busy() or looking or locate_state == "locating":
+		return
+	var now := Time.get_ticks_msec()
+	if _offered_this_stall and now - _last_offer_ms < int(offer_repeat_s * 1000.0):
+		return
+	offer_help()
+
+func offer_help() -> void:
+	var now := Time.get_ticks_msec()
+	_offered_this_stall = true
+	_last_offer_ms = now
+	_offer_until_ms = now + int(offer_window_s * 1000.0)
+	locate_status = "%s（%s かいいねで止まっている問題を見に行く、%s で次の問題）" % [
+		offer_text, key_name("stuck"), key_name("next")]
+	say(offer_text)
+	state_changed.emit()
+
+func offer_pending(now_ms: float) -> bool:
+	return now_ms < _offer_until_ms
+
+func key_name(kind: String) -> String:
+	return OS.get_keycode_string(int(focus_keys.get(kind, KEY_NONE)))
+
+## The game's unused keys come here: true when it was one of the helper's.
+func handle_key(keycode: int) -> bool:
+	for kind in ["stuck", "next"]:
+		if keycode == int(focus_keys[kind]):
+			focus_problem(kind)
+			return true
+	return false
+
+## A thumbs-up held thumb_hold_ms answers a pending offer. A thumb already up when the
+## offer came (or left up after answering) does nothing until it is put down.
+func thumb_tick(thumb: bool, now_ms: float) -> void:
+	if not thumb:
+		_thumb_since_ms = -1.0
+		_thumb_spent = false
+		return
+	if _thumb_spent:
+		return
+	if not offer_pending(now_ms):
+		_thumb_spent = true
+		return
+	if _thumb_since_ms < 0.0:
+		_thumb_since_ms = now_ms
+	if now_ms - _thumb_since_ms >= thumb_hold_ms:
+		_thumb_spent = true
+		focus_problem("stuck")
+
+## Why the arm cannot be sent to a problem now ("" when it can).
+func focus_blocker() -> String:
+	if not advice_available:
+		return "問題を読み取るアシスタントがない（study.provider）"
+	if not robot_link_ready():
+		return "動かすにはバックエンド（実機 / モック）への接続が要る"
+	if not calibration_usable():
+		return "カメラの校正がまだ使えない（宿題タブの「校正点を記録」）"
+	if cameras == null or not cameras.has_feed(camera_role):
+		return "%s カメラに映像がない" % camera_role
+	return ""
+
+## Find the problem ("stuck" / "next") in the overview image now and look at it.
+func focus_problem(kind: String) -> void:
+	_offer_until_ms = 0
+	if locate_state == "locating" or advice_busy() or looking:
+		locate_status = "いまは別の動きの途中です"
+		state_changed.emit()
+		return
+	var why := focus_blocker()
+	if why != "":
+		_locate_failed("見に行けません: " + why, "")
+		return
+	var jpeg := StudyClient.encode_jpeg(cameras.texture(camera_role).get_image(), max_image_edge, max_image_bytes)
+	if jpeg.is_empty():
+		_locate_failed("画像を上限サイズ内に圧縮できませんでした", "")
+		return
+	_ensure_link()
+	_seq += 1
+	locate_kind = kind
+	last_locate = {}
+	var err := link.send_aux({"type": "homework_locate", "request_id": "hwl-%d" % _seq, "data": {
+		"session_id": session_id, "kind": kind, "image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
+	if err != OK:
+		_locate_failed("画像を送れませんでした（WebSocket error %d）" % err, "")
+		return
+	locate_state = "locating"
+	locate_status = ("止まっている問題" if kind == "stuck" else "次に解く問題") + "を読み取っています…"
+	say("わかった、見てみるね。" if kind == "stuck" else "次の問題を見てみるね。")
+	state_changed.emit()
+
+func _on_locate_result(data: Dictionary) -> void:
+	last_locate = data
+	var problem := str(data.get("problem", ""))
+	if not bool(data.get("usable", false)):
+		_locate_failed("場所がはっきりしないので動かしません（%s）: %s" % [problem, str(data.get("reason", ""))],
+			"どの問題か、はっきりわからなかったよ。", "unsure")
+		return
+	locate_state = "done"
+	locate_status = "「%s」を見に行きます%s" % [problem, "" if bool(data.get("verified", false)) else "（Jev では未確認）"]
+	say(("%sを見に行くね。" % problem) if problem != "" else "見に行くね。")
+	look_at(Vector2(float(data.get("u", 0.5)), float(data.get("v", 0.5))))
+	state_changed.emit()
+
+func _locate_failed(status: String, spoken: String, new_state := "error") -> void:
+	locate_state = new_state
+	locate_status = status
+	if spoken != "":
+		say(spoken)
+	state_changed.emit()
+
+## Ask the backend to voice text (nothing when the voice is off or unavailable).
+func say(text: String) -> void:
+	if not voice_on or text.strip_edges() == "":
+		return
+	if not speech_available:
+		speech_status = "声は使えない（バックエンドの homework.speech）: " + text
+		return
+	_ensure_link()
+	_seq += 1
+	if link.send_aux({"type": "homework_say", "request_id": "hws-%d" % _seq, "data": {"text": text}}) != OK:
+		speech_status = "声を頼めませんでした: " + text
+
+func _play_speech(data: Dictionary) -> void:
+	var wav := Marshalls.base64_to_raw(str(data.get("wav_base64", "")))
+	var stream := wav_stream(wav)
+	if stream == null:
+		speech_status = "音声を読み込めませんでした"
+		return
+	speech_credit = str(data.get("credit", ""))
+	speech_status = "「%s」（%s）" % [str(data.get("text", "")), str(data.get("engine", ""))]
+	if voice_on and player != null:
+		player.stream = stream
+		player.play()
+
+## A WAV file's bytes as a stream (null when they are not a WAV).
+static func wav_stream(wav: PackedByteArray) -> AudioStreamWAV:
+	if wav.size() < 44 or wav.slice(0, 4).get_string_from_ascii() != "RIFF" or wav.slice(8, 12).get_string_from_ascii() != "WAVE":
+		return null
+	return AudioStreamWAV.load_from_buffer(wav)
 
 static func _num(v) -> float:
 	return float(v) if v != null else NAN

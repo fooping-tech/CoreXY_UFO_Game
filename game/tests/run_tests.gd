@@ -1157,6 +1157,7 @@ func _test_homework_watch(rs: Node) -> void:
 	hw.approach_and_advise()  # the game's own mock (no backend robot link): refused with a reason
 	_ok(hw.advice_status.contains("バックエンド"), "homework: approaching needs the backend's robot link")
 	_test_homework_camera_map(game, hw)
+	_test_homework_helper(game, hw)
 	hw.stop()
 	remove_child(game)
 	game.free()
@@ -1206,6 +1207,91 @@ func _test_homework_camera_map(game: Node, hw: HomeworkClient) -> void:
 	var refused_ok := not hw.looking and hw.calib_status.contains("バックエンド")
 	_ok(stale_ok and hold_ok and back_ok and refused_ok, "camera map: look states (stale status ignored, hold, back, refused offline)",
 		"%s %s %s %s" % [stale_ok, hold_ok, back_ok, refused_ok])
+
+## Stage 3 (#79): the offer once per stall, the keys and the thumbs-up, the locate
+## result (moves only when usable), the voice as a WAV and its credit.
+func _test_homework_helper(game: Node, hw: HomeworkClient) -> void:
+	# a 16-bit mono PCM WAV with 100 samples
+	var wav := PackedByteArray()
+	wav.append_array("RIFF".to_ascii_buffer())
+	wav.resize(44)
+	wav.encode_u32(4, 36 + 200)
+	var fmt := "WAVEfmt ".to_ascii_buffer()
+	for i in fmt.size():
+		wav[8 + i] = fmt[i]
+	wav.encode_u32(16, 16)
+	wav.encode_u16(20, 1)
+	wav.encode_u16(22, 1)
+	wav.encode_u32(24, 24000)
+	wav.encode_u32(28, 48000)
+	wav.encode_u16(32, 2)
+	wav.encode_u16(34, 16)
+	var data := "data".to_ascii_buffer()
+	for i in data.size():
+		wav[36 + i] = data[i]
+	wav.encode_u32(40, 200)
+	wav.resize(44 + 200)
+	var stream := HomeworkClient.wav_stream(wav)
+	_ok(stream != null and stream.mix_rate == 24000 and HomeworkClient.wav_stream("not a wav at all, really not one".to_ascii_buffer()) == null,
+		"helper: a WAV from the backend becomes a stream, anything else does not")
+	hw._on_message({"type": "homework_speech", "data": {"text": "手伝おうか？", "engine": "voicevox",
+		"credit": "VOICEVOX:ずんだもん", "wav_base64": Marshalls.raw_to_base64(wav)}})
+	game.debug_ui._update_homework()
+	_ok(hw.player.stream != null and hw.speech_credit == "VOICEVOX:ずんだもん"
+		and game.debug_ui._hw_helper.text.contains("VOICEVOX:ずんだもん"), "helper: the voice plays and its credit is shown",
+		game.debug_ui._hw_helper.text)
+	# the offer: once per stall, again only after offer_repeat_s; spoken (here: no speech -> the reason)
+	hw.state = "running"
+	hw.stalled = false
+	hw._offer_until_ms = 0  # the stage-1 test's stall already offered help
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": false}})
+	var calm := not hw.offer_pending(Time.get_ticks_msec())
+	hw.speech_available = false
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": true, "stalled_for_s": 200.0}})
+	var offered := hw.offer_pending(Time.get_ticks_msec()) and hw.locate_status.begins_with(hw.offer_text) \
+		and hw.speech_status.contains("声は使えない")
+	var first := hw._last_offer_ms
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": true, "stalled_for_s": 210.0}})
+	var once := hw._last_offer_ms == first
+	_ok(calm and offered and once, "helper: offers help once when the watch reports a stall", "%s %s %s" % [calm, offered, once])
+	# the thumbs-up: held thumb_hold_ms while the offer is pending; refused here (no assistant), with the reason
+	var t := float(Time.get_ticks_msec())
+	hw.thumb_tick(true, t)
+	hw.thumb_tick(true, t + hw.thumb_hold_ms * 0.5)
+	var waiting := hw.offer_pending(t) and hw.locate_state != "error"
+	hw.thumb_tick(true, t + hw.thumb_hold_ms + 1.0)
+	var fired := not hw.offer_pending(t) and hw.locate_state == "error" and hw.locate_status.contains("アシスタント")
+	hw.thumb_tick(false, t + 2000.0)
+	hw.offer_help()
+	hw.thumb_tick(false, t)
+	hw.locate_state = ""
+	var t2 := float(Time.get_ticks_msec())
+	hw._offer_until_ms = 0
+	hw.thumb_tick(true, t2)  # up before the offer: spent until put down
+	hw._offer_until_ms = int(t2) + 60000
+	hw.thumb_tick(true, t2 + hw.thumb_hold_ms * 3.0)
+	var stale_thumb := hw.locate_state == ""
+	_ok(waiting and fired and stale_thumb, "helper: a held thumbs-up answers the offer, an old one does not",
+		"%s %s %s" % [waiting, fired, stale_thumb])
+	# keys from config; the game's own keys win (only the default branch reaches the helper)
+	var keys_before := hw.focus_keys.duplicate()
+	hw.configure_helper({"keys": {"stuck": "J", "next": "bogus"}})
+	var keys_ok: bool = hw.focus_keys.stuck == KEY_J and hw.focus_keys.next == KEY_N and hw.handle_key(KEY_J) \
+		and not hw.handle_key(KEY_Z) and hw.locate_status.contains("見に行けません")
+	hw.focus_keys = keys_before
+	_ok(keys_ok and hw.key_name("stuck") == "Y" and hw.key_name("next") == "N", "helper: Y / N by default, keys from config")
+	# a locate result: not usable -> no motion, said; usable -> the look (refused here: no backend robot link)
+	hw._on_message({"type": "homework_locate_result", "data": {"kind": "stuck", "problem": "(3) 4×12", "usable": false,
+		"verified": false, "reason": "Claude と Jev の解答欄の位置が合いませんでした"}})
+	var unsure_ok := hw.locate_state == "unsure" and hw.locate_status.contains("動かしません") and not hw.looking
+	hw.calib_status = ""
+	hw._on_message({"type": "homework_locate_result", "data": {"kind": "next", "problem": "(4)", "usable": true,
+		"verified": true, "u": 0.4, "v": 0.6}})
+	var go_ok := hw.locate_state == "done" and hw.locate_status.contains("(4)") and hw.calib_status.contains("バックエンド")
+	hw._on_message({"type": "homework_locate_error", "data": {"code": "not_found", "message": "見えない"}})
+	var err_ok := hw.locate_state == "error" and hw.locate_status.contains("見えない")
+	_ok(unsure_ok and go_ok and err_ok, "helper: locate results (unsure stays put, usable looks, errors shown)",
+		"%s %s %s" % [unsure_ok, go_ok, err_ok])
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;
 ## spawn_fx honours the options; one-shots free themselves; off = nothing spawns.
