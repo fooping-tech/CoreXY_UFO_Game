@@ -123,6 +123,8 @@ class ProgressTracker:
     stall_min_gain: float = STALL_MIN_GAIN
     window: deque = field(default_factory=lambda: deque(maxlen=SMOOTH_WINDOW))
     history: list[dict[str, Any]] = field(default_factory=list)
+    # how many times the shown value grew by stall_min_gain (the answers increased)
+    gains: int = 0
     _base_t: float = 0.0
     _base_pct: float | None = None
     _last_reason: str = ""
@@ -141,6 +143,7 @@ class ProgressTracker:
                 self._base_pct = smoothed  # the clock runs from the start (_base_t = 0)
             elif smoothed >= self._base_pct + self.stall_min_gain:
                 self._base_t, self._base_pct = elapsed_s, smoothed  # progress: restart the clock
+                self.gains += 1
             elif smoothed < self._base_pct:
                 self._base_pct = smoothed  # erased: compare later gains from here, keep the clock
         self.history.append({"elapsed_s": round(elapsed_s, 1), "progress_pct": reading.progress_pct,

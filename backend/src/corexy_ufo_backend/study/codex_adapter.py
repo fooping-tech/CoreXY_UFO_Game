@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shlex
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -169,10 +169,10 @@ class CodexStudyAdapter:
         return thread_id
 
     async def ask(self, thread_id: str, text: str, image_path: Path,
-                  on_delta: Callable[[str], Awaitable[None]]) -> str:
+                  on_delta: Callable[[str], Awaitable[None]], more_images: Sequence[Path] = ()) -> str:
         result = await self._request("turn/start", {"threadId": thread_id, "input": [
             {"type": "text", "text": text},
-            {"type": "localImage", "path": str(image_path), "detail": "high"},
+            *({"type": "localImage", "path": str(p), "detail": "high"} for p in (*more_images, image_path)),
         ]})
         turn = (result or {}).get("turn") or {}
         turn_id = str(turn.get("id", ""))

@@ -43,6 +43,12 @@ Ordering: commands of one connection run one after another (so enable_motors
 -> move_xy keeps its order), EXCEPT the out-of-band commands in PRIORITY_COMMANDS
 (stop, soft_stop, jog, get_state), which run immediately even while a long move
 of the same connection is still waiting for the firmware.
+
+Homework messages (type homework_*, never the robot): start / frame / advice / stop, and
+(#79) homework_locate {session_id, kind: stuck|next, image_jpeg_base64} ->
+homework_locate_result {problem, u, v, verified, usable, ...} / homework_locate_error
+(the game then looks there with the homework_approach command {u, v}), and
+homework_say {text} -> homework_speech {wav_base64, engine, credit} / homework_speech_error.
 """
 
 from __future__ import annotations
@@ -314,7 +320,8 @@ class GameServer:
         log.info("client connected (%d)", len(self.clients))
         try:
             await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None,
-                "homework_advice": self.homework is not None and self.homework.advice_available}}))
+                "homework_advice": self.homework is not None and self.homework.advice_available,
+                "homework_speech": self.homework is not None and self.homework.speech_available}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -412,6 +419,14 @@ class GameServer:
                                            lambda reply: self._study_send(ws, reply))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "session_id": session_id, "state": "advising"}})
+            elif msg["type"] == "homework_locate":
+                await self.homework.locate(session_id, rid, str(data.get("kind", "")),
+                                           str(data.get("image_jpeg_base64", "")),
+                                           lambda reply: self._study_send(ws, reply))
+                await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
+                    "session_id": session_id, "state": "locating", "kind": str(data.get("kind", ""))}})
+            elif msg["type"] == "homework_say":
+                await self.homework.say(rid, str(data.get("text", "")), lambda reply: self._study_send(ws, reply))
             elif msg["type"] == "homework_stop":
                 result = await self.homework.stop(session_id)
                 self._homework_sessions.get(ws, set()).discard(session_id)
