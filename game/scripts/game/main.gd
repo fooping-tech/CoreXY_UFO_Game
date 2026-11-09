@@ -1160,6 +1160,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			KEY_SPACE:
 				_jog_latched = _jog_input() != Vector3.ZERO
 				gesture.stop("stop_key")
+				if homework != null:
+					homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
 				if mock.enabled:
 					mock.emergency_stop()
 				if ws.enabled and ws.is_open():

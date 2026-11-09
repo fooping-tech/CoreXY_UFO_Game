@@ -102,7 +102,7 @@ func _build() -> void:
 	var stops := HBoxContainer.new()
 	root.add_child(stops)
 	_button(stops, "STOP (space)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("soft_stop")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var estop := _button(stops, "E-STOP (ABORT)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("stop"))
+	var estop := _button(stops, "E-STOP (ABORT)", func(): _estop())
 	estop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	estop.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 	_source_option = OptionButton.new()
@@ -346,6 +346,13 @@ func _build_homework() -> void:
 	_hw_focus.custom_minimum_size = Vector2(_inner_w(), _inner_w() * 0.5)
 	_vbox.add_child(_hw_focus)
 	main.homework.request_camera_map()
+
+func _estop() -> void:
+	main.mock.emergency_stop()
+	if main.ws.enabled:
+		main.ws.send_command("stop")
+	if main.homework != null:
+		main.homework.cancel_locate("E-STOP で止めたので、問題を見に行くのをやめました")
 
 func _on_overview_picked(uv: Vector2) -> void:
 	match _hw_click_mode.selected:

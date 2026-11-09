@@ -1280,15 +1280,33 @@ func _test_homework_helper(game: Node, hw: HomeworkClient) -> void:
 		and not hw.handle_key(KEY_Z) and hw.locate_status.contains("見に行けません")
 	hw.focus_keys = keys_before
 	_ok(keys_ok and hw.key_name("stuck") == "Y" and hw.key_name("next") == "N", "helper: Y / N by default, keys from config")
+	# results count only for the pending request; stop / disconnect cancel it (no motion afterwards)
+	hw.locate_state = "locating"
+	hw._locate_rid = "hwl-old"
+	hw.cancel_locate("Space で止めた")
+	hw.calib_status = ""
+	hw._on_message({"type": "homework_locate_result", "request_id": "hwl-old", "data": {"usable": true, "u": 0.4, "v": 0.6}})
+	var cancelled_ok := hw.locate_state == "error" and hw.calib_status == "" and hw.locate_status.contains("Space")
+	hw._locate_rid = "hwl-2"
+	hw.locate_state = "locating"
+	hw._on_message({"type": "homework_locate_result", "request_id": "hwl-1", "data": {"usable": true, "u": 0.4, "v": 0.6}})
+	var other_ok := hw.locate_state == "locating" and hw.calib_status == ""
+	hw._on_disconnected()
+	var dropped_ok := hw.locate_state == "error" and hw._locate_rid == "" and hw.locate_status.contains("接続が切れた")
+	_ok(cancelled_ok and other_ok and dropped_ok, "helper: a stop or a lost link cancels the locate; other results are ignored",
+		"%s %s %s" % [cancelled_ok, other_ok, dropped_ok])
 	# a locate result: not usable -> no motion, said; usable -> the look (refused here: no backend robot link)
-	hw._on_message({"type": "homework_locate_result", "data": {"kind": "stuck", "problem": "(3) 4×12", "usable": false,
+	hw._locate_rid = "L1"
+	hw._on_message({"type": "homework_locate_result", "request_id": "L1", "data": {"kind": "stuck", "problem": "(3) 4×12", "usable": false,
 		"verified": false, "reason": "Claude と Jev の解答欄の位置が合いませんでした"}})
 	var unsure_ok := hw.locate_state == "unsure" and hw.locate_status.contains("動かしません") and not hw.looking
 	hw.calib_status = ""
-	hw._on_message({"type": "homework_locate_result", "data": {"kind": "next", "problem": "(4)", "usable": true,
+	hw._locate_rid = "L2"
+	hw._on_message({"type": "homework_locate_result", "request_id": "L2", "data": {"kind": "next", "problem": "(4)", "usable": true,
 		"verified": true, "u": 0.4, "v": 0.6}})
 	var go_ok := hw.locate_state == "done" and hw.locate_status.contains("(4)") and hw.calib_status.contains("バックエンド")
-	hw._on_message({"type": "homework_locate_error", "data": {"code": "not_found", "message": "見えない"}})
+	hw._locate_rid = "L3"
+	hw._on_message({"type": "homework_locate_error", "request_id": "L3", "data": {"code": "not_found", "message": "見えない"}})
 	var err_ok := hw.locate_state == "error" and hw.locate_status.contains("見えない")
 	_ok(unsure_ok and go_ok and err_ok, "helper: locate results (unsure stays put, usable looks, errors shown)",
 		"%s %s %s" % [unsure_ok, go_ok, err_ok])

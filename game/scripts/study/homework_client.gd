@@ -88,6 +88,8 @@ var locate_status := ""
 var locate_kind := ""
 ## The last homework_locate_result data.
 var last_locate: Dictionary = {}
+## request_id of the locate whose result may still move the arm ("" = none: results are ignored)
+var _locate_rid := ""
 var _offer_until_ms := 0
 var _last_offer_ms := -1
 var _offered_this_stall := false
@@ -229,10 +231,15 @@ func _on_message(msg: Dictionary) -> void:
 		_play_speech(data)
 	elif t == "homework_speech_error":
 		speech_status = "声を出せませんでした: " + str(data.get("message", ""))
-	elif t == "homework_locate_result":
-		_on_locate_result(data)
-	elif t == "homework_locate_error":
-		_locate_failed("読み取れませんでした: " + str(data.get("message", "")), "うまく読み取れなかったよ。")
+	elif t == "homework_locate_result" or t == "homework_locate_error":
+		# only the pending request counts: a cancelled (stop, disconnect) or older one never moves the arm
+		if _locate_rid == "" or str(msg.get("request_id", "")) != _locate_rid:
+			return
+		_locate_rid = ""
+		if t == "homework_locate_result":
+			_on_locate_result(data)
+		else:
+			_locate_failed("読み取れませんでした: " + str(data.get("message", "")), "うまく読み取れなかったよ。")
 	elif t == "homework_advice_delta":
 		advice_text += str(data.get("text", ""))
 	elif t == "homework_advice_result":
@@ -288,6 +295,8 @@ func _apply_summary(data: Dictionary) -> void:
 	cost_usd = float(data.get("cost_usd", cost_usd))
 
 func _on_disconnected() -> void:
+	if _locate_rid != "":
+		cancel_locate("バックエンドとの接続が切れたので、問題の読み取りをやめました（もう一度押す）")
 	if running():
 		_waiting = false
 		state = "connecting"
@@ -630,9 +639,11 @@ func focus_problem(kind: String) -> void:
 	_seq += 1
 	locate_kind = kind
 	last_locate = {}
-	var err := link.send_aux({"type": "homework_locate", "request_id": "hwl-%d" % _seq, "data": {
+	_locate_rid = "hwl-%d" % _seq
+	var err := link.send_aux({"type": "homework_locate", "request_id": _locate_rid, "data": {
 		"session_id": session_id, "kind": kind, "image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
 	if err != OK:
+		_locate_rid = ""
 		_locate_failed("画像を送れませんでした（WebSocket error %d）" % err, "")
 		return
 	locate_state = "locating"
@@ -651,6 +662,16 @@ func _on_locate_result(data: Dictionary) -> void:
 	locate_status = "「%s」を見に行きます%s" % [problem, "" if bool(data.get("verified", false)) else "（Jev では未確認）"]
 	say(("%sを見に行くね。" % problem) if problem != "" else "見に行くね。")
 	look_at(Vector2(float(data.get("u", 0.5)), float(data.get("v", 0.5))))
+	state_changed.emit()
+
+## Stop (Space / E-STOP) or a lost link: a pending locate's result is ignored (no motion).
+func cancel_locate(why: String) -> void:
+	_offer_until_ms = 0
+	if _locate_rid == "" and locate_state != "locating":
+		return
+	_locate_rid = ""
+	locate_state = "error"
+	locate_status = why
 	state_changed.emit()
 
 func _locate_failed(status: String, spoken: String, new_state := "error") -> void:
