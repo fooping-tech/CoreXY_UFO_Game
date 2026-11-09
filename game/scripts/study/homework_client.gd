@@ -268,6 +268,10 @@ func _on_message(msg: Dictionary) -> void:
 		history.append({"elapsed_s": elapsed_s(), "progress_pct": last_pct, "smoothed_pct": progress_pct, "held": held_reason})
 		status_text = "見守り中" + ("" if held_reason == "" else "（%s のため前の値のまま）" % held_text(held_reason))
 		_maybe_offer()
+	elif t == "homework_error" and _locate_rid != "" and str(msg.get("request_id", "")) == _locate_rid:
+		# the backend refused the locate itself (e.g. the previous one is still finishing): not a watch error
+		_locate_rid = ""
+		_locate_failed("問題を読み取れませんでした: " + str(data.get("message", "")), "")
 	elif t == "homework_error":
 		_waiting = false
 		errors += 1

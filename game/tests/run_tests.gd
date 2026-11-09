@@ -1293,6 +1293,20 @@ func _test_homework_helper(game: Node, hw: HomeworkClient) -> void:
 	var other_ok := hw.locate_state == "locating" and hw.calib_status == ""
 	hw._on_disconnected()
 	var dropped_ok := hw.locate_state == "error" and hw._locate_rid == "" and hw.locate_status.contains("接続が切れた")
+	# a refusal of the locate itself (generic homework_error with its request_id) ends it, not the watch
+	hw._locate_rid = "hwl-3"
+	hw.locate_state = "locating"
+	var errors_before := hw.errors
+	hw._on_message({"type": "homework_error", "request_id": "hwl-3", "data": {"code": "invalid_request",
+		"message": "a problem is already being located"}})
+	dropped_ok = dropped_ok and hw.locate_state == "error" and hw._locate_rid == "" and hw.errors == errors_before \
+		and hw.locate_status.contains("already")
+	game.debug_ui._stop()
+	dropped_ok = dropped_ok and hw.locate_status.contains("STOP") == false  # nothing pending: status kept
+	hw.locate_state = "locating"
+	hw._locate_rid = "hwl-4"
+	game.debug_ui._stop()
+	dropped_ok = dropped_ok and hw._locate_rid == "" and hw.locate_status.contains("STOP")
 	_ok(cancelled_ok and other_ok and dropped_ok, "helper: a stop or a lost link cancels the locate; other results are ignored",
 		"%s %s %s" % [cancelled_ok, other_ok, dropped_ok])
 	# a locate result: not usable -> no motion, said; usable -> the look (refused here: no backend robot link)
