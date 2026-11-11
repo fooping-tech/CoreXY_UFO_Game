@@ -19,6 +19,23 @@ CoreXY_UFO_Game/
 - uv: `brew install uv`（Python 3.12+ は uv が自動取得）
 - 実機接続時のみ: M5Stack Core2 + USB ケーブル（CP210x/CH9102 ドライバ）
 
+### Windows
+
+- Godot: `winget install GodotEngine.GodotEngine`（管理者権限なしだと `godot` コマンドは作られないが、`start.ps1` が winget のインストール先から探す。別の場所なら環境変数 `GODOT` に実行ファイルを指定）
+- uv: `winget install astral-sh.uv`
+- 起動は `start.sh` の代わりに `start.ps1`（モードと引数は同じ。実機のポートは `COM3` など）:
+
+```powershell
+.\start.ps1                    # ゲームのみ（Godot 内蔵 MockRobot）
+.\start.ps1 mock               # Python バックエンド --mock + ゲーム
+.\start.ps1 backend --list-ports
+.\start.ps1 real COM3          # 実機バックエンド + ゲーム
+```
+
+- 「スクリプトの実行が無効」と言われたら `powershell -ExecutionPolicy Bypass -File .\start.ps1 mock` のように起動する。
+- 初回（`game/.godot/imported` がないとき）は、ゲームの前に Godot のインポートを自動で実行する。
+- 以下の説明の `./start.sh ...` は、Windows では `.\start.ps1 ...` と読み替える。
+
 ## Phase 1: 実機なしでゲームを起動する
 
 ```bash
