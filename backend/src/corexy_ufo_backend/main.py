@@ -98,6 +98,15 @@ def make_vision(args: argparse.Namespace, gesture_cfg: dict | None = None) -> Vi
     return VisionService(cams, detector, hands)
 
 
+def install_stop_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+    """Ctrl-C / SIGTERM set `stop`, so run() shuts the server and the robot down in order."""
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:  # Windows: the event loop has no signal handlers
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
+
+
 async def run(args: argparse.Namespace) -> int:
     cfg = load_config()
     if args.port:
@@ -143,8 +152,7 @@ async def run(args: argparse.Namespace) -> int:
         vision.start()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+    install_stop_handlers(loop, stop)
     log.info("running: robot=%s  ws://%s:%d  (Ctrl-C to stop)", robot.name, cfg.websocket_host, cfg.websocket_port)
     await stop.wait()
     log.info("shutting down")
