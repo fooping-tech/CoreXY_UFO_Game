@@ -28,6 +28,9 @@ var shake: ScreenShake
 var cameras: CameraHub
 var study: Node
 var homework: Node
+## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
+var study_mode: StudyModeController
+var study_hud: StudyHud
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -232,12 +235,35 @@ func _ready() -> void:
 	debug_ui.name = "DebugUI"
 	add_child(debug_ui)
 	debug_ui.setup(self)
+	if bool(GameConfig.get_value("study_mode", "enabled", false)):
+		_setup_study_mode()
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	set_gesture_enabled(bool(GameConfig.get_value("gesture", "enabled", false)))
 	_apply_cmdline()
+
+## The study mode reuses the homework watch (HomeworkClient); without the F1 panel's
+## one (homework.enabled false) it gets its own, kept out of the game's helper keys.
+func _setup_study_mode() -> void:
+	var hw: HomeworkClient = homework
+	if hw == null:
+		hw = HomeworkClientScript.new()
+		hw.name = "StudyHomeworkClient"
+		add_child(hw)
+		hw.setup(cameras, ws)
+		hw.helper_offer = false  # the study mode has its own HELP
+	study_mode = StudyModeController.new()
+	study_mode.name = "StudyMode"
+	add_child(study_mode)
+	study_mode.setup(self, hw)
+	study_hud = StudyHud.new()
+	study_hud.name = "StudyHud"
+	add_child(study_hud)
+	study_hud.setup(study_mode)
+	if bool(GameConfig.get_value("study_mode", "autostart", false)):
+		study_mode.call_deferred("start")
 
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
 func _apply_cmdline() -> void:
@@ -274,6 +300,13 @@ func _apply_cmdline() -> void:
 				_gesture_demo_t = 0.0
 				set_gesture_enabled(true)
 				gesture_require_focus = false
+			"--study-mode", "--study-demo":
+				# the study mode right away; --study-demo <mock|camera|real> also picks the demo mode
+				if study_mode == null:
+					_setup_study_mode()
+				if args[i] == "--study-demo" and i + 1 < args.size():
+					study_mode.services.set_mode(args[i + 1])
+				study_mode.call_deferred("start")
 			"--quit-after":
 				if i + 1 < args.size():
 					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
@@ -549,6 +582,10 @@ func _update_scope(dt: float) -> void:
 	var want := scope_trigger.step(fx_move, maxf(fx_up, fx_down), lowering, dt) and scope_enabled
 	# not while the hand joystick has the crane (the UFO shows the steering then)
 	want = want and not gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
+	# the study mode's close-ups: the arm camera's real frames in the round view (the mock
+	# demo draws its own close-up, and the game's telescope moment waits meanwhile)
+	if study_mode != null and study_mode.active():
+		want = study_mode.wants_scope() and cameras.has_feed("focus") and study_mode.services.mode != "mock"
 	scope.wanted = want
 	ufo.peering = want
 	if want and scope.open_amount == 0.0:
@@ -593,6 +630,10 @@ static func scope_placement(play_w: float, h: float, r: float, ufo_px: Vector2) 
 	return Vector3(x, y, side)
 
 func _mood() -> String:
+	if study_mode != null:
+		var o := study_mode.mood_override()
+		if o != "":
+			return o
 	match GameState.state:
 		"DISCONNECTED", "BOOT":
 			return "DISCONNECTED"
@@ -851,6 +892,13 @@ func _handle_input(dt: float) -> void:
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
+	# the study mode's HELP / tidy-up owns the arm: no manual jog meanwhile (Space still stops it)
+	if study_mode != null and study_mode.blocks_manual_control():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "勉強モードでアームを使っている間は手動操作できない（Space で止める）"
+		if gesture.is_active():
+			gesture.stop("study_mode")
 	# the auto catch owns the crane: no manual jog until it ends (Space / E-STOP still stop it)
 	if RobotState.auto_catch_active():
 		halt = true
@@ -1156,8 +1204,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
+		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
+		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
+				and study_mode.handle_key(ev.keycode):
+			return
 		match ev.keycode:
 			KEY_SPACE:
+				if study_mode != null:
+					study_mode.on_stop_key()
 				_jog_latched = _jog_input() != Vector3.ZERO
 				gesture.stop("stop_key")
 				if homework != null:
