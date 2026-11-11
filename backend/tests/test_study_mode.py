@@ -537,3 +537,14 @@ def test_json_is_found_with_braces_in_the_prose():
             '"confidence": 0.8, "hint": "足してみよう", "explanation": "1. 式", "speech_text": "やってみよう", '
             '"needs_confirmation": false}\n以上 {おわり}')
     assert parse_explanation(text, 3)["hint"] == "足してみよう"
+
+
+async def test_the_mock_backend_robot_can_tidy_up_without_a_claw_calibration():
+    """./start.sh study runs --mock = DryRunRobot: its virtual claw has both positions."""
+    from corexy_ufo_backend.sequence import AutoCatchConfig
+    from corexy_ufo_backend.sequence.dry_run import make_dry_run_robot
+    r = make_dry_run_robot(AutoCatchConfig.from_raw(RAW).dry_run, LIMITS, speed_model=False)
+    s = r.snapshot()
+    assert s.arm_closed_deg is not None and s.arm_open_deg is not None
+    seq = CleanupSequencer(r, LIMITS, CleanupProfile.from_raw(RAW, "dry_run"))
+    assert not any("claw" in e for e in seq.preconditions(need_spot=False, need_claw=True))
