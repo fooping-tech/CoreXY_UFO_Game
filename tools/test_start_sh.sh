@@ -42,6 +42,20 @@ DOT
 run -- ; has "（.env の CXUFO_START_MODE）: game --from-dotenv --two" && has "-- --from-dotenv --two"
 check ".env: quotes, export, extra spaces" $?
 
+cat > "$TMP/.env" <<'DOT'
+CXUFO_START_MODE=game        # game / mock / real / gesture / backend
+CXUFO_START_ARGS="--a #b" # comment after quotes
+DOT
+run -- ; has "（.env の CXUFO_START_MODE）: game --a #b" && has "-- --a #b"
+check ".env: inline comments as in the README example" $?
+
+printf 'CXUFO_START_MODE=game\nCXUFO_START_ARGS=--tag#1\n' > "$TMP/.env"
+run -- ; has "-- --tag#1"; check ".env: # inside a value is kept" $?
+
+cat > "$TMP/.env" <<'DOT'
+export CXUFO_START_MODE="game"
+CXUFO_START_ARGS='--from-dotenv  --two'
+DOT
 run CXUFO_START_ARGS=--from-env -- ; has "-- --from-env" && ! has "--from-dotenv"
 check "environment wins over .env per key" $?
 

@@ -171,9 +171,13 @@ read_dotenv() {
     [[ "$line" == "export "* ]] && line="${line#export }"
     [[ "$line" == "$1="* ]] || continue
     val="${line#*=}"
-    val="${val%"${val##*[![:space:]]}"}"
-    if [[ ${#val} -ge 2 && ( ( "${val:0:1}" == '"' && "${val: -1}" == '"' ) || ( "${val:0:1}" == "'" && "${val: -1}" == "'" ) ) ]]; then
-      val="${val:1:${#val}-2}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    local q="${val:0:1}"
+    if [[ ( "$q" == '"' || "$q" == "'" ) && "${val:1}" == *"$q"* ]]; then
+      val="${val:1}"; val="${val%%"$q"*}"     # quoted: up to the closing quote
+    else
+      val="${val%%[[:space:]]#*}"             # unquoted: drop an inline " # comment"
+      val="${val%"${val##*[![:space:]]}"}"
     fi
     DOTENV_VALUE="$val"
   done < "$ENV_FILE"
