@@ -1,12 +1,16 @@
 """Which problem to look at, and where its answer box is in the overview image (#79).
 
-Two kinds:
+Three kinds:
 - "stuck": the problem the child seems stuck on (written halfway, or the first blank
   after the last answered one), judged by comparing the frame at the last progress
   gain with the frame now (one image alone was ambiguous in the #78 trials: the same
   photo of a sheet answered out of order gave different answers).
 - "next": the next problem to solve (the first one without an answer after the last
   answered one).
+- "problem" (#86): a given problem of a known worksheet (the study mode's HELP looks at
+  problem 3, the challenge). The assistant is told which one; Jev is asked with the
+  worksheet's own description, and (when the 4 corner marks are found) the box must also
+  lie where the worksheet's layout puts it.
 
 The study assistant (Claude Code / Codex) names the problem and gives its answer box in
 pixels of the image now (Claude's own pixel coordinates were 0..1.5 px off in the #78
@@ -25,7 +29,7 @@ from typing import Any
 
 from .progress import IMAGE_ASSET
 
-KINDS = ("stuck", "next")
+KINDS = ("stuck", "next", "problem")
 
 LOCATE_SYSTEM_PROMPT = (
     "あなたは小学生の宿題プリントの写真を読み取り、問題と解答欄の位置を答えるアシスタントです。"
@@ -82,9 +86,11 @@ def jpeg_size(data: bytes) -> tuple[int, int]:
     raise LocateError("image", "画像の大きさを読み取れませんでした")
 
 
-def locate_prompt(kind: str, width: int, height: int, has_before: bool) -> str:
+def locate_prompt(kind: str, width: int, height: int, has_before: bool, target: str = "") -> str:
     if kind not in KINDS:
         raise LocateError("invalid_request", f"unknown kind {kind!r}")
+    if kind == "problem" and not target:
+        raise LocateError("invalid_request", "kind problem needs the problem (target)")
     parts = []
     if has_before:
         parts.append("算数の宿題プリントを机の上から撮った写真が 2 枚あります。1 枚目は最後に答えが増えたときの写真、"
@@ -96,6 +102,8 @@ def locate_prompt(kind: str, width: int, height: int, has_before: bool) -> str:
                      "なければ、最後に答えが書かれた問題の次の、答えがまだない問題です。")
         if has_before:
             parts.append("1 枚目から書き足された所があれば、その問題を優先してください。")
+    elif kind == "problem":
+        parts.append(f"次の問題を探してください: {target}")
     else:
         parts.append("次に解く問題を 1 つ選んでください。最後に答えが書かれた問題の次の、答えがまだない問題です"
                      "（途中まで書いてある問題があればそれ）。")
@@ -146,19 +154,40 @@ def parse_answer(text: str, width: int, height: int, max_box_area: float = 0.25)
     return {"problem": problem, "description_en": description, "box": box01}
 
 
-def jev_box_input(jpeg_base64: str, description_en: str) -> dict:
+MARK_TEXT = {"tl": "top-left", "tr": "top-right", "bl": "bottom-left", "br": "bottom-right"}
+
+
+def jev_box_input(jpeg_base64: str, description_en: str, marks: bool = False) -> dict:
+    """The answer box question; with marks, also the worksheet's 4 black corner squares (#86)."""
+    questions: dict = {"box": {"type": "box", "instructions": (
+        "Find the answer box (the rectangle where the handwritten answer goes) for "
+        f"{description_en} of the math worksheet in `{IMAGE_ASSET}`.")}}
+    if marks:
+        for key, text in MARK_TEXT.items():
+            questions[f"mark_{key}"] = {"type": "box", "instructions": (
+                f"Find the solid black square printed in the {text} corner of the worksheet in `{IMAGE_ASSET}`.")}
     return {
         "state": {IMAGE_ASSET: IMAGE_ASSET},  # without it: HTTP 400, code 7003
         "assets": {IMAGE_ASSET: {"type": "image", "format": "jpeg", "data_base64": jpeg_base64}},
-        "questions": {"box": {"type": "box", "instructions": (
-            "Find the answer box (the rectangle where the handwritten answer goes) for "
-            f"{description_en} of the math worksheet in `{IMAGE_ASSET}`.")}},
+        "questions": questions,
     }
+
+
+def jev_marks(output: dict) -> dict[str, tuple[float, float]]:
+    """Centres (0..1) of the corner marks Jev found (only those it found)."""
+    out = {}
+    for key in MARK_TEXT:
+        found = jev_box({"answers": {"box": (output.get("answers") or {}).get(f"mark_{key}")}})
+        if found is not None:
+            out[key] = centre(found[0])
+    return out
 
 
 def jev_box(output: dict) -> tuple[tuple[float, float, float, float], float | None] | None:
     """Jev's answer box (0..1, l < r, t < b) and confidence; None without one."""
     a = (output.get("answers") or {}).get("box") or {}
+    if not isinstance(a, dict):
+        return None
     box = a.get("box")
     if not isinstance(box, dict):
         return None
