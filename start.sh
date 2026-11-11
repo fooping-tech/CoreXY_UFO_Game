@@ -7,6 +7,11 @@
 #   ./start.sh gesture [args]      バックエンド --mock --gesture（カメラでピンチ操作）+ ゲーム（ジェスチャー ON）
 #   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
 #
+# 引数なしで起動したときのモードと引数は、環境変数かリポジトリ直下の .env で決められます:
+#   CXUFO_START_MODE=mock          既定のモード（game / mock / real / gesture / backend）
+#   CXUFO_START_ARGS=--study       そのモードに渡す引数（空白区切り。引用符・空白入りのパスは使えない）
+# 環境変数が .env より優先。引数を 1 つでも渡したら引数が優先で、CXUFO_START_* は使わない。
+#
 # 環境変数 GODOT で Godot 実行ファイルを上書きできます。
 # 環境変数 START_SH_WAIT_S でバックエンドの起動を待つ秒数を変えられます（既定 60。--gesture は約 12 秒かかる）。
 # 環境変数 START_SH_NO_GAME=1 なら Godot を起動せず、起動コマンドを表示するだけ（確認用）。
@@ -153,8 +158,58 @@ start_backend() {
   wait_for_port
 }
 
-MODE="${1:-game}"
-[[ $# -gt 0 ]] && shift
+# One KEY=VALUE from .env, without running it as shell code (the file also holds
+# tokens, which stay out of this shell). Sets DOTENV_VALUE; the last line wins.
+ENV_FILE="${START_SH_ENV_FILE:-$ROOT/.env}"
+read_dotenv() {
+  DOTENV_VALUE=""
+  [[ -f "$ENV_FILE" ]] || return 0
+  local line val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ "$line" == "export "* ]] && line="${line#export }"
+    [[ "$line" == "$1="* ]] || continue
+    val="${line#*=}"
+    val="${val#"${val%%[![:space:]]*}"}"
+    local q="${val:0:1}"
+    if [[ ( "$q" == '"' || "$q" == "'" ) && "${val:1}" == *"$q"* ]]; then
+      val="${val:1}"; val="${val%%"$q"*}"     # quoted: up to the closing quote
+    else
+      val="${val%%[[:space:]]#*}"             # unquoted: drop an inline " # comment"
+      val="${val%"${val##*[![:space:]]}"}"
+    fi
+    DOTENV_VALUE="$val"
+  done < "$ENV_FILE"
+}
+
+# The environment wins over .env (same rule as the homework watch's CF_* keys).
+start_setting() {  # $1 = key; sets SETTING_VALUE and SETTING_FROM
+  local env_val="${!1:-}"
+  if [[ -n "$env_val" ]]; then SETTING_VALUE="$env_val"; SETTING_FROM="環境変数 $1"; return; fi
+  read_dotenv "$1"
+  SETTING_VALUE="$DOTENV_VALUE"; SETTING_FROM=".env の $1"
+}
+
+if [[ $# -eq 0 ]]; then
+  # No arguments: the configured default, else the game alone (as before).
+  start_setting CXUFO_START_MODE
+  if [[ -n "$SETTING_VALUE" ]]; then
+    default_from="${SETTING_FROM}"
+    MODE="$SETTING_VALUE"
+    start_setting CXUFO_START_ARGS
+    default_args=()
+    # word splitting only: `read -a` does no glob or command expansion
+    [[ -n "$SETTING_VALUE" ]] && read -r -a default_args <<< "$SETTING_VALUE"
+    echo "既定のモードで起動します（${default_from}）: ${MODE}${default_args[@]+ ${default_args[*]}}" >&2
+    set -- ${default_args[@]+"${default_args[@]}"}
+  else
+    MODE="game"
+  fi
+else
+  MODE="$1"
+  shift
+fi
 
 case "$MODE" in
   game)
@@ -186,10 +241,10 @@ case "$MODE" in
     cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
     ;;
   -h|--help|help)
-    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
-    echo "不明なモード: $MODE（./start.sh --help を参照）" >&2
+    echo "不明なモード: ${MODE}（./start.sh --help を参照）" >&2
     exit 1
     ;;
 esac
