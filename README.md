@@ -32,6 +32,12 @@ CoreXY_UFO_Game/
 .\start.ps1 real COM3          # 実機バックエンド + ゲーム
 ```
 
+- 実機の COM ポート番号の調べ方（M5Stack Core2 を USB でつないでから）:
+  1. `.\start.ps1 backend --list-ports` を実行する。1 行に 1 ポートで「ポート名・説明・ハードウェア ID」が出る。説明に `CP210x`（Silicon Labs）か `CH9102` / `CH910x`（WCH）があるものが M5Stack Core2
+  2. どれか分からなければ、USB ケーブルを抜いてもう一度実行し、消えたポートがそれ
+  3. 画面で見るなら: デバイス マネージャー（スタートボタンを右クリック）→「ポート (COM と LPT)」に `Silicon Labs CP210x USB to UART Bridge (COM3)` のように出る。PowerShell では `Get-CimInstance Win32_PnPEntity | Where-Object Name -match '\(COM\d+\)' | Select-Object Name`
+  4. どこにも出ず、デバイス マネージャーの「ほかのデバイス」に黄色い「!」付きで出るときは、ドライバが入っていない。CP210x は Silicon Labs、CH9102 は WCH のサイトから Windows 用のドライバを入れる
+  - 分かった番号は `.\start.ps1 real COM3` のように渡す。毎回同じなら `config/game_config.json` の `backend.serial_port` に `"COM3"` と書けば、ポートを省略できる
 - 「スクリプトの実行が無効」と言われたら `powershell -ExecutionPolicy Bypass -File .\start.ps1 mock` のように起動する。
 - 初回（`game/.godot/imported` がないとき）は、ゲームの前に Godot のインポートを自動で実行する。
 - 以下の説明の `./start.sh ...` は、Windows では `.\start.ps1 ...` と読み替える。
