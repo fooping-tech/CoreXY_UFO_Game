@@ -5,10 +5,11 @@
 #   ./start.sh mock [backend args] Python バックエンド --mock + ゲーム（WebSocket 経由）
 #   ./start.sh real [PORT] [args]  実機バックエンド + ゲーム（PORT 省略時は config / 自動検出。--gesture でハンドジェスチャー ON）
 #   ./start.sh gesture [args]      バックエンド --mock --gesture（カメラでピンチ操作）+ ゲーム（ジェスチャー ON）
+#   ./start.sh study [args]        UFOくん 勉強モード: バックエンド --mock + ゲーム（勉強モードで開始。F5 で終了/再開）
 #   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
 #
 # 引数なしで起動したときのモードと引数は、環境変数かリポジトリ直下の .env で決められます:
-#   CXUFO_START_MODE=mock          既定のモード（game / mock / real / gesture / backend）
+#   CXUFO_START_MODE=mock          既定のモード（game / mock / real / gesture / study / backend）
 #   CXUFO_START_ARGS=--study       そのモードに渡す引数（空白区切り。引用符・空白入りのパスは使えない）
 # 環境変数が .env より優先。引数を 1 つでも渡したら引数が優先で、CXUFO_START_* は使わない。
 #
@@ -231,6 +232,11 @@ case "$MODE" in
     start_backend ${args[@]+"${args[@]}"} "$@"
     run_game "${game_args[@]}"
     ;;
+  study)
+    # the study mode (#86) on the mock robot: the demo mode comes from study_mode.demo.mode
+    start_backend --mock "$@"
+    run_game --source websocket --study-mode
+    ;;
   gesture)
     # landmarks too: the debug panel draws the hand skeleton over the camera view
     start_backend --mock --gesture --gesture-landmarks "$@"
@@ -241,7 +247,7 @@ case "$MODE" in
     cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
     ;;
   -h|--help|help)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     echo "不明なモード: ${MODE}（./start.sh --help を参照）" >&2

@@ -29,6 +29,7 @@ CoreXY_UFO_Game/
 | `mock` | Python バックエンド `--mock`（仮想クレーン）+ ゲーム（WebSocket 経由） | バックエンド | 実機なしで WebSocket の経路を通す。Study（`--study`）・宿題の見守り・自動キャッチの試し |
 | `real [PORT]` | 実機用バックエンド（USB シリアル）+ ゲーム（WebSocket 経由） | バックエンド（最初の `-` で始まらない引数はシリアルポート） | 実機で遊ぶ。`PORT` を省くと config か自動検出。`--gesture` を付けるとゲームもジェスチャー ON で起動 |
 | `gesture` | バックエンド `--mock --gesture --gesture-landmarks`（カメラで手を認識）+ ゲーム（ジェスチャー ON） | バックエンド | 実機なしでハンドジェスチャー操作を試す |
+| `study` | バックエンド `--mock` + ゲーム（UFOくん 勉強モードで開始） | バックエンド | 勉強モードのデモ（[docs/study_mode.md](docs/study_mode.md)） |
 | `backend` | バックエンドだけ（ゲームは起動しない） | バックエンド | ポートやカメラの一覧、自動キャッチのドライラン、ゲームを別に起動するとき |
 | `help`（`-h` / `--help`） | `start.sh` の使い方を表示 | — | — |
 
@@ -47,6 +48,8 @@ CoreXY_UFO_Game/
 ./start.sh real                              # 実機（ポートは config / 自動検出）
 ./start.sh real /dev/cu.usbserial-XXXX --gesture
 ./start.sh gesture                           # 実機なしで手のカメラ操作
+./start.sh study                             # UFOくん 勉強モード（Mock デモ。F5 で終了/再開）
+./start.sh game --study-mode                 # 勉強モードをゲームだけで（ゲーム内 Mock）
 ./start.sh backend --list-ports              # シリアルポートの一覧
 ./start.sh backend --list-cameras            # カメラの一覧（OpenCV の番号）
 ./start.sh backend --mock --auto-catch-dry-run   # 自動キャッチを仮想クレーンで 1 回
@@ -62,6 +65,7 @@ CoreXY_UFO_Game/
 | `--gesture-scheme pinch_joystick` / `pose_direction` | 手の読み方（config の `gesture.scheme`） |
 | `--gesture-demo` | カメラなしで、決まった手の動きを流してジェスチャー操作を試す |
 | `--hide-debug` | デバッグパネルを隠して起動する |
+| `--study-mode` / `--study-demo mock\|camera\|real` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
 | `--capture <dir>` | 0.5 秒ごとに画面を PNG で保存し（8 秒間）、FPS を表示して終わる |
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
@@ -281,6 +285,15 @@ cd CoreXY_UFO_Game/game
   - VOICEVOX の声を使うときは、利用規約に従って「VOICEVOX:キャラクター名」のクレジットを表示する（タブに出る）。キャラクターごとの規約も確かめる。
   - 宿題タブの「声を出す」で、声を止められる。
 - 1 回の位置の読み取りで、アシスタントへの質問 1 回と Jev の呼び出し 1 回がかかる。**実機では未検証**（俯瞰カメラの実際の画像で、位置が合うかも未確認）。
+
+### UFOくん 勉強モード（F5）
+
+勉強の時間を知らせる → プリントを見つけて宿題開始 → Y キー（HELP）でアームが問題 3 を 10cm・5cm・いちばん近くで撮って
+UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネットジグで片付け → ゲーム解放、までを 1 つの体験として
+メイン画面で進める（`./start.sh study` か F5）。12 学年 × 3 問のサンプルプリント（印刷用 A4: `docs/worksheets/`）付き。
+実機・カメラ・AI なしでも最後まで通せる Mock デモ（`study_mode.demo.mode`）がある。
+**実機での高さ校正と片付けは未実施・実機未検証**で、実機ではどちらも校正と確認が済むまでバックエンドが拒否する。
+詳細（操作、設計、校正、安全）は [docs/study_mode.md](docs/study_mode.md)。
 
 ### ハンドジェスチャー・ジョイスティック
 
