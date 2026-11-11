@@ -21,7 +21,9 @@ then the arm goes back up (and back to where it started).
 Staged capture (#86, the study mode's HELP): `start(target, stages=[(name, z), ...])`
 goes down in steps, highest first (camera 10 cm, 5 cm, the landing: study_mode/height.py),
 and at each one waits settle_s for the swing to die down, then holds for that stage's
-capture (`release(stage)` moves on; a release naming another stage is ignored):
+capture (`release(stage)` moves on; a release naming another stage is ignored). A hold
+that times out (nobody captured) never goes further down: the lower stages are skipped
+and the arm goes back up:
 
     RAISE -> MOVE_XY [-> OPEN_CLAW] -> (LOWER -> SETTLE -> HOLD) x stages -> RAISE_BACK
           [-> CLOSE_CLAW] -> RETURN_XY
@@ -185,7 +187,7 @@ class ApproachSequencer:
         self.stage = ""
         self.holding = False
         self._floor_z: float | None = None
-        self._release_stage = ""
+        self._skip_stages = False  # a staged hold timed out: no lower stage, straight back up
 
     # ------------------------------------------------------------------ status
     @property
@@ -356,7 +358,7 @@ class ApproachSequencer:
         self._abort_reason = ""
         self._stop_sent = False
         self._released.clear()
-        self._release_stage = ""
+        self._skip_stages = False
         self.stage = ""
         self.holding = False
         self._t_start = self.clock()
@@ -369,7 +371,6 @@ class ApproachSequencer:
             return False
         if stage and (not self.holding or stage != self.stage):
             return False
-        self._release_stage = stage
         self._released.set()
         return True
 
@@ -397,6 +398,8 @@ class ApproachSequencer:
     async def _run(self, steps: list[_Step]) -> None:
         try:
             for step in steps:
+                if self._skip_stages and step.stage:
+                    continue  # a staged hold timed out: skip the lower stages
                 await self._do_step(step)
             self.last_result = "done"
             self._set_phase(ApproachPhase.IDLE, "done")
@@ -474,7 +477,9 @@ class ApproachSequencer:
                 while not self._released.is_set():
                     self._check(step, t0)
                     if self.clock() - t0 > self.params.hold_timeout_s:
-                        log.warning("homework approach: no capture within %.0f s, moving on",
+                        if self.stages:
+                            self._skip_stages = True
+                        log.warning("homework approach: no capture within %.0f s, going back up",
                                     self.params.hold_timeout_s)
                         return
                     await asyncio.sleep(self.poll_s)

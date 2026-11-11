@@ -506,3 +506,34 @@ async def test_server_refuses_mm_targets_and_unmeasured_heights_on_the_real_robo
             assert r.snapshot().z == pytest.approx(100.0, abs=1.0)  # nothing moved
     finally:
         await srv.stop()
+
+
+# ------------------------------------------------------------------ review fixes
+async def test_a_staged_hold_that_times_out_goes_back_up_not_further_down():
+    r = await ready_robot()
+    seq = ApproachSequencer(r, LIMITS, ApproachParams(settle_s=0.05, hold_timeout_s=0.3))
+    lowest = []
+    await seq.start((200.0, 100.0), STAGES, open_claw=False)
+    while seq.active:
+        lowest.append(r.snapshot().z)
+        await asyncio.sleep(0.01)
+    assert seq.last_result == "done"
+    assert min(lowest) > STAGES[1][1] + 3.0  # never went to 5 cm (nor the landing) after 10 cm timed out
+    assert r.snapshot().z == pytest.approx(100.0, abs=3.0)
+
+
+async def test_cleanup_refuses_a_first_leg_through_a_keep_out_area():
+    r = await ready_robot()
+    await r.move_xy(300.0, 20.0)
+    await wait_for(lambda: abs(r.snapshot().x - 300.0) < 0.5 and r.snapshot().state.value == "IDLE")
+    seq = CleanupSequencer(r, LIMITS, _dry(keep_out=((150.0, 10.0, 160.0, 30.0),)))  # between here and the jig
+    with pytest.raises(RobotCommandError, match="way from"):
+        await seq.start()
+    assert not seq.active
+
+
+def test_json_is_found_with_braces_in_the_prose():
+    text = ('式は {x + 1} のように書きます。\n{"problem_number": 3, "recognized_problem": "x + y = 10", '
+            '"confidence": 0.8, "hint": "足してみよう", "explanation": "1. 式", "speech_text": "やってみよう", '
+            '"needs_confirmation": false}\n以上 {おわり}')
+    assert parse_explanation(text, 3)["hint"] == "足してみよう"

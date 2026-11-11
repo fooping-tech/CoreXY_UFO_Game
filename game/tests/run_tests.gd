@@ -2090,6 +2090,24 @@ func _test_study_mode_backend_messages(rs: Node) -> void:
 	sv._on_robot_ack("c1", false, {"reason": "tidy-up refused: the tidy-up is off on the real robot (study_mode.cleanup.enabled_real)"})
 	_ok(nack_ok and ctl.state == "CLEANUP_FAILED" and ctl.error_text.contains("enabled_real"),
 		"study backend: refusals (no height calibration, tidy-up off) stop the story with the reason", "%s %s" % [nack_ok, ctl.state])
+	# F5 / F8 while the backend's run is going: the story forgets it, and its late FAULT changes nothing
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl._set_state("HELP_MOVING")
+	sv._help_active = true
+	sv._help_started = true
+	ctl.start()  # F8
+	var forgot := not sv._help_active and not sv.motion_active() and ctl.state == "INTRO"
+	sv._on_robot_message({"type": "homework_approach", "data": {"active": false, "phase": "FAULT", "last_result": "fault", "error": "stopped"}})
+	_ok(forgot and ctl.state == "INTRO", "study backend: a restart ends the run it started; its late FAULT is ignored", "%s %s" % [forgot, ctl.state])
+	# HELP when problem 3 is already written: said so, the arm stays
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.tracker.states[2] = StudyQuestionTracker.FILLED
+	ctl.request_help()
+	_ok(ctl.state == "STUDYING" and not sv.motion_active() and ctl.notice.contains("動かしません"),
+		"study: HELP on an already written problem 3 does not move the arm", ctl.state)
 	ctl.stop()
 	remove_child(game)
 	game.free()

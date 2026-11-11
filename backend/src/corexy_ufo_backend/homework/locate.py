@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..jsonpick import last_json_object
 from .progress import IMAGE_ASSET
 
 KINDS = ("stuck", "next", "problem")
@@ -120,12 +121,7 @@ def locate_prompt(kind: str, width: int, height: int, has_before: bool, target: 
 
 def parse_answer(text: str, width: int, height: int, max_box_area: float = 0.25) -> dict[str, Any]:
     """Claude's JSON -> {problem, description_en, box: (l, t, r, b) in 0..1}. LocateError when unusable."""
-    found = None
-    for m in re.finditer(r"\{.*\}", text, re.S):
-        try:
-            found = json.loads(m.group(0))
-        except ValueError:
-            continue
+    found = last_json_object(text)
     if not isinstance(found, dict):
         raise LocateError("parse", "アシスタントの答えから位置を読み取れませんでした")
     if not found.get("found", False):

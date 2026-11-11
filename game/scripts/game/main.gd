@@ -880,7 +880,7 @@ func _handle_input(dt: float) -> void:
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
 	gesture_gate_reason = gesture_gate()
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
-	if homework != null:
+	if homework != null and (study_mode == null or not study_mode.active()):
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
 		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
 		var age := gesture.age_ms(Time.get_ticks_msec())
@@ -1245,6 +1245,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			KEY_F:
 				GameState.post_event("result_failure")
 			_:
-				# the homework helper's keys (#79, homework.helper.keys; the keys above win)
-				if homework != null:
+				# the homework helper's keys (#79, homework.helper.keys; the keys above win).
+				# Not during the study mode: its HELP is the only way the arm goes to the sheet then.
+				if homework != null and (study_mode == null or not study_mode.active()):
 					homework.handle_key(ev.keycode)

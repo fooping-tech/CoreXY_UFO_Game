@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .progress import IMAGE_ASSET
+from .progress import IMAGE_ASSET, _noul
 
 
 def question_key(number: int) -> str:
@@ -38,7 +38,6 @@ def parse_questions(output: dict, worksheet: dict) -> list[dict[str, Any]]:
     out = []
     for p in worksheet.get("problems", []):
         n = int(p["number"])
-        a = answers.get(question_key(n)) or {}
-        v = a.get("noul") if a.get("type") == "noul" else None
+        v = _noul(answers, question_key(n))
         out.append({"number": n, "filled_prob": float(v) if isinstance(v, (int, float)) else None})
     return out

@@ -191,6 +191,7 @@ class CleanupSequencer(ApproachSequencer):
         super().__init__(robot, limits, params, spot_path=None, lock=lock, is_jogging=is_jogging,
                          other_active=other_active, on_change=on_change, poll_s=poll_s, clock=clock)
         self.profile = profile
+        self.profile_problems = profile.problems(limits)  # frozen profile: checked once
         self.confirming = False
         self.waypoint = 0  # 1-based index of the sweep waypoint being driven to (0 = not sweeping)
         self._confirmed = False
@@ -200,7 +201,7 @@ class CleanupSequencer(ApproachSequencer):
         d.pop("spot", None)
         d.pop("stages", None)
         d.update({"profile": self.profile.profile, "confirming": self.confirming, "waypoint": self.waypoint,
-                  "waypoints": len(self.profile.route_xy), "problems": self.profile.problems(self.limits)})
+                  "waypoints": len(self.profile.route_xy), "problems": self.profile_problems})
         return d
 
     async def start(self, target=None, stages=None, *, open_claw=None) -> None:  # type: ignore[override]
@@ -210,9 +211,15 @@ class CleanupSequencer(ApproachSequencer):
         if refresh is not None:
             await refresh()
         prof = self.profile
-        errs = self.profile.problems(self.limits)
+        errs = list(self.profile_problems)
         errs += [e.replace("already approaching", "already tidying up")
                  for e in self.preconditions(need_spot=False, need_claw=True)]
+        s = self.robot.snapshot()
+        if prof.jig_xy is not None and all(math.isfinite(v) for v in (s.x, s.y)):
+            for r in prof.keep_out:  # the first leg too: from where the arm is to the jig
+                if segment_hits_rect((s.x, s.y), prof.jig_xy, r):
+                    errs.append(f"the way from ({s.x:.0f},{s.y:.0f}) to the jig crosses the keep-out area {r}: "
+                                "move the arm first")
         if errs:
             raise RobotCommandError("tidy-up refused: " + "; ".join(errs))
         if self.lock.locked():

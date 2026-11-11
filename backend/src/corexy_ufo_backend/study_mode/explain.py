@@ -9,11 +9,12 @@ asks for confirmation (needs_confirmation) rather than trusting either side.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 import unicodedata
 from typing import Any
+
+from ..jsonpick import last_json_object
 
 EXPLAIN_SYSTEM_PROMPT = (
     "あなたは子どもの宿題を手伝う、やさしい UFO のキャラクター「UFOくん」です。画像から問題を読み取り、"
@@ -52,12 +53,7 @@ def explain_prompt(problem_number: int, grade_label: str, roles: list[str], know
 
 
 def parse_explanation(text: str, problem_number: int) -> dict[str, Any]:
-    found = None
-    for m in re.finditer(r"\{.*\}", text, re.S):
-        try:
-            found = json.loads(m.group(0))
-        except ValueError:
-            continue
+    found = last_json_object(text)
     if not isinstance(found, dict):
         raise ExplainError("parse", "解説の JSON を読み取れませんでした")
     out: dict[str, Any] = {}

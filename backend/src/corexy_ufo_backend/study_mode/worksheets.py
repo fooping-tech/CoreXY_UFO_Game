@@ -13,12 +13,9 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
 import numpy as np
 
 from ..config import REPO_ROOT
-from ..homework.camera_map import apply, fit_homography
 
 DEFAULT_PATH = REPO_ROOT / "config" / "worksheets.json"
 MARKS = ("tl", "tr", "bl", "br")
@@ -114,6 +111,7 @@ class WorksheetCatalog:
 # ---------------------------------------------------------------- page <-> image
 def paper_to_image(catalog: WorksheetCatalog, marks_uv: dict[str, tuple[float, float]]) -> np.ndarray:
     """Homography page mm -> image (u, v) from the 4 corner marks' centres in the image."""
+    from ..homework.camera_map import fit_homography  # here: homework's service imports this module
     if sorted(marks_uv) != sorted(MARKS):
         raise WorksheetError("all 4 corner marks are needed")
     centres = catalog.mark_centres()
@@ -129,6 +127,7 @@ def paper_to_image(catalog: WorksheetCatalog, marks_uv: dict[str, tuple[float, f
 
 def box_in_image(h: np.ndarray, box_mm: list[float]) -> tuple[float, float, float, float]:
     """The image box (l, t, r, b) around a page box's 4 corners."""
+    from ..homework.camera_map import apply
     x0, y0, x1, y1 = box_mm
     pts = [apply(h, x, y) for x, y in ((x0, y0), (x1, y0), (x0, y1), (x1, y1))]
     us, vs = [p[0] for p in pts], [p[1] for p in pts]
@@ -138,9 +137,3 @@ def box_in_image(h: np.ndarray, box_mm: list[float]) -> tuple[float, float, floa
 def point_inside(box: tuple[float, float, float, float], u: float, v: float, margin: float = 0.0) -> bool:
     return math.isfinite(u) and math.isfinite(v) and \
         box[0] - margin <= u <= box[2] + margin and box[1] - margin <= v <= box[3] + margin
-
-
-def known_problem_for_prompt(ws: dict, number: int) -> dict[str, Any]:
-    """What the explanation prompt may say about a known problem (never the answer)."""
-    p = WorksheetCatalog.problem(ws, number)
-    return {"number": number, "prompt": p["prompt"], "difficulty": p["difficulty"], "grade_label": ws.get("grade_label", "")}

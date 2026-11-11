@@ -71,6 +71,8 @@ var _walk_released := false
 var _walk_confirmed := false
 var captures: Dictionary = {}  # stage -> Image (focus camera), "overview" -> Image
 var voice_status := ""
+var _help_problem := 3
+var _helper_offer_was := true
 var voice_credit := ""
 ## Callable(rid, stream, credit) / Callable(rid, message): the speech queue
 var on_voice: Callable
@@ -102,18 +104,28 @@ func set_mode(m: String) -> void:
 func mode_label() -> String:
 	return {"mock": "MOCK デモ", "camera": "カメラ連携デモ", "real": "実機デモ"}.get(mode, mode)
 
-## Everything stops: pending results are ignored, the mock's walk ends, nothing more is sent.
+## Everything stops: pending results are ignored, the mock's walk ends, and a backend
+## sequence this node started is ended with soft_stop (the backend then ABORTs it).
+## Says nothing back: the caller decides what the story does next.
 func abort(reason := "") -> void:
 	_token += 1
 	_timers.clear()
 	_locate_rid = ""
 	_explain_rid = ""
 	if not _walk.is_empty():
-		var kind := _walk_kind
 		_walk.clear()
+		_walk_kind = ""
 		if main != null and main.mock != null:
 			main.mock.set_target(main.mock.pos)  # the game's mock stops where it is
-		motion_fault.emit(kind, reason if reason != "" else "止めました")
+	if (_help_active or _cleanup_active) and backend_robot():
+		main.ws.send_command("soft_stop")
+	_help_active = false
+	_help_started = false
+	_cleanup_active = false
+	_cleanup_started = false
+	_help_rid = ""
+	_cleanup_rid = ""
+	_last_seq_key.clear()
 	status = reason
 
 func begin(ws: Dictionary, label: String) -> void:
@@ -157,13 +169,19 @@ func watch_start() -> void:
 		return
 	homework.stop()
 	homework.worksheet_id = str(worksheet.get("worksheet_id", ""))
+	_helper_offer_was = homework.helper_offer
+	homework.helper_offer = false  # the study mode has its own HELP: no "手伝おうか？" moving the arm
 	homework.start()
 	status = "カメラでプリントを見ています（Jev）"
 
 func watch_stop() -> void:
+	var was := watching
 	watching = false
-	if mode != "mock" and homework != null and homework.running():
-		homework.stop("勉強モードの見守りを終えました")
+	if mode != "mock" and homework != null and was:
+		if homework.running():
+			homework.stop("勉強モードの見守りを終えました")
+		homework.worksheet_id = ""
+		homework.helper_offer = _helper_offer_was
 
 ## Enter while waiting: the sheet is on the desk (when the camera has not seen it yet).
 func mark_seen() -> void:
@@ -261,6 +279,7 @@ func motion_blocker() -> String:
 
 # ------------------------------------------------------------------ HELP: where is problem n
 func locate_help(problem: int) -> void:
+	_help_problem = problem
 	var tok := _token
 	if inject_fail == "locate":
 		inject_fail = ""
@@ -384,6 +403,7 @@ static func dry_run_stages() -> Array:
 
 # ------------------------------------------------------------------ the explanation
 func explain(problem: int) -> void:
+	_help_problem = problem
 	var tok := _token
 	var p := WorksheetCatalog.problem(worksheet, problem)
 	var fb := fallback_explanation(p, problem)
@@ -583,7 +603,7 @@ func _on_aux(msg: Dictionary) -> void:
 	elif rid == _locate_rid and t in ["homework_locate_result", "homework_locate_error", "homework_error"]:
 		_locate_rid = ""
 		if t == "homework_locate_result" and bool(data.get("usable", false)):
-			located.emit({"u": float(data.get("u", 0.5)), "v": float(data.get("v", 0.5)), "problem": 3,
+			located.emit({"u": float(data.get("u", 0.5)), "v": float(data.get("v", 0.5)), "problem": _help_problem,
 				"verified": bool(data.get("verified", false)), "page_check": data.get("page_check")})
 		elif t == "homework_locate_result":
 			locate_failed.emit("問題の位置がはっきりしないので動かしません: " + str(data.get("reason", "")))
@@ -595,7 +615,7 @@ func _on_aux(msg: Dictionary) -> void:
 			explained.emit(data)
 		else:
 			var fb: Dictionary = data.get("fallback", {}) if data.get("fallback") is Dictionary else \
-				fallback_explanation(WorksheetCatalog.problem(worksheet, 3), 3)
+				fallback_explanation(WorksheetCatalog.problem(worksheet, _help_problem), _help_problem)
 			explain_failed.emit(str(data.get("message", "解説を作れませんでした")), fb)
 
 func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:

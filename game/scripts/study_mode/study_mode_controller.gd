@@ -286,7 +286,10 @@ func request_help() -> void:
 			changed.emit()
 		return
 	if tracker.is_filled(help_problem):
-		notice = "問題 %d はもう書けているみたい。むずかしいところがあったら大人の人に聞いてね" % help_problem
+		notice = "問題 %d はもう書けているみたい（アームは動かしません）" % help_problem
+		_say([{"text": "問題 %d はもう書けているみたい！すごいね！" % help_problem, "face": "happy"}])
+		changed.emit()
+		return
 	_set_state("HELP_LOCATING")
 	explanation = {}
 	explain_note = ""
@@ -572,9 +575,7 @@ func _on_motion_stop_key(reason: String) -> void:
 		if state == "CLEANUP":
 			_cleanup_failed(reason)
 		return
-	services.abort(reason)
-	if main != null and main.ws != null and services.backend_robot():
-		main.ws.send_command("soft_stop")  # ends the backend's sequence with its stop
+	services.abort(reason)  # ends the backend's sequence too (soft_stop -> its ABORT)
 	if state != "ERROR":
 		_error(reason)
 
@@ -644,9 +645,7 @@ func debug_skip() -> void:
 			tracker.confirm_complete()
 			_check_complete()
 		"HELP_LOCATING", "HELP_MOVING", "CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING":
-			services.abort()
-			if services.backend_robot() and services._help_active:
-				main.ws.send_command("soft_stop")
+			services.abort("F6 でスキップ")
 			_help_arm_done = true
 			_begin_explaining()
 		"AI_EXPLAINING":
@@ -657,7 +656,7 @@ func debug_skip() -> void:
 			speech.clear()
 			_begin_cleanup()
 		"CLEANUP":
-			services.abort()
+			services.abort("F6 でスキップ")
 			_cleanup_finished()
 		"CLEANUP_FAILED", "ERROR":
 			advance()
