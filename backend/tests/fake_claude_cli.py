@@ -7,6 +7,7 @@ It answers each user message with the lines the real CLI prints (Claude Code
   "wedge" -> one delta, then ignore everything (no answer to the interrupt)
   "fail"  -> an error result
   "exit"  -> exit without a result
+  "images" -> "images:<each image's bytes between the JPEG markers, in order>"
 otherwise -> "turn<N>:<question>" in two deltas (N counts this process's turns).
 FAKE_CLAUDE_ARGV (env): append this process's argv as a JSON line to that file.
 """
@@ -62,6 +63,11 @@ for line in sys.stdin:
         sys.exit(3)
     if text == "fail":
         result(False, "not signed in")
+        continue
+    if text == "images":
+        tags = [base64.b64decode(c["source"]["data"])[2:-2].decode() for c in content if c["type"] == "image"]
+        delta("images:" + ",".join(tags))
+        result(True)
         continue
     if text in ("slow", "wedge"):
         delta("考え中")

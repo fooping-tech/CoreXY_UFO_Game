@@ -7,7 +7,7 @@ import base64
 import binascii
 import tempfile
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -15,8 +15,9 @@ from typing import Any, Protocol
 
 class StudyAdapter(Protocol):
     async def start_session(self, workdir: Path, instructions: str) -> str: ...
+    # more_images (optional, e.g. an earlier frame to compare with) go before image_path
     async def ask(self, thread_id: str, text: str, image_path: Path,
-                  on_delta: Callable[[str], Awaitable[None]]) -> str: ...
+                  on_delta: Callable[[str], Awaitable[None]], more_images: Sequence[Path] = ()) -> str: ...
     async def cancel(self, thread_id: str, turn_id: str | None = None) -> None: ...
     async def close_session(self, thread_id: str) -> None: ...
     async def close(self) -> None: ...

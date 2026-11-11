@@ -52,6 +52,7 @@ var _hw_stall: Label
 var _hw_spot: Label
 var _hw_advice_status: Label
 var _hw_advice: RichTextLabel
+var _hw_helper: Label
 var _study_status: Label
 var _study_question: TextEdit
 var _study_answer: RichTextLabel
@@ -100,8 +101,8 @@ func _build() -> void:
 	root.add_child(_state_chip)
 	var stops := HBoxContainer.new()
 	root.add_child(stops)
-	_button(stops, "STOP (space)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("soft_stop")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var estop := _button(stops, "E-STOP (ABORT)", func(): main.mock.emergency_stop(); if main.ws.enabled: main.ws.send_command("stop"))
+	_button(stops, "STOP (space)", func(): _stop()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var estop := _button(stops, "E-STOP (ABORT)", func(): _estop())
 	estop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	estop.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 	_source_option = OptionButton.new()
@@ -291,6 +292,27 @@ func _build_homework() -> void:
 	_hw_advice.custom_minimum_size.y = 200
 	_hw_advice.add_theme_font_size_override("normal_font_size", 13)
 	_vbox.add_child(_hw_advice)
+	# stage 3 (#79): the helper's voice, and the arm's camera to the problem
+	var hw: HomeworkClient = main.homework
+	_note("手伝い（段階 3）: 進まないと声で「%s」と聞く。%s かいいね（提案から %d 秒以内に %.1f 秒。ジェスチャー操作が切のときだけ。手のカメラが要る）で止まっている問題、%s で次に解く問題を、Claude / Codex が選んで解答欄の位置を出し、Jev が同じ解答欄を見つけて位置が合ったときだけ、アームのカメラをそこへ下ろす（カメラの校正が要る。合わなければ動かさず、そう伝える）。声は VOICEVOX（起動していれば）か macOS の say。実機では未検証。" % [
+		hw.offer_text, hw.key_name("stuck"), int(hw.offer_window_s), hw.thumb_hold_ms / 1000.0, hw.key_name("next")])
+	var help_row := HBoxContainer.new()
+	_vbox.add_child(help_row)
+	_button(help_row, "止まっている問題を見る（%s）" % hw.key_name("stuck"), func(): main.homework.focus_problem("stuck")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_button(help_row, "次の問題を見る（%s）" % hw.key_name("next"), func(): main.homework.focus_problem("next")).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var voice_row := HBoxContainer.new()
+	_vbox.add_child(voice_row)
+	var voice := CheckBox.new()
+	voice.text = "声を出す"
+	voice.focus_mode = Control.FOCUS_NONE
+	voice.button_pressed = hw.voice_on
+	voice.toggled.connect(func(on): main.homework.voice_on = on)
+	voice_row.add_child(voice)
+	_button(voice_row, "「%s」と言ってみる" % hw.offer_text, func(): main.homework.offer_help()).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hw_helper = Label.new()
+	_hw_helper.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hw_helper.add_theme_font_size_override("font_size", 11)
+	_vbox.add_child(_hw_helper)
 	# stage 2 (#78): overview image <-> CoreXY XY calibration, and looking at a clicked point
 	_note("カメラの校正（俯瞰カメラの画像 → CoreXY の XY）。①「校正点を記録」を選ぶ ② 爪を開いてアームを下ろし、開いた爪でプリントに立たせる（吊ったままだとカメラの線に引かれて傾く）③ JOG で動かし、下のアームのカメラの十字をプリントの目印（解答欄の角など）に合わせる（動かすときは少し上げ、合わせたら下ろして立たせる）④ 俯瞰の映像でその目印をクリック。プリントの四隅と中ほどなど、広く散らして 4 点以上（6 点以上がよい）。宿題の位置も同じく爪で立つ高さで記録する。俯瞰カメラを動かしたら記録し直す。「そこを見に行く」では、クリックした場所の上へアームのカメラを動かす（宿題の位置の高さ、Space / STOP で中止）。実機では未検証。")
 	_hw_click_mode = OptionButton.new()
@@ -325,6 +347,20 @@ func _build_homework() -> void:
 	_vbox.add_child(_hw_focus)
 	main.homework.request_camera_map()
 
+func _stop() -> void:
+	main.mock.emergency_stop()
+	if main.ws.enabled:
+		main.ws.send_command("soft_stop")
+	if main.homework != null:
+		main.homework.cancel_locate("STOP で止めたので、問題を見に行くのをやめました")
+
+func _estop() -> void:
+	main.mock.emergency_stop()
+	if main.ws.enabled:
+		main.ws.send_command("stop")
+	if main.homework != null:
+		main.homework.cancel_locate("E-STOP で止めたので、問題を見に行くのをやめました")
+
 func _on_overview_picked(uv: Vector2) -> void:
 	match _hw_click_mode.selected:
 		1:
@@ -356,6 +392,16 @@ func _update_homework() -> void:
 	_hw_advice_status.text = hw.advice_status + ("（アーム: %s）" % phase if moving else "")
 	_hw_advice_status.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if hw.advice_state == "error" else Color(0.65, 0.9, 1.0))
 	_hw_advice.text = hw.advice_text
+	if _hw_helper != null:
+		var lines: Array[String] = []
+		if hw.locate_status != "":
+			lines.append(hw.locate_status)
+		if hw.speech_status != "":
+			lines.append("声: " + hw.speech_status)
+		if hw.speech_credit != "":
+			lines.append("音声: " + hw.speech_credit)  # the VOICEVOX terms ask for the credit
+		_hw_helper.text = "\n".join(lines)
+		_hw_helper.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if hw.locate_state in ["error", "unsure"] else Color(0.65, 0.9, 1.0))
 	if _hw_calib != null:
 		_hw_preview.clickable = _hw_click_mode.selected != 0
 		_hw_calib.text = hw.calib_summary() + ("\n" + hw.calib_status if hw.calib_status != "" else "")

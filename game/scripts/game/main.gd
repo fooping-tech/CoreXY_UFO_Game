@@ -839,6 +839,12 @@ func _handle_input(dt: float) -> void:
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
 	gesture_gate_reason = gesture_gate()
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	if homework != null:
+		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
+		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
+		var age := gesture.age_ms(Time.get_ticks_msec())
+		homework.thumb_tick(not gesture.enabled and gesture.detected and gesture.pose == "thumb"
+			and age >= 0.0 and age <= gesture.stale_ms, Time.get_ticks_msec())
 	if kb != Vector3.ZERO and gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]:
 		gesture.stop("manual")  # the keyboard takes over; the gesture needs a new pinch
 		gv = Vector2.ZERO
@@ -1154,6 +1160,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 			KEY_SPACE:
 				_jog_latched = _jog_input() != Vector3.ZERO
 				gesture.stop("stop_key")
+				if homework != null:
+					homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
 				if mock.enabled:
 					mock.emergency_stop()
 				if ws.enabled and ws.is_open():
@@ -1182,3 +1190,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 				GameState.post_event("result_success")
 			KEY_F:
 				GameState.post_event("result_failure")
+			_:
+				# the homework helper's keys (#79, homework.helper.keys; the keys above win)
+				if homework != null:
+					homework.handle_key(ev.keycode)

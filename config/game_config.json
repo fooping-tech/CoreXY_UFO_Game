@@ -185,6 +185,40 @@
       "margin_mm": 20.0,
       "_note": "Overview camera image -> CoreXY XY (#78): a homography fitted to points recorded in the 宿題 tab (arm camera centred on a mark, the mark clicked in the overview image), saved in config/camera_xy_calibration.json. Not used to move when the fit's largest error is over max_error_mm, when the camera's size / flips changed since calibration, or for a point more than margin_mm outside the calibrated points. Not yet run on the real robot."
     },
+    "locate": {
+      "timeout_s": 120.0,
+      "jev_timeout_s": 30.0,
+      "require_jev": true,
+      "jev_margin": 0.02,
+      "max_box_area": 0.25,
+      "_note": "Which problem to look at (#79): the study assistant (study.provider) names the problem the child is stuck on (\"stuck\": compares the frame at the last progress gain with the frame now) or the next one to solve (\"next\") and gives its answer box in pixels; Jev is asked for the same answer box and the arm moves only when the centre of the assistant's box lies inside Jev's box widened by jev_margin (0..1 of the image; require_jev false moves on the assistant's box alone). Moving needs a usable camera_map. Not yet run on the real robot."
+    },
+    "speech": {
+      "enabled": true,
+      "engines": [
+        "voicevox",
+        "say"
+      ],
+      "voicevox_url": "http://127.0.0.1:50021",
+      "voicevox_speaker": 3,
+      "voicevox_sampling_rate": 24000,
+      "say_voice": "Kyoko",
+      "timeout_s": 15.0,
+      "max_chars": 120,
+      "_note": "Voice for the helper (#79), tried in this order: a local VOICEVOX engine (voicevox_speaker = a style id from GET /speakers; the game shows the credit \"VOICEVOX:<character>\" the VOICEVOX terms ask for; check the character's own terms), then the macOS say command (say_voice). The WAV is made by the backend and played by the game."
+    },
+    "helper": {
+      "offer": true,
+      "offer_text": "手伝おうか？",
+      "offer_repeat_s": 300.0,
+      "offer_window_s": 60.0,
+      "thumb_hold_ms": 800.0,
+      "keys": {
+        "stuck": "Y",
+        "next": "N"
+      },
+      "_note": "The game's helper (#79): when the backend reports a stall, say offer_text once (again after offer_repeat_s while still stalled). keys.stuck (or a thumbs-up held thumb_hold_ms within offer_window_s of the offer, only while the gesture control is off so the thumb never also moves the arm) locates the problem the child is stuck on and takes the arm's camera there; keys.next does it for the next problem to solve (H is the gesture on/off key). Thumbs-ups need the backend's hand camera (--gesture-camera)."
+    },
     "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
   "backend": {

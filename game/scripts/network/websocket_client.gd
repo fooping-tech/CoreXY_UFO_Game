@@ -24,6 +24,9 @@ var study_only := false
 ## libwebsockets queues a complete message before sending it. StudyClient raises
 ## this for the base64 JPEG; ordinary robot links keep the small default.
 var outbound_buffer_size := 0
+## Bytes one incoming message may have (0 = Godot's default, 64 KiB); the homework link
+## receives the helper's voice as a WAV (#79).
+var inbound_buffer_size := 0
 ## What the backend drives ("mock", "real", ...), from its hello.
 var server_robot := ""
 
@@ -57,6 +60,8 @@ func _connect() -> void:
 	_peer = WebSocketPeer.new()
 	if outbound_buffer_size > 0:
 		_peer.outbound_buffer_size = outbound_buffer_size
+	if inbound_buffer_size > 0:
+		_peer.inbound_buffer_size = inbound_buffer_size
 	var err := _peer.connect_to_url(url)
 	if err != OK:
 		log_line.emit("connect error %d" % err)
