@@ -95,7 +95,7 @@ godot --path . -- --source websocket --hide-debug
 ## 5. end-to-end（実機なし）
 
 ```bash
-./start.sh mock          # Python --mock バックエンド + Godot（--source websocket）
+./start.sh --mock --no-gesture   # Python --mock バックエンド + Godot（--source websocket）
 ```
 
 パネルで `Backend: enable motors` → `home` → `z_zero` → スライダー → `E-STOP` → ALARM 表示を確認。ログに `ack` / `nack` が出る。
