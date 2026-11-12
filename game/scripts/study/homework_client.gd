@@ -25,8 +25,15 @@ extends Node
 ## assistant, checked with Jev); only a box it calls usable is looked at (the look above,
 ## so it needs the calibration). Otherwise nothing moves and the helper says so. The
 ## voice is made by the backend (VOICEVOX / macOS say) and played here.
+##
+## Study mode (#86, study_mode/): the same watch with a sample worksheet
+## (`worksheet_id`: every progress then carries the per-problem `questions`).
+## `aux_message` hands every aux-link message to the study mode, which sends its
+## own requests (request ids "sm-...") on this link; their replies (voice, errors)
+## are left to it: never played or counted as watch errors here.
 
 signal state_changed
+signal aux_message(msg: Dictionary)
 
 var cameras: CameraHub
 var link: UfoWebSocketClient
@@ -51,6 +58,9 @@ var errors := 0
 var cost_usd := 0.0
 ## Every reading of this session: {elapsed_s, progress_pct, smoothed_pct, held}
 var history: Array[Dictionary] = []
+## Study mode (#86): the sample worksheet of this watch ("" = none) and the last per-problem readings
+var worksheet_id := ""
+var questions: Array = []
 ## The backend's stall verdict (no gain of stall_min_gain points for stall_s).
 var stalled := false
 var stalled_for_s := 0.0
@@ -159,6 +169,7 @@ func start() -> void:
 	errors = 0
 	cost_usd = 0.0
 	history.clear()
+	questions = []
 	_waiting = false
 	state = "connecting"
 	status_text = "バックエンドに接続中…"
@@ -212,11 +223,17 @@ func _process(_dt: float) -> void:
 	state_changed.emit()
 
 func _send_start() -> void:
-	link.send_aux({"type": "homework_start", "data": {"session_id": session_id}})
+	var d := {"session_id": session_id}
+	if worksheet_id != "":
+		d["worksheet_id"] = worksheet_id
+	link.send_aux({"type": "homework_start", "data": d})
 
 func _on_message(msg: Dictionary) -> void:
 	var t := str(msg.get("type", ""))
 	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
+	aux_message.emit(msg)
+	if str(msg.get("request_id", "")).begins_with("sm-") and t != "homework_progress":
+		return  # the study mode's own requests (explain / locate / say): handled there
 	if t == "hello":
 		advice_available = bool(data.get("homework_advice", false))
 		speech_available = bool(data.get("homework_speech", false))
@@ -264,6 +281,8 @@ func _on_message(msg: Dictionary) -> void:
 		if not is_nan(smoothed):
 			progress_pct = smoothed
 		held_reason = str(data.get("held_reason", ""))
+		if data.get("questions") is Array:
+			questions = data.questions
 		last_update_ms = Time.get_ticks_msec()
 		history.append({"elapsed_s": elapsed_s(), "progress_pct": last_pct, "smoothed_pct": progress_pct, "held": held_reason})
 		status_text = "見守り中" + ("" if held_reason == "" else "（%s のため前の値のまま）" % held_text(held_reason))

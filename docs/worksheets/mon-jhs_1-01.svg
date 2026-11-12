@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210.0mm" height="297.0mm" viewBox="0 0 210.0 297.0" font-family="'Hiragino Maru Gothic ProN', 'BIZ UDPGothic', 'Noto Sans JP', sans-serif">
+<rect width="210.0" height="297.0" fill="#fff"/>
+<rect x="8.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="8.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<text x="28.0" y="26.0" font-size="6.5" font-weight="bold" text-anchor="start" fill="#222">げつようびの しゅくだい　中学1年</text>
+<text x="28.0" y="36.0" font-size="5.5" font-weight="normal" text-anchor="start" fill="#222">正負の数と 方程式</text>
+<text x="132.0" y="36.0" font-size="4.5" font-weight="normal" text-anchor="start" fill="#222">なまえ</text>
+<line x1="148" y1="37" x2="186" y2="37" stroke="#222" stroke-width="0.4"/>
+<text x="105.0" y="292.0" font-size="3.0" font-weight="normal" text-anchor="middle" fill="#777">mon-jhs_1-01　UFOくん 勉強モード</text>
+<rect x="20.0" y="52.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="60.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="62.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">1</text>
+<text x="35.0" y="62.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">(−7) + 12 =</text>
+<rect x="135.0" y="82.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="80.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+<rect x="20.0" y="128.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="136.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="138.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">2</text>
+<text x="35.0" y="138.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">3x − 5 = 16 を 解きなさい。</text>
+<rect x="135.0" y="158.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="156.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+<rect x="20.0" y="204.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#e07a00" stroke-width="0.9"/>
+<circle cx="27.0" cy="212.0" r="5" fill="#e07a00"/>
+<text x="27.0" y="214.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">3</text>
+<text x="26.0" y="271.0" font-size="4.0" font-weight="bold" text-anchor="start" fill="#e07a00">★ チャレンジ</text>
+<text x="35.0" y="214.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">連続する 3つの 整数の 和が 72 です。いちばん 大きい</text>
+<text x="35.0" y="221.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222"> 数を 求めなさい。</text>
+<rect x="135.0" y="234.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="232.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+</svg>

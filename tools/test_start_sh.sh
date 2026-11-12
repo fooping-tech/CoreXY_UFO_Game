@@ -106,6 +106,17 @@ run -- --mock --port /dev/x ; [[ $CODE -ne 0 ]] && has "--port は"; check "--po
 run -- --game-only --study ; [[ $CODE -ne 0 ]] && has "--study は"; check "--study without a backend stops" $?
 run -- --port ; [[ $CODE -ne 0 ]] && has "シリアルポートが要ります"; check "--port without a value stops" $?
 
+# ---- the study mode (#86)
+run -- --mock --no-gesture --study-mode ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" \
+  && has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --study-mode"
+check "--study-mode starts the game in the study mode" $?
+run -- --game-only --study-mode ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --study-mode"
+check "--game-only --study-mode" $?
+run -- --backend-only --study-mode ; [[ $CODE -ne 0 ]] && has "--study-mode は"; check "--study-mode without a game stops" $?
+run -- study ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" \
+  && line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --study-mode"
+check "mode study as in #86" $?
+
 # ---- the earlier mode names still work as they did
 run -- mock ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" && line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket" && has "今までの書き方"; check "mode mock as before" $?
 run -- real /dev/cu.OLD --gesture ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --port /dev/cu.OLD --gesture-landmarks --gesture" && has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --gesture"

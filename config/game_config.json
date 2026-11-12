@@ -167,6 +167,7 @@
     "stall_s": 180.0,
     "stall_min_gain": 5.0,
     "advice_timeout_s": 120.0,
+    "explain_timeout_s": 150.0,
     "approach": {
       "hold_timeout_s": 15.0,
       "step_timeout_s": 30.0,
@@ -177,7 +178,8 @@
       "open_claw": true,
       "close_claw_after": false,
       "claw_settle_s": 0.5,
-      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot.",
+      "settle_s": 1.0
     },
     "camera_map": {
       "min_points": 4,
@@ -236,6 +238,160 @@
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
     "_note": "z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
+  },
+  "study_mode": {
+    "enabled": true,
+    "autostart": false,
+    "weekday": "monday",
+    "weekday_label": "月曜日",
+    "grade": "elem_3",
+    "_note": "UFOくん 勉強モード (#86). F5 (or the game's --study-mode argument / ./start.sh study) starts it. enabled = the backend starts the homework service (voice, per-problem watch, explanation) even when homework.enabled is false. weekday_label = the day shown and said (fixed to Monday for the demo). grade = the first grade shown (nursery_1..3, elem_1..6, jhs_1..3; , / . change it on the intro screen). Worksheets: config/worksheets.json (python3 tools/build_worksheets.py; printable sheets in docs/worksheets/).",
+    "demo": {
+      "mode": "mock",
+      "_note": "mock = no camera, Jev or AI: the worksheet, the answers (keys 1/2/3), the explanation (the worksheet's own hints) are simulated, the arm moves on the backend's mock robot (./start.sh study) or the game's own mock; camera = the real overview camera, Jev and Claude / Codex, the arm on the mock robot only (refused when the backend runs the real robot); real = the real crane and cameras, only with the calibrations below confirmed (the tidy-up separately).",
+      "worksheet_wait_s": 4.0,
+      "auto_answer": false,
+      "auto_answer_s": 6.0,
+      "mock_desk": {
+        "origin_xy_mm": [
+          90.0,
+          0.0
+        ],
+        "mm_per_paper_mm": 0.6,
+        "_note": "mock robot only: where the A4 page lies in robot XY (page x -> robot +x, page y -> robot +y from origin, scaled by mm_per_paper_mm so the 297 mm page fits the 200 mm Y travel), to aim the mock arm at problem 3."
+      }
+    },
+    "watch": {
+      "filled_prob": 0.6,
+      "writing_prob": 0.3,
+      "confirm_readings": 2,
+      "complete_readings": 2,
+      "_note": "Per-problem state from Jev's per-answer-box probability: >= filled_prob counts as a filled reading, >= writing_prob as writing, below as empty; a reading held (hand over the sheet, sheet not visible) changes nothing. A problem is filled after confirm_readings filled readings in a row (a later empty reading takes it back). The homework is complete after all 3 stayed filled for complete_readings readings in a row, or when a grown-up confirms it (Enter). Filled means written, never correct."
+    },
+    "help": {
+      "key": "Y",
+      "problem": 3,
+      "open_claw": false,
+      "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
+    },
+    "height": {
+      "capture_heights_cm": [
+        10.0,
+        5.0
+      ],
+      "real": {
+        "z_desk_tip": null,
+        "z_per_cm": null,
+        "camera_offset_cm": null,
+        "landing_tip_cm": null,
+        "min_clearance_cm": 1.0,
+        "allow_landing_contact": false,
+        "confirmed": {
+          "z_desk_tip": false,
+          "z_per_cm": false,
+          "camera_offset_cm": false,
+          "landing": false
+        }
+      },
+      "dry_run": {
+        "z_desk_tip": 20.0,
+        "z_per_cm": 4.0,
+        "camera_offset_cm": 3.0,
+        "landing_tip_cm": 1.5,
+        "min_clearance_cm": 1.0,
+        "allow_landing_contact": false
+      },
+      "_note": "Backend Z is an abstract unit, not a height above the desk. Z(camera h cm) = z_desk_tip + (z_up_is_positive ? +1 : -1) * (h - camera_offset_cm) * z_per_cm. z_desk_tip = Z where the claw tips touch the desk, z_per_cm = Z units per cm (measure with a block of known height), camera_offset_cm = lens above the claw tips, landing_tip_cm = claw tip height at the landing (below min_clearance_cm only with allow_landing_contact, after checking it on the robot). real: every null measured on the machine and every confirmed item set by hand, otherwise the staged descent is refused (NOT measured yet). dry_run: made-up values for the mock robot only."
+    },
+    "cleanup": {
+      "enabled_real": false,
+      "real": {
+        "jig_xy": null,
+        "jig_grip_z": null,
+        "travel_z": null,
+        "safe_z": null,
+        "claw_grip": "closed",
+        "claw_release": "open",
+        "route_xy": [],
+        "collect_xy": null,
+        "collect_z": null,
+        "collect_dwell_s": 1.0,
+        "park_xy": null,
+        "keep_out": [],
+        "xy_feed_mm_min": null,
+        "step_timeout_s": null,
+        "total_timeout_s": null,
+        "grip_confirm_timeout_s": 60.0,
+        "confirmed": {
+          "jig_xy": false,
+          "jig_grip_z": false,
+          "route": false,
+          "collect": false,
+          "speeds": false
+        }
+      },
+      "dry_run": {
+        "jig_xy": [
+          30.0,
+          20.0
+        ],
+        "jig_grip_z": 25.0,
+        "travel_z": 55.0,
+        "safe_z": 95.0,
+        "claw_grip": "closed",
+        "claw_release": "open",
+        "route_xy": [
+          [
+            110.0,
+            40.0
+          ],
+          [
+            300.0,
+            40.0
+          ],
+          [
+            300.0,
+            100.0
+          ],
+          [
+            110.0,
+            100.0
+          ],
+          [
+            110.0,
+            160.0
+          ],
+          [
+            300.0,
+            160.0
+          ]
+        ],
+        "collect_xy": [
+          360.0,
+          180.0
+        ],
+        "collect_z": 45.0,
+        "collect_dwell_s": 1.0,
+        "park_xy": [
+          195.0,
+          190.0
+        ],
+        "keep_out": [
+          [
+            180.0,
+            0.0,
+            215.0,
+            12.0
+          ]
+        ],
+        "xy_feed_mm_min": 1500.0,
+        "step_timeout_s": 30.0,
+        "total_timeout_s": 240.0,
+        "grip_confirm_timeout_s": 60.0,
+        "auto_confirm_grip_s": null
+      },
+      "_note": "Tidy-up with a magnet jig: claws open over the jig's stand (jig_xy), down to jig_grip_z, close, wait for a grown-up to confirm the grip (Enter; no sensor, never judged automatically; grip_confirm_timeout_s then FAULT), up to travel_z, the fixed route_xy (no free search), the collection spot (collect_xy, down to collect_z, collect_dwell_s), the jig back to its stand, safe_z, park_xy. Every point inside the soft limits and every segment clear of keep_out [x0, y0, x1, y1] is checked before moving. Only magnetic test objects (paper clips): pencils and erasers are not collected. Keep magnets away from children's mouths and electronics. real: off (enabled_real false) and every null measured / confirmed item set on the machine before it may run (NOT measured yet). dry_run: the mock robot only; auto_confirm_grip_s (dry run only) confirms by itself after that many seconds."
+    }
   },
   "auto_catch": {
     "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_zero reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",

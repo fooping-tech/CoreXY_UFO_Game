@@ -46,6 +46,7 @@ CoreXY_UFO_Game/
 | `--gesture-camera CAM` | ジェスチャーに使うカメラ（番号か名前の一部。省くと config の `gesture.camera`） |
 | `--port PORT` | 実機のシリアルポート（省くと config か自動検出） |
 | `--study` | Study タブ（カメラ学習アシスタント。config の `study.enabled: true` も必要） |
+| `--study-mode` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
 | `-h` / `--help` | 使い方を表示 |
 | `-- <引数>` | 後ろをそのままバックエンドへ（`--game-only` ではゲームへ）渡す。下の 2 つの表 |
 
@@ -64,6 +65,8 @@ CoreXY_UFO_Game/
 ./start.sh --mock                            # 実機なし: 仮想クレーン + ジェスチャー
 ./start.sh --mock --no-gesture               # 実機もカメラもなしで WebSocket 経由
 ./start.sh --mock --no-gesture --study       # + Study タブ（study.enabled も必要）
+./start.sh --mock --no-gesture --study-mode  # UFOくん 勉強モードのデモ（実機なし。F5 で終了/再開）
+./start.sh --game-only --study-mode          # 勉強モードをゲームだけで（ゲーム内 Mock）
 ./start.sh --game-only                       # ゲームだけ（ゲーム内 MockRobot）
 ./start.sh --game-only -- --scenario sudden_stop   # テストシナリオを流す
 ./start.sh --backend-only -- --list-ports    # シリアルポートの一覧
@@ -80,6 +83,7 @@ CoreXY_UFO_Game/
 | `./start.sh real [PORT] [引数]` | `./start.sh --no-gesture [--port PORT] -- [引数]` |
 | `./start.sh real [PORT] --gesture` | `./start.sh [--port PORT]` |
 | `./start.sh gesture` | `./start.sh --mock` |
+| `./start.sh study [引数]` | `./start.sh --mock --no-gesture --study-mode -- [引数]` |
 | `./start.sh backend [引数]` | `./start.sh --backend-only -- [引数]`（仮想クレーンは `--backend-only --mock`） |
 
 ### ゲームの引数（`--game-only -- ...`）
@@ -92,6 +96,7 @@ CoreXY_UFO_Game/
 | `--gesture-scheme pinch_joystick` / `pose_direction` | 手の読み方（config の `gesture.scheme`） |
 | `--gesture-demo` | カメラなしで、決まった手の動きを流してジェスチャー操作を試す |
 | `--hide-debug` | デバッグパネルを隠して起動する |
+| `--study-mode` / `--study-demo mock\|camera\|real` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
 | `--capture <dir>` | 0.5 秒ごとに画面を PNG で保存し（8 秒間）、FPS を表示して終わる |
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
@@ -312,6 +317,15 @@ cd CoreXY_UFO_Game/game
   - VOICEVOX の声を使うときは、利用規約に従って「VOICEVOX:キャラクター名」のクレジットを表示する（タブに出る）。キャラクターごとの規約も確かめる。
   - 宿題タブの「声を出す」で、声を止められる。
 - 1 回の位置の読み取りで、アシスタントへの質問 1 回と Jev の呼び出し 1 回がかかる。**実機では未検証**（俯瞰カメラの実際の画像で、位置が合うかも未確認）。
+
+### UFOくん 勉強モード（F5）
+
+勉強の時間を知らせる → プリントを見つけて宿題開始 → Y キー（HELP）でアームが問題 3 を 10cm・5cm・いちばん近くで撮って
+UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネットジグで片付け → ゲーム解放、までを 1 つの体験として
+メイン画面で進める（`./start.sh --mock --no-gesture --study-mode` か F5）。12 学年 × 3 問のサンプルプリント（印刷用 A4: `docs/worksheets/`）付き。
+実機・カメラ・AI なしでも最後まで通せる Mock デモ（`study_mode.demo.mode`）がある。
+**実機での高さ校正と片付けは未実施・実機未検証**で、実機ではどちらも校正と確認が済むまでバックエンドが拒否する。
+詳細（操作、設計、校正、安全）は [docs/study_mode.md](docs/study_mode.md)。
 
 ### ハンドジェスチャー・ジョイスティック
 

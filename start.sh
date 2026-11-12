@@ -6,9 +6,10 @@
 #   ./start.sh --no-gesture       ジェスチャーなし（--mock とも組み合わせられる）
 #   ./start.sh --game-only        ゲームだけ（ゲーム内の MockRobot。バックエンドなし）
 #   ./start.sh --backend-only     バックエンドだけ（--mock と組み合わせられる）
+#   ./start.sh --mock --no-gesture --study-mode   UFOくん 勉強モードで開始（F5 で終了/再開）
 #   ./start.sh ... -- <引数>      -- の後ろはバックエンドへ（--game-only ではゲームへ）そのまま渡す
 #
-# 今までの書き方（game / mock / real [PORT] / gesture / backend）もそのまま使える。
+# 今までの書き方（game / mock / real [PORT] / gesture / study / backend）もそのまま使える。
 #
 # 引数なしで起動したときの引数は、環境変数かリポジトリ直下の .env の CXUFO_START_ARGS で決められる
 # （例: CXUFO_START_ARGS=--mock --no-gesture）。今までの CXUFO_START_MODE（モード名）も使える。
@@ -232,6 +233,7 @@ usage() {
   --gesture-camera CAM   ジェスチャーに使うカメラ（番号か名前の一部。省くと config の gesture.camera）
   --port PORT       実機のシリアルポート（省くと config か自動検出）
   --study           Study タブ（カメラ学習アシスタント。config の study.enabled も必要）
+  --study-mode      UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了）
   -h, --help        この説明
 
 例
@@ -239,10 +241,11 @@ usage() {
   ./start.sh --port /dev/cu.usbserial-XXXX
   ./start.sh --mock                       実機なしで（仮想クレーン + ジェスチャー）
   ./start.sh --mock --no-gesture          実機もカメラもなしで
+  ./start.sh --mock --no-gesture --study-mode   勉強モードのデモ（実機なし）
   ./start.sh --game-only -- --scenario sudden_stop
   ./start.sh --backend-only -- --list-ports
 
-今までの書き方も使えます: game / mock / real [PORT] / gesture / backend [引数]
+今までの書き方も使えます: game / mock / real [PORT] / gesture / study / backend [引数]
 引数なしのときの既定は .env か環境変数の CXUFO_START_ARGS（例: CXUFO_START_ARGS=--mock）。
 実機のモーターは、どの起動でも最初は無効（デバッグパネルの「実機」タブで有効にするまで動かない）。
 EOF
@@ -252,7 +255,7 @@ die_usage() { echo "$1（./start.sh --help を参照）" >&2; exit 1; }
 
 # The option form: sets TARGET (real / mock / game / backend), the backend's and the game's arguments.
 parse_options() {
-  local robot="" parts="" gesture="" camera="" port="" study=0
+  local robot="" parts="" gesture="" camera="" port="" study=0 study_mode=0
   EXTRA=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -271,6 +274,7 @@ parse_options() {
               port="$2"; shift ;;
       --port=*) port="${1#*=}" ;;
       --study) study=1 ;;
+      --study-mode) study_mode=1 ;;
       -h|--help) usage; exit 0 ;;
       --) shift; EXTRA=("$@"); break ;;
       *) die_usage "不明なオプション: $1（バックエンド・ゲームへの引数は -- の後ろに書く）" ;;
@@ -306,6 +310,10 @@ parse_options() {
   GAME_ARGS=()
   [[ "$TARGET" != game ]] && GAME_ARGS+=(--source websocket)
   [[ "$gesture" == 1 && "$TARGET" != backend ]] && GAME_ARGS+=(--gesture)
+  if [[ "$study_mode" == 1 ]]; then
+    [[ "$TARGET" != backend ]] || die_usage "--study-mode はゲームを起動するときだけ（--backend-only では使えない）"
+    GAME_ARGS+=(--study-mode)
+  fi
   return 0
 }
 
@@ -364,6 +372,11 @@ run_mode() {
       start_backend ${args[@]+"${args[@]}"} "$@"
       run_game "${game_args[@]}"
       ;;
+    study)
+      # the study mode (#86) on the mock robot: the demo mode comes from study_mode.demo.mode
+      start_backend --mock "$@"
+      run_game --source websocket --study-mode
+      ;;
     gesture)
       start_backend --mock --gesture --gesture-landmarks "$@"
       run_game --source websocket --gesture
@@ -381,7 +394,7 @@ run_mode() {
   esac
 }
 
-is_mode() { case "$1" in game|mock|real|gesture|backend|help) return 0 ;; *) return 1 ;; esac; }
+is_mode() { case "$1" in game|mock|real|gesture|study|backend|help) return 0 ;; *) return 1 ;; esac; }
 
 if [[ $# -eq 0 ]]; then
   # No arguments: the configured default (CXUFO_START_MODE / CXUFO_START_ARGS), else the
