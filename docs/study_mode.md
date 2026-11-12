@@ -22,7 +22,8 @@
 ```bash
 ./start.sh --mock --no-gesture --study-mode       # バックエンド --mock + ゲーム（勉強モードで開始）
 ./start.sh --game-only --study-mode               # ゲームだけ（Godot 内蔵の Mock でアームを再現）
-./start.sh --game-only -- --study-demo mock       # mock / camera / real を指定して開始
+./start.sh --game-only -- --study-demo simulated  # simulated / camera を指定して開始
+./start.sh --study-mode                           # 実機 + ジェスチャー（demo.source が camera のときだけアームを動かす）
 ```
 
 起動時のタイトル画面で「勉強モード」を選ぶか、ゲームの中ではいつでも **F5** で勉強モードの開始・終了。
@@ -32,7 +33,7 @@
 | Enter | 次へ・大人の確認（プリントを置いた / 全問書けたことの確認 / ジグをつかめた / 片付け失敗の確認 / ゲームで遊ぶ） |
 | Y | HELP（`study_mode.help.key`。宿題アシスタントの「止まっている問題」キーと同じ） |
 | Space | 止める（ゲームの停止キー。勉強モードの動きも止める） |
-| 1 / 2 / 3 | Mock デモ: その問題に記入した（記入中 → 次の読み取りで記入済み） |
+| 1 / 2 / 3 | 模擬デモ: その問題に記入した（記入中 → 次の読み取りで記入済み） |
 | , / . | 学年を変える（最初の画面とプリント待ちのとき） |
 | F6 / F7 / F8 | 状態のスキップ / 失敗の注入（位置特定・アーム停止・AI・音声・手で隠れる・片付けを順に） / 最初から |
 | Esc | タイトル画面に戻る（勉強モードを止める） |
@@ -40,13 +41,22 @@
 勉強モード中は F1 のデバッグパネルを閉じて始めます（F1 で再表示）。ゲームの他のキーはそのまま。
 HELP と片付けの間は、矢印・W/S・ジェスチャーによる手動操作を受け付けません。
 
-## 3. デモモード（`study_mode.demo.mode`）
+## 3. 何を使うか（`study_mode.demo.source`）と、どのロボットか（start.sh）
 
-| モード | プリント・記入 | 位置 | 解説 | アーム |
+config で決めるのは「模擬か、カメラと AI を使うか」だけです。**アームは start.sh がつないだロボット**に従います（`./start.sh` = 実機、`--mock` = バックエンドの仮想クレーン、`--game-only` = ゲーム内蔵の Mock）。
+
+| `demo.source` | プリント・記入 | 位置 | 解説 | 外部への送信 |
 |---|---|---|---|---|
-| `mock` | 模擬（`worksheet_wait_s` 秒で発見。記入は 1/2/3 キー、`auto_answer` で 1・2 問を自動） | プリントデータから | プリントのヒント | バックエンドの Mock（`./start.sh --mock --no-gesture --study-mode`）か、ゲーム内蔵の Mock |
-| `camera` | 俯瞰カメラ + Jev（HomeworkClient の見守りにワークシートを付ける） | Claude/Codex + Jev + 基準マーク + camera_map | Claude / Codex | Mock のみ（バックエンドが実機なら動かさない） |
-| `real` | 同上 | 同上 | 同上 | 実機（高さ校正と確認がないと拒否） |
+| `simulated`（既定） | 模擬（`worksheet_wait_s` 秒で発見。記入は 1/2/3 キー、`auto_answer` で 1・2 問を自動） | プリントデータから | プリントのヒント | **なし** |
+| `camera` | 俯瞰カメラ + Jev（HomeworkClient の見守りにワークシートを付ける） | Claude/Codex + Jev + 基準マーク + camera_map | Claude / Codex | 俯瞰と近接の画像を Jev（Cloudflare）と Claude / Codex へ |
+
+| つないだロボット | `simulated` | `camera` |
+|---|---|---|
+| ゲーム内蔵の Mock（`--game-only`） | 動く | 動かさない（バックエンドが要る） |
+| バックエンドの仮想クレーン（`--mock`） | 動く | 動く |
+| 実機（`./start.sh`） | **動かさない**（模擬の位置はプリントのデータで、机の上の本物の位置ではないため） | 動く。ただし高さ校正と確認がないとバックエンドが拒否する |
+
+前の `study_mode.demo.mode`（`mock` / `camera` / `real`）と `--study-demo mock|real` も読めます（`mock` = `simulated`、`camera` / `real` = `camera`）。
 
 声は `homework.speech`（VOICEVOX → macOS `say`）。バックエンドがないとき・声が作れないときは文字だけで進みます（行ごとの読み時間で次へ）。
 

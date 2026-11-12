@@ -1,16 +1,19 @@
 class_name StudyServices
 extends Node
 ## What the study mode asks of the outside world, for each demo mode
-## (study_mode.demo.mode). The controller never talks to the robot, the cameras,
+## (study_mode.demo.source). The controller never talks to the robot, the cameras,
 ## Jev or the assistant itself: only to this node, which answers with signals.
 ##
-##   mock   : the worksheet, the answers (keys 1/2/3, or auto), the problem's place
-##            and the explanation (the worksheet's own hints) are simulated. The arm
-##            moves on the backend's mock robot (`./start.sh study`) or, without a
-##            backend, on the game's own MockRobot.
-##   camera : the overview camera + Jev (HomeworkClient's watch with the worksheet),
-##            Claude / Codex (locate + explain); the arm on the mock robot only.
-##   real   : the same with the real crane (the backend refuses what is not calibrated).
+##   simulated : the worksheet, the answers (keys 1/2/3, or auto), the problem's place
+##               and the explanation (the worksheet's own hints) are simulated: no
+##               camera, no Jev, no AI, nothing leaves the machine. The arm moves on the
+##               backend's mock robot (`./start.sh --mock --study-mode`) or, without a
+##               backend, on the game's own MockRobot; never on the real crane.
+##   camera    : the overview camera + Jev (HomeworkClient's watch with the worksheet),
+##               Claude / Codex (locate + explain).
+##
+## Which robot is not chosen here (#92): it is the one start.sh connected (--real /
+## --mock). With the real crane the backend still refuses what is not calibrated.
 ##
 ## Robot motion is always one sequence run by the backend (homework_approach with
 ## stages, study_cleanup_*) under its motion lock, or the game's mock walking its
@@ -27,12 +30,14 @@ signal motion_fault(kind: String, reason: String)
 signal explained(result: Dictionary)
 signal explain_failed(reason: String, fallback: Dictionary)
 
-const MODES := ["mock", "camera", "real"]
+const MODES := ["simulated", "camera"]
+## the earlier study_mode.demo.mode values (#86), read as the new ones
+const LEGACY_MODES := {"mock": "simulated", "real": "camera"}
 const MOCK_READING_S := 1.5
 
 var main: Node
 var homework: HomeworkClient
-var mode := "mock"
+var mode := "simulated"
 var worksheet: Dictionary = {}
 var grade_label := ""
 ## the next action of this kind fails (debug): "" | locate | motion | ai | cleanup | occlude
@@ -88,7 +93,7 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 		main.ws.ack.connect(_on_robot_ack)
 	var d = GameConfig.get_value("study_mode", "demo", {})
 	if d is Dictionary:
-		mode = str(d.get("mode", mode)) if str(d.get("mode", mode)) in MODES else "mock"
+		mode = normalize_mode(str(d.get("source", d.get("mode", mode))))
 		worksheet_wait_s = float(d.get("worksheet_wait_s", worksheet_wait_s))
 		auto_answer = bool(d.get("auto_answer", auto_answer))
 		auto_answer_s = maxf(float(d.get("auto_answer_s", auto_answer_s)), 1.0)
@@ -97,12 +102,23 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 			mock_origin = Vector2(float(md.origin_xy_mm[0]), float(md.origin_xy_mm[1]))
 			mock_scale = float(md.get("mm_per_paper_mm", 1.0))
 
+## "simulated" / "camera"; the earlier names are read (mock -> simulated, real -> camera)
+## and anything else is the safe one, simulated (nothing leaves the machine).
+static func normalize_mode(m: String) -> String:
+	m = LEGACY_MODES.get(m, m)
+	return m if m in MODES else "simulated"
+
 func set_mode(m: String) -> void:
-	if m in MODES:
-		mode = m
+	mode = normalize_mode(m)
 
 func mode_label() -> String:
-	return {"mock": "MOCK デモ", "camera": "カメラ連携デモ", "real": "実機デモ"}.get(mode, mode)
+	var what: String = {"simulated": "模擬デモ", "camera": "カメラ連携デモ"}.get(mode, mode)
+	match motion_route():
+		"backend":
+			return what + ("・実機" if robot_is_real() else "・Mock")
+		"game_mock":
+			return what + "・ゲーム内 Mock"
+	return what
 
 ## Everything stops: pending results are ignored, the mock's walk ends, and a backend
 ## sequence this node started is ended with soft_stop (the backend then ABORTs it).
@@ -153,7 +169,7 @@ func _process(dt: float) -> void:
 			_timers.erase(t)
 			if int(t[2]) == _token:
 				t[1].call()
-	if watching and mode == "mock":
+	if watching and mode == "simulated":
 		_mock_tick(dt)
 	if not _walk.is_empty():
 		_walk_tick(dt)
@@ -161,7 +177,7 @@ func _process(dt: float) -> void:
 # ------------------------------------------------------------------ the watch
 func watch_start() -> void:
 	watching = true
-	if mode == "mock":
+	if mode == "simulated":
 		_mock_seen_at = worksheet_wait_s if not seen else -1.0
 		return
 	if homework == null:
@@ -177,7 +193,7 @@ func watch_start() -> void:
 func watch_stop() -> void:
 	var was := watching
 	watching = false
-	if mode != "mock" and homework != null and was:
+	if mode != "simulated" and homework != null and was:
 		if homework.running():
 			homework.stop("勉強モードの見守りを終えました")
 		homework.worksheet_id = ""
@@ -246,7 +262,7 @@ func backend_robot() -> bool:
 func motion_route() -> String:
 	if backend_robot():
 		return "backend"
-	if main != null and mode == "mock" and RobotState.source == "mock" and main.mock != null and main.mock.enabled:
+	if main != null and mode == "simulated" and RobotState.source == "mock" and main.mock != null and main.mock.enabled:
 		return "game_mock"
 	return ""
 
@@ -268,13 +284,15 @@ func prepare_mock_robot() -> void:
 
 ## Why the arm may not move now ("" = it may).
 func motion_blocker() -> String:
-	var route := motion_route()
+	return blocker_for(motion_route(), robot_is_real(), mode)
+
+## The rule alone (tests): route = motion_route(), real = the backend runs the real crane.
+static func blocker_for(route: String, real: bool, demo_source: String) -> String:
 	if route == "":
 		return "ロボット（Mock / 実機）につながっていません"
-	if robot_is_real() and mode != "real":
-		return "実機につながっています。%sでは実機を動かしません（study_mode.demo.mode を real に）" % mode_label()
-	if mode == "real" and not robot_is_real():
-		return "実機デモですが、実機につながっていません（Mock のバックエンドです）"
+	if real and demo_source != "camera":
+		# the simulated places come from the worksheet data, not the desk: never on the crane
+		return "実機につながっています。模擬デモでは実機を動かしません（study_mode.demo.source を camera に）"
 	return ""
 
 # ------------------------------------------------------------------ HELP: where is problem n
@@ -285,7 +303,7 @@ func locate_help(problem: int) -> void:
 		inject_fail = ""
 		_after(1.0, func(): locate_failed.emit("カメラの座標校正が使えません（失敗の注入）"))
 		return
-	if mode == "mock":
+	if mode == "simulated":
 		var p := WorksheetCatalog.problem(worksheet, problem)
 		if p.is_empty():
 			locate_failed.emit("プリントに問題 %d がありません" % problem)
@@ -411,7 +429,7 @@ func explain(problem: int) -> void:
 		inject_fail = ""
 		_after(1.5, func(): explain_failed.emit("AI につながりませんでした（失敗の注入）", fb))
 		return
-	if mode == "mock":
+	if mode == "simulated":
 		var demo := fb.duplicate()
 		demo["source"] = "demo"
 		_after(2.0, func(): if tok == _token: explained.emit(demo))

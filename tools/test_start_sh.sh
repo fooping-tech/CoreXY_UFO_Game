@@ -25,6 +25,9 @@ has() { [[ "$OUT" == *"$1"* ]]; }
 line() { printf '%s\n' "$OUT" | grep -qFx -- "$1"; }  # a whole output line
 
 rm -f "$TMP/.env"
+# configs for the Study tab's second switch (#92)
+python3 -c 'import json,sys;c=json.load(open(sys.argv[1]));c["study"]["enabled"]=False;json.dump(c,open(sys.argv[2],"w"),indent=2)' "$ROOT/config/game_config.json" "$TMP/study_off.json"
+python3 -c 'import json,sys;c=json.load(open(sys.argv[1]));c["study"]["enabled"]=True;json.dump(c,open(sys.argv[2],"w"),indent=2)' "$ROOT/config/game_config.json" "$TMP/study_on.json"
 run -- ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --gesture --gesture-landmarks" && has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --gesture" && has "起動: 実機" \
   && has "モーターは無効" && ! has "既定の"; check "nothing set: the real robot + gestures + the game" $?
 
@@ -79,19 +82,19 @@ rm -f "$TMP/.env"
 run -- --mock ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock --gesture --gesture-landmarks" && has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --gesture" && has "仮想クレーン"
 check "--mock: the virtual crane with gestures" $?
 
-run -- --mock --no-gesture ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" && line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket" && has "ジェスチャー OFF"
+run -- --mock --no-gesture ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" && line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --no-gesture" && has "ジェスチャー OFF"
 check "--no-gesture: neither side gets gestures" $?
 
 run -- --port /dev/cu.TEST --gesture-camera C270 ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --port /dev/cu.TEST --gesture C270 --gesture-landmarks" && has "ポート: /dev/cu.TEST"
 check "--port and --gesture-camera" $?
 
-run -- --game-only -- --scenario sudden_stop ; has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --scenario sudden_stop" && ! has "backend:"
+run -- --game-only -- --scenario sudden_stop ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --no-gesture --scenario sudden_stop" && ! has "backend:"
 check "--game-only: the game alone, -- args go to the game" $?
 
 run -- --backend-only -- --list-ports ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --list-ports" && ! has "game:"
 check "--backend-only: -- args go to the backend" $?
 
-run -- --mock --study -- -v ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock --gesture --gesture-landmarks --study -v"
+run "START_SH_CONFIG=$TMP/study_on.json" -- --mock --study -- -v ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock --gesture --gesture-landmarks --study -v"
 check "--study and -- args go to the backend" $?
 
 run -- --help ; [[ $CODE -eq 0 ]] && has "使い方: ./start.sh" && ! has "backend:"; check "--help" $?
@@ -106,11 +109,19 @@ run -- --mock --port /dev/x ; [[ $CODE -ne 0 ]] && has "--port は"; check "--po
 run -- --game-only --study ; [[ $CODE -ne 0 ]] && has "--study は"; check "--study without a backend stops" $?
 run -- --port ; [[ $CODE -ne 0 ]] && has "シリアルポートが要ります"; check "--port without a value stops" $?
 
+# ---- #92: start.sh decides, the config holds defaults
+run "START_SH_CONFIG=$TMP/study_off.json" -- --mock --study ; [[ $CODE -ne 0 ]] && has "study.enabled: true も要ります" && ! has "backend:"
+check "--study with study.enabled false stops with the reason" $?
+run -- --game-only --gesture ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --gesture"
+check "--game-only --gesture: the game gets --gesture" $?
+run -- --mock ; has "game: godot --path $ROOT/game -- --source websocket --gesture" && ! has "--no-gesture"
+check "gestures on: no --no-gesture" $?
+
 # ---- the study mode (#86)
 run -- --mock --no-gesture --study-mode ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" \
-  && has "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --study-mode"
+  && line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --source websocket --no-gesture --study-mode"
 check "--study-mode starts the game in the study mode" $?
-run -- --game-only --study-mode ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --study-mode"
+run -- --game-only --study-mode ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --no-gesture --study-mode"
 check "--game-only --study-mode" $?
 run -- --backend-only --study-mode ; [[ $CODE -ne 0 ]] && has "--study-mode は"; check "--study-mode without a game stops" $?
 run -- study ; line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock" \
@@ -128,7 +139,7 @@ run -- backend --list-ports ; has "[START_SH_DRY_RUN] backend: corexy-ufo-backen
 printf 'CXUFO_START_ARGS=--mock --no-gesture\n' > "$TMP/.env"
 run -- ; has "既定の引数で起動します（.env の CXUFO_START_ARGS）: --mock --no-gesture" && line "[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock"
 check ".env CXUFO_START_ARGS alone: the option form" $?
-run -- --game-only ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- " && ! has "既定の"; check "arguments win over CXUFO_START_ARGS" $?
+run -- --game-only ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --no-gesture" && ! has "既定の"; check "arguments win over CXUFO_START_ARGS" $?
 
 if [[ $fails -eq 0 ]]; then echo "start.sh: all passed"; else echo "start.sh: $fails failed"; fi
 exit $(( fails > 0 ))

@@ -593,7 +593,7 @@ func handle_key(keycode: int) -> bool:
 		advance()
 	elif keycode == help_keycode:
 		request_help()
-	elif keycode in [keys.fill_1, keys.fill_2, keys.fill_3] and services.mode == "mock":
+	elif keycode in [keys.fill_1, keys.fill_2, keys.fill_3] and services.mode == "simulated":
 		services.demo_fill({keys.fill_1: 1, keys.fill_2: 2, keys.fill_3: 3}[keycode])
 	elif keycode == keys.grade_prev:
 		change_grade(-1)
