@@ -17,6 +17,7 @@ func _ok(cond: bool, name: String, detail: String = "") -> void:
 
 func _ready() -> void:
 	var rs: Node = RobotState
+	GameConfig.drop_local()  # this machine's config/local_settings.json (#93) must not change the tests
 	_test_rest_state()
 	_test_inextensible_under_motion()
 	_test_sudden_stop_swing_and_decay()
@@ -59,6 +60,7 @@ func _ready() -> void:
 	_test_study_mode_failures(rs)
 	_test_study_mode_backend_messages(rs)
 	_test_title_screen(rs)
+	_test_settings(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2133,6 +2135,87 @@ func _key(code: int) -> InputEventKey:
 
 ## The title screen (#90): not shown headless; when shown it holds the arm (Space still
 ## stops), picks the study or the game mode by keys or a click, and Esc comes back.
+func _test_settings(rs: Node) -> void:
+	# the schema: what the screen may change, nothing about calibration or safety
+	var items := GameConfig.schema_items(GameConfig.schema)
+	var missing := []
+	for k in items.keys():
+		if GameConfig.base_value(k) == null:
+			missing.append(k)
+	var banned := []
+	for k in items.keys():
+		for b in ["robot.", "backend.z_", "backend.arm_open", "backend.home_", "auto_catch.", "study_mode.height.",
+				"study_mode.cleanup.", "gesture.allow_real_robot", "network."]:
+			if str(k).begins_with(b):
+				banned.append(k)
+	_ok(items.size() >= 15 and missing.is_empty() and banned.is_empty(),
+		"settings: the schema lists the settings (all in game_config.json, no calibration / safety key)",
+		"%d %s %s" % [items.size(), missing, banned])
+	var warns: Array[String] = []
+	var got := GameConfig.filter_overrides({"backend.z_sign": -1, "robot.x_max_mm": 999.0, "study.enabled": "yes",
+		"audio.volume_db": 50.0, "backend.serial_port": "a\nb", "study.provider": "codex", "audio.volume_db_x": 1,
+		"study_mode.demo.source": "camera"}, items, warns)
+	_ok(got == {"study.provider": "codex", "study_mode.demo.source": "camera"} and warns.size() == 6,
+		"settings: only allowed keys and values are used from local_settings.json", str(got))
+	_ok(GameConfig.flatten({"a": {"b": {"c": 1}}, "d": 2}) == {"a.b.c": 1, "d": 2}
+		and GameConfig.nest({"a.b.c": 1, "a.x": true}) == {"a": {"b": {"c": 1}, "x": true}},
+		"settings: flatten / nest of the dotted keys")
+
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var st: SettingsScreen = game.settings
+	game._unhandled_input(_key(KEY_S))
+	_ok(not game.settings_active(), "settings: only from the title")
+	game.show_title()
+	game._unhandled_input(_key(KEY_S))
+	game._handle_input(0.1)
+	var held: bool = game.settings_active() and game.title_active() and game.control_source == "halt"
+	_ok(held and st.layer > t.layer and game.debug_ui.layer > st.layer,
+		"settings: S opens it over the title; the arm stays held; the debug panel above it", game.control_source)
+	game._unhandled_input(_key(KEY_2))
+	_ok(game.settings_active() and game.title_active(), "settings: the title's keys do not reach through it")
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.settings_active() and game.mock.target.is_equal_approx(game.mock.pos), "settings: Space still stops")
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and game.title_active() and t.notice() == "", "settings: Esc closes it unsaved, back to the title")
+	t.gear.pressed.emit()
+	_ok(game.settings_active(), "settings: the gear opens it")
+
+	# save to a test file (never the machine's own)
+	var real_path := GameConfig.local_path
+	var path := "user://test_local_settings.json"
+	GameConfig.local_path = path
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var base_provider = GameConfig.base_value("study.provider")
+	st.set_form_value("study.provider", "codex")
+	st.set_form_value("study_mode.demo.source", "camera")
+	st.set_form_value("audio.volume_db", -20.0)
+	var marked: bool = (st._rows["study.provider"].label as Label).text.ends_with("＊")
+	var err := st.save()
+	var saved = GameConfig.read_json(path)
+	_ok(err == "" and not game.settings_active() and t.notice().contains("保存") and marked
+		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "camera"}}}
+		and GameConfig.value("study.provider") == "codex" and GameConfig.base_value("study.provider") == base_provider,
+		"settings: 保存 writes only the changed keys to local_settings.json and uses them", str(saved))
+	game.open_settings()
+	var shown: bool = st.form_value("study.provider") == "codex" and is_equal_approx(float(st.form_value("audio.volume_db")), -20.0)
+	_ok(shown and GameConfig.save_local({"robot.x_max_mm": 1.0}) != "" and GameConfig.read_json(path) == saved,
+		"settings: it reopens with the saved values; a key outside the schema is refused")
+	GameConfig.load_local()
+	_ok(GameConfig.local == {"study.provider": "codex", "study_mode.demo.source": "camera", "audio.volume_db": -20.0},
+		"settings: the saved file reads back", str(GameConfig.local))
+	st.reset_defaults()
+	st.save()
+	_ok(GameConfig.read_json(path) == {} and GameConfig.local.is_empty() and GameConfig.value("study.provider") == base_provider,
+		"settings: 既定に戻す + 保存 empties the overrides")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	GameConfig.local_path = real_path
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_title_screen(rs: Node) -> void:
 	var game := _study_game()
 	var t: TitleScreen = game.title

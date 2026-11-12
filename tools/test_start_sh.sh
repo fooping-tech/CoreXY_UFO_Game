@@ -112,6 +112,16 @@ run -- --port ; [[ $CODE -ne 0 ]] && has "シリアルポートが要ります";
 # ---- #92: start.sh decides, the config holds defaults
 run "START_SH_CONFIG=$TMP/study_off.json" -- --mock --study ; [[ $CODE -ne 0 ]] && has "study.enabled: true も要ります" && ! has "backend:"
 check "--study with study.enabled false stops with the reason" $?
+# #93: the settings screen's config/local_settings.json wins over game_config.json
+mkdir -p "$TMP/cfg_local"
+cp "$TMP/study_off.json" "$TMP/cfg_local/game_config.json"
+printf '{\n  "study": {\n    "enabled": true\n  }\n}\n' > "$TMP/cfg_local/local_settings.json"
+run "START_SH_CONFIG=$TMP/cfg_local/game_config.json" -- --mock --study ; has "backend: corexy-ufo-backend --mock --gesture --gesture-landmarks --study"
+check "--study: study.enabled from local_settings.json counts" $?
+cp "$TMP/study_on.json" "$TMP/cfg_local/game_config.json"
+printf '{"study": {"enabled": false, "provider": "codex"}}' > "$TMP/cfg_local/local_settings.json"
+run "START_SH_CONFIG=$TMP/cfg_local/game_config.json" -- --mock --study ; [[ $CODE -ne 0 ]] && has "study.enabled: true も要ります"
+check "--study: local_settings.json false wins" $?
 run -- --game-only --gesture ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --gesture"
 check "--game-only --gesture: the game gets --gesture" $?
 run -- --mock ; has "game: godot --path $ROOT/game -- --source websocket --gesture" && ! has "--no-gesture"

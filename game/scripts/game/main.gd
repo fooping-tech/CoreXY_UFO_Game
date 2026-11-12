@@ -33,6 +33,7 @@ var study_mode: StudyModeController
 var study_hud: StudyHud
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
+var settings: SettingsScreen
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -244,6 +245,12 @@ func _ready() -> void:
 	add_child(title)
 	title.setup()
 	title.chosen.connect(_on_title_chosen)
+	title.settings_requested.connect(open_settings)
+	settings = SettingsScreen.new()
+	settings.name = "SettingsScreen"
+	add_child(settings)
+	settings.setup()
+	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -299,9 +306,24 @@ func show_title() -> void:
 	if not title.active():
 		_debug_layer = debug_ui.layer
 		_debug_before_title = debug_ui.visible
-	debug_ui.layer = title.layer + 1
+	debug_ui.layer = title.layer + 2  # above the title and the settings screen
 	_set_debug_visible(false)
 	title.open()
+
+## The gear on the title (#93). Only over the title: the arm is held meanwhile.
+func open_settings() -> void:
+	if not title_active() or settings.active():
+		return
+	settings.layer = title.layer + 1
+	settings.open()
+
+func settings_active() -> bool:
+	return settings != null and settings.active()
+
+func _on_settings_closed(saved: bool) -> void:
+	debug_log.emit("settings: " + ("saved" if saved else "cancelled"))
+	if saved:
+		title.set_notice("設定を保存しました（次の起動から使います）")
 
 func _set_debug_visible(on: bool) -> void:
 	if debug_ui.visible != on:
@@ -1296,7 +1318,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
-		# the title screen takes every key but the stop (Space) and the debug panel (F1 / Tab)
+		# the settings and the title screens take every key but the stop (Space) and the
+		# debug panel (F1 / Tab); typing in a settings field never gets here
+		if settings_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			settings.handle_key(ev.keycode)
+			return
 		if title_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			title.handle_key(ev.keycode)
 			return

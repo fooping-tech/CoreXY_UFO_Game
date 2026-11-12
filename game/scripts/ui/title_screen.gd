@@ -6,6 +6,7 @@ extends CanvasLayer
 ## auto catch); Space still stops. Esc in the game / the study mode comes back here.
 
 signal chosen(mode: String)  # "study" or "game"
+signal settings_requested  # the gear (#93) or S
 
 const CHOICES: Array[String] = ["study", "game"]
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
@@ -22,6 +23,8 @@ var _card_styles: Array[StyleBoxFlat] = []
 var _ufo: TextureRect
 var _ufo_atlas: AtlasTexture
 var _status: Label
+var gear: GearButton
+var _notice: Label
 var _t := 0.0
 
 func setup() -> void:
@@ -81,13 +84,28 @@ func setup() -> void:
 	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nわからない問題は Y で HELP")
 	_add_card(row, 1, "2", "ゲームモード", "UFO キャッチャーで遊ぼう\n（いつものゲーム画面）")
 
-	var keys := StudyHud.label("← → か 1 / 2 で選んで Enter（クリックでも選べる）    Esc: いつでもタイトルに戻る    Space: 止める",
+	var keys := StudyHud.label("← → か 1 / 2 で選んで Enter（クリックでも選べる）    S / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",
 		18, Color("c8d6f0"), 4)
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(keys)
 	_status = StudyHud.label("", 16, Color("8fa3c4"), 3)
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(_status)
+	_notice = StudyHud.label("", 18, YELLOW, 4)
+	_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_notice)
+
+	# the settings (#93): a gear in the top-right corner
+	gear = GearButton.new()
+	gear.name = "Gear"
+	gear.tooltip_text = "設定（S）"
+	gear.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	gear.offset_left = -96
+	gear.offset_top = 20
+	gear.offset_right = -24
+	gear.offset_bottom = 92
+	gear.pressed.connect(func(): if visible: settings_requested.emit())
+	root.add_child(gear)
 	visible = false
 	_refresh()
 
@@ -150,6 +168,14 @@ func choose(mode: String) -> void:
 	close()
 	chosen.emit(mode)
 
+## A line under the status (the settings screen's "saved").
+func set_notice(text: String) -> void:
+	if _notice != null:
+		_notice.text = text
+
+func notice() -> String:
+	return _notice.text if _notice != null else ""
+
 func set_status(text: String) -> void:
 	if _status != null and _status.text != text:
 		_status.text = text
@@ -168,6 +194,8 @@ func handle_key(keycode: int) -> bool:
 			choose("game")
 		KEY_ENTER, KEY_KP_ENTER:
 			choose(selected_mode())
+		KEY_S:
+			settings_requested.emit()
 	return true
 
 func _refresh() -> void:
@@ -188,3 +216,31 @@ func _process(dt: float) -> void:
 		var s := 1.0 + (0.035 * (0.5 + 0.5 * sin(_t * 5.0)) if i == selected else 0.0)
 		_cards[i].pivot_offset = _cards[i].size * 0.5
 		_cards[i].scale = Vector2(s, s)
+
+
+## The gear icon, drawn (no icon font needed): 8 teeth around a ring.
+class GearButton extends Button:
+	var _hover := false
+
+	func _init() -> void:
+		flat = true
+		focus_mode = Control.FOCUS_NONE  # Space stays the stop key
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		custom_minimum_size = Vector2(72, 72)
+		mouse_entered.connect(func(): _hover = true; queue_redraw())
+		mouse_exited.connect(func(): _hover = false; queue_redraw())
+
+	func _draw() -> void:
+		var c := size * 0.5
+		var r := minf(size.x, size.y) * 0.5
+		var col := Color("ffe03c") if _hover else Color("c8d6f0")
+		draw_circle(c, r * 0.95, Color(0.1, 0.14, 0.25, 0.85))
+		for i in range(8):
+			var a := TAU * i / 8.0
+			var d := Vector2(cos(a), sin(a))
+			var n := Vector2(-d.y, d.x)
+			var pts := PackedVector2Array([c + d * r * 0.42 + n * r * 0.13, c + d * r * 0.78 + n * r * 0.1,
+				c + d * r * 0.78 - n * r * 0.1, c + d * r * 0.42 - n * r * 0.13])
+			draw_colored_polygon(pts, col)
+		draw_circle(c, r * 0.55, col)
+		draw_circle(c, r * 0.24, Color(0.1, 0.14, 0.25, 1.0))

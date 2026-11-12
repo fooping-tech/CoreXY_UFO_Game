@@ -72,12 +72,19 @@ resolve_ws_endpoint() {
   done
 }
 
-# study.enabled in the config: "true" / "false" / "" (not found). Plain shell, like above;
-# "enabled" is the study section's first key.
-config_study_enabled() {
-  [[ -f "$CONFIG_FILE" ]] || return 0
-  tr -d '\n' < "$CONFIG_FILE" \
+# study.enabled: "true" / "false" / "" (not found). Plain shell, like above; "enabled" is
+# the study section's first key (the settings screen writes local_settings.json with sorted
+# keys). config/local_settings.json (the settings screen, #93) wins over game_config.json.
+json_study_enabled() {
+  [[ -f "$1" ]] || return 0
+  tr -d '\n' < "$1" \
     | sed -E -n 's/.*"study"[[:space:]]*:[[:space:]]*\{[[:space:]]*"enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p'
+}
+config_study_enabled() {
+  local v
+  v="$(json_study_enabled "$(dirname "$CONFIG_FILE")/local_settings.json")"
+  [[ -n "$v" ]] || v="$(json_study_enabled "$CONFIG_FILE")"
+  echo "$v"
 }
 
 port_listener() {  # pid of the process listening on WS_PORT (empty if none)
@@ -318,7 +325,7 @@ parse_options() {
     # the Study tab sends camera images to the assistant: it needs both switches, this
     # option and study.enabled in the config. Say so now, not as a backend log line.
     if [[ "$(config_study_enabled)" == false ]]; then
-      echo "--study には config/game_config.json の study.enabled: true も要ります（Study タブはカメラの画像を AI に送るので、2 か所で有効にする）" >&2
+      echo "--study には study.enabled: true も要ります（タイトル画面の歯車の設定画面か config/game_config.json で。Study タブはカメラの画像を AI に送るので、2 か所で有効にする）" >&2
       exit 1
     fi
     BACKEND_ARGS+=(--study)
