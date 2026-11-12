@@ -18,15 +18,21 @@ def read(d: Path) -> dict:
     return json.loads((d / CALIBRATION_FILE).read_text(encoding="utf-8"))
 
 
-def test_the_repository_file_has_the_measured_values() -> None:
-    d = json.loads((DEFAULT_CONFIG_PATH.parent / CALIBRATION_FILE).read_text(encoding="utf-8"))
-    assert d["z"] == {"counts_per_unit": 80.42, "sign": 1, "span_counts": 8042}  # #72, unchanged
-    assert d["claw"]["open_deg"] == 61.875 and d["claw"]["closed_deg"] == 292.060546875
-    for old in LEGACY_FILES.values():
-        assert not (DEFAULT_CONFIG_PATH.parent / old).exists(), old
-    cfg = load_config()
-    assert ZCalibration.load(cfg.z_calibration_path).counts_per_unit == 80.42
-    assert ClawCalibration.load(cfg.arm_calibration_path).open_deg == 61.875
+def test_the_config_points_at_calibration_json(tmp_path: Path) -> None:
+    p = tmp_path / "game_config.json"
+    p.write_text(json.dumps({}))
+    cfg = load_config(p)
+    for s, name in ((cfg.z_calibration_path, "z"), (cfg.arm_calibration_path, "claw"),
+                    (cfg.homework_spot_path, "homework_spot"), (cfg.camera_xy_path, "camera_xy")):
+        assert str(s) == f"{tmp_path / CALIBRATION_FILE}#{name}" and s.legacy == tmp_path / LEGACY_FILES[name]
+    # a machine that has measured nothing yet: nothing is used
+    assert ZCalibration.load(cfg.z_calibration_path).counts_per_unit is None
+    assert ClawCalibration.load(cfg.arm_calibration_path).open_deg is None
+
+
+def test_calibration_json_stays_out_of_git() -> None:
+    ignored = (DEFAULT_CONFIG_PATH.parents[1] / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "config/calibration.json" in ignored and "config/local_settings.json" in ignored
 
 
 def test_a_section_is_written_without_losing_the_others(tmp_path: Path) -> None:

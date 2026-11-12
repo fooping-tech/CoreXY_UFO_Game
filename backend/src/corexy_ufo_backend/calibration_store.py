@@ -1,4 +1,5 @@
 """All values measured on this desk / this machine in one file: config/calibration.json (#96).
+Not in Git: the values differ from machine to machine, so each one measures its own.
 
 Sections: ``z`` (Z servo counts per unit and sign), ``claw`` (the claw's open / closed
 angles), ``homework_spot`` (where the arm's camera looks at the worksheet) and
@@ -34,7 +35,7 @@ LEGACY_FILES = {
 NOTE = ("Values measured on this desk / this machine (#96), written by the backend when they are "
         "recorded (the debug panel). z = Z servo counts per unit and sign (z_set top / bottom), claw = "
         "the claw's open / closed angles, homework_spot = where the arm's camera looks at the worksheet, "
-        "camera_xy = overview image -> CoreXY XY. Commit it after a calibration (shared, like #72).")
+        "camera_xy = overview image -> CoreXY XY. Per machine: not in Git (every machine measures its own).")
 
 _lock = threading.Lock()
 

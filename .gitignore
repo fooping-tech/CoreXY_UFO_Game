@@ -30,3 +30,6 @@ backend/models/
 
 # the settings screen's overrides (#93): per machine, never committed
 config/local_settings.json
+# the values measured on this machine (#96): every machine measures its own
+config/calibration.json
+config/calibration.json.tmp
