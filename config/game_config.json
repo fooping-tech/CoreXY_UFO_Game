@@ -139,6 +139,10 @@
     },
     "_note": "USB cameras by role (C270 = overview / gesture, Innomaker U20CAM = arm tip): overview = looks down on the desk (gesture detection later), focus = on the arm tip. match = part of the camera name (empty = none; pick one in the debug panel). The scope view shows focus, or overview when there is no focus camera. Frames are only drawn: never saved or sent."
   },
+  "title_screen": {
+    "enabled": true,
+    "_note": "The first screen (#90): pick the study mode or the game mode; Esc comes back. Skipped when headless (tests / CI), with --no-title, and when the start is already decided (--study-mode / --study-demo / --scenario / --capture / --log-motion / --gesture-demo, or study_mode.autostart); --title shows it anyway. Presentation only: while it shows, the arm takes no manual input, gestures included (Space still stops); the debug panel opens above it (F1 / Tab)."
+  },
   "network": {
     "websocket_url": "ws://127.0.0.1:8765",
     "state_timeout_ms": 1500,

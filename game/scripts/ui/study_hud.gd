@@ -405,7 +405,7 @@ static func key_help(state: String, mode: String) -> String:
 		parts.append(", . 学年")
 	if mode == "mock":
 		parts.append("1/2/3 記入（Mock）")
-	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了"])
+	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
 	return "  ".join(parts)
 
 func _process(dt: float) -> void:

@@ -31,6 +31,8 @@ var homework: Node
 ## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
 var study_mode: StudyModeController
 var study_hud: StudyHud
+## The title screen (#90): study mode or game mode at start; Esc comes back to it
+var title: TitleScreen
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -237,6 +239,11 @@ func _ready() -> void:
 	debug_ui.setup(self)
 	if bool(GameConfig.get_value("study_mode", "enabled", false)):
 		_setup_study_mode()
+	title = TitleScreen.new()
+	title.name = "TitleScreen"
+	add_child(title)
+	title.setup()
+	title.chosen.connect(_on_title_chosen)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -265,9 +272,72 @@ func _setup_study_mode() -> void:
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 
+## The title at start unless the start is already decided (a scenario, a capture, the study
+## mode by argument or by study_mode.autostart) or nobody looks (headless: the tests and CI).
+## --title shows it anyway, --no-title never.
+static func title_on_start(args: PackedStringArray, enabled: bool, headless: bool, study_autostart: bool) -> bool:
+	if args.has("--title"):
+		return true
+	if not enabled or headless or study_autostart:
+		return false
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo"]:
+		if args.has(a):
+			return false
+	return true
+
+var _debug_layer := 1
+var _debug_before_title := false
+
+## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
+## the hand stick lets go, and main holds the manual controls while it shows. The debug
+## panel goes above the title (hidden; F1 / Tab shows it there, STOP / E-STOP clickable).
+func show_title() -> void:
+	if study_mode != null and study_mode.active():
+		study_mode.stop()
+	if gesture.is_active():
+		gesture.stop("title")
+	if not title.active():
+		_debug_layer = debug_ui.layer
+		_debug_before_title = debug_ui.visible
+	debug_ui.layer = title.layer + 1
+	_set_debug_visible(false)
+	title.open()
+
+func _set_debug_visible(on: bool) -> void:
+	if debug_ui.visible != on:
+		debug_ui.visible = on
+		debug_ui.study_panel_visibility_changed(on)
+		_layout()
+
+func title_active() -> bool:
+	return title != null and title.active()
+
+func _on_title_chosen(mode: String) -> void:
+	debug_log.emit("title: " + mode)
+	debug_ui.layer = _debug_layer
+	_set_debug_visible(_debug_before_title or debug_ui.visible)
+	if mode == "study":
+		if study_mode == null:
+			_setup_study_mode()
+		if not study_mode.active():
+			study_mode.start()
+	elif study_mode != null and study_mode.active():
+		study_mode.stop()
+
+func _title_status() -> String:
+	if RobotState.source != "websocket":
+		return "アーム: ゲーム内の仮想クレーン"
+	if not ws.is_open():
+		return "アーム: バックエンドにつながっていない"
+	return "アーム: バックエンド（%s）  モーターは「実機」タブで有効にするまで動かない" % RobotState.machine_state
+
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
 func _apply_cmdline() -> void:
 	var args := OS.get_cmdline_user_args()
+	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
+			DisplayServer.get_name() == "headless",
+			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
+		show_title()
 	for i in range(args.size()):
 		match args[i]:
 			"--scenario":
@@ -543,6 +613,8 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 
 func _process(dt: float) -> void:
 	_capture_tick(dt)
+	if title_active():
+		title.set_status(_title_status())
 	_update_origin()
 	if _cur_points.is_empty():
 		return
@@ -880,7 +952,7 @@ func _handle_input(dt: float) -> void:
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
 	gesture_gate_reason = gesture_gate()
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
-	if homework != null and (study_mode == null or not study_mode.active()):
+	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
 		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
 		var age := gesture.age_ms(Time.get_ticks_msec())
@@ -892,6 +964,13 @@ func _handle_input(dt: float) -> void:
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
+	# the title screen: nothing moves the arm until a mode is picked (Space still stops)
+	if title_active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "タイトル画面ではアームを動かせない（モードを選んでから）"
+		if gesture.is_active():
+			gesture.stop("title")
 	# the study mode's HELP / tidy-up owns the arm: no manual jog meanwhile (Space still stops it)
 	if study_mode != null and study_mode.blocks_manual_control():
 		halt = true
@@ -1113,6 +1192,14 @@ func set_gesture_sim(on: bool) -> void:
 func gesture_gate() -> String:
 	if gesture_require_focus and not get_window().has_focus():
 		return GATE_FOCUS
+	# the steering and the claw poses: nothing while the title shows or something else owns
+	# the arm (a claw pose would otherwise still reach arm_goto)
+	if title_active():
+		return "タイトル画面（モードを選んでから）"
+	if study_mode != null and study_mode.blocks_manual_control():
+		return "勉強モードがアームを使用中"
+	if RobotState.auto_catch_active():
+		return "自動キャッチ中"
 	if RobotState.machine_state in ["ALARM", "ESTOP"]:
 		return "アラーム中:「clear_alarm」→「home」"
 	if RobotState.source == "mock":
@@ -1204,6 +1291,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
+		# the title screen takes every key but the stop (Space) and the debug panel (F1 / Tab)
+		if title_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			title.handle_key(ev.keycode)
+			return
+		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
+			show_title()
+			return
 		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
 		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
 				and study_mode.handle_key(ev.keycode):
