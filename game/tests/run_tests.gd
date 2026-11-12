@@ -58,6 +58,7 @@ func _ready() -> void:
 	_test_study_mode_mock_story(rs)
 	_test_study_mode_failures(rs)
 	_test_study_mode_backend_messages(rs)
+	_test_title_screen(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2108,6 +2109,52 @@ func _test_study_mode_backend_messages(rs: Node) -> void:
 	ctl.request_help()
 	_ok(ctl.state == "STUDYING" and not sv.motion_active() and ctl.notice.contains("動かしません"),
 		"study: HELP on an already written problem 3 does not move the arm", ctl.state)
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _key(code: int) -> InputEventKey:
+	var ev := InputEventKey.new()
+	ev.keycode = code
+	ev.pressed = true
+	return ev
+
+## The title screen (#90): not shown headless; when shown it holds the arm (Space still
+## stops), picks the study or the game mode by keys or a click, and Esc comes back.
+func _test_title_screen(rs: Node) -> void:
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var ctl: StudyModeController = game.study_mode
+	_ok(t != null and not game.title_active(), "title: not shown at start when headless (tests, CI)")
+	game.show_title()
+	game._handle_input(0.1)
+	var held: bool = game.title_active() and game.control_source == "halt"
+	game._unhandled_input(_key(KEY_C))  # the auto catch key goes nowhere
+	game._unhandled_input(_key(KEY_RIGHT))
+	var moved_sel: bool = t.selected_mode() == "game" and game.title_active()
+	game._unhandled_input(_key(KEY_LEFT))
+	_ok(held and moved_sel and t.selected_mode() == "study" and not ctl.active(),
+		"title: holds the manual controls; arrows choose, other keys are swallowed", game.control_source)
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(not game.title_active() and ctl.active() and ctl.state == "INTRO", "title: Enter on the study mode starts it", ctl.state)
+	game._handle_input(0.1)
+	var free_again: bool = game.control_source != "halt"
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(free_again and game.title_active() and not ctl.active(), "title: Esc stops the study mode and comes back", ctl.state)
+	game._unhandled_input(_key(KEY_2))
+	_ok(not game.title_active() and not ctl.active(), "title: 2 picks the game mode (the crane game, no study mode)")
+	game.show_title()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))  # as if the arm were on its way
+	game._unhandled_input(_key(KEY_SPACE))
+	var stopped: bool = game.mock.target.is_equal_approx(game.mock.pos)
+	_ok(game.title_active() and stopped, "title: Space still reaches the game's stop (the mock halts) and leaves the title up")
+	var card: PanelContainer = t._cards[1]
+	card.gui_input.emit(_mouse_press())
+	_ok(not game.title_active() and not ctl.active() and t.selected_mode() == "game", "title: a click on a card picks it")
+	game.show_title()
+	game._unhandled_input(_key(KEY_F5))
+	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
 	ctl.stop()
 	remove_child(game)
 	game.free()
