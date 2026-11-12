@@ -4,7 +4,11 @@ the exact line formats the real firmware prints (see protocol.py)."""
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+
+# this machine's config/local_settings.json (the settings screen, #93) must not change the tests
+os.environ["CXUFO_NO_LOCAL_SETTINGS"] = "1"
 
 from corexy_ufo_backend.serial_service.transport import SerialTransport
 

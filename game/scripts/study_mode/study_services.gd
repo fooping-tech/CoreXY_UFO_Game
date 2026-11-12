@@ -91,6 +91,10 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	if main != null and main.ws != null:
 		main.ws.message_received.connect(_on_robot_message)
 		main.ws.ack.connect(_on_robot_ack)
+	load_demo_config()
+
+## study_mode.demo (again after the settings screen's 保存, #93).
+func load_demo_config() -> void:
 	var d = GameConfig.get_value("study_mode", "demo", {})
 	if d is Dictionary:
 		mode = normalize_mode(str(d.get("source", d.get("mode", mode))))

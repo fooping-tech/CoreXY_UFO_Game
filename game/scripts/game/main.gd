@@ -33,6 +33,7 @@ var study_mode: StudyModeController
 var study_hud: StudyHud
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
+var settings: SettingsScreen
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -244,6 +245,12 @@ func _ready() -> void:
 	add_child(title)
 	title.setup()
 	title.chosen.connect(_on_title_chosen)
+	title.settings_requested.connect(open_settings)
+	settings = SettingsScreen.new()
+	settings.name = "SettingsScreen"
+	add_child(settings)
+	settings.setup()
+	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -299,9 +306,38 @@ func show_title() -> void:
 	if not title.active():
 		_debug_layer = debug_ui.layer
 		_debug_before_title = debug_ui.visible
-	debug_ui.layer = title.layer + 1
+	debug_ui.layer = title.layer + 2  # above the title and the settings screen
 	_set_debug_visible(false)
 	title.open()
+
+## The gear on the title (#93). Only over the title: the arm is held meanwhile.
+func open_settings() -> void:
+	if not title_active() or settings.active():
+		return
+	settings.layer = title.layer + 1
+	settings.open()
+
+func settings_active() -> bool:
+	return settings != null and settings.active()
+
+func _on_settings_closed(saved: bool) -> void:
+	debug_log.emit("settings: " + ("saved" if saved else "cancelled"))
+	if saved:
+		apply_live_settings()
+		title.set_notice("設定を保存しました（「今すぐ」の項目は反映済み。ほかは次の起動から）")
+
+## The settings marked "now" in config/settings_schema.json, from GameConfig (#93).
+## Presentation only: sounds, effects, the hand-reading scheme, the study mode's choices.
+func apply_live_settings() -> void:
+	sfx.enabled = bool(GameConfig.value("audio.enabled", true))
+	sfx.volume_db = float(GameConfig.value("audio.volume_db", -8.0))
+	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
+	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
+	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
+	if sch != gesture.scheme.id():
+		gesture.set_scheme(sch)  # a forced stop of the hand stick (it is held on the title anyway)
+	if study_mode != null:
+		study_mode.reload_settings()
 
 func _set_debug_visible(on: bool) -> void:
 	if debug_ui.visible != on:
@@ -1291,12 +1327,39 @@ func _update_gesture_presentation(dt: float) -> void:
 	ufo.gesture_face = face
 	ufo.steer = steer
 
+## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
+## no alarm; the debug panel's E-STOP sends ABORT).
+func stop_key() -> void:
+	if study_mode != null:
+		study_mode.on_stop_key()
+	_jog_latched = _jog_input() != Vector3.ZERO
+	gesture.stop("stop_key")
+	if homework != null:
+		homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
+	if mock.enabled:
+		mock.emergency_stop()
+	if ws.enabled and ws.is_open():
+		_jog_active = false
+		ws.send_command("soft_stop")
+
+## Review on #95: a settings field (camera name, serial port) would take Space as text, and
+## the title does not end a running sequence (the auto catch), so Space must still stop.
+## _input runs before the GUI; the space is typed too (stopping again is harmless).
+func _input(ev: InputEvent) -> void:
+	if ev is InputEventKey and ev.pressed and not ev.echo and ev.keycode == KEY_SPACE \
+			and settings_active() and text_entry_focused():
+		stop_key()
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton and ev.pressed and text_entry_focused():
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
-		# the title screen takes every key but the stop (Space) and the debug panel (F1 / Tab)
+		# the settings and the title screens take every key but the stop (Space) and the
+		# debug panel (F1 / Tab); typing in a settings field never gets here
+		if settings_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			settings.handle_key(ev.keycode)
+			return
 		if title_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			title.handle_key(ev.keycode)
 			return
@@ -1309,18 +1372,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		match ev.keycode:
 			KEY_SPACE:
-				if study_mode != null:
-					study_mode.on_stop_key()
-				_jog_latched = _jog_input() != Vector3.ZERO
-				gesture.stop("stop_key")
-				if homework != null:
-					homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
-				if mock.enabled:
-					mock.emergency_stop()
-				if ws.enabled and ws.is_open():
-					# decelerating stop, no alarm (the debug panel's E-STOP sends ABORT)
-					_jog_active = false
-					ws.send_command("soft_stop")
+				stop_key()
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
 				debug_ui.study_panel_visibility_changed(debug_ui.visible)

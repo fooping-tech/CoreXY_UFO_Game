@@ -1,0 +1,70 @@
+{
+  "_note": "What the settings screen (#93, the gear on the title screen) may change. It saves only these keys, only changed from game_config.json, to config/local_settings.json (not in Git); the game and the backend read that file over game_config.json and ignore any key or value not allowed here (a hand-edited file cannot change the calibration or the safety settings). Types: bool, enum (options: [value, label]), number (min, max, step), text (max_length). apply = when a saved change is used: now (the game applies it on 保存), restart (the next start of the game), backend (the next start of the backend: ./start.sh again).",
+  "format_version": 1,
+  "file": "local_settings.json",
+  "sections": [
+    {
+      "title": "勉強モード",
+      "items": [
+        {"key": "study_mode.grade", "apply": "now", "label": "最初に出す学年", "type": "enum",
+         "options": [["nursery_1", "保育園 年少"], ["nursery_2", "保育園 年中"], ["nursery_3", "保育園 年長"],
+                     ["elem_1", "小学1年"], ["elem_2", "小学2年"], ["elem_3", "小学3年"],
+                     ["elem_4", "小学4年"], ["elem_5", "小学5年"], ["elem_6", "小学6年"],
+                     ["jhs_1", "中学1年"], ["jhs_2", "中学2年"], ["jhs_3", "中学3年"]]},
+        {"key": "study_mode.demo.source", "apply": "now", "label": "プリントと解説", "type": "enum",
+         "options": [["simulated", "模擬（カメラも AI も使わない。外部に何も送らない）"],
+                     ["camera", "カメラと AI（画像を Jev と Claude / Codex に送る）"]],
+         "note": "アームは start.sh でつないだロボットで動く。模擬のときは実機を動かさない"},
+        {"key": "study_mode.demo.auto_answer", "apply": "now", "label": "1・2 問めを自動で記入（模擬）", "type": "bool"},
+        {"key": "study_mode.autostart", "apply": "restart", "label": "起動したらすぐ勉強モードで始める", "type": "bool",
+         "note": "オンにするとタイトル画面を出さない"},
+        {"key": "homework.speech.enabled", "apply": "backend", "label": "UFOくんの声", "type": "bool"}
+      ]
+    },
+    {
+      "title": "画面と音",
+      "items": [
+        {"key": "title_screen.enabled", "apply": "restart", "label": "起動時にタイトル画面を出す", "type": "bool",
+         "note": "オフにするとこの画面も開けなくなる。戻すときは config/local_settings.json を消す"},
+        {"key": "audio.enabled", "apply": "now", "label": "効果音", "type": "bool"},
+        {"key": "audio.volume_db", "apply": "now", "label": "効果音の大きさ（dB）", "type": "number", "min": -40, "max": 0, "step": 1},
+        {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
+        {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
+      ]
+    },
+    {
+      "title": "ハンドジェスチャー",
+      "items": [
+        {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum",
+         "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"],
+                     ["pose_direction", "手の形で方向を決める"]]},
+        {"key": "gesture.camera", "apply": "backend", "label": "手のカメラ（名前の一部か番号）", "type": "text", "max_length": 80},
+        {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool",
+         "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
+      ]
+    },
+    {
+      "title": "カメラ",
+      "items": [
+        {"key": "camera.overview.match", "apply": "restart", "label": "俯瞰カメラ（名前の一部）", "type": "text", "max_length": 80},
+        {"key": "camera.focus.match", "apply": "restart", "label": "アームの先のカメラ（名前の一部）", "type": "text", "max_length": 80}
+      ]
+    },
+    {
+      "title": "Study タブ（カメラ学習アシスタント）",
+      "items": [
+        {"key": "study.enabled", "apply": "backend", "label": "Study タブを使う", "type": "bool",
+         "note": "画像を AI に送る。./start.sh --study も要る"},
+        {"key": "study.provider", "apply": "backend", "label": "アシスタント", "type": "enum",
+         "options": [["claude", "Claude Code"], ["codex", "Codex"]]}
+      ]
+    },
+    {
+      "title": "実機",
+      "items": [
+        {"key": "backend.serial_port", "apply": "backend", "label": "シリアルポート（空 = 自動検出）", "type": "text", "max_length": 200,
+         "note": "./start.sh --port が優先。校正値はここでは変えられない"}
+      ]
+    }
+  ]
+}
