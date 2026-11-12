@@ -34,6 +34,8 @@ var study_hud: StudyHud
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
+## the keys besides the polled jog (arrows, W / S) that work on the 校正 tab (#98)
+const CALIBRATION_KEYS := [KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_Q, KEY_A]
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -250,6 +252,7 @@ func _ready() -> void:
 	settings.name = "SettingsScreen"
 	add_child(settings)
 	settings.setup()
+	settings.setup_calibration(self)
 	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
@@ -319,6 +322,27 @@ func open_settings() -> void:
 
 func settings_active() -> bool:
 	return settings != null and settings.active()
+
+## The settings screen's 校正 tab shows (#98): the keys may move the arm (arrows, W / S,
+## [ ], Q / A) though the title is up; gestures and the auto catch stay off, Space stops.
+func calibrating() -> bool:
+	return settings != null and settings.calibrating()
+
+## The calibration needs the homework link (the spot, the camera map) even when the
+## homework watch and the study mode are off: theirs, or one of its own.
+var _calib_hw: HomeworkClient
+func homework_for_calibration() -> HomeworkClient:
+	if homework != null:
+		return homework
+	if study_mode != null and study_mode.services.homework != null:
+		return study_mode.services.homework
+	if _calib_hw == null:
+		_calib_hw = HomeworkClientScript.new()
+		_calib_hw.name = "CalibrationHomeworkClient"
+		add_child(_calib_hw)
+		_calib_hw.setup(cameras, ws)
+		_calib_hw.helper_offer = false
+	return _calib_hw
 
 func _on_settings_closed(saved: bool) -> void:
 	debug_log.emit("settings: " + ("saved" if saved else "cancelled"))
@@ -1006,7 +1030,7 @@ func _handle_input(dt: float) -> void:
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
 	# the title screen: nothing moves the arm until a mode is picked (Space still stops)
-	if title_active():
+	if title_active() and not calibrating():
 		halt = true
 		if kb != Vector3.ZERO:
 			jog_hint = "タイトル画面ではアームを動かせない（モードを選んでから）"
@@ -1357,10 +1381,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		# the settings and the title screens take every key but the stop (Space) and the
 		# debug panel (F1 / Tab); typing in a settings field never gets here
-		if settings_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+		# the 校正 tab lets the claw keys through to the match below (#98)
+		var claw_key: bool = calibrating() and ev.keycode in CALIBRATION_KEYS
+		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)
 			return
-		if title_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+		if title_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			title.handle_key(ev.keycode)
 			return
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():

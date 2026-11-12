@@ -3,8 +3,10 @@ extends CanvasLayer
 ## The settings screen (#93), opened from the gear on the title screen. The items come from
 ## game_config.json's settings_screen section; 保存 writes the changed ones to config/local_settings.json
 ## (GameConfig.save_local: never game_config.json, never a key the schema does not list).
-## Presentation only: it never writes RobotState and never sends a command. It opens over
-## the title, so main.gd keeps holding the manual controls; Space still stops.
+## The settings tab is presentation only: it never writes RobotState and never sends a
+## command. It opens over the title, so main.gd keeps holding the manual controls; Space
+## still stops. The 校正 tab (#98, CalibrationPanel) sends the calibration commands, and
+## main.gd lets the keys move the arm only while that tab shows.
 
 signal closed(saved: bool)
 
@@ -16,6 +18,12 @@ const APPLY_LABELS := {"now": "今すぐ", "restart": "次の起動から", "bac
 var root: Control
 var _rows: Dictionary = {}  # key -> {"item", "control", "label"}
 var _status: Label
+var tabs: TabContainer
+var calibration: CalibrationPanel
+var _reset_b: Button
+var _cancel_b: Button
+var _save_b: Button
+const CALIBRATION_TAB := 1
 var _list: VBoxContainer
 
 func setup() -> void:
@@ -50,17 +58,28 @@ func setup() -> void:
 	panel.add_child(box)
 
 	box.add_child(StudyHud.label("設定", 40, YELLOW, 10))
+	# two tabs (#98): the settings, and the calibration of this machine
+	tabs = TabContainer.new()
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tabs.add_theme_font_size_override("font_size", 22)
+	tabs.get_tab_bar().focus_mode = Control.FOCUS_NONE
+	tabs.tab_changed.connect(_on_tab_changed)
+	box.add_child(tabs)
+	var page := VBoxContainer.new()
+	page.name = "設定"
+	page.add_theme_constant_override("separation", 8)
+	tabs.add_child(page)
 	var info := StudyHud.label("保存すると config/local_settings.json に書きます（Git には入らない）。"
 		+ "［今すぐ］は保存で反映、［次の起動から］［バックエンド再起動］は ./start.sh で起動し直すと反映。"
-		+ "実機の校正値はここでは変えられません。", 16, MUTED, 3)
+		+ "実機で測る値は「校正」タブで。", 16, MUTED, 3)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.custom_minimum_size = Vector2(880, 0)
-	box.add_child(info)
+	page.add_child(info)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	box.add_child(scroll)
+	page.add_child(scroll)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_list.add_theme_constant_override("separation", 6)
@@ -82,12 +101,48 @@ func setup() -> void:
 	buttons.alignment = BoxContainer.ALIGNMENT_END
 	buttons.add_theme_constant_override("separation", 14)
 	box.add_child(buttons)
-	buttons.add_child(_button("既定に戻す", reset_defaults))
-	buttons.add_child(_button("キャンセル（Esc）", cancel))
-	var save_b := _button("保存", func(): save())
-	save_b.custom_minimum_size = Vector2(160, 0)
-	buttons.add_child(save_b)
+	_reset_b = _button("既定に戻す", reset_defaults)
+	buttons.add_child(_reset_b)
+	_cancel_b = _button("キャンセル（Esc）", cancel)
+	buttons.add_child(_cancel_b)
+	_save_b = _button("保存", func(): save())
+	_save_b.custom_minimum_size = Vector2(160, 0)
+	buttons.add_child(_save_b)
 	visible = false
+
+## The 校正 tab (#98): needs main (the robot link, the cameras, the arm's keys).
+func setup_calibration(main: Node) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.name = "校正"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	tabs.add_child(scroll)
+	calibration = CalibrationPanel.new()
+	calibration.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(calibration)
+	calibration.setup(main)
+
+## The 校正 tab shows: main.gd lets the keys move the arm meanwhile.
+func calibrating() -> bool:
+	return visible and calibration != null and tabs.current_tab == CALIBRATION_TAB
+
+func show_tab(i: int) -> void:
+	if i >= 0 and i < tabs.get_tab_count():
+		tabs.current_tab = i
+
+func _on_tab_changed(i: int) -> void:
+	if _save_b == null:
+		return  # the first tab is added while the screen is built
+	var cal := i == CALIBRATION_TAB
+	_reset_b.visible = not cal
+	_save_b.visible = not cal
+	_cancel_b.text = "閉じる（Esc）" if cal else "キャンセル（Esc）"
+	_status.text = ""
+	if cal and calibration != null:
+		calibration.opened()
+
+func _process(_dt: float) -> void:
+	if calibrating():
+		calibration.refresh()
 
 func _button(text: String, cb: Callable) -> Button:
 	var b := Button.new()
@@ -176,6 +231,8 @@ func open() -> void:
 	_status.text = ""
 	if not GameConfig.local_warnings.is_empty():
 		_status.text = "使わなかった設定があります: " + GameConfig.local_warnings[0]
+	show_tab(0)  # the settings first; the arm moves only once 校正 is picked
+	_on_tab_changed(0)
 	visible = true
 
 func cancel() -> void:
