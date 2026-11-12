@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# CoreXY UFO Game launcher (macOS)
+# CoreXY UFO Game launcher (macOS)。使い方は ./start.sh --help（下の usage と同じ）。
 #
-#   ./start.sh                     ゲームのみ（Godot 内蔵 MockRobot）
-#   ./start.sh mock [backend args] Python バックエンド --mock + ゲーム（WebSocket 経由）
-#   ./start.sh real [PORT] [args]  実機バックエンド + ゲーム（PORT 省略時は config / 自動検出。--gesture でハンドジェスチャー ON）
-#   ./start.sh gesture [args]      バックエンド --mock --gesture（カメラでピンチ操作）+ ゲーム（ジェスチャー ON）
-#   ./start.sh backend [args]      バックエンドのみ（例: ./start.sh backend --list-ports）
+#   ./start.sh                    実機 + ハンドジェスチャー + ゲーム（いつもの起動）
+#   ./start.sh --mock             仮想クレーン（バックエンド --mock）+ ジェスチャー + ゲーム
+#   ./start.sh --no-gesture       ジェスチャーなし（--mock とも組み合わせられる）
+#   ./start.sh --game-only        ゲームだけ（ゲーム内の MockRobot。バックエンドなし）
+#   ./start.sh --backend-only     バックエンドだけ（--mock と組み合わせられる）
+#   ./start.sh ... -- <引数>      -- の後ろはバックエンドへ（--game-only ではゲームへ）そのまま渡す
 #
-# 引数なしで起動したときのモードと引数は、環境変数かリポジトリ直下の .env で決められます:
-#   CXUFO_START_MODE=mock          既定のモード（game / mock / real / gesture / backend）
-#   CXUFO_START_ARGS=--study       そのモードに渡す引数（空白区切り。引用符・空白入りのパスは使えない）
+# 今までの書き方（game / mock / real [PORT] / gesture / backend）もそのまま使える。
+#
+# 引数なしで起動したときの引数は、環境変数かリポジトリ直下の .env の CXUFO_START_ARGS で決められる
+# （例: CXUFO_START_ARGS=--mock --no-gesture）。今までの CXUFO_START_MODE（モード名）も使える。
 # 環境変数が .env より優先。引数を 1 つでも渡したら引数が優先で、CXUFO_START_* は使わない。
 #
 # 環境変数 GODOT で Godot 実行ファイルを上書きできます。
 # 環境変数 START_SH_WAIT_S でバックエンドの起動を待つ秒数を変えられます（既定 60。--gesture は約 12 秒かかる）。
 # 環境変数 START_SH_NO_GAME=1 なら Godot を起動せず、起動コマンドを表示するだけ（確認用）。
+# 環境変数 START_SH_DRY_RUN=1 ならバックエンドもゲームも起動せず、起動コマンドを表示するだけ（確認用）。
 #
 # バックエンドの WebSocket のアドレスは config/game_config.json の network.websocket_url
 # （--ws-host / --ws-port を渡したらそちら）。起動前にそのポートが使われていたら止める:
@@ -133,7 +136,13 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+DRY_RUN="${START_SH_DRY_RUN:-}"
+
 run_game() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[START_SH_DRY_RUN] game: godot --path $GAME_DIR -- $*"
+    return 0
+  fi
   if [[ "${START_SH_NO_GAME:-}" == "1" ]]; then
     local backend=""
     [[ -n "${BACKEND_PID:-}" ]] && backend="（バックエンド ${WS_HOST:-?}:${WS_PORT:-?} は起動済み）"
@@ -144,6 +153,10 @@ run_game() {
 }
 
 start_backend() {
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
+    return 0
+  fi
   require_uv
   resolve_ws_endpoint "$@"
   ensure_port_free
@@ -157,6 +170,16 @@ start_backend() {
   BACKEND_PID=$!
   wait_for_port
 }
+
+run_backend_only() {  # in the foreground (no game)
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
+    return 0
+  fi
+  require_uv
+  cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
+}
+
 
 # One KEY=VALUE from .env, without running it as shell code (the file also holds
 # tokens, which stay out of this shell). Sets DOTENV_VALUE; the last line wins.
@@ -191,60 +214,199 @@ start_setting() {  # $1 = key; sets SETTING_VALUE and SETTING_FROM
   SETTING_VALUE="$DOTENV_VALUE"; SETTING_FROM=".env の $1"
 }
 
-if [[ $# -eq 0 ]]; then
-  # No arguments: the configured default, else the game alone (as before).
-  start_setting CXUFO_START_MODE
-  if [[ -n "$SETTING_VALUE" ]]; then
-    default_from="${SETTING_FROM}"
-    MODE="$SETTING_VALUE"
-    start_setting CXUFO_START_ARGS
-    default_args=()
-    # word splitting only: `read -a` does no glob or command expansion
-    [[ -n "$SETTING_VALUE" ]] && read -r -a default_args <<< "$SETTING_VALUE"
-    echo "既定のモードで起動します（${default_from}）: ${MODE}${default_args[@]+ ${default_args[*]}}" >&2
-    set -- ${default_args[@]+"${default_args[@]}"}
-  else
-    MODE="game"
+usage() {
+  cat <<'EOF'
+使い方: ./start.sh [オプション] [-- バックエンド（--game-only ではゲーム）への引数]
+
+ロボット（省くと --real）
+  --real            実機（USB シリアル）
+  --mock            仮想クレーン（バックエンドの --mock）。実機には何も送らない
+
+起動するもの（省くとバックエンド + ゲーム）
+  --game-only       ゲームだけ（ゲーム内の MockRobot。バックエンドなし）
+  --backend-only    バックエンドだけ（ゲームなし。例: -- --list-ports）
+
+オプション
+  --no-gesture      ハンドジェスチャーを使わない（--real / --mock では既定で ON）
+  --gesture         ハンドジェスチャーを使う（--game-only / --backend-only でも ON にする）
+  --gesture-camera CAM   ジェスチャーに使うカメラ（番号か名前の一部。省くと config の gesture.camera）
+  --port PORT       実機のシリアルポート（省くと config か自動検出）
+  --study           Study タブ（カメラ学習アシスタント。config の study.enabled も必要）
+  -h, --help        この説明
+
+例
+  ./start.sh                              実機 + ジェスチャー + ゲーム
+  ./start.sh --port /dev/cu.usbserial-XXXX
+  ./start.sh --mock                       実機なしで（仮想クレーン + ジェスチャー）
+  ./start.sh --mock --no-gesture          実機もカメラもなしで
+  ./start.sh --game-only -- --scenario sudden_stop
+  ./start.sh --backend-only -- --list-ports
+
+今までの書き方も使えます: game / mock / real [PORT] / gesture / backend [引数]
+引数なしのときの既定は .env か環境変数の CXUFO_START_ARGS（例: CXUFO_START_ARGS=--mock）。
+実機のモーターは、どの起動でも最初は無効（デバッグパネルの「実機」タブで有効にするまで動かない）。
+EOF
+}
+
+die_usage() { echo "$1（./start.sh --help を参照）" >&2; exit 1; }
+
+# The option form: sets TARGET (real / mock / game / backend), the backend's and the game's arguments.
+parse_options() {
+  local robot="" parts="" gesture="" camera="" port="" study=0
+  EXTRA=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --real|--mock)
+        [[ -z "$robot" || "$robot" == "${1#--}" ]] || die_usage "--real と --mock は一緒に使えない"
+        robot="${1#--}" ;;
+      --game-only|--backend-only)
+        [[ -z "$parts" || "$parts" == "$1" ]] || die_usage "--game-only と --backend-only は一緒に使えない"
+        parts="$1" ;;
+      --gesture) gesture=1 ;;
+      --no-gesture) gesture=0 ;;
+      --gesture-camera) [[ $# -ge 2 ]] || die_usage "--gesture-camera にはカメラが要ります"
+                        camera="$2"; gesture=1; shift ;;
+      --gesture-camera=*) camera="${1#*=}"; gesture=1 ;;
+      --port) [[ $# -ge 2 ]] || die_usage "--port にはシリアルポートが要ります"
+              port="$2"; shift ;;
+      --port=*) port="${1#*=}" ;;
+      --study) study=1 ;;
+      -h|--help) usage; exit 0 ;;
+      --) shift; EXTRA=("$@"); break ;;
+      *) die_usage "不明なオプション: $1（バックエンド・ゲームへの引数は -- の後ろに書く）" ;;
+    esac
+    shift
+  done
+  case "$parts" in
+    --game-only)
+      [[ -z "$robot" ]] || die_usage "--game-only はゲーム内の MockRobot を使う（--real / --mock は要らない）"
+      [[ -z "$port" ]] || die_usage "--port はバックエンドを起動するときだけ（--game-only では使えない）"
+      [[ "$study" == 0 ]] || die_usage "--study はバックエンドを起動するときだけ（--game-only では使えない）"
+      TARGET=game ;;
+    --backend-only) TARGET=backend ;;
+    *) TARGET="${robot:-real}" ;;
+  esac
+  [[ -z "$port" || "$robot" != mock ]] || die_usage "--port は実機のときだけ（--mock では使えない）"
+  # gestures: on by default when the backend and the game both start
+  if [[ -z "$gesture" ]]; then
+    case "$TARGET" in real|mock) gesture=1 ;; *) gesture=0 ;; esac
   fi
-else
-  MODE="$1"
-  shift
+  GESTURE="$gesture"; PORT="$port"; BACKEND_MOCK=0
+  [[ "$robot" == mock ]] && BACKEND_MOCK=1
+
+  BACKEND_ARGS=()
+  [[ "$BACKEND_MOCK" == 1 ]] && BACKEND_ARGS+=(--mock)
+  [[ -n "$port" ]] && BACKEND_ARGS+=(--port "$port")
+  if [[ "$gesture" == 1 && "$TARGET" != game ]]; then
+    if [[ -n "$camera" ]]; then BACKEND_ARGS+=(--gesture "$camera"); else BACKEND_ARGS+=(--gesture); fi
+    # the landmarks too: the debug panel draws the hand skeleton over the camera view
+    BACKEND_ARGS+=(--gesture-landmarks)
+  fi
+  [[ "$study" == 1 ]] && BACKEND_ARGS+=(--study)
+  GAME_ARGS=()
+  [[ "$TARGET" != game ]] && GAME_ARGS+=(--source websocket)
+  [[ "$gesture" == 1 && "$TARGET" != backend ]] && GAME_ARGS+=(--gesture)
+  return 0
+}
+
+describe() {  # one line: what starts (above all, whether it is the real robot)
+  local what gesture=""
+  case "$TARGET" in
+    real) what="実機（ポート: ${PORT:-config / 自動検出}）+ ゲーム" ;;
+    mock) what="仮想クレーン（実機には送らない）+ ゲーム" ;;
+    game) what="ゲームだけ（ゲーム内の MockRobot）" ;;
+    backend) if [[ "$BACKEND_MOCK" == 1 ]]; then what="バックエンドだけ（仮想クレーン）"
+             else what="バックエンドだけ（実機用）"; fi ;;
+  esac
+  [[ "$GESTURE" == 1 ]] && gesture=" / ジェスチャー ON" || gesture=" / ジェスチャー OFF"
+  echo "起動: ${what}${gesture}" >&2
+  [[ "$TARGET" == real ]] && echo "  実機のモーターは無効で起動します（「実機」タブで有効にするまで動きません）" >&2
+  return 0
+}
+
+run_options() {
+  parse_options "$@"
+  describe
+  case "$TARGET" in
+    real|mock)
+      start_backend ${BACKEND_ARGS[@]+"${BACKEND_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
+      run_game ${GAME_ARGS[@]+"${GAME_ARGS[@]}"}
+      ;;
+    game)
+      run_game ${GAME_ARGS[@]+"${GAME_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
+      ;;
+    backend)
+      run_backend_only ${BACKEND_ARGS[@]+"${BACKEND_ARGS[@]}"} ${EXTRA[@]+"${EXTRA[@]}"}
+      ;;
+  esac
+}
+
+# The earlier form: a mode name first (kept as it was, so .env files and notes still work).
+run_mode() {
+  local MODE="$1"; shift
+  [[ "$MODE" == help ]] || echo "起動（今までの書き方）: ${MODE}${*:+ $*}" >&2
+  case "$MODE" in
+    game)
+      run_game "$@"
+      ;;
+    mock)
+      start_backend --mock "$@"
+      run_game --source websocket
+      ;;
+    real)
+      local args=() game_args=(--source websocket) a
+      if [[ $# -gt 0 && "$1" != -* ]]; then args=(--port "$1"); shift; fi
+      for a in "$@"; do
+        # --gesture: the game starts with the hand joystick on, the backend sends the
+        # landmarks for the HUD / debug view
+        if [[ "$a" == --gesture || "$a" == --gesture=* ]]; then game_args+=(--gesture); args+=(--gesture-landmarks); fi
+      done
+      start_backend ${args[@]+"${args[@]}"} "$@"
+      run_game "${game_args[@]}"
+      ;;
+    gesture)
+      start_backend --mock --gesture --gesture-landmarks "$@"
+      run_game --source websocket --gesture
+      ;;
+    backend)
+      run_backend_only "$@"
+      ;;
+    help)
+      usage
+      ;;
+    *)
+      echo "不明なモード: ${MODE}（./start.sh --help を参照）" >&2
+      exit 1
+      ;;
+  esac
+}
+
+is_mode() { case "$1" in game|mock|real|gesture|backend|help) return 0 ;; *) return 1 ;; esac; }
+
+if [[ $# -eq 0 ]]; then
+  # No arguments: the configured default (CXUFO_START_MODE / CXUFO_START_ARGS), else the
+  # real robot with gestures.
+  start_setting CXUFO_START_MODE
+  mode_value="$SETTING_VALUE"; mode_from="$SETTING_FROM"
+  start_setting CXUFO_START_ARGS
+  args_value="$SETTING_VALUE"; args_from="$SETTING_FROM"
+  default_args=()
+  # word splitting only: `read -a` does no glob or command expansion
+  [[ -n "$args_value" ]] && read -r -a default_args <<< "$args_value"
+  if [[ -n "$mode_value" ]]; then
+    echo "既定のモードで起動します（${mode_from}）: ${mode_value}${default_args[@]+ ${default_args[*]}}" >&2
+    set -- "$mode_value" ${default_args[@]+"${default_args[@]}"}
+  elif [[ "${#default_args[@]}" -gt 0 ]]; then
+    echo "既定の引数で起動します（${args_from}）: ${default_args[*]}" >&2
+    set -- "${default_args[@]}"
+  fi
 fi
 
-case "$MODE" in
-  game)
-    run_game "$@"
-    ;;
-  mock)
-    start_backend --mock "$@"
-    run_game --source websocket
-    ;;
-  real)
-    args=()
-    if [[ $# -gt 0 && "$1" != -* ]]; then args=(--port "$1"); shift; fi
-    game_args=(--source websocket)
-    for a in "$@"; do
-      # --gesture: the game starts with the hand joystick on, the backend sends the
-      # landmarks for the HUD / debug view
-      if [[ "$a" == --gesture || "$a" == --gesture=* ]]; then game_args+=(--gesture); args+=(--gesture-landmarks); fi
-    done
-    start_backend ${args[@]+"${args[@]}"} "$@"
-    run_game "${game_args[@]}"
-    ;;
-  gesture)
-    # landmarks too: the debug panel draws the hand skeleton over the camera view
-    start_backend --mock --gesture --gesture-landmarks "$@"
-    run_game --source websocket --gesture
-    ;;
-  backend)
-    require_uv
-    cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
-    ;;
-  -h|--help|help)
-    sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
-    ;;
-  *)
-    echo "不明なモード: ${MODE}（./start.sh --help を参照）" >&2
-    exit 1
-    ;;
-esac
+if [[ $# -gt 0 ]] && is_mode "$1"; then
+  run_mode "$@"
+elif [[ $# -gt 0 && "$1" != -* ]]; then
+  echo "不明なモード: $1（./start.sh --help を参照）" >&2
+  exit 1
+else
+  run_options "$@"
+fi
