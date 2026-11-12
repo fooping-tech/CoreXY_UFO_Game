@@ -11,6 +11,7 @@ signal closed(saved: bool)
 const YELLOW := Color("ffe03c")
 const CYAN := Color("7ae0ff")
 const MUTED := Color("8fa3c4")
+const APPLY_LABELS := {"now": "今すぐ", "restart": "次の起動から", "backend": "バックエンド再起動"}
 
 var root: Control
 var _rows: Dictionary = {}  # key -> {"item", "control", "label"}
@@ -49,8 +50,9 @@ func setup() -> void:
 	panel.add_child(box)
 
 	box.add_child(StudyHud.label("設定", 40, YELLOW, 10))
-	var info := StudyHud.label("保存すると config/local_settings.json に書きます（Git には入らない）。反映は次の起動から"
-		+ "（./start.sh で起動し直す）。実機の校正値はここでは変えられません。", 16, MUTED, 3)
+	var info := StudyHud.label("保存すると config/local_settings.json に書きます（Git には入らない）。"
+		+ "［今すぐ］は保存で反映、［次の起動から］［バックエンド再起動］は ./start.sh で起動し直すと反映。"
+		+ "実機の校正値はここでは変えられません。", 16, MUTED, 3)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	info.custom_minimum_size = Vector2(880, 0)
 	box.add_child(info)
@@ -100,7 +102,7 @@ func _add_row(it: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	var label := StudyHud.label(str(it.get("label", key)), 20, Color.WHITE, 3)
-	label.custom_minimum_size = Vector2(400, 0)
+	label.custom_minimum_size = Vector2(340, 0)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.add_child(label)
 	var c: Control
@@ -114,7 +116,7 @@ func _add_row(it: Dictionary) -> void:
 			var ob := OptionButton.new()
 			ob.focus_mode = Control.FOCUS_NONE
 			ob.fit_to_longest_item = false
-			ob.custom_minimum_size = Vector2(440, 0)
+			ob.custom_minimum_size = Vector2(380, 0)
 			ob.clip_text = true
 			for o in it.get("options", []):
 				if o is Array and o.size() > 0:
@@ -129,7 +131,7 @@ func _add_row(it: Dictionary) -> void:
 			sl.min_value = float(it.get("min", 0))
 			sl.max_value = float(it.get("max", 100))
 			sl.step = float(it.get("step", 1))
-			sl.custom_minimum_size = Vector2(320, 0)
+			sl.custom_minimum_size = Vector2(300, 0)
 			sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			var val := StudyHud.label("", 18, Color.WHITE, 3)
 			val.custom_minimum_size = Vector2(70, 0)
@@ -142,12 +144,19 @@ func _add_row(it: Dictionary) -> void:
 		"text":
 			var le := LineEdit.new()
 			le.max_length = int(it.get("max_length", 200))
-			le.custom_minimum_size = Vector2(440, 0)
+			le.custom_minimum_size = Vector2(380, 0)
 			le.text_changed.connect(func(_t): _mark(key))
 			c = le
 		_:
 			return
-	row.add_child(c)
+	var cell := HBoxContainer.new()  # one width for every control: the badges line up
+	cell.custom_minimum_size = Vector2(380, 0)
+	cell.add_child(c)
+	row.add_child(cell)
+	var badge := StudyHud.label(APPLY_LABELS.get(str(it.get("apply", "restart")), "次の起動から"), 14,
+		Color("9ff0a8") if str(it.get("apply", "")) == "now" else MUTED, 2)
+	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(badge)
 	_list.add_child(row)
 	if it.has("note"):
 		var note := StudyHud.label("    " + str(it["note"]), 15, MUTED, 2)

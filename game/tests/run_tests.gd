@@ -2203,6 +2203,18 @@ func _test_settings(rs: Node) -> void:
 	var marked: bool = (st._rows["study.provider"].label as Label).text.ends_with("＊")
 	var err := st.save()
 	var saved = GameConfig.read_json(path)
+	_ok(game.study_mode.services.mode == "camera" and is_equal_approx(game.sfx.volume_db, -20.0),
+		"settings: the 今すぐ items apply on 保存 (the study mode's source, the volume)")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", false)
+	st.set_form_value("study_mode.grade", "jhs_1")
+	st.save()
+	var live_ok: bool = not game.shake.enabled and game.study_mode.grade_index == game.study_mode.catalog.grade_index("jhs_1")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", true)
+	st.set_form_value("study_mode.grade", str(GameConfig.base_value("study_mode.grade")))
+	st.save()
+	_ok(live_ok and game.shake.enabled, "settings: the screen shake and the grade apply on 保存 too (and back)")
 	_ok(err == "" and not game.settings_active() and t.notice().contains("保存") and marked
 		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "camera"}}}
 		and GameConfig.value("study.provider") == "codex" and GameConfig.base_value("study.provider") == base_provider,

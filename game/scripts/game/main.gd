@@ -323,7 +323,21 @@ func settings_active() -> bool:
 func _on_settings_closed(saved: bool) -> void:
 	debug_log.emit("settings: " + ("saved" if saved else "cancelled"))
 	if saved:
-		title.set_notice("設定を保存しました（次の起動から使います）")
+		apply_live_settings()
+		title.set_notice("設定を保存しました（「今すぐ」の項目は反映済み。ほかは次の起動から）")
+
+## The settings marked "now" in config/settings_schema.json, from GameConfig (#93).
+## Presentation only: sounds, effects, the hand-reading scheme, the study mode's choices.
+func apply_live_settings() -> void:
+	sfx.enabled = bool(GameConfig.value("audio.enabled", true))
+	sfx.volume_db = float(GameConfig.value("audio.volume_db", -8.0))
+	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
+	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
+	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
+	if sch != gesture.scheme.id():
+		gesture.set_scheme(sch)  # a forced stop of the hand stick (it is held on the title anyway)
+	if study_mode != null:
+		study_mode.reload_settings()
 
 func _set_debug_visible(on: bool) -> void:
 	if debug_ui.visible != on:

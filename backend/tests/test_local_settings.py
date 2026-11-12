@@ -39,6 +39,15 @@ def test_every_schema_key_is_in_game_config() -> None:
             cur = cur[part]
 
 
+def test_every_item_says_when_it_applies() -> None:
+    schema = json.loads((REPO_CONFIG / "settings_schema.json").read_text(encoding="utf-8"))
+    for key, item in schema_items(schema).items():
+        assert item.get("apply") in ("now", "restart", "backend"), key
+        # what the backend reads at start can never be "now"
+        if key.startswith(("backend.", "study.")) or key in ("gesture.camera", "homework.speech.enabled"):
+            assert item["apply"] == "backend", key
+
+
 def test_no_calibration_or_safety_key_in_the_schema() -> None:
     schema = json.loads((REPO_CONFIG / "settings_schema.json").read_text(encoding="utf-8"))
     keys = set(schema_items(schema))

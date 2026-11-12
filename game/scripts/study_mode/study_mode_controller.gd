@@ -97,8 +97,7 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	var w = GameConfig.get_value("study_mode", "watch", {})
 	tracker.configure(w if w is Dictionary else {})
 	weekday_label = str(GameConfig.get_value("study_mode", "weekday_label", weekday_label))
-	var gi := catalog.grade_index(str(GameConfig.get_value("study_mode", "grade", "elem_3")))
-	grade_index = gi if gi >= 0 else 3
+	_load_grade()
 	var h = GameConfig.get_value("study_mode", "help", {})
 	if h is Dictionary:
 		help_problem = int(h.get("problem", 3))
@@ -175,6 +174,19 @@ func current_worksheet() -> Dictionary:
 
 func grade_label() -> String:
 	return str(worksheet.get("grade_label", ""))
+
+func _load_grade() -> void:
+	var gi := catalog.grade_index(str(GameConfig.get_value("study_mode", "grade", "elem_3")))
+	grade_index = gi if gi >= 0 else 3
+
+## The settings screen saved (#93): the grade, simulated / camera, the sounds. Not while
+## it runs (the settings open from the title, where the study mode is stopped).
+func reload_settings() -> void:
+	if active():
+		return
+	_load_grade()
+	services.load_demo_config()
+	sounds.enabled = bool(GameConfig.get_value("audio", "enabled", true))
 
 func change_grade(step: int) -> void:
 	if state not in ["INTRO", "WAITING_FOR_WORKSHEET"]:
