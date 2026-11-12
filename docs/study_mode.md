@@ -20,9 +20,9 @@
 ## 2. 起動と操作
 
 ```bash
-./start.sh study                  # バックエンド --mock + ゲーム（勉強モードで開始）
-./start.sh game --study-mode      # ゲームだけ（Godot 内蔵の Mock でアームを再現）
-./start.sh game --study-demo mock # mock / camera / real を指定して開始
+./start.sh --mock --no-gesture --study-mode       # バックエンド --mock + ゲーム（勉強モードで開始）
+./start.sh --game-only --study-mode               # ゲームだけ（Godot 内蔵の Mock でアームを再現）
+./start.sh --game-only -- --study-demo mock       # mock / camera / real を指定して開始
 ```
 
 ゲームの中ではいつでも **F5** で勉強モードの開始・終了。
@@ -43,7 +43,7 @@ HELP と片付けの間は、矢印・W/S・ジェスチャーによる手動操
 
 | モード | プリント・記入 | 位置 | 解説 | アーム |
 |---|---|---|---|---|
-| `mock` | 模擬（`worksheet_wait_s` 秒で発見。記入は 1/2/3 キー、`auto_answer` で 1・2 問を自動） | プリントデータから | プリントのヒント | バックエンドの Mock（`./start.sh study`）か、ゲーム内蔵の Mock |
+| `mock` | 模擬（`worksheet_wait_s` 秒で発見。記入は 1/2/3 キー、`auto_answer` で 1・2 問を自動） | プリントデータから | プリントのヒント | バックエンドの Mock（`./start.sh --mock --no-gesture --study-mode`）か、ゲーム内蔵の Mock |
 | `camera` | 俯瞰カメラ + Jev（HomeworkClient の見守りにワークシートを付ける） | Claude/Codex + Jev + 基準マーク + camera_map | Claude / Codex | Mock のみ（バックエンドが実機なら動かさない） |
 | `real` | 同上 | 同上 | 同上 | 実機（高さ校正と確認がないと拒否） |
 

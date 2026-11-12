@@ -21,47 +21,78 @@ CoreXY_UFO_Game/
 
 ## 起動のしかた（`start.sh`）
 
-`./start.sh <モード> [引数]` で起動する。モードを省くと `game`（または `.env` で決めた既定のモード、下の「いつもの起動モードを決める」）。
+`./start.sh` だけで、**実機 + ハンドジェスチャー + ゲーム**が起動する。ほかの起動は、オプションで選ぶ。
 
-| モード | 起動するもの | 引数の渡り先 | 使う場面 |
-|---|---|---|---|
-| `game`（省略時） | ゲームだけ。ゲーム内の MockRobot（仮想クレーン）につなぐ | ゲーム | 実機なしで遊ぶ・見た目の確認・テストシナリオ |
-| `mock` | Python バックエンド `--mock`（仮想クレーン）+ ゲーム（WebSocket 経由） | バックエンド | 実機なしで WebSocket の経路を通す。Study（`--study`）・宿題の見守り・自動キャッチの試し |
-| `real [PORT]` | 実機用バックエンド（USB シリアル）+ ゲーム（WebSocket 経由） | バックエンド（最初の `-` で始まらない引数はシリアルポート） | 実機で遊ぶ。`PORT` を省くと config か自動検出。`--gesture` を付けるとゲームもジェスチャー ON で起動 |
-| `gesture` | バックエンド `--mock --gesture --gesture-landmarks`（カメラで手を認識）+ ゲーム（ジェスチャー ON） | バックエンド | 実機なしでハンドジェスチャー操作を試す |
-| `study` | バックエンド `--mock` + ゲーム（UFOくん 勉強モードで開始） | バックエンド | 勉強モードのデモ（[docs/study_mode.md](docs/study_mode.md)） |
-| `backend` | バックエンドだけ（ゲームは起動しない） | バックエンド | ポートやカメラの一覧、自動キャッチのドライラン、ゲームを別に起動するとき |
-| `help`（`-h` / `--help`） | `start.sh` の使い方を表示 | — | — |
+```bash
+./start.sh [オプション] [-- バックエンド（--game-only ではゲーム）への引数]
+```
 
-- `mock` / `real` / `gesture` では、引数は**バックエンドに**渡る。ゲームの引数（`--scenario` など）は `game` モードでだけ使える。
-- バックエンドを起動するモード（`mock` / `real` / `gesture`）は、起動前に WebSocket のポート（`network.websocket_url`、`--ws-port`）が使われていないかを調べ、使われていたら止まる（起動したままの別のバックエンド、たとえば実機用につながるのを防ぐため）。ゲームが閉じるとバックエンドも止める。
-- `--gesture` / `--hands` / `--camera` を渡すと、カメラと手の認識の依存（`uv sync --extra vision --extra hands`）を入れてから起動する。
-- 実機のモーターは、どのモードでも起動時は無効（デバッグパネルの「実機」タブでモーター有効にするまで動かない）。
+**ロボットと、起動するもの**
+
+| オプション | 内容 | 使う場面 |
+|---|---|---|
+| `--real`（省略時） | 実機（USB シリアル）につなぐバックエンド | 実機で遊ぶ |
+| `--mock` | バックエンドの仮想クレーン（`--mock`）。実機には何も送らない | 実機なしで WebSocket の経路を通す。Study・宿題の見守り・自動キャッチの試し |
+| （省略時） | バックエンド + ゲーム（WebSocket 経由） | ふだん |
+| `--game-only` | ゲームだけ（ゲーム内の MockRobot。バックエンドなし。`--real` / `--mock` は付けない） | 実機なしで遊ぶ・見た目の確認・テストシナリオ |
+| `--backend-only` | バックエンドだけ（ゲームなし。`--mock` と組み合わせられる） | ポートやカメラの一覧、自動キャッチのドライラン、ゲームを別に起動するとき |
+
+**オプション**
+
+| オプション | 内容 |
+|---|---|
+| `--no-gesture` | ハンドジェスチャーを使わない。`--real` / `--mock` では**既定で ON**（手のカメラが要る） |
+| `--gesture` | ハンドジェスチャーを使う（`--game-only` / `--backend-only` で ON にしたいとき） |
+| `--gesture-camera CAM` | ジェスチャーに使うカメラ（番号か名前の一部。省くと config の `gesture.camera`） |
+| `--port PORT` | 実機のシリアルポート（省くと config か自動検出） |
+| `--study` | Study タブ（カメラ学習アシスタント。config の `study.enabled: true` も必要） |
+| `--study-mode` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
+| `-h` / `--help` | 使い方を表示 |
+| `-- <引数>` | 後ろをそのままバックエンドへ（`--game-only` ではゲームへ）渡す。下の 2 つの表 |
+
+- 起動するときに、何を起動するかを 1 行で表示する（例「起動: 実機（ポート: config / 自動検出）+ ゲーム / ジェスチャー ON」）。
+- 知らないオプションはエラーで止まる。バックエンドやゲームの引数は `--` の後ろに書く。
+- バックエンドを起動するとき（`--game-only` 以外）は、起動前に WebSocket のポート（`network.websocket_url`、`--ws-port`）が使われていないかを調べ、使われていたら止まる（起動したままの別のバックエンド、たとえば実機用につながるのを防ぐため）。ゲームが閉じるとバックエンドも止める。
+- ジェスチャー（`--gesture` / `--hands` / `--camera`）を使うときは、カメラと手の認識の依存（`uv sync --extra vision --extra hands`）を入れてから起動する。バックエンドの起動に 12 秒ほどかかる。
+- 実機のモーターは、どの起動でも最初は無効（デバッグパネルの「実機」タブでモーター有効にするまで動かない）。
 
 例:
 
 ```bash
-./start.sh                                   # ゲームだけ（ゲーム内 MockRobot）
-./start.sh game --scenario sudden_stop       # テストシナリオを流す
-./start.sh mock                              # バックエンドの仮想クレーン経由
-./start.sh mock --study                      # + Study タブ（study.enabled も必要）
-./start.sh real                              # 実機（ポートは config / 自動検出）
-./start.sh real /dev/cu.usbserial-XXXX --gesture
-./start.sh gesture                           # 実機なしで手のカメラ操作
-./start.sh study                             # UFOくん 勉強モード（Mock デモ。F5 で終了/再開）
-./start.sh game --study-mode                 # 勉強モードをゲームだけで（ゲーム内 Mock）
-./start.sh backend --list-ports              # シリアルポートの一覧
-./start.sh backend --list-cameras            # カメラの一覧（OpenCV の番号）
-./start.sh backend --mock --auto-catch-dry-run   # 自動キャッチを仮想クレーンで 1 回
+./start.sh                                   # 実機 + ジェスチャー + ゲーム（いつもの起動）
+./start.sh --port /dev/cu.usbserial-XXXX     # ポートを指定して
+./start.sh --no-gesture                      # 実機、手のカメラなし
+./start.sh --mock                            # 実機なし: 仮想クレーン + ジェスチャー
+./start.sh --mock --no-gesture               # 実機もカメラもなしで WebSocket 経由
+./start.sh --mock --no-gesture --study       # + Study タブ（study.enabled も必要）
+./start.sh --mock --no-gesture --study-mode  # UFOくん 勉強モードのデモ（実機なし。F5 で終了/再開）
+./start.sh --game-only --study-mode          # 勉強モードをゲームだけで（ゲーム内 Mock）
+./start.sh --game-only                       # ゲームだけ（ゲーム内 MockRobot）
+./start.sh --game-only -- --scenario sudden_stop   # テストシナリオを流す
+./start.sh --backend-only -- --list-ports    # シリアルポートの一覧
+./start.sh --backend-only -- --list-cameras  # カメラの一覧（OpenCV の番号）
+./start.sh --backend-only --mock -- --auto-catch-dry-run   # 自動キャッチを仮想クレーンで 1 回
 ```
 
-### ゲームの引数（`game` モード）
+**今までの書き方**（モード名を先頭に書く）もそのまま使える。動きは前と同じ（ジェスチャーは `gesture` モードと `real ... --gesture` のときだけ）。
+
+| 今までの書き方 | 新しい書き方 |
+|---|---|
+| `./start.sh game [ゲームの引数]` | `./start.sh --game-only -- [ゲームの引数]` |
+| `./start.sh mock [引数]` | `./start.sh --mock --no-gesture -- [引数]` |
+| `./start.sh real [PORT] [引数]` | `./start.sh --no-gesture [--port PORT] -- [引数]` |
+| `./start.sh real [PORT] --gesture` | `./start.sh [--port PORT]` |
+| `./start.sh gesture` | `./start.sh --mock` |
+| `./start.sh study [引数]` | `./start.sh --mock --no-gesture --study-mode -- [引数]` |
+| `./start.sh backend [引数]` | `./start.sh --backend-only -- [引数]`（仮想クレーンは `--backend-only --mock`） |
+
+### ゲームの引数（`--game-only -- ...`）
 
 | 引数 | 内容 |
 |---|---|
-| `--source mock` / `--source websocket` | ロボットの接続先。既定はゲーム内の MockRobot。`websocket` はバックエンドにつなぐ（`./start.sh backend ...` を別に起動したとき） |
+| `--source mock` / `--source websocket` | ロボットの接続先。既定はゲーム内の MockRobot。`websocket` はバックエンドにつなぐ（`./start.sh --backend-only` を別に起動したとき） |
 | `--scenario <名前>` | ゲーム内 MockRobot でテストシナリオを流す: `x_sweep` `y_sweep` `xy_diagonal` `sudden_stop` `z_down_up` `xyz_together` `disconnect` `reconnect` `limits` `rope_snap` `grab_cycle` |
-| `--gesture` | ハンドジェスチャー操作を ON で起動する（手の情報はバックエンドから受け取る） |
+| `--gesture` | ハンドジェスチャー操作を ON で起動する（手の情報はバックエンドから受け取る）。`./start.sh --game-only --gesture` とも書ける |
 | `--gesture-scheme pinch_joystick` / `pose_direction` | 手の読み方（config の `gesture.scheme`） |
 | `--gesture-demo` | カメラなしで、決まった手の動きを流してジェスチャー操作を試す |
 | `--hide-debug` | デバッグパネルを隠して起動する |
@@ -70,18 +101,20 @@ CoreXY_UFO_Game/
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
 
-### バックエンドの引数（`mock` / `real` / `gesture` / `backend` モード）
+### バックエンドの引数（`-- ...`）
+
+`start.sh` のオプション（`--mock`、`--port`、`--gesture-camera`、`--study`）で足りないものを `--` の後ろに書く。
 
 | 引数 | 内容 |
 |---|---|
-| `--mock` | 仮想クレーンを使う（シリアルなし。自動キャッチはドライラン）。`mock` / `gesture` モードは自動で付ける |
-| `--port <PORT>` / `--baud <速度>` | シリアルポートと速度（既定は config か自動検出）。`real` モードでは `./start.sh real <PORT>` とも書ける |
+| `--mock` | 仮想クレーンを使う（シリアルなし。自動キャッチはドライラン）。`./start.sh --mock` が付ける |
+| `--port <PORT>` / `--baud <速度>` | シリアルポートと速度（既定は config か自動検出） |
 | `--list-ports` / `--list-cameras` | シリアルポート / カメラ（OpenCV の番号）の一覧を出して終わる |
 | `--ws-host <host>` / `--ws-port <port>` | WebSocket の待ち受け（既定は config の `network.websocket_url`）。変えたときはゲームの接続先も合わせる |
 | `--state-hz <Hz>` | 状態の送信頻度 |
 | `--study` | カメラ学習アシスタント（Study タブ）を使う。config の `study.enabled: true` も必要 |
 | `--gesture [CAMERA]` | 手のカメラでハンドジェスチャー（CAMERA は番号か名前の一部。省くと config の `gesture.camera`）。宿題の見守りの「いいね」もこのカメラで見る |
-| `--gesture-landmarks` | 手の 21 点も送る（デバッグ表示用。`gesture` モードと `real --gesture` は自動で付ける） |
+| `--gesture-landmarks` | 手の 21 点も送る（デバッグ表示用。ジェスチャー ON の起動では自動で付ける） |
 | `--camera INDEX[:roles]` | カメラと役割（例 `0:objects`、`1:hands`。最大 2 台） |
 | `--hands` | `hands` の役割のカメラで MediaPipe の手の追跡を使う |
 | `--detector none` / `yolo` / `cloudflare`、`--yolo-model <path>` | 物の検出器 |
@@ -92,28 +125,27 @@ CoreXY_UFO_Game/
 
 | 変数 | 内容 |
 |---|---|
-| `CXUFO_START_MODE` / `CXUFO_START_ARGS` | 引数なしで起動したときのモードと引数（`.env` にも書ける。下の節） |
+| `CXUFO_START_ARGS` / `CXUFO_START_MODE` | 引数なしで起動したときの引数（とモード名）。`.env` にも書ける。下の節 |
 | `GODOT` | Godot の実行ファイル（既定は `/Applications/Godot.app`、なければ PATH の `godot`） |
 | `START_SH_WAIT_S` | バックエンドの起動を待つ秒数（既定 60。`--gesture` は 12 秒ほどかかる） |
-| `START_SH_NO_GAME=1` | Godot を起動せず、起動コマンドを表示するだけ（確認用） |
+| `START_SH_NO_GAME=1` | Godot を起動せず、起動コマンドを表示するだけ（バックエンドは起動する。確認用） |
+| `START_SH_DRY_RUN=1` | バックエンドもゲームも起動せず、起動コマンドを表示するだけ（確認用） |
 
-### いつもの起動モードを決める（`.env`）
+### いつもの起動を変える（`.env`）
 
-`./start.sh` を引数なしで起動したときのモードと引数は、リポジトリ直下の `.env`（Git には入らない。`.env.example` を参照）か環境変数で決められる。
+`./start.sh` を引数なしで起動したときの引数は、リポジトリ直下の `.env`（Git には入らない。`.env.example` を参照）か環境変数で変えられる。何も書かなければ、実機 + ジェスチャー + ゲーム。
 
 ```bash
 # .env
-CXUFO_START_MODE=mock        # game / mock / real / gesture / backend
-CXUFO_START_ARGS=--study     # そのモードに渡す引数（空白区切り）
+CXUFO_START_ARGS=--mock --no-gesture    # ./start.sh だけで ./start.sh --mock --no-gesture と同じ
 ```
 
-- この例では、`./start.sh` だけで `./start.sh mock --study` と同じように起動する。起動時に「既定のモードで起動します（.env の CXUFO_START_MODE）: mock --study」と表示する。
-- **引数を 1 つでも渡すと引数が優先**で、`CXUFO_START_*` は使わない（例: `./start.sh game` はいつもゲームだけ）。
-- 環境変数と `.env` の両方にあるときは環境変数が勝つ（`CXUFO_START_MODE=game ./start.sh` で一度だけ変えられる）。
-- 何も書かなければ、今までどおりゲームだけで起動する。
+- 起動時に「既定の引数で起動します（.env の CXUFO_START_ARGS）: --mock --no-gesture」と表示する。
+- 今までの `CXUFO_START_MODE`（`game` / `mock` / `real` / `gesture` / `backend`）も使える。そのときの `CXUFO_START_ARGS` は、そのモードに渡す引数（今までどおり）。
+- **引数を 1 つでも渡すと引数が優先**で、`CXUFO_START_*` は使わない（例: `./start.sh --game-only` はいつもゲームだけ）。
+- 環境変数と `.env` の両方にあるときは環境変数が勝つ（`CXUFO_START_ARGS=--mock ./start.sh` で一度だけ変えられる）。
 - `CXUFO_START_ARGS` は空白で区切るだけで、引用符や空白を含むパスは使えない。そういう引数は `./start.sh` に直接渡す。
 - `start.sh` は `.env` をシェルのコードとして実行せず、`CXUFO_START_MODE` と `CXUFO_START_ARGS` の 2 行だけを読む（`.env` のトークンなどはシェルに読み込まない）。
-- `real` を既定にしても、起動時にモーターが無効なのは変わらない（「実機」タブでモーター有効にするまで動かない）。
 
 ## Phase 1: 実機なしでゲームを起動する
 
@@ -199,7 +231,7 @@ cd CoreXY_UFO_Game/game
 
 ### カメラ学習アシスタント（任意）
 
-- `config/game_config.json` の `study.enabled` を `true` にし、`./start.sh mock --study`（または実機起動に `--study` を追加）で起動すると、F1 パネルに **Study** タブが現れる。既定は OFF で、OFF のときは UI・専用 WebSocket・回答役のプロセスを作らない。
+- `config/game_config.json` の `study.enabled` を `true` にし、`./start.sh --mock --no-gesture --study`（または実機の起動に `--study` を追加）で起動すると、F1 パネルに **Study** タブが現れる。既定は OFF で、OFF のときは UI・専用 WebSocket・回答役のプロセスを作らない。
 - **回答役は `study.provider` で選ぶ。** `"claude"`（既定）= Claude Code CLI、`"codex"` = `codex app-server`。
   - Claude Code は、手元でログイン済みの `claude` を使う。設定は既定の `"claude"` のままでよい。PATH に無ければ、バックエンドが次の順に探す。
     1. `~/.local/bin/claude`、`~/.claude/local/claude`
@@ -218,7 +250,7 @@ cd CoreXY_UFO_Game/game
 俯瞰カメラに映る宿題プリントを一定間隔で撮影し、回答の進捗（0〜100%）を推定して、F1 パネルの **宿題** タブに経過時間と一緒に出す。推定には Cloudflare Workers AI の Jev（`typesafe/jev-1.14.0`）を使う。方式は `~/python_ws/jev`（`homework_progress.py`、`docs/homework_progress.md`）で検証したものと同じ。
 
 1. リポジトリ直下に `.env` を作り（`.env.example` を参照。Git には入らない）、`CF_ACCOUNT_ID` と `CF_API_TOKEN`（Workers AI の権限付き）を書く。環境変数でもよい。
-2. `config/game_config.json` の `homework.enabled` を `true` にして、いつもどおり起動する（`./start.sh mock` など。`--study` は不要）。
+2. `config/game_config.json` の `homework.enabled` を `true` にして、いつもどおり起動する（`./start.sh --mock` など。`--study` は不要）。
 3. F1 → **宿題** タブで「宿題スタート」を押す。経過時間が 0 から数え始め、`homework.interval_s`（既定 10 秒）ごとに撮影して進捗を更新する。「終了」で止める（タブを移ってもパネルを閉じても止まらない）。
 
 - 1 回の推定で、3 つの質問をまとめて送る。プリントが見えるか、手やペンが解答欄を隠しているか、全体の進捗（6 段階の確率）。100% 段階の確率が 0.5 以上なら 100%、それ以外は期待値。見えない回と隠れている回は前の値のまま。表示するのは、更新した直近 3 回の中央値。
@@ -271,7 +303,7 @@ cd CoreXY_UFO_Game/game
 - **提案**: 見守り中に進みが止まった（`homework.stall_s`）と判定されると、声で「手伝おうか？」と 1 回だけ聞く。止まったままなら `homework.helper.offer_repeat_s`（既定 300 秒）ごとにもう一度聞く。
 - **止まっている問題を見る**: `Y` キー、または提案から `offer_window_s`（既定 60 秒）以内の**いいね**（親指を立てて 0.8 秒）。
   - いいねは、**ジェスチャー操作が切のときだけ**受け付ける。入のときは、親指でアームが上下したり（pose_direction）、爪が閉じたりする（ピンチ）ので、重ならないようにした。
-  - 手の検出にはバックエンドの手のカメラ（`--gesture`、例 `./start.sh mock --gesture`）が要る。
+  - 手の検出にはバックエンドの手のカメラ（`--gesture`、例 `./start.sh --mock`。ジェスチャーは既定で ON）が要る。
 - **次に解く問題を見る**: `N` キー（`H` はジェスチャー操作の入/切に使っているため）。
   - キーは `homework.helper.keys` で変えられる。ゲームのほかのキーと重なったときは、ほかのキーが優先される。
 - **どの問題かの決め方**:
@@ -290,7 +322,7 @@ cd CoreXY_UFO_Game/game
 
 勉強の時間を知らせる → プリントを見つけて宿題開始 → Y キー（HELP）でアームが問題 3 を 10cm・5cm・いちばん近くで撮って
 UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネットジグで片付け → ゲーム解放、までを 1 つの体験として
-メイン画面で進める（`./start.sh study` か F5）。12 学年 × 3 問のサンプルプリント（印刷用 A4: `docs/worksheets/`）付き。
+メイン画面で進める（`./start.sh --mock --no-gesture --study-mode` か F5）。12 学年 × 3 問のサンプルプリント（印刷用 A4: `docs/worksheets/`）付き。
 実機・カメラ・AI なしでも最後まで通せる Mock デモ（`study_mode.demo.mode`）がある。
 **実機での高さ校正と片付けは未実施・実機未検証**で、実機ではどちらも校正と確認が済むまでバックエンドが拒否する。
 詳細（操作、設計、校正、安全）は [docs/study_mode.md](docs/study_mode.md)。
@@ -300,19 +332,19 @@ UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネ�
 親指と人差し指をつまむと、**つまんだ位置が中心の仮想ジョイスティック**になり、手を前後左右に動かした分だけクレーンの XY が**速度で**動く。指を離すと止まる。UFO とロープはこれまでどおり実機（Mock）の状態から物理で描く（手の位置で UFO を動かすことはしない）。
 
 ```bash
-./start.sh gesture                      # Python の MockRobot + C270 で認識 + ゲーム（ジェスチャー ON）
-./start.sh game --gesture-demo          # カメラなし: 決まった手の動きを流してゲーム内 Mock を操縦
-./start.sh real /dev/cu.usbserial-XXXX --gesture   # 実機（ゲームもジェスチャー ON で起動。enable motors → home の後に操縦）
+./start.sh --mock                       # Python の MockRobot + C270 で認識 + ゲーム（ジェスチャー ON）
+./start.sh --game-only -- --gesture-demo   # カメラなし: 決まった手の動きを流してゲーム内 Mock を操縦
+./start.sh --port /dev/cu.usbserial-XXXX   # 実機（ゲームもジェスチャー ON で起動。enable motors → home の後に操縦）
 ```
 
 - 初回は `backend/models/hand_landmarker.task`（MediaPipe の公式モデル、Apache-2.0、約 7.8 MB）を自動でダウンロードする。依存は `uv sync --extra vision --extra hands`（`start.sh` が `--gesture` を見て入れる）。
-- ゲーム内の MockRobot でもカメラ操作を試せる: `./start.sh backend --mock --gesture` を別に起動し、`./start.sh game` で H を押す（ゲームはバックエンドからジェスチャーだけを受け取る）。カメラが無ければデバッグパネルの「Sim hand (mouse)」で、プレイ画面上のマウス（左ボタン = 手のひら上でつまむ（XY）、右ボタン = 手のひら下でつまむ（上下））が手の代わりになる。
+- ゲーム内の MockRobot でもカメラ操作を試せる: `./start.sh --backend-only --mock --gesture` を別に起動し、`./start.sh --game-only` で H を押す（ゲームはバックエンドからジェスチャーだけを受け取る）。カメラが無ければデバッグパネルの「Sim hand (mouse)」で、プレイ画面上のマウス（左ボタン = 手のひら上でつまむ（XY）、右ボタン = 手のひら下でつまむ（上下））が手の代わりになる。
 - 操作: H で ON → 手をカメラに見せる → つまむ（「操縦開始！」）→ 手を動かす方向に進む（中心に戻すと止まる）→ 離すと止まる。手を動かせる範囲が足りなくなったら、離して手を戻し、もう一度つまむ（クラッチ）。クレーンの位置はそのまま。
 - 止まる条件（どれも速度を即ゼロにし、**指を離して新しくつまむまで再開しない**）: 指を離す、手を見失う・手が 2 つ写る（素早い動きのブレで一瞬見失うことがあるので `gesture.lost_grace_ms` = 300 ms までは直前の状態で続ける）、認識イベントが `gesture.stale_ms`（350 ms）より古い、カメラが外れる、WebSocket が切れる、ゲームのウィンドウが非アクティブ、Space、アラーム、キーボード操作（キーが優先）、ジェスチャー OFF、実機の準備ができていない。認識が途切れたときなどは、ゼロ JOG に加えて減速停止（`soft_stop`）も送る。
 - 実機の条件: 接続済み・モーター有効・原点復帰済み・アラームなし・ほかの移動コマンドが動いていない。ジェスチャーがホーミングやモーター有効化を始めることはない。`gesture.allow_real_robot` が false なら実機ではジェスチャーで動かさない（Mock での確認後、true にした）。
 - 実機を止める仕組み: ファームウェアと Mock は最後の JOG から 250 ms で止まる。加えてバックエンドは、JOG を送っていたクライアントが切断したときと、JOG の更新が 300 ms 途絶えたとき（ゲームが固まった）にゼロ JOG を送る。**カメラによる接触・挟み込みの検出は安全機能ではない**。手をクレーンの可動範囲に入れない運用と、物理的な非常停止を前提にすること。操作領域を可動範囲の外に限るには `gesture.roi` / `roi_enabled`（デバッグパネルでも調整可）。
 - ゲーム画面左下の HUD に、ジェスチャー用カメラの小さなライブ映像と、手のひら中心（灰 / 水色 / 金 = 未検出 / 検出 / つまみ中）・スティックの輪を表示する。手が画角の端（10% 以内）に近づくと枠が黄色に、端から外へ出て見失うと赤く点滅して「カメラの外に出たよ」と、戻す方向の矢印を出す。
-- デバッグパネルの俯瞰カメラの映像に、検出状態を重ねて表示する: 手のひら中心（灰 = 未検出、水色 = 検出、金 = つまみ中）、つまんだ中心とスティックの輪、ROI、状態の 1 行。手の骨格はバックエンドを `--gesture-landmarks` 付きで起動したとき（`./start.sh gesture` は付ける）。
+- デバッグパネルの俯瞰カメラの映像に、検出状態を重ねて表示する: 手のひら中心（灰 = 未検出、水色 = 検出、金 = つまみ中）、つまんだ中心とスティックの輪、ROI、状態の 1 行。手の骨格はバックエンドを `--gesture-landmarks` 付きで起動したとき（ジェスチャー ON の `./start.sh` / `./start.sh --mock` は付ける）。
 - 効果音: パーの手を検出したら小さく「ポン」（0.6 秒に 1 回まで）、つまみを検出したら「ピポッ」、ピンチをやめて手を開いたら「ポピッ」、操縦が途切れたら（見失い・2 つの手・期限切れ・カメラ外れ・切断）「ブブー」。ゲーム内で合成する 8bit 風の音で、`audio.cue_pinch` / `audio.cue_lost` に mp3 のファイル名を書けば差し替えられる。
 - 手の形と操作:
 
@@ -348,7 +380,7 @@ UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネ�
   - 強制停止（見失い・Space・キーボード・方式の切り替えなど）の後は、同じ形のままでは動かない。別の形（移動に使う形でもよい。パーで止められたらチョキへ、など）に `pose_release_ms` 以上変えると解除される。1 フレームだけの誤判定では解除しない。
   - 移動に使う形は爪の操作には使わない（設定で重なっていたら爪のほうを外して警告する）。パーを 0.5 秒見せると爪が開き、チョキで閉じるので、手を休めるときはグーにする。
   - 手を見せただけで動くので、手をカメラに向けるときは注意。止まる条件と実機の条件はつまみ方式と同じ。
-  - マウス模擬（「Sim hand (mouse)」）では、1 / 2 / 3 / 4 / 5 キーを押している間がパー / チョキ / グー / 指差し / いいね（指と親指の向きは画面の中心からマウスへ）。カメラなしの `./start.sh game --gesture-demo --gesture-scheme pose_direction` は、指差し（指が一周する）→ いいね上 → いいね下 → パー → チョキ → グー → 画角の外、を繰り返す。
+  - マウス模擬（「Sim hand (mouse)」）では、1 / 2 / 3 / 4 / 5 キーを押している間がパー / チョキ / グー / 指差し / いいね（指と親指の向きは画面の中心からマウスへ）。カメラなしの `./start.sh --game-only -- --gesture-demo --gesture-scheme pose_direction` は、指差し（指が一周する）→ いいね上 → いいね下 → パー → チョキ → グー → 画角の外、を繰り返す。
   - 実カメラ・実機では未確認。バックエンドの手の形の判定（指先が第 2 関節より手首に近いか）は、カメラから見た向きによって誤判定がありうる。指差しは「人差し指だけ伸びていて、中指・薬指・小指が畳まれている」（親指は見ない）。いいねは「4 本の指が畳まれていて、親指の先が中指の付け根から手の大きさの 0.85 倍より離れている」（親指を指の上にしまっていればグー）。バックエンドは検出した手ごとに `point_dx` / `point_dy`（人差し指の向き）と `point_len`、`thumb_dx` / `thumb_dy`（親指の付け根から先への向き）を送る。つまみ方式では、いいねもグーと同じく爪を閉じる（今までグーと判定されていたため）。
 
 コマンドラインから直接シナリオを再生することもできます。
@@ -422,7 +454,7 @@ WebSocket メッセージ例:
 
 ```bash
 cd backend && uv run corexy-ufo-backend --auto-catch-dry-run          # 仮想クレーンで 1 回（故障注入: stall_z, estop など）
-./start.sh mock                                                     # ゲームから C キー（仮想クレーン）
+./start.sh --mock --no-gesture                                      # ゲームから C キー（仮想クレーン）
 ```
 
 状態遷移、安全機構、校正パラメータ、実機前の確認項目は [docs/auto_catch.md](docs/auto_catch.md)。

@@ -131,7 +131,7 @@ uv run corexy-ufo-backend --auto-catch-dry-run stall_z                  # 途中
 uv run corexy-ufo-backend --auto-catch-dry-run estop                    # 仮想の非常停止入力
 uv run corexy-ufo-backend --auto-catch-dry-run stall_xy --fault-at MOVE_TO_BOX
 #  故障: stall_xy stall_z claw_stall claw_fail z_glitch disconnect estop limit_x limit_y
-./start.sh mock   # ゲームから C キーで（バックエンドは仮想クレーン、実機には何も送らない）
+./start.sh --mock --no-gesture   # ゲームから C キーで（バックエンドは仮想クレーン、実機には何も送らない）
 ```
 
 仮想クレーン `robot/dry_run.py`（`DryRunRobot`）: XY/Z は速度・加速度付きのモデル、爪は `virtual_claw_move_s` で完了する仮想サーボ、リミットと非常停止は極性とデバウンス付きの仮想入力線、故障注入つき。送ったはずのコマンドは `commands` に残るだけで、どこにも出力しない。
