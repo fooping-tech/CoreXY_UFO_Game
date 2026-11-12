@@ -1313,6 +1313,29 @@ func _update_gesture_presentation(dt: float) -> void:
 	ufo.gesture_face = face
 	ufo.steer = steer
 
+## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
+## no alarm; the debug panel's E-STOP sends ABORT).
+func stop_key() -> void:
+	if study_mode != null:
+		study_mode.on_stop_key()
+	_jog_latched = _jog_input() != Vector3.ZERO
+	gesture.stop("stop_key")
+	if homework != null:
+		homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
+	if mock.enabled:
+		mock.emergency_stop()
+	if ws.enabled and ws.is_open():
+		_jog_active = false
+		ws.send_command("soft_stop")
+
+## Review on #95: a settings field (camera name, serial port) would take Space as text, and
+## the title does not end a running sequence (the auto catch), so Space must still stop.
+## _input runs before the GUI; the space is typed too (stopping again is harmless).
+func _input(ev: InputEvent) -> void:
+	if ev is InputEventKey and ev.pressed and not ev.echo and ev.keycode == KEY_SPACE \
+			and settings_active() and text_entry_focused():
+		stop_key()
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton and ev.pressed and text_entry_focused():
 		# a click on the game area ends typing, so the jog keys work again
@@ -1335,18 +1358,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		match ev.keycode:
 			KEY_SPACE:
-				if study_mode != null:
-					study_mode.on_stop_key()
-				_jog_latched = _jog_input() != Vector3.ZERO
-				gesture.stop("stop_key")
-				if homework != null:
-					homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
-				if mock.enabled:
-					mock.emergency_stop()
-				if ws.enabled and ws.is_open():
-					# decelerating stop, no alarm (the debug panel's E-STOP sends ABORT)
-					_jog_active = false
-					ws.send_command("soft_stop")
+				stop_key()
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
 				debug_ui.study_panel_visibility_changed(debug_ui.visible)

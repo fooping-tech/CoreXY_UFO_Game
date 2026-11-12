@@ -2177,6 +2177,14 @@ func _test_settings(rs: Node) -> void:
 	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
 	game._unhandled_input(_key(KEY_SPACE))
 	_ok(game.settings_active() and game.mock.target.is_equal_approx(game.mock.pos), "settings: Space still stops")
+	# review on #95: Space stops even while a settings field has the keyboard
+	var field: LineEdit = st._rows["backend.serial_port"].control
+	field.grab_focus()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._input(_key(KEY_SPACE))
+	_ok(game.text_entry_focused() and game.mock.target.is_equal_approx(game.mock.pos),
+		"settings: Space stops while typing in a settings field (the GUI would take it)")
+	field.release_focus()
 	game._unhandled_input(_key(KEY_ESCAPE))
 	_ok(not game.settings_active() and game.title_active() and t.notice() == "", "settings: Esc closes it unsaved, back to the title")
 	t.gear.pressed.emit()
