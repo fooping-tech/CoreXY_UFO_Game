@@ -1899,7 +1899,7 @@ func _study_pump(game: Node, secs: float, until := Callable()) -> bool:
 			return true
 	return not until.is_valid()
 
-func _study_game(mode := "mock") -> Node:
+func _study_game(mode := "simulated") -> Node:
 	GameConfig.data["study_mode"]["enabled"] = true
 	var game: Node = load("res://scenes/main.tscn").instantiate()
 	add_child(game)
@@ -2037,6 +2037,17 @@ func _test_study_mode_failures(rs: Node) -> void:
 	_ok(failed_ok and ctl.state == "GAME_UNLOCKED" and not ctl.cleanup_ok and game.study_hud._sub_banner.text.contains("大人"),
 		"study: a failed tidy-up is not the unlock (a grown-up confirms, the tidy-up stays unchecked)",
 		"%s %s" % [failed_ok, ctl.state])
+	# #92: the robot is the one start.sh connected; the config only says simulated / camera
+	var sv := StudyServices
+	_ok(sv.normalize_mode("mock") == "simulated" and sv.normalize_mode("real") == "camera"
+		and sv.normalize_mode("camera") == "camera" and sv.normalize_mode("simulated") == "simulated"
+		and sv.normalize_mode("bogus") == "simulated",
+		"study: demo source names (earlier mock / real read; unknown = simulated, nothing sent)")
+	var sim_real := sv.blocker_for("backend", true, "simulated")
+	_ok(sim_real.contains("模擬デモでは実機を動かしません") and sv.blocker_for("backend", true, "camera") == ""
+		and sv.blocker_for("backend", false, "simulated") == "" and sv.blocker_for("game_mock", false, "simulated") == ""
+		and sv.blocker_for("", false, "camera") != "",
+		"study: simulated never moves the real crane; camera follows the connected robot (backend gates stay)", sim_real)
 	# camera mode without a backend: nothing to move, with the reason
 	ctl.start()
 	ctl.services.set_mode("camera")

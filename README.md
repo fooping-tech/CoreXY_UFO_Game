@@ -45,7 +45,7 @@ CoreXY_UFO_Game/
 | `--gesture` | ハンドジェスチャーを使う（`--game-only` / `--backend-only` で ON にしたいとき） |
 | `--gesture-camera CAM` | ジェスチャーに使うカメラ（番号か名前の一部。省くと config の `gesture.camera`） |
 | `--port PORT` | 実機のシリアルポート（省くと config か自動検出） |
-| `--study` | Study タブ（カメラ学習アシスタント。config の `study.enabled: true` も必要） |
+| `--study` | Study タブ（カメラ学習アシスタント）。画像を AI に送るので、config の `study.enabled: true` も要る（2 か所で有効にする。片方だけなら start.sh が理由を出して止まる） |
 | `--study-mode` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
 | `-h` / `--help` | 使い方を表示 |
 | `-- <引数>` | 後ろをそのままバックエンドへ（`--game-only` ではゲームへ）渡す。下の 2 つの表 |
@@ -74,6 +74,16 @@ CoreXY_UFO_Game/
 ./start.sh --backend-only --mock -- --auto-catch-dry-run   # 自動キャッチを仮想クレーンで 1 回
 ```
 
+**start.sh と config の分担**: 「今回何を起動するか」（実機か仮想クレーンか、ジェスチャー、Study タブ、勉強モードで始めるか）は start.sh のオプションで決める。config（`config/game_config.json`）には、この机・この機械の事実（ポート、カメラの名前、校正）と好み（学年、模擬かカメラか、音など）だけを書く。
+
+| config の項目 | start.sh との関係 |
+|---|---|
+| `gesture.enabled` | start.sh を通さずゲームを直接起動したときの既定値だけ。start.sh はゲームに `--gesture` か `--no-gesture` を必ず渡す |
+| `study.enabled` | Study タブの 2 つめのスイッチ（`--study` と両方が要る） |
+| `study_mode.demo.source` | 勉強モードが使うもの（`simulated` = 模擬、外部に送らない / `camera` = カメラと AI）。どのロボットで動かすかは start.sh で決まる |
+| `study_mode.enabled` / `homework.enabled` | 勉強モードがあるか / F1 パネルの宿題の見守りがあるか。どちらかが `true` ならバックエンドが宿題のサービスを用意する（見守りを始めるまで撮影はしない） |
+| `backend.serial_port` | 既定のポート。`--port` が優先 |
+
 **今までの書き方**（モード名を先頭に書く）もそのまま使える。動きは前と同じ（ジェスチャーは `gesture` モードと `real ... --gesture` のときだけ）。
 
 | 今までの書き方 | 新しい書き方 |
@@ -97,7 +107,7 @@ CoreXY_UFO_Game/
 | `--gesture-demo` | カメラなしで、決まった手の動きを流してジェスチャー操作を試す |
 | `--hide-debug` | デバッグパネルを隠して起動する |
 | `--title` / `--no-title` | タイトル画面を出す / 出さない（既定は出す。下の「タイトル画面」） |
-| `--study-mode` / `--study-demo mock\|camera\|real` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
+| `--study-mode` / `--study-demo simulated\|camera` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
 | `--capture <dir>` | 0.5 秒ごとに画面を PNG で保存し（8 秒間）、FPS を表示して終わる |
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
@@ -334,7 +344,7 @@ cd CoreXY_UFO_Game/game
 勉強の時間を知らせる → プリントを見つけて宿題開始 → Y キー（HELP）でアームが問題 3 を 10cm・5cm・いちばん近くで撮って
 UFOくんが解説 → 3 問の記入を確かめたらお祝い → マグネットジグで片付け → ゲーム解放、までを 1 つの体験として
 メイン画面で進める（`./start.sh --mock --no-gesture --study-mode` か F5）。12 学年 × 3 問のサンプルプリント（印刷用 A4: `docs/worksheets/`）付き。
-実機・カメラ・AI なしでも最後まで通せる Mock デモ（`study_mode.demo.mode`）がある。
+実機・カメラ・AI なしでも最後まで通せる模擬デモ（`study_mode.demo.source: simulated`。画像を外部に送らない）がある。アームは start.sh がつないだロボットで動く（模擬のまま実機は動かさない）。
 **実機での高さ校正と片付けは未実施・実機未検証**で、実機ではどちらも校正と確認が済むまでバックエンドが拒否する。
 詳細（操作、設計、校正、安全）は [docs/study_mode.md](docs/study_mode.md)。
 

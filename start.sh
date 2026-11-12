@@ -28,7 +28,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 GAME_DIR="$ROOT/game"
 BACKEND_DIR="$ROOT/backend"
-CONFIG_FILE="$ROOT/config/game_config.json"
+CONFIG_FILE="${START_SH_CONFIG:-$ROOT/config/game_config.json}"  # START_SH_CONFIG: tests only
 # 他プロジェクトの venv が有効でも backend/.venv を使わせる
 unset VIRTUAL_ENV
 
@@ -70,6 +70,14 @@ resolve_ws_endpoint() {
     case "$a" in --ws-host=*) WS_HOST="${a#*=}" ;; --ws-port=*) WS_PORT="${a#*=}" ;; esac
     prev="$a"
   done
+}
+
+# study.enabled in the config: "true" / "false" / "" (not found). Plain shell, like above;
+# "enabled" is the study section's first key.
+config_study_enabled() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  tr -d '\n' < "$CONFIG_FILE" \
+    | sed -E -n 's/.*"study"[[:space:]]*:[[:space:]]*\{[[:space:]]*"enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p'
 }
 
 port_listener() {  # pid of the process listening on WS_PORT (empty if none)
@@ -306,10 +314,22 @@ parse_options() {
     # the landmarks too: the debug panel draws the hand skeleton over the camera view
     BACKEND_ARGS+=(--gesture-landmarks)
   fi
-  [[ "$study" == 1 ]] && BACKEND_ARGS+=(--study)
+  if [[ "$study" == 1 ]]; then
+    # the Study tab sends camera images to the assistant: it needs both switches, this
+    # option and study.enabled in the config. Say so now, not as a backend log line.
+    if [[ "$(config_study_enabled)" == false ]]; then
+      echo "--study には config/game_config.json の study.enabled: true も要ります（Study タブはカメラの画像を AI に送るので、2 か所で有効にする）" >&2
+      exit 1
+    fi
+    BACKEND_ARGS+=(--study)
+  fi
   GAME_ARGS=()
   [[ "$TARGET" != game ]] && GAME_ARGS+=(--source websocket)
-  [[ "$gesture" == 1 && "$TARGET" != backend ]] && GAME_ARGS+=(--gesture)
+  # always say it: the config's gesture.enabled is only the default of a game started
+  # without start.sh
+  if [[ "$TARGET" != backend ]]; then
+    if [[ "$gesture" == 1 ]]; then GAME_ARGS+=(--gesture); else GAME_ARGS+=(--no-gesture); fi
+  fi
   if [[ "$study_mode" == 1 ]]; then
     [[ "$TARGET" != backend ]] || die_usage "--study-mode はゲームを起動するときだけ（--backend-only では使えない）"
     GAME_ARGS+=(--study-mode)
@@ -373,7 +393,7 @@ run_mode() {
       run_game "${game_args[@]}"
       ;;
     study)
-      # the study mode (#86) on the mock robot: the demo mode comes from study_mode.demo.mode
+      # the study mode (#86) on the mock robot: simulated / camera comes from study_mode.demo.source
       start_backend --mock "$@"
       run_game --source websocket --study-mode
       ;;

@@ -361,6 +361,10 @@ func _apply_cmdline() -> void:
 					_open_motion_log(args[i + 1])
 			"--gesture":
 				set_gesture_enabled(true)
+			"--no-gesture":
+				# start.sh always says --gesture or --no-gesture; the config's gesture.enabled
+				# is only the default of a game started without it
+				set_gesture_enabled(false)
 			"--gesture-scheme":
 				# how the hand is read: pinch_joystick / pose_direction (config gesture.scheme)
 				if i + 1 < args.size():
@@ -371,7 +375,8 @@ func _apply_cmdline() -> void:
 				set_gesture_enabled(true)
 				gesture_require_focus = false
 			"--study-mode", "--study-demo":
-				# the study mode right away; --study-demo <mock|camera|real> also picks the demo mode
+				# the study mode right away; --study-demo <simulated|camera> also picks what it
+				# uses (mock / real still read: mock = simulated, real = camera)
 				if study_mode == null:
 					_setup_study_mode()
 				if args[i] == "--study-demo" and i + 1 < args.size():
@@ -657,7 +662,7 @@ func _update_scope(dt: float) -> void:
 	# the study mode's close-ups: the arm camera's real frames in the round view (the mock
 	# demo draws its own close-up, and the game's telescope moment waits meanwhile)
 	if study_mode != null and study_mode.active():
-		want = study_mode.wants_scope() and cameras.has_feed("focus") and study_mode.services.mode != "mock"
+		want = study_mode.wants_scope() and cameras.has_feed("focus") and study_mode.services.mode != "simulated"
 	scope.wanted = want
 	ufo.peering = want
 	if want and scope.open_amount == 0.0:

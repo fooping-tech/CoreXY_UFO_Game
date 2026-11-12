@@ -356,13 +356,13 @@ func refresh() -> void:
 	sheet.worksheet = ctl.worksheet
 	sheet.tracker = ctl.tracker
 	sheet.highlight = ctl.help_problem if st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING" else 0
-	sheet.caption = "つくえの上（Mock）" if ctl.services.mode == "mock" else "プリント（%s）" % ctl.worksheet.get("worksheet_id", "")
+	sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else "プリント（%s）" % ctl.worksheet.get("worksheet_id", "")
 	sheet.visible = st not in ["CELEBRATION", "GAME_UNLOCKED", "HOMEWORK_COMPLETE"]
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)
 	var stage := ctl.capture_stage()
 	var has_focus: bool = ctl.main != null and ctl.main.cameras != null and ctl.main.cameras.has_feed("focus")
-	scope.visible = ctl.wants_scope() and (not has_focus or ctl.services.mode == "mock")
+	scope.visible = ctl.wants_scope() and (not has_focus or ctl.services.mode == "simulated")
 	scope.stage = stage if stage != "" else "10cm"
 	scope.problem = WorksheetCatalog.problem(ctl.worksheet, ctl.help_problem)
 	scope.position = Vector2(266.0, 128.0)  # beside the sheet, clear of the UFO (it rises as the arm goes down)
@@ -403,8 +403,8 @@ static func key_help(state: String, mode: String) -> String:
 	var parts := ["Enter 次へ/確認", "Y HELP", "Space 止める"]
 	if state in ["INTRO", "WAITING_FOR_WORKSHEET"]:
 		parts.append(", . 学年")
-	if mode == "mock":
-		parts.append("1/2/3 記入（Mock）")
+	if mode == "simulated":
+		parts.append("1/2/3 記入（模擬）")
 	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
 	return "  ".join(parts)
 
