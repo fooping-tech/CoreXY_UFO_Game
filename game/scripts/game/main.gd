@@ -272,20 +272,50 @@ func _setup_study_mode() -> void:
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 
+## The title at start unless the start is already decided (a scenario, a capture, the study
+## mode by argument or by study_mode.autostart) or nobody looks (headless: the tests and CI).
+## --title shows it anyway, --no-title never.
+static func title_on_start(args: PackedStringArray, enabled: bool, headless: bool, study_autostart: bool) -> bool:
+	if args.has("--title"):
+		return true
+	if not enabled or headless or study_autostart:
+		return false
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo"]:
+		if args.has(a):
+			return false
+	return true
+
+var _debug_layer := 1
+var _debug_before_title := false
+
 ## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
-## the hand stick lets go, and main holds the manual controls while it shows.
+## the hand stick lets go, and main holds the manual controls while it shows. The debug
+## panel goes above the title (hidden; F1 / Tab shows it there, STOP / E-STOP clickable).
 func show_title() -> void:
 	if study_mode != null and study_mode.active():
 		study_mode.stop()
 	if gesture.is_active():
 		gesture.stop("title")
+	if not title.active():
+		_debug_layer = debug_ui.layer
+		_debug_before_title = debug_ui.visible
+	debug_ui.layer = title.layer + 1
+	_set_debug_visible(false)
 	title.open()
+
+func _set_debug_visible(on: bool) -> void:
+	if debug_ui.visible != on:
+		debug_ui.visible = on
+		debug_ui.study_panel_visibility_changed(on)
+		_layout()
 
 func title_active() -> bool:
 	return title != null and title.active()
 
 func _on_title_chosen(mode: String) -> void:
 	debug_log.emit("title: " + mode)
+	debug_ui.layer = _debug_layer
+	_set_debug_visible(_debug_before_title or debug_ui.visible)
 	if mode == "study":
 		if study_mode == null:
 			_setup_study_mode()
@@ -304,18 +334,9 @@ func _title_status() -> String:
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
 func _apply_cmdline() -> void:
 	var args := OS.get_cmdline_user_args()
-	# the title screen unless the start is already decided (a scenario, a capture, the study
-	# mode...) or nobody looks (headless: the tests and CI); --title / --no-title decide
-	var title_wanted := bool(GameConfig.get_value("title_screen", "enabled", true)) \
-		and DisplayServer.get_name() != "headless"
-	var title_forced := false
-	for i in range(args.size()):
-		if args[i] in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo",
-				"--study-mode", "--study-demo"]:
-			title_wanted = false
-		elif args[i] == "--title":
-			title_forced = true
-	if title_wanted or title_forced:
+	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
+			DisplayServer.get_name() == "headless",
+			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
 		show_title()
 	for i in range(args.size()):
 		match args[i]:
@@ -1171,6 +1192,14 @@ func set_gesture_sim(on: bool) -> void:
 func gesture_gate() -> String:
 	if gesture_require_focus and not get_window().has_focus():
 		return GATE_FOCUS
+	# the steering and the claw poses: nothing while the title shows or something else owns
+	# the arm (a claw pose would otherwise still reach arm_goto)
+	if title_active():
+		return "タイトル画面（モードを選んでから）"
+	if study_mode != null and study_mode.blocks_manual_control():
+		return "勉強モードがアームを使用中"
+	if RobotState.auto_catch_active():
+		return "自動キャッチ中"
 	if RobotState.machine_state in ["ALARM", "ESTOP"]:
 		return "アラーム中:「clear_alarm」→「home」"
 	if RobotState.source == "mock":

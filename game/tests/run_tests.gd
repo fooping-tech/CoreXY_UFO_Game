@@ -2156,6 +2156,32 @@ func _test_title_screen(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_F5))
 	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
 	ctl.stop()
+	# review on #91: the claw poses are gated too (the gate reaches GestureControl._claw_tick)
+	game.gesture_require_focus = false
+	var open_gate: String = game.gesture_gate()
+	game.show_title()
+	var title_gate: String = game.gesture_gate()
+	_ok(open_gate == "" and title_gate != "", "title: the gesture gate (steering and claw poses) is shut while it shows",
+		"%s / %s" % [open_gate, title_gate])
+	# the debug panel goes above the title (hidden; F1 shows it there), and back after
+	var dbg: CanvasLayer = game.debug_ui
+	var above: bool = dbg.layer > t.layer and not dbg.visible
+	game._unhandled_input(_key(KEY_F1))
+	var shown: bool = dbg.visible and game.title_active()
+	game._unhandled_input(_key(KEY_2))
+	_ok(above and shown and dbg.layer < t.layer and dbg.visible, "title: the debug panel opens above it (F1) and goes back after",
+		"layer %d" % dbg.layer)
+	# when the title is shown at start
+	var none := PackedStringArray()
+	var GameMain: GDScript = load("res://scripts/game/main.gd")
+	_ok(GameMain.title_on_start(none, true, false, false) and not GameMain.title_on_start(none, true, true, false)
+		and not GameMain.title_on_start(none, false, false, false)
+		and not GameMain.title_on_start(none, true, false, true)
+		and not GameMain.title_on_start(PackedStringArray(["--study-mode"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--scenario", "x_sweep"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--no-title"]), true, false, false)
+		and GameMain.title_on_start(PackedStringArray(["--capture", "d", "--title"]), true, true, true),
+		"title: at start unless headless, disabled, autostarted or decided by arguments; --title forces it")
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
