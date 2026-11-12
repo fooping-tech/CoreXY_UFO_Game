@@ -1,7 +1,7 @@
 class_name SettingsScreen
 extends CanvasLayer
 ## The settings screen (#93), opened from the gear on the title screen. The items come from
-## config/settings_schema.json; 保存 writes the changed ones to config/local_settings.json
+## game_config.json's settings_screen section; 保存 writes the changed ones to config/local_settings.json
 ## (GameConfig.save_local: never game_config.json, never a key the schema does not list).
 ## Presentation only: it never writes RobotState and never sends a command. It opens over
 ## the title, so main.gd keeps holding the manual controls; Space still stops.
@@ -74,7 +74,7 @@ func setup() -> void:
 			if it is Dictionary and it.has("key"):
 				_add_row(it)
 	if _rows.is_empty():
-		_list.add_child(StudyHud.label("設定の一覧（config/settings_schema.json）が読めません", 20, Color("ff8a8a"), 4))
+		_list.add_child(StudyHud.label("設定の一覧（config/game_config.json の settings_screen）が読めません", 20, Color("ff8a8a"), 4))
 
 	_status = StudyHud.label("", 18, YELLOW, 4)
 	box.add_child(_status)

@@ -64,7 +64,7 @@ class AutoCatchParams:
     xy_accel_mm_s2: float | None = None
     z_speed_units_s: float | None = None
     z_accel_units_s2: float | None = None
-    # claw: which recorded position (arm_calibration.json: closed_deg / open_deg) each
+    # claw: which recorded position (calibration.json claw: closed_deg / open_deg) each
     # step goes to; standby None = leave the claw as it is at the end
     claw_open: str = "open"
     claw_close: str = "closed"

@@ -39,11 +39,10 @@ const DEFAULTS := {
 var data: Dictionary = {}
 var loaded_from: String = "(defaults)"
 
-## The settings screen (#93): config/settings_schema.json says which keys it may change;
+## The settings screen (#93): game_config.json's settings_screen section says which keys it may change;
 ## config/local_settings.json (not in Git) holds the changed ones and is read over
 ## game_config.json. Keys or values the schema does not allow are ignored, so a hand-edited
 ## file cannot reach the calibration or the safety settings.
-const SCHEMA_FILE := "settings_schema.json"
 const LOCAL_FILE := "local_settings.json"
 var schema: Dictionary = {}
 var base: Dictionary = {}    # data without the local overrides
@@ -67,7 +66,7 @@ func _ready() -> void:
 	base = data.duplicate(true)
 	var dir := loaded_from.get_base_dir() if loaded_from != "(defaults)" else ""
 	if dir != "":
-		var sc = read_json(dir.path_join(SCHEMA_FILE))
+		var sc = base.get("settings_screen", {})
 		schema = sc if sc is Dictionary else {}
 		local_path = dir.path_join(str(schema.get("file", LOCAL_FILE)))
 		load_local()

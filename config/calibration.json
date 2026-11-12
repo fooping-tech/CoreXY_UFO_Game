@@ -1,0 +1,13 @@
+{
+  "_note": "Values measured on this desk / this machine (#96), written by the backend when they are recorded (the debug panel). z = Z servo counts per unit and sign (z_set top / bottom), claw = the claw's open / closed angles, homework_spot = where the arm's camera looks at the worksheet, camera_xy = overview image -> CoreXY XY. Commit it after a calibration (shared, like #72).",
+  "claw": {
+    "closed_deg": 292.060546875,
+    "open_deg": 61.875,
+    "span_deg": 129.814453125
+  },
+  "z": {
+    "counts_per_unit": 80.42,
+    "sign": 1,
+    "span_counts": 8042
+  }
+}

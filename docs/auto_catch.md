@@ -111,7 +111,7 @@ XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm.
 | `box_x_mm` / `box_y_mm` | 救出ボックスの XY | **未設定** |
 | `xy_feed_mm_min` / `xy_feed_max_mm_min` | XY 速度とその上限 | **未設定** |
 | `xy_accel_mm_s2` / `z_speed_units_s` / `z_accel_units_s2` | 加速度・Z 速度（ファームウェア固定。ドライランのモデル用） | 未設定（実機には送らない） |
-| `claw_open` / `claw_close` / `claw_standby` | 各段で使う爪の位置（`open` / `closed`、待機は null で省略）。角度そのものは実機で記録した `config/arm_calibration.json` | standby **未設定** |
+| `claw_open` / `claw_close` / `claw_standby` | 各段で使う爪の位置（`open` / `closed`、待機は null で省略）。角度そのものは実機で記録した `config/calibration.json` の `claw` | standby **未設定** |
 | `claw_span_min_deg` / `claw_span_max_deg` | 記録した閉じ→開きの弧の許容範囲（サーボ角度の上下限） | **未設定** |
 | `claw_settle_s` | 爪の動作後の待ち（サーボ動作待ち時間） | **未設定** |
 | `timeouts_s.*` / `total_timeout_s` | 状態ごと / 全体のタイムアウト | **未設定** |

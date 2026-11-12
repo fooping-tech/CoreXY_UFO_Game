@@ -326,7 +326,7 @@ func _on_settings_closed(saved: bool) -> void:
 		apply_live_settings()
 		title.set_notice("設定を保存しました（「今すぐ」の項目は反映済み。ほかは次の起動から）")
 
-## The settings marked "now" in config/settings_schema.json, from GameConfig (#93).
+## The settings marked "now" in game_config.json's settings_screen section (#93).
 ## Presentation only: sounds, effects, the hand-reading scheme, the study mode's choices.
 func apply_live_settings() -> void:
 	sfx.enabled = bool(GameConfig.value("audio.enabled", true))

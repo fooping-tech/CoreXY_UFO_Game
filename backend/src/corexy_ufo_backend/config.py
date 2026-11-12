@@ -1,7 +1,7 @@
 """Shared configuration loader (reads ../config/game_config.json).
 
 The settings screen (#93) writes config/local_settings.json (not in Git), read here over
-game_config.json. Only the keys and values config/settings_schema.json allows are used, so
+game_config.json. Only the keys and values its settings_screen section allows are used, so
 a hand-edited file cannot change the calibration or the safety settings.
 """
 
@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .calibration_store import section as calibration_section
 
 log = logging.getLogger(__name__)
 
@@ -60,10 +62,16 @@ class BackendConfig:
     websocket_host: str = "127.0.0.1"
     websocket_port: int = 8765
     limits: RobotLimits = field(default_factory=RobotLimits)
-    # where the claw's open / closed angles are kept (None: not saved, e.g. tests)
-    arm_calibration_path: Path | None = None
-    # where the Z calibration from the top / bottom points is kept (None: not saved)
-    z_calibration_path: Path | None = None
+    # The values measured on this machine, each a section of config/calibration.json
+    # (#96; a plain Path works too, as in the tests). None: not saved.
+    # the claw's open / closed angles
+    arm_calibration_path: Any = None
+    # the Z calibration from the top / bottom points
+    z_calibration_path: Any = None
+    # where the arm's camera looks at the worksheet (#76)
+    homework_spot_path: Any = None
+    # overview image -> CoreXY XY (#78)
+    camera_xy_path: Any = None
     # the real robot homes XY only with a Z reference and the arm wound up (within
     # home_z_tolerance of its top): a lowered arm would hit things on the way. On
     # when loaded from the config file (backend.home_requires_z_top, default true);
@@ -73,7 +81,6 @@ class BackendConfig:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-SCHEMA_FILE = "settings_schema.json"
 LOCAL_FILE = "local_settings.json"
 
 
@@ -130,14 +137,11 @@ def set_path(d: dict[str, Any], key: str, v: Any) -> None:
     cur[parts[-1]] = v
 
 
-def local_overrides(config_dir: Path) -> tuple[dict[str, Any], list[str]]:
-    """The allowed overrides of config_dir/local_settings.json ("a.b.c" -> value) and warnings."""
+def local_overrides(config_dir: Path, data: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The allowed overrides of config_dir/local_settings.json ("a.b.c" -> value) and warnings.
+    data = game_config.json: its settings_screen section lists what may change."""
     warnings: list[str] = []
-    schema_path = config_dir / SCHEMA_FILE
-    try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8")) if schema_path.exists() else {}
-    except (OSError, ValueError) as e:
-        return {}, [f"{schema_path}: {e}"]
+    schema = data.get("settings_screen") if isinstance(data.get("settings_screen"), dict) else {}
     local_path = config_dir / str(schema.get("file", LOCAL_FILE))
     if not local_path.exists():
         return {}, []
@@ -164,14 +168,16 @@ def local_overrides(config_dir: Path) -> tuple[dict[str, Any], list[str]]:
 def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfig:
     path = path or DEFAULT_CONFIG_PATH
     cfg = BackendConfig()
-    cfg.arm_calibration_path = path.parent / "arm_calibration.json"
-    cfg.z_calibration_path = path.parent / "z_calibration.json"
+    cfg.arm_calibration_path = calibration_section(path.parent, "claw")
+    cfg.z_calibration_path = calibration_section(path.parent, "z")
+    cfg.homework_spot_path = calibration_section(path.parent, "homework_spot")
+    cfg.camera_xy_path = calibration_section(path.parent, "camera_xy")
     if not path.exists():
         return cfg
     data = json.loads(path.read_text(encoding="utf-8"))
     # CXUFO_NO_LOCAL_SETTINGS=1 (the tests): this machine's own file must not change them
     if local and not os.environ.get("CXUFO_NO_LOCAL_SETTINGS"):
-        overrides, warnings = local_overrides(path.parent)
+        overrides, warnings = local_overrides(path.parent, data)
         for w in warnings:
             log.warning("local settings: %s", w)
         for k, v in overrides.items():
