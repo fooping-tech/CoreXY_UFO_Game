@@ -19,6 +19,38 @@ CoreXY_UFO_Game/
 - uv: `brew install uv`（Python 3.12+ は uv が自動取得）
 - 実機接続時のみ: M5Stack Core2 + USB ケーブル（CP210x/CH9102 ドライバ）
 
+### Windows
+
+- Godot: `winget install GodotEngine.GodotEngine`（管理者権限なしだと `godot` コマンドは作られないが、`start.ps1` が winget のインストール先から探す。別の場所なら環境変数 `GODOT` に実行ファイルを指定）
+- uv: `winget install astral-sh.uv`
+- 起動は `start.sh` の代わりに `start.ps1`。オプション・今までの書き方・`.env` の `CXUFO_START_*`・環境変数は下の「起動のしかた」と同じ（`./start.sh ...` を `.\start.ps1 ...` と読み替える）。
+- **`--` は `'--'` と引用符で囲む。** PowerShell は、プロンプトで打った引用符のない `--` を取り除く（取り除かれたと分かるときは start.ps1 がそう言って止まる）。
+
+```powershell
+.\start.ps1 --port COM3                     # 実機 + ジェスチャー + ゲーム（いつもの起動）
+.\start.ps1 --mock --no-gesture             # 実機もカメラもなしで
+.\start.ps1 --game-only                     # ゲームだけ（ゲーム内 MockRobot）
+.\start.ps1 --game-only '--' --scenario sudden_stop
+.\start.ps1 --backend-only '--' --list-ports
+```
+
+- **実機のポートは `--port COM3` のように指定する。** ポートの自動検出は macOS のポート名（`/dev/cu.*`）向けで、Windows では一覧の最初のポートを選んでしまう。毎回同じなら `config/game_config.json` の `backend.serial_port` に `"COM3"` と書けば省略できる。番号の調べ方（M5Stack Core2 を USB でつないでから）:
+  1. `.\start.ps1 --backend-only '--' --list-ports` を実行する。1 行に 1 ポートで「ポート名・説明・ハードウェア ID」が出る。説明に `CP210x`（Silicon Labs）か `CH9102` / `CH910x`（WCH）があるものが M5Stack Core2
+  2. どれか分からなければ、USB ケーブルを抜いてもう一度実行し、消えたポートがそれ
+  3. 画面で見るなら: デバイス マネージャー（スタートボタンを右クリック）→「ポート (COM と LPT)」に `Silicon Labs CP210x USB to UART Bridge (COM3)` のように出る。PowerShell では `Get-CimInstance Win32_PnPEntity | Where-Object Name -match '\(COM\d+\)' | Select-Object Name`
+  4. どこにも出ず、デバイス マネージャーの「ほかのデバイス」に黄色い「!」付きで出るときは、ドライバが入っていない。CP210x は Silicon Labs、CH9102 は WCH のサイトから Windows 用のドライバを入れる
+- ゲームを閉じたら（Ctrl-C でも）、バックエンドの標準入力を閉じて、Ctrl-C と同じ順番で止まらせる（サーバー → ロボット。動作中なら ABORT）。`START_SH_STOP_WAIT_S` 秒（既定 15）以内に止まらないときだけ強制終了する。強制終了したときは、実機が動いていたら非常停止ボタンか電源で止める（USB が切れても実機の動きは止まらない）。
+- 新しいチェックアウトのときや、スクリプト（`.gd`）が Godot のクラスキャッシュより新しいときは、ゲームの前に Godot のインポートを自動で実行する（しないと新しい `class_name` が見つからず、スクリプトのエラーになる）。
+- 「スクリプトの実行が無効」と言われたら `powershell -ExecutionPolicy Bypass -File .\start.ps1 --mock` のように起動する（`-File` で起動すると `--` はそのまま渡る）。
+- カメラは名前の一部（config の `gesture.camera` の `"C270"` など）でも番号でも選べる。Windows では DirectShow の順番が番号になる（`.\start.ps1 --backend-only '--' --list-cameras` で一覧）。
+- **Windows での今の制約**（2026-11-14 時点。Windows 11 + Godot 4.7.2 で確認）:
+  - **ゲーム内のカメラの映像は映らない**（俯瞰・アームのカメラ、スコープ、デバッグパネル）。Godot 4.7.2 の CameraServer が Windows ではカメラを 1 台も見つけない（`get_feed_count()` が 0 のまま。OpenCV からは同じカメラが見える）。また Windows では 1 台のカメラを同時に 1 つのアプリしか開けないので、バックエンドがジェスチャーに使っているカメラ（config の `gesture.camera`、既定 C270）は、ゲームの俯瞰カメラ（`camera.overview.match`、既定 C270）と同時には使えない。直すには、バックエンドが映像をゲームに送る経路が要る（未実装）
+  - ハンドジェスチャーは動く（カメラはバックエンドが直接読む。上のカメラの映像とは別）
+  - ポートの自動検出は macOS のポート名向け。実機は `--port COM6` のように指定する
+  - VOICEVOX がないときの予備の声（macOS の `say`）はない
+  - 原点復帰の前に、毎回（接続のたびに）Z の上端を記録し直す。これは Windows に限らない仕様: モーター有効 → ▲ でアームを最上位まで巻き上げる → 上端を記録（`z_set top`）→ 原点復帰。原点復帰が済むまでカーソルキーの JOG も「原点復帰していない」で断られる
+  - 実機での確認はまだ途中（シリアルの応答は確認済み。原点復帰・JOG・終了時の ABORT は Windows では未確認）
+
 ## 起動のしかた（`start.sh`）
 
 `./start.sh` だけで、**実機 + ハンドジェスチャー + ゲーム**が起動する。ほかの起動は、オプションで選ぶ。
@@ -134,7 +166,7 @@ CoreXY_UFO_Game/
 |---|---|
 | `--mock` | 仮想クレーンを使う（シリアルなし。自動キャッチはドライラン）。`./start.sh --mock` が付ける |
 | `--port <PORT>` / `--baud <速度>` | シリアルポートと速度（既定は config か自動検出） |
-| `--list-ports` / `--list-cameras` | シリアルポート / カメラ（OpenCV の番号）の一覧を出して終わる |
+| `--list-ports` / `--list-cameras` | シリアルポート / カメラ（OpenCV の番号。macOS と Windows）の一覧を出して終わる |
 | `--ws-host <host>` / `--ws-port <port>` | WebSocket の待ち受け（既定は config の `network.websocket_url`）。変えたときはゲームの接続先も合わせる |
 | `--state-hz <Hz>` | 状態の送信頻度 |
 | `--study` | カメラ学習アシスタント（Study タブ）を使う。config の `study.enabled: true` も必要 |
@@ -144,6 +176,7 @@ CoreXY_UFO_Game/
 | `--hands` | `hands` の役割のカメラで MediaPipe の手の追跡を使う |
 | `--detector none` / `yolo` / `cloudflare`、`--yolo-model <path>` | 物の検出器 |
 | `--auto-catch-dry-run [FAULT]`、`--fault-at <状態>` | 自動キャッチを仮想クレーンで 1 回だけ流して終わる（実機には何も送らない）。FAULT で故障を注入 |
+| `--stop-on-stdin-close` | 標準入力が閉じたら、Ctrl-C と同じ順番で止まる（サーバー → ロボット）。Windows には送れる SIGTERM がないので、`start.ps1` が付けて使う |
 | `-v` / `--verbose` | 詳しいログ |
 
 ### 環境変数
@@ -151,10 +184,11 @@ CoreXY_UFO_Game/
 | 変数 | 内容 |
 |---|---|
 | `CXUFO_START_ARGS` / `CXUFO_START_MODE` | 引数なしで起動したときの引数（とモード名）。`.env` にも書ける。下の節 |
-| `GODOT` | Godot の実行ファイル（既定は `/Applications/Godot.app`、なければ PATH の `godot`） |
+| `GODOT` | Godot の実行ファイル（既定は `/Applications/Godot.app`、なければ PATH の `godot`。Windows は PATH の `godot_console` / `godot`、なければ winget のインストール先） |
 | `START_SH_WAIT_S` | バックエンドの起動を待つ秒数（既定 60。`--gesture` は 12 秒ほどかかる） |
 | `START_SH_NO_GAME=1` | Godot を起動せず、起動コマンドを表示するだけ（バックエンドは起動する。確認用） |
 | `START_SH_DRY_RUN=1` | バックエンドもゲームも起動せず、起動コマンドを表示するだけ（確認用） |
+| `START_SH_STOP_WAIT_S` | start.ps1（Windows）だけ: ゲームを閉じたあと、バックエンドが自分で止まるのを待つ秒数（既定 15。過ぎたら強制終了） |
 
 ### いつもの起動を変える（`.env`）
 
