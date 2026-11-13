@@ -15,6 +15,7 @@ def test_an_index_needs_no_listing(monkeypatch):
 
 def test_a_name_is_its_position_in_the_listing(monkeypatch):
     # the order of the Windows machine of #82: DirectShow numbers them as OpenCV CAP_DSHOW does
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(cameras, "list_cameras", lambda: [
         {"name": "FHD Webcam", "unique_id": "a"}, {"name": "Logi C270 HD WebCam", "unique_id": "b"},
         {"name": "Innomaker-U20CAM-1080p-S1", "unique_id": "c"}])
