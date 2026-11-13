@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
+import threading
 
 from .config import load_config
 from .sequence import AutoCatchConfig
@@ -61,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS)")
     p.add_argument("--study", action="store_true",
                    help="enable the optional camera study assistant (also requires study.enabled in config)")
+    p.add_argument("--stop-on-stdin-close", action="store_true",
+                   help="stop cleanly (as on Ctrl-C) when stdin reaches EOF: start.ps1 closes it to end the backend")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -106,6 +110,28 @@ def install_stop_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) 
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:  # Windows: the event loop has no signal handlers
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
+
+
+def stop_when_closed(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, fd: int | None) -> None:
+    """Set `stop` when the pipe `fd` reaches EOF. Windows has no SIGTERM for start.ps1 to send, so it
+    closes the backend's stdin instead; run() then stops the server and the robot (ABORT if busy)
+    as on Ctrl-C. The pipe also closes if start.ps1 itself dies. The raw fd, not sys.stdin: a
+    daemon thread blocked in a buffered read would hold its lock at interpreter shutdown."""
+    if fd is None:  # no stdin (e.g. pythonw): nothing to watch, Ctrl-C still works
+        log.warning("--stop-on-stdin-close ignored: there is no stdin")
+        return
+
+    def wait() -> None:
+        try:
+            while os.read(fd, 4096):
+                pass
+        except OSError:
+            pass
+        try:
+            loop.call_soon_threadsafe(stop.set)
+        except RuntimeError:  # the loop is already closed: run() has ended
+            pass
+    threading.Thread(target=wait, name="stdin-close", daemon=True).start()
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -165,6 +191,8 @@ async def run(args: argparse.Namespace) -> int:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     install_stop_handlers(loop, stop)
+    if args.stop_on_stdin_close:
+        stop_when_closed(loop, stop, sys.stdin.fileno() if sys.stdin else None)
     log.info("running: robot=%s  ws://%s:%d  (Ctrl-C to stop)", robot.name, cfg.websocket_host, cfg.websocket_port)
     await stop.wait()
     log.info("shutting down")
