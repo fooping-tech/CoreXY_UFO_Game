@@ -16,6 +16,13 @@ extends Node
 ##   failure      (RESULT, not success): a puff of smoke
 ##   round over   (leaving RESULT): cyan motes scattering and fading
 ##
+## Study mode (#86, GameState events "study_*", posted by StudyModeController):
+##   study_question_filled : a sparkle by the checklist
+##   study_help / study_capture : energy at the UFO / a small burst at each close-up
+##   study_celebrate / study_game_unlocked : waves of confetti across the play area,
+##                sparkles and energy at the UFO (the HUD adds the flash and crackers)
+##   study_error / study_cleanup_failed : a puff of smoke under the UFO
+##
 ## The loops (idle / moving / lowering) are one slot each: entering the state
 ## again replaces, never stacks. One-shots have a cooldown per moment, so a
 ## state flapping on a slow link or a repeated event cannot pile them up.
@@ -27,7 +34,14 @@ const LOOPS := {"READY": ["idle_glow", Vector2(0, 22)], "LOWERING": ["lower_char
 
 var main: Node
 ## Effects for each moment, for the debug panel's event buttons.
-const MOMENTS := ["start", "idle", "lowering", "grab", "success", "failure", "end"]
+const MOMENTS := ["start", "idle", "lowering", "grab", "success", "failure", "end", "study_filled", "study_help",
+	"study_capture", "study_celebrate", "study_error"]
+## GameState event -> moment
+const STUDY_EVENTS := {"study_question_filled": "study_filled", "study_help": "study_help",
+	"study_capture": "study_capture", "study_celebrate": "study_celebrate", "study_game_unlocked": "study_celebrate",
+	"study_error": "study_error", "study_cleanup_failed": "study_error"}
+## how many celebration waves played (tests)
+var celebrations := 0
 var _loop  # AnimatedSprite2D, or a freed one after "stop all" / VFX off: check is_instance_valid
 var _loop_state := ""
 var _last_s: Dictionary = {}  # moment -> time (s) it last played
@@ -75,6 +89,8 @@ func _on_state(prev: String, cur: String) -> void:
 func _on_event(name: String, _payload: Dictionary) -> void:
 	if name == "claw_closed":
 		play("grab")
+	elif STUDY_EVENTS.has(name):
+		play(STUDY_EVENTS[name])
 
 ## The looping effect for `state` (or none), one at a time.
 func _set_loop(state: String) -> void:
@@ -108,7 +124,37 @@ func play(moment: String, loop_s := 3.0, force := false) -> void:
 			VFXManager.spawn_fx("fail_poof", p + Vector2(0, 26) * px)  # under the saucer: the face stays visible
 		"end":
 			VFXManager.spawn_fx("end_fade", p + Vector2(0, 8) * px)
+		"study_filled":
+			var vs: Vector2 = main.get_viewport_rect().size
+			VFXManager.spawn_fx("success_sparkle", Vector2(vs.x - 200.0, 330.0), {"scale": 2.0})
+		"study_help":
+			VFXManager.spawn_fx("start_energy", p, {"follow": _body, "offset": Vector2(0, 10) * px})
+		"study_capture":
+			VFXManager.spawn_fx("grab_burst", p + Vector2(0, 7) * px, {"scale": 1.5})
+		"study_error":
+			VFXManager.spawn_fx("fail_poof", p + Vector2(0, 26) * px)
+		"study_celebrate":
+			celebrations += 1
+			_celebration_wave(0)
 		"idle", "lowering":
 			var st: String = {"idle": "READY", "lowering": "LOWERING"}[moment]
 			var l: Array = LOOPS[st]
 			VFXManager.spawn_fx(l[0], p, {"follow": _body, "offset": l[1] * px, "duration": loop_s})
+
+## The big moment: confetti across the play area in three waves, sparkles and
+## energy at the UFO. Waves are one-shots (they free themselves).
+func _celebration_wave(wave: int) -> void:
+	if not VFXManager.enabled or main == null:
+		return
+	var p := ufo_body()
+	var px: float = main.ufo.pixel_scale
+	var w: float = main._play_w
+	var y := play_center().y
+	for i in 5:
+		var x := w * (0.1 + 0.2 * i)
+		VFXManager.spawn_fx("success_confetti", Vector2(x, y - 120.0 + 60.0 * float((i + wave) % 2)), {"scale": 2.5, "flip_h": i % 2 == 1})
+	VFXManager.spawn_fx("success_sparkle", p + Vector2(0, 8) * px, {"scale": 3.0})
+	if wave == 0:
+		VFXManager.spawn_fx("start_energy", p, {"follow": _body, "offset": Vector2(0, 10) * px, "scale": 2.0})
+	if wave < 2 and is_inside_tree():
+		get_tree().create_timer(0.7).timeout.connect(_celebration_wave.bind(wave + 1))

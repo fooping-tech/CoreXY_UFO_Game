@@ -36,9 +36,10 @@ if want secrets; then
 fi
 
 if want tooling; then
-  step "dev tooling (guard hook + dev_state)"
+  step "dev tooling (guard hook + dev_state + start.sh)"
   python3 "$ROOT/.claude/hooks/guard_git.py" --self-test && \
-    python3 -m unittest discover -s "$ROOT/.claude/skills/dev/scripts" -p 'test_*.py'
+    python3 -m unittest discover -s "$ROOT/.claude/skills/dev/scripts" -p 'test_*.py' && \
+    "$ROOT/tools/test_start_sh.sh"
   record $? "tooling"
 fi
 

@@ -28,6 +28,14 @@ var shake: ScreenShake
 var cameras: CameraHub
 var study: Node
 var homework: Node
+## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
+var study_mode: StudyModeController
+var study_hud: StudyHud
+## The title screen (#90): study mode or game mode at start; Esc comes back to it
+var title: TitleScreen
+var settings: SettingsScreen
+## the keys besides the polled jog (arrows, W / S) that work on the 校正 tab (#98)
+const CALIBRATION_KEYS := [KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_Q, KEY_A]
 var scope: ScopeView
 var scope_trigger := ScopeTrigger.new()
 var scope_enabled := true
@@ -232,6 +240,20 @@ func _ready() -> void:
 	debug_ui.name = "DebugUI"
 	add_child(debug_ui)
 	debug_ui.setup(self)
+	if bool(GameConfig.get_value("study_mode", "enabled", false)):
+		_setup_study_mode()
+	title = TitleScreen.new()
+	title.name = "TitleScreen"
+	add_child(title)
+	title.setup()
+	title.chosen.connect(_on_title_chosen)
+	title.settings_requested.connect(open_settings)
+	settings = SettingsScreen.new()
+	settings.name = "SettingsScreen"
+	add_child(settings)
+	settings.setup()
+	settings.setup_calibration(self)
+	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -239,9 +261,143 @@ func _ready() -> void:
 	set_gesture_enabled(bool(GameConfig.get_value("gesture", "enabled", false)))
 	_apply_cmdline()
 
+## The study mode reuses the homework watch (HomeworkClient); without the F1 panel's
+## one (homework.enabled false) it gets its own, kept out of the game's helper keys.
+func _setup_study_mode() -> void:
+	var hw: HomeworkClient = homework
+	if hw == null:
+		hw = HomeworkClientScript.new()
+		hw.name = "StudyHomeworkClient"
+		add_child(hw)
+		hw.setup(cameras, ws)
+		hw.helper_offer = false  # the study mode has its own HELP
+	study_mode = StudyModeController.new()
+	study_mode.name = "StudyMode"
+	add_child(study_mode)
+	study_mode.setup(self, hw)
+	study_hud = StudyHud.new()
+	study_hud.name = "StudyHud"
+	add_child(study_hud)
+	study_hud.setup(study_mode)
+	if bool(GameConfig.get_value("study_mode", "autostart", false)):
+		study_mode.call_deferred("start")
+
+## The title at start unless the start is already decided (a scenario, a capture, the study
+## mode by argument or by study_mode.autostart) or nobody looks (headless: the tests and CI).
+## --title shows it anyway, --no-title never.
+static func title_on_start(args: PackedStringArray, enabled: bool, headless: bool, study_autostart: bool) -> bool:
+	if args.has("--title"):
+		return true
+	if not enabled or headless or study_autostart:
+		return false
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo"]:
+		if args.has(a):
+			return false
+	return true
+
+var _debug_layer := 1
+var _debug_before_title := false
+
+## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
+## the hand stick lets go, and main holds the manual controls while it shows. The debug
+## panel goes above the title (hidden; F1 / Tab shows it there, STOP / E-STOP clickable).
+func show_title() -> void:
+	if study_mode != null and study_mode.active():
+		study_mode.stop()
+	if gesture.is_active():
+		gesture.stop("title")
+	if not title.active():
+		_debug_layer = debug_ui.layer
+		_debug_before_title = debug_ui.visible
+	debug_ui.layer = title.layer + 2  # above the title and the settings screen
+	_set_debug_visible(false)
+	title.open()
+
+## The gear on the title (#93). Only over the title: the arm is held meanwhile.
+func open_settings() -> void:
+	if not title_active() or settings.active():
+		return
+	settings.layer = title.layer + 1
+	settings.open()
+
+func settings_active() -> bool:
+	return settings != null and settings.active()
+
+## The settings screen's 校正 tab shows (#98): the keys may move the arm (arrows, W / S,
+## [ ], Q / A) though the title is up; gestures and the auto catch stay off, Space stops.
+func calibrating() -> bool:
+	return settings != null and settings.calibrating()
+
+## The calibration needs the homework link (the spot, the camera map) even when the
+## homework watch and the study mode are off: theirs, or one of its own.
+var _calib_hw: HomeworkClient
+func homework_for_calibration() -> HomeworkClient:
+	if homework != null:
+		return homework
+	if study_mode != null and study_mode.services.homework != null:
+		return study_mode.services.homework
+	if _calib_hw == null:
+		_calib_hw = HomeworkClientScript.new()
+		_calib_hw.name = "CalibrationHomeworkClient"
+		add_child(_calib_hw)
+		_calib_hw.setup(cameras, ws)
+		_calib_hw.helper_offer = false
+	return _calib_hw
+
+func _on_settings_closed(saved: bool) -> void:
+	debug_log.emit("settings: " + ("saved" if saved else "cancelled"))
+	if saved:
+		apply_live_settings()
+		title.set_notice("設定を保存しました（「今すぐ」の項目は反映済み。ほかは次の起動から）")
+
+## The settings marked "now" in game_config.json's settings_screen section (#93).
+## Presentation only: sounds, effects, the hand-reading scheme, the study mode's choices.
+func apply_live_settings() -> void:
+	sfx.enabled = bool(GameConfig.value("audio.enabled", true))
+	sfx.volume_db = float(GameConfig.value("audio.volume_db", -8.0))
+	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
+	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
+	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
+	if sch != gesture.scheme.id():
+		gesture.set_scheme(sch)  # a forced stop of the hand stick (it is held on the title anyway)
+	if study_mode != null:
+		study_mode.reload_settings()
+
+func _set_debug_visible(on: bool) -> void:
+	if debug_ui.visible != on:
+		debug_ui.visible = on
+		debug_ui.study_panel_visibility_changed(on)
+		_layout()
+
+func title_active() -> bool:
+	return title != null and title.active()
+
+func _on_title_chosen(mode: String) -> void:
+	debug_log.emit("title: " + mode)
+	debug_ui.layer = _debug_layer
+	_set_debug_visible(_debug_before_title or debug_ui.visible)
+	if mode == "study":
+		if study_mode == null:
+			_setup_study_mode()
+		if not study_mode.active():
+			study_mode.start()
+	elif study_mode != null and study_mode.active():
+		study_mode.stop()
+
+func _title_status() -> String:
+	if RobotState.source != "websocket":
+		return "アーム: ゲーム内の仮想クレーン"
+	if not ws.is_open():
+		return "アーム: バックエンドにつながっていない"
+	return "アーム: バックエンド（%s）  モーターは「実機」タブで有効にするまで動かない" % RobotState.machine_state
+
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
 func _apply_cmdline() -> void:
 	var args := OS.get_cmdline_user_args()
+	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
+			DisplayServer.get_name() == "headless",
+			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
+		show_title()
 	for i in range(args.size()):
 		match args[i]:
 			"--scenario":
@@ -265,6 +421,10 @@ func _apply_cmdline() -> void:
 					_open_motion_log(args[i + 1])
 			"--gesture":
 				set_gesture_enabled(true)
+			"--no-gesture":
+				# start.sh always says --gesture or --no-gesture; the config's gesture.enabled
+				# is only the default of a game started without it
+				set_gesture_enabled(false)
 			"--gesture-scheme":
 				# how the hand is read: pinch_joystick / pose_direction (config gesture.scheme)
 				if i + 1 < args.size():
@@ -274,6 +434,14 @@ func _apply_cmdline() -> void:
 				_gesture_demo_t = 0.0
 				set_gesture_enabled(true)
 				gesture_require_focus = false
+			"--study-mode", "--study-demo":
+				# the study mode right away; --study-demo <simulated|camera> also picks what it
+				# uses (mock / real still read: mock = simulated, real = camera)
+				if study_mode == null:
+					_setup_study_mode()
+				if args[i] == "--study-demo" and i + 1 < args.size():
+					study_mode.services.set_mode(args[i + 1])
+				study_mode.call_deferred("start")
 			"--quit-after":
 				if i + 1 < args.size():
 					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
@@ -510,6 +678,8 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 
 func _process(dt: float) -> void:
 	_capture_tick(dt)
+	if title_active():
+		title.set_status(_title_status())
 	_update_origin()
 	if _cur_points.is_empty():
 		return
@@ -549,6 +719,10 @@ func _update_scope(dt: float) -> void:
 	var want := scope_trigger.step(fx_move, maxf(fx_up, fx_down), lowering, dt) and scope_enabled
 	# not while the hand joystick has the crane (the UFO shows the steering then)
 	want = want and not gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
+	# the study mode's close-ups: the arm camera's real frames in the round view (the mock
+	# demo draws its own close-up, and the game's telescope moment waits meanwhile)
+	if study_mode != null and study_mode.active():
+		want = study_mode.wants_scope() and cameras.has_feed("focus") and study_mode.services.mode != "simulated"
 	scope.wanted = want
 	ufo.peering = want
 	if want and scope.open_amount == 0.0:
@@ -593,6 +767,10 @@ static func scope_placement(play_w: float, h: float, r: float, ufo_px: Vector2) 
 	return Vector3(x, y, side)
 
 func _mood() -> String:
+	if study_mode != null:
+		var o := study_mode.mood_override()
+		if o != "":
+			return o
 	match GameState.state:
 		"DISCONNECTED", "BOOT":
 			return "DISCONNECTED"
@@ -839,12 +1017,32 @@ func _handle_input(dt: float) -> void:
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
 	gesture_gate_reason = gesture_gate()
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
+		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
+		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
+		var age := gesture.age_ms(Time.get_ticks_msec())
+		homework.thumb_tick(not gesture.enabled and gesture.detected and gesture.pose == "thumb"
+			and age >= 0.0 and age <= gesture.stale_ms, Time.get_ticks_msec())
 	if kb != Vector3.ZERO and gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]:
 		gesture.stop("manual")  # the keyboard takes over; the gesture needs a new pinch
 		gv = Vector2.ZERO
 	var halt := RobotState.machine_state in ["ALARM", "ESTOP"]
 	if halt and kb != Vector3.ZERO:
 		jog_hint = jog_hint_for("alarm")
+	# the title screen: nothing moves the arm until a mode is picked (Space still stops)
+	if title_active() and not calibrating():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "タイトル画面ではアームを動かせない（モードを選んでから）"
+		if gesture.is_active():
+			gesture.stop("title")
+	# the study mode's HELP / tidy-up owns the arm: no manual jog meanwhile (Space still stops it)
+	if study_mode != null and study_mode.blocks_manual_control():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "勉強モードでアームを使っている間は手動操作できない（Space で止める）"
+		if gesture.is_active():
+			gesture.stop("study_mode")
 	# the auto catch owns the crane: no manual jog until it ends (Space / E-STOP still stop it)
 	if RobotState.auto_catch_active():
 		halt = true
@@ -1059,6 +1257,14 @@ func set_gesture_sim(on: bool) -> void:
 func gesture_gate() -> String:
 	if gesture_require_focus and not get_window().has_focus():
 		return GATE_FOCUS
+	# the steering and the claw poses: nothing while the title shows or something else owns
+	# the arm (a claw pose would otherwise still reach arm_goto)
+	if title_active():
+		return "タイトル画面（モードを選んでから）"
+	if study_mode != null and study_mode.blocks_manual_control():
+		return "勉強モードがアームを使用中"
+	if RobotState.auto_catch_active():
+		return "自動キャッチ中"
 	if RobotState.machine_state in ["ALARM", "ESTOP"]:
 		return "アラーム中:「clear_alarm」→「home」"
 	if RobotState.source == "mock":
@@ -1145,21 +1351,54 @@ func _update_gesture_presentation(dt: float) -> void:
 	ufo.gesture_face = face
 	ufo.steer = steer
 
+## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
+## no alarm; the debug panel's E-STOP sends ABORT).
+func stop_key() -> void:
+	if study_mode != null:
+		study_mode.on_stop_key()
+	_jog_latched = _jog_input() != Vector3.ZERO
+	gesture.stop("stop_key")
+	if homework != null:
+		homework.cancel_locate("Space で止めたので、問題を見に行くのをやめました")
+	if mock.enabled:
+		mock.emergency_stop()
+	if ws.enabled and ws.is_open():
+		_jog_active = false
+		ws.send_command("soft_stop")
+
+## Review on #95: a settings field (camera name, serial port) would take Space as text, and
+## the title does not end a running sequence (the auto catch), so Space must still stop.
+## _input runs before the GUI; the space is typed too (stopping again is harmless).
+func _input(ev: InputEvent) -> void:
+	if ev is InputEventKey and ev.pressed and not ev.echo and ev.keycode == KEY_SPACE \
+			and settings_active() and text_entry_focused():
+		stop_key()
+
 func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton and ev.pressed and text_entry_focused():
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
 	if ev is InputEventKey and ev.pressed and not ev.echo:
+		# the settings and the title screens take every key but the stop (Space) and the
+		# debug panel (F1 / Tab); typing in a settings field never gets here
+		# the 校正 tab lets the claw keys through to the match below (#98)
+		var claw_key: bool = calibrating() and ev.keycode in CALIBRATION_KEYS
+		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			settings.handle_key(ev.keycode)
+			return
+		if title_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			title.handle_key(ev.keycode)
+			return
+		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
+			show_title()
+			return
+		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
+		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
+				and study_mode.handle_key(ev.keycode):
+			return
 		match ev.keycode:
 			KEY_SPACE:
-				_jog_latched = _jog_input() != Vector3.ZERO
-				gesture.stop("stop_key")
-				if mock.enabled:
-					mock.emergency_stop()
-				if ws.enabled and ws.is_open():
-					# decelerating stop, no alarm (the debug panel's E-STOP sends ABORT)
-					_jog_active = false
-					ws.send_command("soft_stop")
+				stop_key()
 			KEY_F1, KEY_TAB:
 				debug_ui.visible = not debug_ui.visible
 				debug_ui.study_panel_visibility_changed(debug_ui.visible)
@@ -1182,3 +1421,8 @@ func _unhandled_input(ev: InputEvent) -> void:
 				GameState.post_event("result_success")
 			KEY_F:
 				GameState.post_event("result_failure")
+			_:
+				# the homework helper's keys (#79, homework.helper.keys; the keys above win).
+				# Not during the study mode: its HELP is the only way the arm goes to the sheet then.
+				if homework != null and (study_mode == null or not study_mode.active()):
+					homework.handle_key(ev.keycode)

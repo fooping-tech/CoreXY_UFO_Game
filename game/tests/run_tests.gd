@@ -17,6 +17,7 @@ func _ok(cond: bool, name: String, detail: String = "") -> void:
 
 func _ready() -> void:
 	var rs: Node = RobotState
+	GameConfig.drop_local()  # this machine's config/local_settings.json (#93) must not change the tests
 	_test_rest_state()
 	_test_inextensible_under_motion()
 	_test_sudden_stop_swing_and_decay()
@@ -54,6 +55,13 @@ func _ready() -> void:
 	_test_study_is_optional(rs)
 	_test_homework_watch(rs)
 	_test_auto_catch_controls(rs)
+	_test_study_worksheets_and_tracker()
+	_test_study_mode_mock_story(rs)
+	_test_study_mode_failures(rs)
+	_test_study_mode_backend_messages(rs)
+	_test_title_screen(rs)
+	_test_settings(rs)
+	_test_calibration_tab(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -1157,6 +1165,7 @@ func _test_homework_watch(rs: Node) -> void:
 	hw.approach_and_advise()  # the game's own mock (no backend robot link): refused with a reason
 	_ok(hw.advice_status.contains("バックエンド"), "homework: approaching needs the backend's robot link")
 	_test_homework_camera_map(game, hw)
+	_test_homework_helper(game, hw)
 	hw.stop()
 	remove_child(game)
 	game.free()
@@ -1206,6 +1215,123 @@ func _test_homework_camera_map(game: Node, hw: HomeworkClient) -> void:
 	var refused_ok := not hw.looking and hw.calib_status.contains("バックエンド")
 	_ok(stale_ok and hold_ok and back_ok and refused_ok, "camera map: look states (stale status ignored, hold, back, refused offline)",
 		"%s %s %s %s" % [stale_ok, hold_ok, back_ok, refused_ok])
+
+## Stage 3 (#79): the offer once per stall, the keys and the thumbs-up, the locate
+## result (moves only when usable), the voice as a WAV and its credit.
+func _test_homework_helper(game: Node, hw: HomeworkClient) -> void:
+	# a 16-bit mono PCM WAV with 100 samples
+	var wav := PackedByteArray()
+	wav.append_array("RIFF".to_ascii_buffer())
+	wav.resize(44)
+	wav.encode_u32(4, 36 + 200)
+	var fmt := "WAVEfmt ".to_ascii_buffer()
+	for i in fmt.size():
+		wav[8 + i] = fmt[i]
+	wav.encode_u32(16, 16)
+	wav.encode_u16(20, 1)
+	wav.encode_u16(22, 1)
+	wav.encode_u32(24, 24000)
+	wav.encode_u32(28, 48000)
+	wav.encode_u16(32, 2)
+	wav.encode_u16(34, 16)
+	var data := "data".to_ascii_buffer()
+	for i in data.size():
+		wav[36 + i] = data[i]
+	wav.encode_u32(40, 200)
+	wav.resize(44 + 200)
+	var stream := HomeworkClient.wav_stream(wav)
+	_ok(stream != null and stream.mix_rate == 24000 and HomeworkClient.wav_stream("not a wav at all, really not one".to_ascii_buffer()) == null,
+		"helper: a WAV from the backend becomes a stream, anything else does not")
+	hw._on_message({"type": "homework_speech", "data": {"text": "手伝おうか？", "engine": "voicevox",
+		"credit": "VOICEVOX:ずんだもん", "wav_base64": Marshalls.raw_to_base64(wav)}})
+	game.debug_ui._update_homework()
+	_ok(hw.player.stream != null and hw.speech_credit == "VOICEVOX:ずんだもん"
+		and game.debug_ui._hw_helper.text.contains("VOICEVOX:ずんだもん"), "helper: the voice plays and its credit is shown",
+		game.debug_ui._hw_helper.text)
+	# the offer: once per stall, again only after offer_repeat_s; spoken (here: no speech -> the reason)
+	hw.state = "running"
+	hw.stalled = false
+	hw._offer_until_ms = 0  # the stage-1 test's stall already offered help
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": false}})
+	var calm := not hw.offer_pending(Time.get_ticks_msec())
+	hw.speech_available = false
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": true, "stalled_for_s": 200.0}})
+	var offered := hw.offer_pending(Time.get_ticks_msec()) and hw.locate_status.begins_with(hw.offer_text) \
+		and hw.speech_status.contains("声は使えない")
+	var first := hw._last_offer_ms
+	hw._on_message({"type": "homework_progress", "data": {"smoothed_pct": 20.0, "held_reason": "", "stalled": true, "stalled_for_s": 210.0}})
+	var once := hw._last_offer_ms == first
+	_ok(calm and offered and once, "helper: offers help once when the watch reports a stall", "%s %s %s" % [calm, offered, once])
+	# the thumbs-up: held thumb_hold_ms while the offer is pending; refused here (no assistant), with the reason
+	var t := float(Time.get_ticks_msec())
+	hw.thumb_tick(true, t)
+	hw.thumb_tick(true, t + hw.thumb_hold_ms * 0.5)
+	var waiting := hw.offer_pending(t) and hw.locate_state != "error"
+	hw.thumb_tick(true, t + hw.thumb_hold_ms + 1.0)
+	var fired := not hw.offer_pending(t) and hw.locate_state == "error" and hw.locate_status.contains("アシスタント")
+	hw.thumb_tick(false, t + 2000.0)
+	hw.offer_help()
+	hw.thumb_tick(false, t)
+	hw.locate_state = ""
+	var t2 := float(Time.get_ticks_msec())
+	hw._offer_until_ms = 0
+	hw.thumb_tick(true, t2)  # up before the offer: spent until put down
+	hw._offer_until_ms = int(t2) + 60000
+	hw.thumb_tick(true, t2 + hw.thumb_hold_ms * 3.0)
+	var stale_thumb := hw.locate_state == ""
+	_ok(waiting and fired and stale_thumb, "helper: a held thumbs-up answers the offer, an old one does not",
+		"%s %s %s" % [waiting, fired, stale_thumb])
+	# keys from config; the game's own keys win (only the default branch reaches the helper)
+	var keys_before := hw.focus_keys.duplicate()
+	hw.configure_helper({"keys": {"stuck": "J", "next": "bogus"}})
+	var keys_ok: bool = hw.focus_keys.stuck == KEY_J and hw.focus_keys.next == KEY_N and hw.handle_key(KEY_J) \
+		and not hw.handle_key(KEY_Z) and hw.locate_status.contains("見に行けません")
+	hw.focus_keys = keys_before
+	_ok(keys_ok and hw.key_name("stuck") == "Y" and hw.key_name("next") == "N", "helper: Y / N by default, keys from config")
+	# results count only for the pending request; stop / disconnect cancel it (no motion afterwards)
+	hw.locate_state = "locating"
+	hw._locate_rid = "hwl-old"
+	hw.cancel_locate("Space で止めた")
+	hw.calib_status = ""
+	hw._on_message({"type": "homework_locate_result", "request_id": "hwl-old", "data": {"usable": true, "u": 0.4, "v": 0.6}})
+	var cancelled_ok := hw.locate_state == "error" and hw.calib_status == "" and hw.locate_status.contains("Space")
+	hw._locate_rid = "hwl-2"
+	hw.locate_state = "locating"
+	hw._on_message({"type": "homework_locate_result", "request_id": "hwl-1", "data": {"usable": true, "u": 0.4, "v": 0.6}})
+	var other_ok := hw.locate_state == "locating" and hw.calib_status == ""
+	hw._on_disconnected()
+	var dropped_ok := hw.locate_state == "error" and hw._locate_rid == "" and hw.locate_status.contains("接続が切れた")
+	# a refusal of the locate itself (generic homework_error with its request_id) ends it, not the watch
+	hw._locate_rid = "hwl-3"
+	hw.locate_state = "locating"
+	var errors_before := hw.errors
+	hw._on_message({"type": "homework_error", "request_id": "hwl-3", "data": {"code": "invalid_request",
+		"message": "a problem is already being located"}})
+	dropped_ok = dropped_ok and hw.locate_state == "error" and hw._locate_rid == "" and hw.errors == errors_before \
+		and hw.locate_status.contains("already")
+	game.debug_ui._stop()
+	dropped_ok = dropped_ok and hw.locate_status.contains("STOP") == false  # nothing pending: status kept
+	hw.locate_state = "locating"
+	hw._locate_rid = "hwl-4"
+	game.debug_ui._stop()
+	dropped_ok = dropped_ok and hw._locate_rid == "" and hw.locate_status.contains("STOP")
+	_ok(cancelled_ok and other_ok and dropped_ok, "helper: a stop or a lost link cancels the locate; other results are ignored",
+		"%s %s %s" % [cancelled_ok, other_ok, dropped_ok])
+	# a locate result: not usable -> no motion, said; usable -> the look (refused here: no backend robot link)
+	hw._locate_rid = "L1"
+	hw._on_message({"type": "homework_locate_result", "request_id": "L1", "data": {"kind": "stuck", "problem": "(3) 4×12", "usable": false,
+		"verified": false, "reason": "Claude と Jev の解答欄の位置が合いませんでした"}})
+	var unsure_ok := hw.locate_state == "unsure" and hw.locate_status.contains("動かしません") and not hw.looking
+	hw.calib_status = ""
+	hw._locate_rid = "L2"
+	hw._on_message({"type": "homework_locate_result", "request_id": "L2", "data": {"kind": "next", "problem": "(4)", "usable": true,
+		"verified": true, "u": 0.4, "v": 0.6}})
+	var go_ok := hw.locate_state == "done" and hw.locate_status.contains("(4)") and hw.calib_status.contains("バックエンド")
+	hw._locate_rid = "L3"
+	hw._on_message({"type": "homework_locate_error", "request_id": "L3", "data": {"code": "not_found", "message": "見えない"}})
+	var err_ok := hw.locate_state == "error" and hw.locate_status.contains("見えない")
+	_ok(unsure_ok and go_ok and err_ok, "helper: locate results (unsure stays put, usable looks, errors shown)",
+		"%s %s %s" % [unsure_ok, go_ok, err_ok])
 
 ## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;
 ## spawn_fx honours the options; one-shots free themselves; off = nothing spawns.
@@ -1719,4 +1845,525 @@ func _test_auto_catch_controls(rs: Node) -> void:
 	rs.auto_catch = {}
 	rs.source = "mock"
 	rs.connected = false
+	rs.clear_samples()
+
+# ------------------------------------------------------------------ study mode (#86)
+func _test_study_worksheets_and_tracker() -> void:
+	var cat := WorksheetCatalog.load_default()
+	var grades := cat.grades()
+	var three := true
+	for g in grades:
+		var ws := cat.for_grade(str(g.id))
+		var probs: Array = ws.get("problems", [])
+		if probs.size() != 3 or int(ws.get("help_problem", 0)) != 3 or str(probs[2].difficulty) != "challenge" \
+				or str(probs[0].difficulty) != "easy" or str(probs[1].difficulty) != "easy":
+			three = false
+	_ok(cat.ok() and grades.size() == 12 and three and str(grades[0].label) == "保育園 年少" and str(grades[11].label) == "中学3年",
+		"study: 12 grades, each worksheet has 3 problems and problem 3 is the HELP challenge", str(grades.size()))
+	var t := StudyQuestionTracker.new()
+	t.configure({"filled_prob": 0.6, "writing_prob": 0.3, "confirm_readings": 2, "complete_readings": 2})
+	t.reset(3)
+	var first := t.add_reading([0.9, 0.4, 0.1])
+	var want_states: Array[String] = ["writing", "writing", "empty"]
+	var once_ok := first.is_empty() and t.states == want_states
+	var second := t.add_reading([0.9, 0.4, 0.1])
+	var want_one: Array[int] = [1]
+	var filled_ok := second == want_one and t.filled_count() == 1
+	t.add_reading([null, null, null], true, "occluded")
+	var held_ok := t.filled_count() == 1 and t.shown_state(2) == "held" and t.shown_state(1) == "filled"
+	t.add_reading([0.1, 0.9, 0.9])  # problem 1 erased
+	var erased_ok := not t.is_filled(1)
+	t.add_reading([0.9, 0.9, 0.9])
+	t.add_reading([0.9, 0.9, 0.9])
+	var not_yet := t.filled_count() == 3 and not t.complete  # all filled once: not stable yet
+	t.add_reading([0.9, 0.9, 0.9])
+	_ok(once_ok and filled_ok and held_ok and erased_ok and not_yet and t.complete and t.completed_by == "readings",
+		"study: a problem counts after 2 readings, a hand holds the states, completion needs stable readings",
+		"%s %s %s %s %s %s" % [once_ok, filled_ok, held_ok, erased_ok, not_yet, t.complete])
+	var m := StudyQuestionTracker.new()
+	m.reset(3)
+	m.confirm_complete()
+	_ok(m.complete and m.completed_by == "manual" and m.filled_count() == 3, "study: a grown-up can confirm the homework by hand")
+
+## Advance the study mode's clocks (speech, services, controller timers); the game's
+## mock jumps to its targets (it is the virtual crane: the walk only waits for it).
+func _study_pump(game: Node, secs: float, until := Callable()) -> bool:
+	var ctl: StudyModeController = game.study_mode
+	var dt := 0.1
+	var t := 0.0
+	while t < secs:
+		ctl.speech._process(dt)
+		ctl.services._process(dt)
+		ctl._process(dt)
+		game.mock.pos = game.mock.target
+		game.mock.vel = Vector3.ZERO
+		t += dt
+		if until.is_valid() and until.call():
+			return true
+	return not until.is_valid()
+
+func _study_game(mode := "simulated") -> Node:
+	GameConfig.data["study_mode"]["enabled"] = true
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	RobotState.source = "mock"
+	game.mock.enabled = true
+	game.study_mode.services.set_mode(mode)
+	game.study_mode.speech.voice_on = false
+	game.study_mode.sounds.enabled = false
+	return game
+
+func _test_study_mode_mock_story(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	var states: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): states.append(c))
+	var events: Array[String] = []
+	var on_event := func(n, _d): events.append(n)
+	GameState.event.connect(on_event)
+	ctl.start()
+	var intro_ok := ctl.state == "INTRO" and hud.visible and ctl.speech.current == "そろそろ勉強の時間だよ！" \
+		and str(hud._check_rows[0][1].text) == "さんすうプリント"
+	_study_pump(game, 15.0, func(): return ctl.state == "WAITING_FOR_WORKSHEET")
+	ctl.change_grade(-1)  # 小学2年
+	var grade_ok := ctl.grade_label() == "小学2年"
+	_study_pump(game, 8.0, func(): return ctl.state == "STUDYING")  # the mock sheet is seen after worksheet_wait_s
+	var studying_ok := ctl.state == "STUDYING" and ctl.study_started_ms >= 0
+	ctl.handle_key(KEY_1)
+	_study_pump(game, 6.0, func(): return ctl.tracker.is_filled(1))
+	hud.refresh()
+	var one_ok := ctl.tracker.is_filled(1) and str(hud._count.text) == "宿題 1 / 3 問" and events.has("study_question_filled")
+	# HELP: Y -> locate -> the 3 close-ups in order -> explanation -> back to the homework
+	var target_before: Vector3 = game.mock.target
+	ctl.handle_key(KEY_Y)
+	var help_ok := ctl.state == "HELP_LOCATING"
+	_study_pump(game, 5.0, func(): return ctl.state == "HELP_MOVING")
+	var moving: bool = ctl.state == "HELP_MOVING" and ctl.blocks_manual_control()
+	game._handle_input(1.0 / 60.0)
+	var halted: bool = game.control_source == "halt"
+	_study_pump(game, 30.0, func(): return ctl.state == "AI_EXPLAINING")
+	var captures := states.filter(func(s): return s.begins_with("CAPTURE_"))
+	var order_ok := captures == ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING"]
+	var went_down: bool = game.mock.target != target_before
+	_study_pump(game, 40.0, func(): return ctl.state == "STUDYING")
+	var explained_ok := ctl.state == "STUDYING" and str(ctl.explanation.get("hint", "")) != "" \
+		and str(ctl.explanation.get("source", "")) == "demo"
+	_ok(intro_ok and grade_ok and studying_ok and one_ok, "study mock: intro, grade, the sheet is found, a problem filled",
+		"%s %s %s %s" % [intro_ok, grade_ok, studying_ok, one_ok])
+	_ok(help_ok and moving and halted and order_ok and went_down and explained_ok,
+		"study mock: HELP looks at problem 3 with 10cm -> 5cm -> landing close-ups, explains, and the jog is held meanwhile",
+		"%s %s %s %s %s %s %s" % [help_ok, moving, halted, captures, went_down, explained_ok, ctl.state])
+	# complete: only after stable readings, celebrated once
+	ctl.handle_key(KEY_2)
+	ctl.handle_key(KEY_3)
+	_study_pump(game, 2.0)
+	var not_early := ctl.celebrate_count == 0
+	var celebrations_before: int = game.vfx.celebrations
+	_study_pump(game, 10.0, func(): return ctl.state == "CELEBRATION")
+	var celebrate_ok: bool = ctl.state == "CELEBRATION" and ctl.celebrate_count == 1 and events.has("study_complete") \
+		and game.vfx.celebrations == celebrations_before + 1 and game._mood() == "SUCCESS"
+	ctl._on_reading([0.95, 0.95, 0.95], false, "")
+	ctl._check_complete()
+	ctl.advance()  # a stray Enter during the celebration
+	var once_ok := ctl.celebrate_count == 1
+	hud.refresh()
+	var banner_ok := hud._banner.visible and str(hud._banner.text) == "宿題完了！！" and str(hud._check_rows[0][0].text) == "☑"
+	_ok(not_early and celebrate_ok and once_ok and banner_ok, "study mock: the celebration fires once, after the 3 problems are stably filled",
+		"%s %s %s %s" % [not_early, celebrate_ok, once_ok, banner_ok])
+	# the tidy-up: waits for a grown-up to confirm the grip, then the game is unlocked
+	_study_pump(game, 20.0, func(): return ctl.adult_prompt != "")
+	var frozen := ctl.elapsed_s()
+	var grip_wait := ctl.state == "CLEANUP" and ctl.adult_prompt.contains("つかめていたら") and hud._time_panel.visible
+	_study_pump(game, 3.0)
+	var still := ctl.state == "CLEANUP" and is_equal_approx(ctl.elapsed_s(), frozen)  # never by itself
+	ctl.advance()
+	_study_pump(game, 40.0, func(): return ctl.state == "GAME_UNLOCKED")
+	hud.refresh()
+	var unlocked := ctl.state == "GAME_UNLOCKED" and ctl.cleanup_ok and str(hud._check_rows[2][0].text) == "☑" \
+		and hud._play.visible and str(hud._banner.text) == "MISSION COMPLETE!" and hud._sub_banner.text.begins_with("GAME MODE UNLOCKED!")
+	_ok(grip_wait and still and unlocked, "study mock: the tidy-up waits for the grip confirmation, then MISSION COMPLETE",
+		"%s %s %s %s" % [grip_wait, still, unlocked, ctl.state])
+	ctl.play_game()
+	_ok(ctl.state == "OFF" and not hud.visible and game._mood() != "SUCCESS" and not ctl.blocks_manual_control(),
+		"study mock: 'ゲームで遊ぶ' returns to the claw game")
+	GameState.event.disconnect(on_event)
+	remove_child(game)
+	game.free()
+	RobotState.source = "mock"
+	rs.clear_samples()
+
+func _test_study_mode_failures(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()  # INTRO -> waiting
+	ctl.debug_skip()  # the sheet is placed
+	var to_study := ctl.state == "STUDYING"
+	# the place cannot be told (calibration): no motion, the worksheet's hints instead
+	ctl.services.inject_fail = "locate"
+	var target_before: Vector3 = game.mock.target
+	ctl.request_help()
+	_study_pump(game, 4.0, func(): return ctl.state == "RESUME_STUDY")
+	var no_move: bool = ctl.state == "RESUME_STUDY" and game.mock.target == target_before and ctl.notice.contains("校正")
+	_study_pump(game, 30.0, func(): return ctl.state == "STUDYING")
+	var hints_ok := str(ctl.explanation.get("source", "")) == "worksheet" and ctl.explain_note.contains("動かしていません")
+	_ok(to_study and no_move and hints_ok, "study: an unusable calibration never moves the arm, the hints are still shown",
+		"%s %s %s" % [to_study, no_move, hints_ok])
+	# Space during a close-up: the arm stops, ERROR, Enter goes back to the homework
+	ctl.request_help()
+	_study_pump(game, 10.0, func(): return ctl.state == "CAPTURE_10CM")
+	ctl.on_stop_key()
+	var stopped := ctl.state == "ERROR" and not ctl.services.motion_active() and ctl.error_text.contains("Space")
+	ctl.advance()
+	_ok(stopped and ctl.state == "STUDYING", "study: Space during HELP stops the arm, then Enter resumes the homework",
+		"%s %s" % [stopped, ctl.state])
+	# the AI fails: the explanation still comes (the worksheet's hints) and the story goes on
+	ctl.services.inject_fail = "ai"
+	ctl.request_help()
+	_study_pump(game, 40.0, func(): return ctl.state == "STUDYING")
+	_ok(ctl.state == "STUDYING" and str(ctl.explanation.get("source", "")) == "worksheet" and ctl.explain_note.contains("AI"),
+		"study: an AI failure is shown and the worksheet's hints explain instead", ctl.explain_note)
+	# no voice engine: every line is still shown and the story moves on
+	var spoke := ctl.services.voice_request("テスト")
+	_ok(spoke == "" and ctl.speech.reading_time("あいうえお") >= ctl.speech.min_line_s,
+		"study: without VOICEVOX the lines are only shown, for a reading time")
+	# the tidy-up fails: told apart from the unlock, needs a grown-up, then unlocks without the check
+	ctl.services.inject_fail = "cleanup"
+	ctl.tracker.confirm_complete()
+	ctl._check_complete()
+	_study_pump(game, 30.0, func(): return ctl.state == "CLEANUP_FAILED")
+	game.study_hud.refresh()
+	var failed_ok: bool = ctl.state == "CLEANUP_FAILED" and not ctl.cleanup_ok and ctl.adult_prompt != "" \
+		and str(game.study_hud._check_rows[2][0].text) == "☒"
+	ctl.advance()
+	_ok(failed_ok and ctl.state == "GAME_UNLOCKED" and not ctl.cleanup_ok and game.study_hud._sub_banner.text.contains("大人"),
+		"study: a failed tidy-up is not the unlock (a grown-up confirms, the tidy-up stays unchecked)",
+		"%s %s" % [failed_ok, ctl.state])
+	# #92: the robot is the one start.sh connected; the config only says simulated / camera
+	var sv := StudyServices
+	_ok(sv.normalize_mode("mock") == "simulated" and sv.normalize_mode("real") == "camera"
+		and sv.normalize_mode("camera") == "camera" and sv.normalize_mode("simulated") == "simulated"
+		and sv.normalize_mode("bogus") == "simulated",
+		"study: demo source names (earlier mock / real read; unknown = simulated, nothing sent)")
+	var sim_real := sv.blocker_for("backend", true, "simulated")
+	_ok(sim_real.contains("模擬デモでは実機を動かしません") and sv.blocker_for("backend", true, "camera") == ""
+		and sv.blocker_for("backend", false, "simulated") == "" and sv.blocker_for("game_mock", false, "simulated") == ""
+		and sv.blocker_for("", false, "camera") != "",
+		"study: simulated never moves the real crane; camera follows the connected robot (backend gates stay)", sim_real)
+	# camera mode without a backend: nothing to move, with the reason
+	ctl.start()
+	ctl.services.set_mode("camera")
+	var why := ctl.services.motion_blocker()
+	RobotState.source = "websocket"
+	var why_ws := ctl.services.motion_blocker()
+	RobotState.source = "mock"
+	_ok(why != "" and why_ws.contains("つながっていません"), "study: the camera demo never moves the game's own mock, nor without a robot link", why + " | " + why_ws)
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## The backend route: the sequences' status messages drive the story (holding at a
+## stage -> that close-up; the previous run's IDLE / FAULT ignored; NACK and FAULT end it).
+func _test_study_mode_backend_messages(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl._set_state("HELP_MOVING")
+	sv._help_active = true
+	sv._help_rid = "h1"
+	var st := {"active": false, "phase": "FAULT", "last_result": "fault", "error": "old run"}
+	sv._on_robot_message({"type": "robot_state", "data": {"homework_approach": st}})
+	var stale_ok := ctl.state == "HELP_MOVING"  # the previous run's FAULT is not this one's
+	var seen: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): seen.append(c))
+	for stage in ["10cm", "5cm", "landing"]:
+		sv._on_robot_message({"type": "homework_approach", "data": {"active": true, "phase": "LOWER", "stage": stage, "holding": false}})
+		sv._on_robot_message({"type": "homework_approach", "data": {"active": true, "phase": "HOLD", "stage": stage, "holding": true}})
+		sv._on_robot_message({"type": "robot_state", "data": {"homework_approach": {"active": true, "phase": "HOLD", "stage": stage, "holding": true}}})
+		_study_pump(game, 1.5)
+	var order: Array = seen.filter(func(x): return x.begins_with("CAPTURE_"))
+	sv._on_robot_message({"type": "homework_approach", "data": {"active": false, "phase": "IDLE", "last_result": "done"}})
+	var done_ok := ctl._help_arm_done and not sv.motion_active()
+	_ok(stale_ok and order == ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING"] and done_ok,
+		"study backend: the staged approach's messages give the 3 close-ups in order, then done", "%s %s %s" % [stale_ok, order, done_ok])
+	# a refused approach (NACK) and a refused tidy-up are shown, never retried
+	ctl._set_state("HELP_MOVING")
+	sv._help_active = true
+	sv._help_rid = "h2"
+	sv._on_robot_ack("h2", false, {"reason": "staged capture refused: height calibration (study_mode.height.real) not measured"})
+	var nack_ok := ctl.state == "ERROR" and ctl.error_text.contains("not measured") and not sv.motion_active()
+	ctl.advance()
+	ctl.completion_fired = true
+	ctl._set_state("CLEANUP")
+	sv._cleanup_active = true
+	sv._cleanup_rid = "c1"
+	sv._on_robot_ack("c1", false, {"reason": "tidy-up refused: the tidy-up is off on the real robot (study_mode.cleanup.enabled_real)"})
+	_ok(nack_ok and ctl.state == "CLEANUP_FAILED" and ctl.error_text.contains("enabled_real"),
+		"study backend: refusals (no height calibration, tidy-up off) stop the story with the reason", "%s %s" % [nack_ok, ctl.state])
+	# F5 / F8 while the backend's run is going: the story forgets it, and its late FAULT changes nothing
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl._set_state("HELP_MOVING")
+	sv._help_active = true
+	sv._help_started = true
+	ctl.start()  # F8
+	var forgot := not sv._help_active and not sv.motion_active() and ctl.state == "INTRO"
+	sv._on_robot_message({"type": "homework_approach", "data": {"active": false, "phase": "FAULT", "last_result": "fault", "error": "stopped"}})
+	_ok(forgot and ctl.state == "INTRO", "study backend: a restart ends the run it started; its late FAULT is ignored", "%s %s" % [forgot, ctl.state])
+	# HELP when problem 3 is already written: said so, the arm stays
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.tracker.states[2] = StudyQuestionTracker.FILLED
+	ctl.request_help()
+	_ok(ctl.state == "STUDYING" and not sv.motion_active() and ctl.notice.contains("動かしません"),
+		"study: HELP on an already written problem 3 does not move the arm", ctl.state)
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _key(code: int) -> InputEventKey:
+	var ev := InputEventKey.new()
+	ev.keycode = code
+	ev.pressed = true
+	return ev
+
+## The title screen (#90): not shown headless; when shown it holds the arm (Space still
+## stops), picks the study or the game mode by keys or a click, and Esc comes back.
+func _test_settings(rs: Node) -> void:
+	# the schema: what the screen may change, nothing about calibration or safety
+	var items := GameConfig.schema_items(GameConfig.schema)
+	var missing := []
+	for k in items.keys():
+		if GameConfig.base_value(k) == null:
+			missing.append(k)
+	var banned := []
+	for k in items.keys():
+		for b in ["robot.", "backend.z_", "backend.arm_open", "backend.home_", "auto_catch.", "study_mode.height.",
+				"study_mode.cleanup.", "gesture.allow_real_robot", "network."]:
+			if str(k).begins_with(b):
+				banned.append(k)
+	_ok(items.size() >= 15 and missing.is_empty() and banned.is_empty(),
+		"settings: the schema lists the settings (all in game_config.json, no calibration / safety key)",
+		"%d %s %s" % [items.size(), missing, banned])
+	var warns: Array[String] = []
+	var got := GameConfig.filter_overrides({"backend.z_sign": -1, "robot.x_max_mm": 999.0, "study.enabled": "yes",
+		"audio.volume_db": 50.0, "backend.serial_port": "a\nb", "study.provider": "codex", "audio.volume_db_x": 1,
+		"study_mode.demo.source": "camera"}, items, warns)
+	_ok(got == {"study.provider": "codex", "study_mode.demo.source": "camera"} and warns.size() == 6,
+		"settings: only allowed keys and values are used from local_settings.json", str(got))
+	_ok(GameConfig.flatten({"a": {"b": {"c": 1}}, "d": 2}) == {"a.b.c": 1, "d": 2}
+		and GameConfig.nest({"a.b.c": 1, "a.x": true}) == {"a": {"b": {"c": 1}, "x": true}},
+		"settings: flatten / nest of the dotted keys")
+
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var st: SettingsScreen = game.settings
+	game._unhandled_input(_key(KEY_S))
+	_ok(not game.settings_active(), "settings: only from the title")
+	game.show_title()
+	game._unhandled_input(_key(KEY_S))
+	game._handle_input(0.1)
+	var held: bool = game.settings_active() and game.title_active() and game.control_source == "halt"
+	_ok(held and st.layer > t.layer and game.debug_ui.layer > st.layer,
+		"settings: S opens it over the title; the arm stays held; the debug panel above it", game.control_source)
+	game._unhandled_input(_key(KEY_2))
+	_ok(game.settings_active() and game.title_active(), "settings: the title's keys do not reach through it")
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.settings_active() and game.mock.target.is_equal_approx(game.mock.pos), "settings: Space still stops")
+	# review on #95: Space stops even while a settings field has the keyboard
+	var field: LineEdit = st._rows["backend.serial_port"].control
+	field.grab_focus()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._input(_key(KEY_SPACE))
+	_ok(game.text_entry_focused() and game.mock.target.is_equal_approx(game.mock.pos),
+		"settings: Space stops while typing in a settings field (the GUI would take it)")
+	field.release_focus()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and game.title_active() and t.notice() == "", "settings: Esc closes it unsaved, back to the title")
+	t.gear.pressed.emit()
+	_ok(game.settings_active(), "settings: the gear opens it")
+
+	# save to a test file (never the machine's own)
+	var real_path := GameConfig.local_path
+	var path := "user://test_local_settings.json"
+	GameConfig.local_path = path
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var base_provider = GameConfig.base_value("study.provider")
+	st.set_form_value("study.provider", "codex")
+	st.set_form_value("study_mode.demo.source", "camera")
+	st.set_form_value("audio.volume_db", -20.0)
+	var marked: bool = (st._rows["study.provider"].label as Label).text.ends_with("＊")
+	var err := st.save()
+	var saved = GameConfig.read_json(path)
+	_ok(game.study_mode.services.mode == "camera" and is_equal_approx(game.sfx.volume_db, -20.0),
+		"settings: the 今すぐ items apply on 保存 (the study mode's source, the volume)")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", false)
+	st.set_form_value("study_mode.grade", "jhs_1")
+	st.save()
+	var live_ok: bool = not game.shake.enabled and game.study_mode.grade_index == game.study_mode.catalog.grade_index("jhs_1")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", true)
+	st.set_form_value("study_mode.grade", str(GameConfig.base_value("study_mode.grade")))
+	st.save()
+	_ok(live_ok and game.shake.enabled, "settings: the screen shake and the grade apply on 保存 too (and back)")
+	_ok(err == "" and not game.settings_active() and t.notice().contains("保存") and marked
+		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "camera"}}}
+		and GameConfig.value("study.provider") == "codex" and GameConfig.base_value("study.provider") == base_provider,
+		"settings: 保存 writes only the changed keys to local_settings.json and uses them", str(saved))
+	game.open_settings()
+	var shown: bool = st.form_value("study.provider") == "codex" and is_equal_approx(float(st.form_value("audio.volume_db")), -20.0)
+	_ok(shown and GameConfig.save_local({"robot.x_max_mm": 1.0}) != "" and GameConfig.read_json(path) == saved,
+		"settings: it reopens with the saved values; a key outside the schema is refused")
+	GameConfig.load_local()
+	_ok(GameConfig.local == {"study.provider": "codex", "study_mode.demo.source": "camera", "audio.volume_db": -20.0},
+		"settings: the saved file reads back", str(GameConfig.local))
+	st.reset_defaults()
+	st.save()
+	_ok(GameConfig.read_json(path) == {} and GameConfig.local.is_empty() and GameConfig.value("study.provider") == base_provider,
+		"settings: 既定に戻す + 保存 empties the overrides")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	GameConfig.local_path = real_path
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _find_button(n: Node, text: String) -> Button:
+	if n is Button and (n as Button).text == text:
+		return n
+	for c in n.get_children():
+		var b := _find_button(c, text)
+		if b != null:
+			return b
+	return null
+
+func _test_calibration_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	game.ui_jog_z = 1.0  # as if W were held (the debug panel's hold button uses the same path)
+	game._handle_input(0.1)
+	var held_on_settings: bool = game.control_source == "halt" and not game.calibrating()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._handle_input(0.1)
+	var moves: bool = game.calibrating() and game.control_source != "halt"
+	_ok(held_on_settings and moves and game.title_active(),
+		"calibration: the keys move the arm only on the 校正 tab (the title stays up)", game.control_source)
+	_ok(game.gesture_gate() != "", "calibration: the hand gestures stay off on the 校正 tab")
+	var deg0: float = game.mock.arm_deg
+	game._unhandled_input(_key(KEY_BRACKETRIGHT))
+	var turned: bool = not is_equal_approx(game.mock.arm_deg, deg0)
+	game._unhandled_input(_key(KEY_C))
+	_ok(turned and not rs.auto_catch_active() and st.calibrating(),
+		"calibration: [ ] turn the claw there; C (the auto catch) still goes nowhere")
+	var open_b := _find_button(st.calibration, "ここを開きに記録")
+	open_b.pressed.emit()
+	_ok(is_equal_approx(float(game.mock.arm_marks.get("open", NAN)), game.mock.arm_deg),
+		"calibration: 開きに記録 records the claw position (the game's mock here)")
+	st.calibration.refresh()
+	var z_b := _find_button(st.calibration, "ここを上に記録")
+	_ok(z_b.disabled and st.calibration._link.text.contains("バックエンドなし"),
+		"calibration: without a backend the Z / spot / camera buttons cannot be pressed, with the reason")
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.mock.target.is_equal_approx(game.mock.pos) and st.calibrating(), "calibration: Space still stops")
+	game.ws.ack.emit("r1", false, {"command": "home",
+		"reason": "the arm is not wound up (Z 3.0, top 100): raise it to the top before homing"})
+	st._process(0.0)
+	var refused: String = st._status.text
+	game.ws.ack.emit("r2", false, {"command": "jog", "reason": "busy"})
+	st._process(0.0)
+	_ok(refused.contains("原点復帰 は断られました") and refused.contains("巻き上げ")
+		and st._status.text == refused,
+		"calibration: a refused command shows why under the tab (a jog's refusal does not replace it)", refused)
+	game.ws.ack.emit("r3", true, {"command": "z_set"})
+	st._process(0.0)
+	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	st.show_tab(0)
+	game._handle_input(0.1)
+	var held_again: bool = game.control_source == "halt"
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	game._handle_input(0.1)
+	_ok(held_again and not game.settings_active() and game.title_active() and game.control_source == "halt",
+		"calibration: back on the settings tab or closed, the arm is held again")
+	game.open_settings()
+	_ok(not game.calibrating(), "calibration: the settings screen always opens on the settings tab")
+	game.ui_jog_z = 0.0
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _test_title_screen(rs: Node) -> void:
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var ctl: StudyModeController = game.study_mode
+	_ok(t != null and not game.title_active(), "title: not shown at start when headless (tests, CI)")
+	game.show_title()
+	game._handle_input(0.1)
+	var held: bool = game.title_active() and game.control_source == "halt"
+	game._unhandled_input(_key(KEY_C))  # the auto catch key goes nowhere
+	game._unhandled_input(_key(KEY_RIGHT))
+	var moved_sel: bool = t.selected_mode() == "game" and game.title_active()
+	game._unhandled_input(_key(KEY_LEFT))
+	_ok(held and moved_sel and t.selected_mode() == "study" and not ctl.active(),
+		"title: holds the manual controls; arrows choose, other keys are swallowed", game.control_source)
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(not game.title_active() and ctl.active() and ctl.state == "INTRO", "title: Enter on the study mode starts it", ctl.state)
+	game._handle_input(0.1)
+	var free_again: bool = game.control_source != "halt"
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(free_again and game.title_active() and not ctl.active(), "title: Esc stops the study mode and comes back", ctl.state)
+	game._unhandled_input(_key(KEY_2))
+	_ok(not game.title_active() and not ctl.active(), "title: 2 picks the game mode (the crane game, no study mode)")
+	game.show_title()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))  # as if the arm were on its way
+	game._unhandled_input(_key(KEY_SPACE))
+	var stopped: bool = game.mock.target.is_equal_approx(game.mock.pos)
+	_ok(game.title_active() and stopped, "title: Space still reaches the game's stop (the mock halts) and leaves the title up")
+	var card: PanelContainer = t._cards[1]
+	card.gui_input.emit(_mouse_press())
+	_ok(not game.title_active() and not ctl.active() and t.selected_mode() == "game", "title: a click on a card picks it")
+	game.show_title()
+	game._unhandled_input(_key(KEY_F5))
+	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
+	ctl.stop()
+	# review on #91: the claw poses are gated too (the gate reaches GestureControl._claw_tick)
+	game.gesture_require_focus = false
+	var open_gate: String = game.gesture_gate()
+	game.show_title()
+	var title_gate: String = game.gesture_gate()
+	_ok(open_gate == "" and title_gate != "", "title: the gesture gate (steering and claw poses) is shut while it shows",
+		"%s / %s" % [open_gate, title_gate])
+	# the debug panel goes above the title (hidden; F1 shows it there), and back after
+	var dbg: CanvasLayer = game.debug_ui
+	var above: bool = dbg.layer > t.layer and not dbg.visible
+	game._unhandled_input(_key(KEY_F1))
+	var shown: bool = dbg.visible and game.title_active()
+	game._unhandled_input(_key(KEY_2))
+	_ok(above and shown and dbg.layer < t.layer and dbg.visible, "title: the debug panel opens above it (F1) and goes back after",
+		"layer %d" % dbg.layer)
+	# when the title is shown at start
+	var none := PackedStringArray()
+	var GameMain: GDScript = load("res://scripts/game/main.gd")
+	_ok(GameMain.title_on_start(none, true, false, false) and not GameMain.title_on_start(none, true, true, false)
+		and not GameMain.title_on_start(none, false, false, false)
+		and not GameMain.title_on_start(none, true, false, true)
+		and not GameMain.title_on_start(PackedStringArray(["--study-mode"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--scenario", "x_sweep"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--no-title"]), true, false, false)
+		and GameMain.title_on_start(PackedStringArray(["--capture", "d", "--title"]), true, true, true),
+		"title: at start unless headless, disabled, autostarted or decided by arguments; --title forces it")
+	remove_child(game)
+	game.free()
 	rs.clear_samples()

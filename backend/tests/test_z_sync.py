@@ -419,6 +419,6 @@ def test_the_config_file_turns_the_home_check_on(tmp_path):
     p = tmp_path / "game_config.json"
     p.write_text(json.dumps({"backend": {}}))
     cfg = load_config(p)
-    assert cfg.home_requires_z_top and cfg.z_calibration_path == tmp_path / "z_calibration.json"
+    assert cfg.home_requires_z_top and str(cfg.z_calibration_path) == f"{tmp_path / 'calibration.json'}#z"
     p.write_text(json.dumps({"backend": {"home_requires_z_top": False}}))
     assert not load_config(p).home_requires_z_top

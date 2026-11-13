@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210.0mm" height="297.0mm" viewBox="0 0 210.0 297.0" font-family="'Hiragino Maru Gothic ProN', 'BIZ UDPGothic', 'Noto Sans JP', sans-serif">
+<rect width="210.0" height="297.0" fill="#fff"/>
+<rect x="8.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="8.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<text x="28.0" y="26.0" font-size="6.5" font-weight="bold" text-anchor="start" fill="#222">げつようびの しゅくだい　保育園 年少</text>
+<text x="28.0" y="36.0" font-size="5.5" font-weight="normal" text-anchor="start" fill="#222">かぞえてみよう</text>
+<text x="132.0" y="36.0" font-size="4.5" font-weight="normal" text-anchor="start" fill="#222">なまえ</text>
+<line x1="148" y1="37" x2="186" y2="37" stroke="#222" stroke-width="0.4"/>
+<text x="105.0" y="292.0" font-size="3.0" font-weight="normal" text-anchor="middle" fill="#777">mon-nursery_1-01　UFOくん 勉強モード</text>
+<rect x="20.0" y="52.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="60.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="62.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">1</text>
+<text x="35.0" y="62.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">りんご は いくつ かな？ かずだけ ○ を ぬろう</text>
+<circle cx="44.0" cy="89.5" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="44.0" y1="85.2" x2="45.1" y2="83.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="62.0" cy="89.5" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="62.0" y1="85.2" x2="63.1" y2="83.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="80.0" cy="89.5" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="80.0" y1="85.2" x2="81.1" y2="83.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="34.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="45.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="56.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="67.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="78.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="89.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="100.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="111.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="122.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="133.0" cy="107.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<rect x="20.0" y="128.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="136.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="138.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">2</text>
+<text x="35.0" y="138.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">まる（○）は どれかな？ ゆびで さして ○ を つけよう</text>
+<polygon points="65.0,164.0 58.0,176.6 72.0,176.6" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="104.0" cy="171.0" r="7.0" fill="none" stroke="#222" stroke-width="0.8"/>
+<rect x="136.0" y="164.0" width="14.0" height="14.0" fill="none" stroke="#222" stroke-width="0.8"/>
+<rect x="20.0" y="204.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#e07a00" stroke-width="0.9"/>
+<circle cx="27.0" cy="212.0" r="5" fill="#e07a00"/>
+<text x="27.0" y="214.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">3</text>
+<text x="26.0" y="271.0" font-size="4.0" font-weight="bold" text-anchor="start" fill="#e07a00">★ チャレンジ</text>
+<text x="35.0" y="214.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">ほし が いちばん おおい のは どれ？ ○ を つけよう</text>
+<rect x="29.0" y="226.0" width="46.0" height="42.0" rx="4" fill="none" stroke="#aaa" stroke-width="0.5"/>
+<polygon points="38.0,233.0 39.3,236.2 42.8,236.5 40.1,238.7 40.9,242.0 38.0,240.2 35.1,242.0 35.9,238.7 33.2,236.5 36.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="51.0,233.0 52.3,236.2 55.8,236.5 53.1,238.7 53.9,242.0 51.0,240.2 48.1,242.0 48.9,238.7 46.2,236.5 49.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<rect x="81.0" y="226.0" width="46.0" height="42.0" rx="4" fill="none" stroke="#aaa" stroke-width="0.5"/>
+<polygon points="90.0,233.0 91.3,236.2 94.8,236.5 92.1,238.7 92.9,242.0 90.0,240.2 87.1,242.0 87.9,238.7 85.2,236.5 88.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="103.0,233.0 104.3,236.2 107.8,236.5 105.1,238.7 105.9,242.0 103.0,240.2 100.1,242.0 100.9,238.7 98.2,236.5 101.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="116.0,233.0 117.3,236.2 120.8,236.5 118.1,238.7 118.9,242.0 116.0,240.2 113.1,242.0 113.9,238.7 111.2,236.5 114.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="90.0,247.0 91.3,250.2 94.8,250.5 92.1,252.7 92.9,256.0 90.0,254.2 87.1,256.0 87.9,252.7 85.2,250.5 88.7,250.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<rect x="133.0" y="226.0" width="46.0" height="42.0" rx="4" fill="none" stroke="#aaa" stroke-width="0.5"/>
+<polygon points="142.0,233.0 143.3,236.2 146.8,236.5 144.1,238.7 144.9,242.0 142.0,240.2 139.1,242.0 139.9,238.7 137.2,236.5 140.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="155.0,233.0 156.3,236.2 159.8,236.5 157.1,238.7 157.9,242.0 155.0,240.2 152.1,242.0 152.9,238.7 150.2,236.5 153.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+<polygon points="168.0,233.0 169.3,236.2 172.8,236.5 170.1,238.7 170.9,242.0 168.0,240.2 165.1,242.0 165.9,238.7 163.2,236.5 166.7,236.2" fill="#f6c945" stroke="#222" stroke-width="0.6"/>
+</svg>

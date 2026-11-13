@@ -69,6 +69,23 @@ async def test_answers_stream_and_the_session_keeps_one_process(tmp_path, image,
         await adapter.close()
 
 
+async def test_more_images_go_before_the_main_one(tmp_path, image):
+    before = tmp_path / "before.jpg"
+    before.write_bytes(b"\xff\xd8before\xff\xd9")
+    got: list[str] = []
+
+    async def on_delta(t):
+        got.append(t)
+
+    adapter = ClaudeCodeStudyAdapter(FAKE_CMD)
+    try:
+        thread = await adapter.start_session(tmp_path, "system")
+        await adapter.ask(thread, "images", image, on_delta, more_images=[before])
+        assert "".join(got) == "images:before,study-test"
+    finally:
+        await adapter.close()
+
+
 async def test_an_error_result_is_an_error(tmp_path, image):
     adapter = ClaudeCodeStudyAdapter(FAKE_CMD)
     try:

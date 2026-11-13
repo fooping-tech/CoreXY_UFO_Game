@@ -111,7 +111,7 @@ XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm.
 | `box_x_mm` / `box_y_mm` | 救出ボックスの XY | **未設定** |
 | `xy_feed_mm_min` / `xy_feed_max_mm_min` | XY 速度とその上限 | **未設定** |
 | `xy_accel_mm_s2` / `z_speed_units_s` / `z_accel_units_s2` | 加速度・Z 速度（ファームウェア固定。ドライランのモデル用） | 未設定（実機には送らない） |
-| `claw_open` / `claw_close` / `claw_standby` | 各段で使う爪の位置（`open` / `closed`、待機は null で省略）。角度そのものは実機で記録した `config/arm_calibration.json` | standby **未設定** |
+| `claw_open` / `claw_close` / `claw_standby` | 各段で使う爪の位置（`open` / `closed`、待機は null で省略）。角度そのものは実機で記録した `config/calibration.json` の `claw` | standby **未設定** |
 | `claw_span_min_deg` / `claw_span_max_deg` | 記録した閉じ→開きの弧の許容範囲（サーボ角度の上下限） | **未設定** |
 | `claw_settle_s` | 爪の動作後の待ち（サーボ動作待ち時間） | **未設定** |
 | `timeouts_s.*` / `total_timeout_s` | 状態ごと / 全体のタイムアウト | **未設定** |
@@ -131,7 +131,7 @@ uv run corexy-ufo-backend --auto-catch-dry-run stall_z                  # 途中
 uv run corexy-ufo-backend --auto-catch-dry-run estop                    # 仮想の非常停止入力
 uv run corexy-ufo-backend --auto-catch-dry-run stall_xy --fault-at MOVE_TO_BOX
 #  故障: stall_xy stall_z claw_stall claw_fail z_glitch disconnect estop limit_x limit_y
-./start.sh mock   # ゲームから C キーで（バックエンドは仮想クレーン、実機には何も送らない）
+./start.sh --mock --no-gesture   # ゲームから C キーで（バックエンドは仮想クレーン、実機には何も送らない）
 ```
 
 仮想クレーン `robot/dry_run.py`（`DryRunRobot`）: XY/Z は速度・加速度付きのモデル、爪は `virtual_claw_move_s` で完了する仮想サーボ、リミットと非常停止は極性とデバウンス付きの仮想入力線、故障注入つき。送ったはずのコマンドは `commands` に残るだけで、どこにも出力しない。

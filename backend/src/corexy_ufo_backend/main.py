@@ -27,10 +27,11 @@ from .vision_service.cameras import list_cameras_macos, resolve_camera
 from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
 from .config import REPO_ROOT
-from .homework import HomeworkConfig, HomeworkService
+from .homework import HomeworkConfig, HomeworkService, LocateParams, SpeechConfig, SpeechService
 from .homework.approach import ApproachParams
 from .homework.camera_map import CameraMapParams
 from .study import StudyConfig, StudyService, make_adapter
+from .study_mode import WorksheetCatalog, WorksheetError
 
 log = logging.getLogger("corexy_ufo_backend")
 
@@ -136,8 +137,19 @@ async def run(args: argparse.Namespace) -> int:
     elif args.study:
         log.warning("--study ignored because study.enabled is false in config")
     hw_cfg = HomeworkConfig.from_raw(cfg.raw, env_path=REPO_ROOT / ".env")
+    # the study mode (#86) needs the homework service for its voice, the per-problem watch and
+    # the explanation, even with the F1 panel's homework watch off
+    study_mode_on = bool((cfg.raw.get("study_mode") or {}).get("enabled", False))
+    worksheets = None
+    try:
+        worksheets = WorksheetCatalog.load()
+    except WorksheetError as e:
+        log.warning("study mode worksheets unavailable: %s", e)
     # the advice uses the study assistant's provider (Claude Code / Codex) without needing --study
-    homework = HomeworkService(hw_cfg, advice_factory=lambda: make_adapter(study_cfg)) if hw_cfg.enabled else None
+    homework = HomeworkService(hw_cfg, advice_factory=lambda: make_adapter(study_cfg),
+                               locate=LocateParams.from_raw(cfg.raw),
+                               speech=SpeechService(SpeechConfig.from_raw(cfg.raw)),
+                               worksheets=worksheets) if (hw_cfg.enabled or study_mode_on) else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,

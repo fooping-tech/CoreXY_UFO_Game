@@ -39,6 +39,17 @@ const DEFAULTS := {
 var data: Dictionary = {}
 var loaded_from: String = "(defaults)"
 
+## The settings screen (#93): game_config.json's settings_screen section says which keys it may change;
+## config/local_settings.json (not in Git) holds the changed ones and is read over
+## game_config.json. Keys or values the schema does not allow are ignored, so a hand-edited
+## file cannot reach the calibration or the safety settings.
+const LOCAL_FILE := "local_settings.json"
+var schema: Dictionary = {}
+var base: Dictionary = {}    # data without the local overrides
+var local: Dictionary = {}   # "a.b.c" -> value: the overrides in use
+var local_path := ""
+var local_warnings: Array[String] = []
+
 func _ready() -> void:
 	data = DEFAULTS.duplicate(true)
 	for path in _candidate_paths():
@@ -52,6 +63,172 @@ func _ready() -> void:
 				loaded_from = path
 				break
 	print("[GameConfig] loaded from ", loaded_from)
+	base = data.duplicate(true)
+	var dir := loaded_from.get_base_dir() if loaded_from != "(defaults)" else ""
+	if dir != "":
+		var sc = base.get("settings_screen", {})
+		schema = sc if sc is Dictionary else {}
+		local_path = dir.path_join(str(schema.get("file", LOCAL_FILE)))
+		load_local()
+
+## Reads local_path over the base (again): only what the schema allows.
+func load_local() -> void:
+	for k in local.keys():
+		path_set(data, k, path_get(base, k))
+	local = {}
+	local_warnings = []
+	if local_path == "" or not FileAccess.file_exists(local_path):
+		return
+	var raw = read_json(local_path)
+	if not raw is Dictionary:
+		local_warnings.append("%s が読めません（JSON のオブジェクトではない）" % local_path)
+	else:
+		local = filter_overrides(flatten(raw), schema_items(schema), local_warnings)
+	for k in local.keys():
+		path_set(data, k, local[k])
+	for w in local_warnings:
+		push_warning("[GameConfig] " + w)
+	if not local.is_empty():
+		print("[GameConfig] local settings from ", local_path, ": ", ", ".join(local.keys()))
+
+## Drops the overrides for this run (the tests: the machine's own file must not change them).
+func drop_local() -> void:
+	for k in local.keys():
+		path_set(data, k, path_get(base, k))
+	local = {}
+
+## The settings screen's save: `values` maps keys to the form's values. Keeps those that
+## differ from game_config.json (the rest are the default again), writes them to
+## local_path and uses them in `data` (most parts read it at start: the next start).
+## Returns "" or the reason it could not be written.
+func save_local(values: Dictionary) -> String:
+	if local_path == "":
+		return "設定ファイルの場所がわかりません"
+	var items := schema_items(schema)
+	var keep := local.duplicate()
+	for k in values.keys():
+		if not items.has(k):
+			return "この画面では変えられない項目です: %s" % k
+		var v = check_value(items[k], values[k])
+		if v == null:
+			return "値が正しくありません: %s" % k
+		if same_value(v, path_get(base, k)):
+			keep.erase(k)
+		else:
+			keep[k] = v
+	var text := JSON.stringify(nest(keep), "  ", true)
+	var f := FileAccess.open(local_path, FileAccess.WRITE)
+	if f == null:
+		return "%s に書けません（%s）" % [local_path, error_string(FileAccess.get_open_error())]
+	f.store_string(text + "\n")
+	f.close()
+	for k in local.keys():
+		path_set(data, k, path_get(base, k))
+	local = keep
+	for k in local.keys():
+		path_set(data, k, local[k])
+	return ""
+
+func value(key: String, fallback = null):
+	return path_get(data, key, fallback)
+
+func base_value(key: String, fallback = null):
+	return path_get(base, key, fallback)
+
+static func read_json(path: String):
+	if not FileAccess.file_exists(path):
+		return null
+	var f := FileAccess.open(path, FileAccess.READ)
+	return JSON.parse_string(f.get_as_text()) if f != null else null
+
+## key -> item of every section
+static func schema_items(sc: Dictionary) -> Dictionary:
+	var out := {}
+	var secs = sc.get("sections", [])
+	if secs is Array:
+		for sec in secs:
+			if sec is Dictionary and sec.get("items") is Array:
+				for it in sec["items"]:
+					if it is Dictionary and it.has("key"):
+						out[str(it["key"])] = it
+	return out
+
+## The value as the item allows it, or null when it does not.
+static func check_value(item: Dictionary, v):
+	match str(item.get("type", "")):
+		"bool":
+			return v if v is bool else null
+		"enum":
+			for o in item.get("options", []):
+				if o is Array and o.size() > 0 and v is String and str(o[0]) == v:
+					return v
+			return null
+		"number":
+			if not (v is float or v is int) or is_nan(float(v)) or is_inf(float(v)):
+				return null
+			var x := float(v)
+			if item.has("min") and x < float(item["min"]) or item.has("max") and x > float(item["max"]):
+				return null
+			return x
+		"text":
+			if not v is String or v.length() > int(item.get("max_length", 200)):
+				return null
+			for ch in v:
+				if ch.unicode_at(0) < 32:
+					return null  # no control characters (newlines, escapes)
+			return v
+	return null
+
+static func filter_overrides(flat: Dictionary, items: Dictionary, warnings: Array[String]) -> Dictionary:
+	var out := {}
+	for k in flat.keys():
+		if not items.has(k):
+			warnings.append("設定画面で変えられない項目は使いません: %s" % k)
+			continue
+		var v = check_value(items[k], flat[k])
+		if v == null:
+			warnings.append("値が正しくないので使いません: %s = %s" % [k, str(flat[k])])
+			continue
+		out[k] = v
+	return out
+
+static func same_value(a, b) -> bool:
+	if (a is float or a is int) and (b is float or b is int):
+		return is_equal_approx(float(a), float(b))
+	return typeof(a) == typeof(b) and a == b
+
+static func flatten(d: Dictionary, prefix := "") -> Dictionary:
+	var out := {}
+	for k in d.keys():
+		var key := str(k) if prefix == "" else prefix + "." + str(k)
+		if d[k] is Dictionary and not (d[k] as Dictionary).is_empty():
+			out.merge(flatten(d[k], key))
+		else:
+			out[key] = d[k]
+	return out
+
+static func nest(flat: Dictionary) -> Dictionary:
+	var out := {}
+	for k in flat.keys():
+		path_set(out, k, flat[k])
+	return out
+
+static func path_get(d: Dictionary, key: String, fallback = null):
+	var cur = d
+	for part in key.split("."):
+		if not (cur is Dictionary and cur.has(part)):
+			return fallback
+		cur = cur[part]
+	return cur
+
+static func path_set(d: Dictionary, key: String, v) -> void:
+	var parts := key.split(".")
+	var cur := d
+	for i in range(parts.size() - 1):
+		if not cur.get(parts[i]) is Dictionary:
+			cur[parts[i]] = {}
+		cur = cur[parts[i]]
+	cur[parts[parts.size() - 1]] = v
 
 func _candidate_paths() -> Array[String]:
 	var out: Array[String] = []

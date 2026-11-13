@@ -37,6 +37,10 @@ description: >
 | 自動キャッチ（1 ボタン） | `backend/.../sequence/auto_catch.py`（状態機械）, `sequence/params.py`（校正値・範囲検査）, `robot/dry_run.py`（仮想クレーン・故障注入）, `main.gd::request_auto_catch` | `docs/auto_catch.md`。シーケンスはバックエンドがモーションロックを持って実行し、ゲームは表示と手動ロックだけ。異常は必ず FAULT + ABORT。`auto_catch.real` は実機で測って `confirmed` を立てるまで null のまま（推測で埋めない） |
 | Z 軸・座標変換 | `robot/robot_state.gd`, `config/game_config.json`, `real_robot.py::move_z` | [references/architecture.md](references/architecture.md) §3, [robot-protocol.md](references/robot-protocol.md) §3 |
 | ハンドジェスチャー | `backend/.../vision_service/hand_control.py`, `mediapipe_hands.py`（Tasks API）, `input/gesture_control.gd`（安全の枠）, `input/gesture_scheme.gd` / `input/pinch_joystick_scheme.gd` / `input/pose_direction_scheme.gd`（方式）, `input/hand_joystick.gd`, `input/control_arbiter.gd`, `ui/gesture_hud.gd`, `main.gd::_handle_input` | README「ハンドジェスチャー・ジョイスティック」。JOG を送るのは `_send_jog` だけ（調停の後）。強制停止はラッチ（指を離して新しくつまむまで再開しない）。鮮度は受信側の単調時計と sequence で判定。`gesture.allow_real_robot` は実機で確かめるまで false |
+| 設定画面（#93、タイトルの歯車） | `ui/settings_screen.gd`, `game_config.gd::save_local / load_local`, backend `config.py::local_overrides`, `game_config.json` の `settings_screen` 節 | 保存先は Git に入らない `config/local_settings.json`。ゲームとバックエンドはスキーマにある項目・値だけを重ねる。**校正・安全の値をスキーマに足さない**。テストは `GameConfig.drop_local()` / `CXUFO_NO_LOCAL_SETTINGS=1` で手元のファイルを無視する |
+| 校正タブ（#98、設定画面） | `ui/calibration_panel.gd`, `settings_screen.gd::calibrating`, `main.gd::calibrating / homework_for_calibration / CALIBRATION_KEYS` | 校正タブの間だけ `_handle_input` の title の halt を外し、[ ] Q A を通す。ジェスチャー・自動キャッチは止めたまま。ボタンは既存のコマンド（z_set / arm_set / homework_spot_set / camera_map_*）を送るだけで、関門はバックエンド。実機での校正は未検証 |
+| 起動時のタイトル（#90） | `ui/title_screen.gd`, `main.gd::show_title / _on_title_chosen` | README「タイトル画面」。演出だけ（RobotState を書かない、コマンドを送らない）。表示中は `_handle_input` が halt、キーはタイトルが受け取る（Space・F1 / Tab は通す）。ヘッドレスでは出さない |
+| 勉強モード（#86） | `study_mode/study_mode_controller.gd`（体験の状態機械）, `study_mode/study_services.gd`（Mock / Jev / AI / ロボットの窓口）, `ui/study_hud.gd`, backend `study_mode/`・`homework/approach.py`（段階撮影）・`sequence/cleanup.py` | `docs/study_mode.md`。体験の状態は RobotState と別。動きはバックエンドのシーケンス 1 本（モーションロック）かゲーム内 Mock だけ、JOG は送らない。`study_mode.height.real` / `cleanup.real` は実機で測って `confirmed` を立てるまで null（推測で埋めない）。config の `demo.source` は simulated / camera だけで、ロボットは start.sh がつないだもの（#92: simulated は実機を動かさない） |
 | USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
 | テスト | `game/tests/run_tests.gd`, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
 
@@ -84,7 +88,7 @@ description: >
 3. ソルバーを変えるなら伸びなし・UFO がロープ長を超えない・減衰・性能のテストを全部通す。詳細は [rope-physics.md](references/rope-physics.md)。
 
 ### C. 「実機の Z 軸と同期して」
-1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/z_calibration.json` に保存、設定値より優先）。
+1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
 2. ゲーム側の逆マッピング（`rope_length_for_z`）は正しい前提で触らない。ずれは backend の換算（`z_sign`, `z_counts_per_unit`）か基準設定の手順で直す。
 3. 実機での確認が必要（§5）。手順は `docs/HANDOFF.md` §6。詳細は [robot-protocol.md](references/robot-protocol.md) §3。
 
@@ -144,8 +148,8 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 
 - 件数が基準より減っていないことと、終了コード 0 を確認する。機能を追加したらテストも追加する（どこに何を足すかは [testing.md](references/testing.md)）。
 - 見た目の変更は `--scenario <name> --capture <dir>` でフレームを保存して確認する。
-- 動きの不具合（チャタリング、ガタつき、表情のちらつき）は**推測で直さず**、まず実際にウィンドウで動かして `--log-motion <csv> --quit-after <秒>` でログを取る。ヘッドレスでは描画フレームが物理と同期してしまい、描画側の不具合が出ない。WebSocket 経路は `./start.sh mock` 相当でバックエンドを起動して取る。
-- WebSocket 経路の変更は `./start.sh mock` で end-to-end を確認する。`start.sh` は WebSocket のポート（`network.websocket_url`、`--ws-port`）が使用中なら起動前に止まる（起動したままの実機用バックエンドにつながるのを防ぐため）。ゲームを起動せずに起動確認だけするなら `START_SH_NO_GAME=1 ./start.sh mock --ws-port 8799`。
+- 動きの不具合（チャタリング、ガタつき、表情のちらつき）は**推測で直さず**、まず実際にウィンドウで動かして `--log-motion <csv> --quit-after <秒>` でログを取る。ヘッドレスでは描画フレームが物理と同期してしまい、描画側の不具合が出ない。WebSocket 経路は `./start.sh --mock --no-gesture` 相当でバックエンドを起動して取る。
+- WebSocket 経路の変更は `./start.sh --mock --no-gesture` で end-to-end を確認する（引数なしの `./start.sh` は**実機** + ジェスチャーなので、確認に使わない）。`start.sh` は WebSocket のポート（`network.websocket_url`、`--ws-port`）が使用中なら起動前に止まる（起動したままの実機用バックエンドにつながるのを防ぐため）。ゲームを起動せずに起動確認だけするなら `START_SH_NO_GAME=1 ./start.sh --mock --no-gesture -- --ws-port 8799`（何も起動せずコマンドだけ見るなら `START_SH_DRY_RUN=1`）。
 - 報告には、実行したコマンド、件数、未実行の項目（実機など）を書く。
 
 ## 7. 外部 Agent Skills との使い分け

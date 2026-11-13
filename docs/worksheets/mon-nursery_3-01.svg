@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210.0mm" height="297.0mm" viewBox="0 0 210.0 297.0" font-family="'Hiragino Maru Gothic ProN', 'BIZ UDPGothic', 'Noto Sans JP', sans-serif">
+<rect width="210.0" height="297.0" fill="#fff"/>
+<rect x="8.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="8.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="12.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="8.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="12.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<rect x="190.0" y="277.0" width="12.0" height="12.0" fill="#000"/>
+<rect x="194.0" y="281.0" width="4.0" height="4.0" fill="#fff"/>
+<text x="28.0" y="26.0" font-size="6.5" font-weight="bold" text-anchor="start" fill="#222">げつようびの しゅくだい　保育園 年長</text>
+<text x="28.0" y="36.0" font-size="5.5" font-weight="normal" text-anchor="start" fill="#222">かずの おけいこ</text>
+<text x="132.0" y="36.0" font-size="4.5" font-weight="normal" text-anchor="start" fill="#222">なまえ</text>
+<line x1="148" y1="37" x2="186" y2="37" stroke="#222" stroke-width="0.4"/>
+<text x="105.0" y="292.0" font-size="3.0" font-weight="normal" text-anchor="middle" fill="#777">mon-nursery_3-01　UFOくん 勉強モード</text>
+<rect x="20.0" y="52.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="60.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="62.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">1</text>
+<text x="35.0" y="62.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">あわせて いくつ？ □に かずを かこう</text>
+<circle cx="36.0" cy="95.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="48.0" cy="95.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<text x="66.0" y="98.0" font-size="7" font-weight="normal" text-anchor="start" fill="#222">と</text>
+<circle cx="86.0" cy="95.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<rect x="135.0" y="82.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="80.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+<rect x="20.0" y="128.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#999" stroke-width="0.4"/>
+<circle cx="27.0" cy="136.0" r="5" fill="#3b7dd8"/>
+<text x="27.0" y="138.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">2</text>
+<text x="35.0" y="138.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">りんご は いくつ？ □に かずを かこう</text>
+<circle cx="37.2" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="37.2" y1="161.2" x2="38.3" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="48.4" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="48.4" y1="161.2" x2="49.5" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="59.7" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="59.7" y1="161.2" x2="60.8" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="70.9" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="70.9" y1="161.2" x2="72.0" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="82.1" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="82.1" y1="161.2" x2="83.2" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="93.3" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="93.3" y1="161.2" x2="94.4" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="104.6" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="104.6" y1="161.2" x2="105.7" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="115.8" cy="165.6" r="4.7" fill="#e85a4f" stroke="#222" stroke-width="0.6"/><line x1="115.8" y1="161.2" x2="116.9" y2="159.5" stroke="#5a3" stroke-width="0.9"/>
+<circle cx="34.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="45.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="56.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="67.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="78.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="89.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="100.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="111.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="122.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<circle cx="133.0" cy="183.0" r="3.6" fill="none" stroke="#888" stroke-width="0.6"/>
+<rect x="135.0" y="158.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="156.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+<rect x="20.0" y="204.0" width="170.0" height="70.0" rx="3" fill="none" stroke="#e07a00" stroke-width="0.9"/>
+<circle cx="27.0" cy="212.0" r="5" fill="#e07a00"/>
+<text x="27.0" y="214.0" font-size="5.5" font-weight="bold" text-anchor="middle" fill="#fff">3</text>
+<text x="26.0" y="271.0" font-size="4.0" font-weight="bold" text-anchor="start" fill="#e07a00">★ チャレンジ</text>
+<text x="35.0" y="214.0" font-size="5.0" font-weight="normal" text-anchor="start" fill="#222">5 は 3 と いくつ？ □に かずを かこう</text>
+<circle cx="36.0" cy="247.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="48.0" cy="247.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="60.0" cy="247.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="72.0" cy="247.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<circle cx="84.0" cy="247.0" r="4.5" fill="none" stroke="#222" stroke-width="0.8"/>
+<rect x="135.0" y="234.0" width="50.0" height="32.0" fill="none" stroke="#222" stroke-width="0.6"/>
+<text x="135.0" y="232.5" font-size="3.2" font-weight="normal" text-anchor="start" fill="#555">こたえ</text>
+</svg>

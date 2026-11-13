@@ -117,7 +117,7 @@
       "max_speed_z": 15.0,
       "invert_z": false
     },
-    "_note": "Pinch hand joystick (backend: --gesture). scheme = how the game reads the hand (pinch_joystick = this pinch stick, pose_direction = a hand shape per direction; settings of other schemes go in schemes.<id>; switching always stops the gesture). delegate = gpu (Metal: faster, and frees the CPU for the game). MediaPipe 1.1.1's GPU path keeps one image per frame (~1 GB per 30 s, aborting after ~8 min with 'Error creating pixel buffer: -6662') until the landmarker is closed, so it is rebuilt on a thread and swapped in every gpu_recreate_s. detection_confidence / tracking_confidence = MediaPipe's thresholds (tracking low so a fast, blurred hand is kept). pinch_start 1.0 / pinch_release 1.5 / confirm 0 were tuned by hand on the C270 (open the hand wide to release: check the ratio goes above 1.5). stale_ms = an event older than this stops the stick (CPU MediaPipe frames occasionally take 200-280 ms on an M4 MacBook Air; 150 stopped every few seconds). camera = part of the gesture camera's name (or an index). Pinch = |thumb tip - index tip| / hand size (the larger of |index MCP - pinky MCP| and 0.75 x |wrist - middle MCP|): starts <= pinch_start held pinch_confirm_ms, ends >= pinch_release held release_confirm_ms (tunable live from the debug panel: the gesture_config command). A hand lost (or a second hand / ambiguous) for less than lost_grace_ms keeps the last good frame (MediaPipe drops a moving hand for a frame or two). min_confidence gates the left/right score (0 = off: it drops for a hand seen from above). roi = operating region [x0, y0, x1, y1] in normalised image coords (keep it outside the crane's reach). joystick: radius = fraction of the image short side, deadzone / full = fractions of the radius, speed = ((r - deadzone)/(full - deadzone))^curve * max_speed_mm_s. allow_real_robot: true since the gesture was checked with the mock (2026-10-25); the robot must still be connected, motors on, homed, no alarm, nothing else moving (H toggles the mode)."
+    "_note": "Pinch hand joystick (backend: --gesture). enabled = only the default of a game started without start.sh (Godot directly): start.sh always passes --gesture or --no-gesture (gestures are on with ./start.sh and ./start.sh --mock, off with --game-only / --no-gesture). scheme = how the game reads the hand (pinch_joystick = this pinch stick, pose_direction = a hand shape per direction; settings of other schemes go in schemes.<id>; switching always stops the gesture). delegate = gpu (Metal: faster, and frees the CPU for the game). MediaPipe 1.1.1's GPU path keeps one image per frame (~1 GB per 30 s, aborting after ~8 min with 'Error creating pixel buffer: -6662') until the landmarker is closed, so it is rebuilt on a thread and swapped in every gpu_recreate_s. detection_confidence / tracking_confidence = MediaPipe's thresholds (tracking low so a fast, blurred hand is kept). pinch_start 1.0 / pinch_release 1.5 / confirm 0 were tuned by hand on the C270 (open the hand wide to release: check the ratio goes above 1.5). stale_ms = an event older than this stops the stick (CPU MediaPipe frames occasionally take 200-280 ms on an M4 MacBook Air; 150 stopped every few seconds). camera = part of the gesture camera's name (or an index). Pinch = |thumb tip - index tip| / hand size (the larger of |index MCP - pinky MCP| and 0.75 x |wrist - middle MCP|): starts <= pinch_start held pinch_confirm_ms, ends >= pinch_release held release_confirm_ms (tunable live from the debug panel: the gesture_config command). A hand lost (or a second hand / ambiguous) for less than lost_grace_ms keeps the last good frame (MediaPipe drops a moving hand for a frame or two). min_confidence gates the left/right score (0 = off: it drops for a hand seen from above). roi = operating region [x0, y0, x1, y1] in normalised image coords (keep it outside the crane's reach). joystick: radius = fraction of the image short side, deadzone / full = fractions of the radius, speed = ((r - deadzone)/(full - deadzone))^curve * max_speed_mm_s. allow_real_robot: true since the gesture was checked with the mock (2026-10-25); the robot must still be connected, motors on, homed, no alarm, nothing else moving (H toggles the mode)."
   },
   "camera": {
     "enabled": true,
@@ -139,6 +139,46 @@
     },
     "_note": "USB cameras by role (C270 = overview / gesture, Innomaker U20CAM = arm tip): overview = looks down on the desk (gesture detection later), focus = on the arm tip. match = part of the camera name (empty = none; pick one in the debug panel). The scope view shows focus, or overview when there is no focus camera. Frames are only drawn: never saved or sent."
   },
+  "settings_screen": {
+    "_note": "The settings screen (#93, the gear on the title screen): what it may change (#96: this section was config/settings_schema.json). It saves only these keys, only changed from game_config.json, to config/local_settings.json (not in Git); the game and the backend read that file over game_config.json and ignore any key or value not allowed here (a hand-edited file cannot change the calibration or the safety settings). Types: bool, enum (options: [value, label]), number (min, max, step), text (max_length). apply = when a saved change is used: now (the game applies it on 保存), restart (the next start of the game), backend (the next start of the backend: ./start.sh again).",
+    "file": "local_settings.json",
+    "sections": [
+      {"title": "勉強モード", "items": [
+        {"key": "study_mode.grade", "apply": "now", "label": "最初に出す学年", "type": "enum", "options": [["nursery_1", "保育園 年少"], ["nursery_2", "保育園 年中"], ["nursery_3", "保育園 年長"], ["elem_1", "小学1年"], ["elem_2", "小学2年"], ["elem_3", "小学3年"], ["elem_4", "小学4年"], ["elem_5", "小学5年"], ["elem_6", "小学6年"], ["jhs_1", "中学1年"], ["jhs_2", "中学2年"], ["jhs_3", "中学3年"]]},
+        {"key": "study_mode.demo.source", "apply": "now", "label": "プリントと解説", "type": "enum", "options": [["simulated", "模擬（カメラも AI も使わない。外部に何も送らない）"], ["camera", "カメラと AI（画像を Jev と Claude / Codex に送る）"]], "note": "アームは start.sh でつないだロボットで動く。模擬のときは実機を動かさない"},
+        {"key": "study_mode.demo.auto_answer", "apply": "now", "label": "1・2 問めを自動で記入（模擬）", "type": "bool"},
+        {"key": "study_mode.autostart", "apply": "restart", "label": "起動したらすぐ勉強モードで始める", "type": "bool", "note": "オンにするとタイトル画面を出さない"},
+        {"key": "homework.speech.enabled", "apply": "backend", "label": "UFOくんの声", "type": "bool"}
+      ]},
+      {"title": "画面と音", "items": [
+        {"key": "title_screen.enabled", "apply": "restart", "label": "起動時にタイトル画面を出す", "type": "bool", "note": "オフにするとこの画面も開けなくなる。戻すときは config/local_settings.json を消す"},
+        {"key": "audio.enabled", "apply": "now", "label": "効果音", "type": "bool"},
+        {"key": "audio.volume_db", "apply": "now", "label": "効果音の大きさ（dB）", "type": "number", "min": -40, "max": 0, "step": 1},
+        {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
+        {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
+      ]},
+      {"title": "ハンドジェスチャー", "items": [
+        {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum", "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"], ["pose_direction", "手の形で方向を決める"]]},
+        {"key": "gesture.camera", "apply": "backend", "label": "手のカメラ（名前の一部か番号）", "type": "text", "max_length": 80},
+        {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool", "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
+      ]},
+      {"title": "カメラ", "items": [
+        {"key": "camera.overview.match", "apply": "restart", "label": "俯瞰カメラ（名前の一部）", "type": "text", "max_length": 80},
+        {"key": "camera.focus.match", "apply": "restart", "label": "アームの先のカメラ（名前の一部）", "type": "text", "max_length": 80}
+      ]},
+      {"title": "Study タブ（カメラ学習アシスタント）", "items": [
+        {"key": "study.enabled", "apply": "backend", "label": "Study タブを使う", "type": "bool", "note": "画像を AI に送る。./start.sh --study も要る"},
+        {"key": "study.provider", "apply": "backend", "label": "アシスタント", "type": "enum", "options": [["claude", "Claude Code"], ["codex", "Codex"]]}
+      ]},
+      {"title": "実機", "items": [
+        {"key": "backend.serial_port", "apply": "backend", "label": "シリアルポート（空 = 自動検出）", "type": "text", "max_length": 200, "note": "./start.sh --port が優先。校正値はここでは変えられない"}
+      ]}
+    ]
+  },
+  "title_screen": {
+    "enabled": true,
+    "_note": "The first screen (#90): pick the study mode or the game mode; Esc comes back. Skipped when headless (tests / CI), with --no-title, and when the start is already decided (--study-mode / --study-demo / --scenario / --capture / --log-motion / --gesture-demo, or study_mode.autostart); --title shows it anyway. Presentation only: while it shows, the arm takes no manual input, gestures included (Space still stops); the debug panel opens above it (F1 / Tab)."
+  },
   "network": {
     "websocket_url": "ws://127.0.0.1:8765",
     "state_timeout_ms": 1500,
@@ -155,7 +195,7 @@
     "claude_command": "claude",
     "claude_model": "",
     "codex_command": "codex app-server --listen stdio://",
-    "_note": "Optional and off by default. It runs only when enabled here and the backend is started with --study. provider: claude (Claude Code CLI, signed in; claude is looked for in ~/.local/bin, Homebrew and the newest VS Code / Cursor extension when not on PATH; ~ is allowed) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
+    "_note": "The Study tab (camera study assistant). Optional and off by default. It runs only when enabled here and the backend is started with --study (./start.sh --study): two switches on purpose, as it sends camera frames to the assistant; start.sh stops with the reason when only --study is given. provider: claude (Claude Code CLI, signed in; claude is looked for in ~/.local/bin, Homebrew and the newest VS Code / Cursor extension when not on PATH; ~ is allowed) or codex (codex app-server). No tools, no MCP, no settings; no credentials are stored here."
   },
   "homework": {
     "enabled": false,
@@ -167,6 +207,7 @@
     "stall_s": 180.0,
     "stall_min_gain": 5.0,
     "advice_timeout_s": 120.0,
+    "explain_timeout_s": 150.0,
     "approach": {
       "hold_timeout_s": 15.0,
       "step_timeout_s": 30.0,
@@ -177,15 +218,50 @@
       "open_claw": true,
       "close_claw_after": false,
       "claw_settle_s": 0.5,
-      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/homework_spot.json) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot."
+      "_note": "近づいてアドバイス (#76): Z to the top, XY to the spot recorded with homework_spot_set (config/calibration.json homework_spot) or to a clicked overview point (#78), claws open (open_claw: the arm hangs from the rope and its camera cable can tilt it; standing on its open claws the camera looks straight down, so record the spot where the open claws stand on the worksheet), Z down to its height, wait for the game's capture (at most hold_timeout_s), Z back to the top (claws closed if close_claw_after), XY back to where it started (return_xy). Holds the motion lock like the auto catch; stop / soft_stop / motors off / the operator leaving / any fault end it with the robot's stop (ABORT). Not yet run on the real robot.",
+      "settle_s": 1.0
     },
     "camera_map": {
       "min_points": 4,
       "max_error_mm": 5.0,
       "margin_mm": 20.0,
-      "_note": "Overview camera image -> CoreXY XY (#78): a homography fitted to points recorded in the 宿題 tab (arm camera centred on a mark, the mark clicked in the overview image), saved in config/camera_xy_calibration.json. Not used to move when the fit's largest error is over max_error_mm, when the camera's size / flips changed since calibration, or for a point more than margin_mm outside the calibrated points. Not yet run on the real robot."
+      "_note": "Overview camera image -> CoreXY XY (#78): a homography fitted to points recorded in the 宿題 tab (arm camera centred on a mark, the mark clicked in the overview image), saved in config/calibration.json camera_xy. Not used to move when the fit's largest error is over max_error_mm, when the camera's size / flips changed since calibration, or for a point more than margin_mm outside the calibrated points. Not yet run on the real robot."
     },
-    "_note": "Homework watch (F1 panel tab). While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
+    "locate": {
+      "timeout_s": 120.0,
+      "jev_timeout_s": 30.0,
+      "require_jev": true,
+      "jev_margin": 0.02,
+      "max_box_area": 0.25,
+      "_note": "Which problem to look at (#79): the study assistant (study.provider) names the problem the child is stuck on (\"stuck\": compares the frame at the last progress gain with the frame now) or the next one to solve (\"next\") and gives its answer box in pixels; Jev is asked for the same answer box and the arm moves only when the centre of the assistant's box lies inside Jev's box widened by jev_margin (0..1 of the image; require_jev false moves on the assistant's box alone). Moving needs a usable camera_map. Not yet run on the real robot."
+    },
+    "speech": {
+      "enabled": true,
+      "engines": [
+        "voicevox",
+        "say"
+      ],
+      "voicevox_url": "http://127.0.0.1:50021",
+      "voicevox_speaker": 3,
+      "voicevox_sampling_rate": 24000,
+      "say_voice": "Kyoko",
+      "timeout_s": 15.0,
+      "max_chars": 120,
+      "_note": "Voice for the helper (#79), tried in this order: a local VOICEVOX engine (voicevox_speaker = a style id from GET /speakers; the game shows the credit \"VOICEVOX:<character>\" the VOICEVOX terms ask for; check the character's own terms), then the macOS say command (say_voice). The WAV is made by the backend and played by the game."
+    },
+    "helper": {
+      "offer": true,
+      "offer_text": "手伝おうか？",
+      "offer_repeat_s": 300.0,
+      "offer_window_s": 60.0,
+      "thumb_hold_ms": 800.0,
+      "keys": {
+        "stuck": "Y",
+        "next": "N"
+      },
+      "_note": "The game's helper (#79): when the backend reports a stall, say offer_text once (again after offer_repeat_s while still stalled). keys.stuck (or a thumbs-up held thumb_hold_ms within offer_window_s of the offer, only while the gesture control is off so the thumb never also moves the arm) locates the problem the child is stuck on and takes the arm's camera there; keys.next does it for the next problem to solve (H is the gesture on/off key). Thumbs-ups need the backend's hand camera (--gesture-camera)."
+    },
+    "_note": "Homework watch (F1 panel tab). enabled = this watch in the F1 panel; the backend's homework service also starts when study_mode.enabled is true (the study mode uses it), and nothing is captured until a watch is started. While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
   "backend": {
     "serial_port": "",
@@ -202,6 +278,160 @@
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
     "_note": "z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
+  },
+  "study_mode": {
+    "enabled": true,
+    "autostart": false,
+    "weekday": "monday",
+    "weekday_label": "月曜日",
+    "grade": "elem_3",
+    "_note": "UFOくん 勉強モード (#86). The title screen, F5, ./start.sh --study-mode or the game's --study-mode start it. enabled = the study mode is there, and the backend starts the homework service it needs (voice, per-problem watch, explanation) even when homework.enabled is false (homework.enabled is only the F1 panel's homework watch). Nothing is sent outside while demo.source is simulated. weekday_label = the day shown and said (fixed to Monday for the demo). grade = the first grade shown (nursery_1..3, elem_1..6, jhs_1..3; , / . change it on the intro screen). Worksheets: config/worksheets.json (python3 tools/build_worksheets.py; printable sheets in docs/worksheets/).",
+    "demo": {
+      "source": "simulated",
+      "_note": "What the study mode uses (#92). simulated = no camera, Jev or AI, nothing leaves the machine: the worksheet, the answers (keys 1/2/3), the problem's place (worksheet data + mock_desk) and the explanation (the worksheet's own hints) are simulated; the arm moves on a mock robot only (never the real crane). camera = the overview camera, Jev (Cloudflare) and Claude / Codex: frames are sent to them. Which robot is not set here: it is the one start.sh connected (./start.sh = the real crane, --mock = the backend's mock, --game-only = the game's own mock). With the real crane the backend still refuses what is not calibrated and confirmed below (the tidy-up separately). The earlier mode key is still read (mock = simulated, camera / real = camera).",
+      "worksheet_wait_s": 4.0,
+      "auto_answer": false,
+      "auto_answer_s": 6.0,
+      "mock_desk": {
+        "origin_xy_mm": [
+          90.0,
+          0.0
+        ],
+        "mm_per_paper_mm": 0.6,
+        "_note": "mock robot only: where the A4 page lies in robot XY (page x -> robot +x, page y -> robot +y from origin, scaled by mm_per_paper_mm so the 297 mm page fits the 200 mm Y travel), to aim the mock arm at problem 3."
+      }
+    },
+    "watch": {
+      "filled_prob": 0.6,
+      "writing_prob": 0.3,
+      "confirm_readings": 2,
+      "complete_readings": 2,
+      "_note": "Per-problem state from Jev's per-answer-box probability: >= filled_prob counts as a filled reading, >= writing_prob as writing, below as empty; a reading held (hand over the sheet, sheet not visible) changes nothing. A problem is filled after confirm_readings filled readings in a row (a later empty reading takes it back). The homework is complete after all 3 stayed filled for complete_readings readings in a row, or when a grown-up confirms it (Enter). Filled means written, never correct."
+    },
+    "help": {
+      "key": "Y",
+      "problem": 3,
+      "open_claw": false,
+      "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
+    },
+    "height": {
+      "capture_heights_cm": [
+        10.0,
+        5.0
+      ],
+      "real": {
+        "z_desk_tip": null,
+        "z_per_cm": null,
+        "camera_offset_cm": null,
+        "landing_tip_cm": null,
+        "min_clearance_cm": 1.0,
+        "allow_landing_contact": false,
+        "confirmed": {
+          "z_desk_tip": false,
+          "z_per_cm": false,
+          "camera_offset_cm": false,
+          "landing": false
+        }
+      },
+      "dry_run": {
+        "z_desk_tip": 20.0,
+        "z_per_cm": 4.0,
+        "camera_offset_cm": 3.0,
+        "landing_tip_cm": 1.5,
+        "min_clearance_cm": 1.0,
+        "allow_landing_contact": false
+      },
+      "_note": "Backend Z is an abstract unit, not a height above the desk. Z(camera h cm) = z_desk_tip + (z_up_is_positive ? +1 : -1) * (h - camera_offset_cm) * z_per_cm. z_desk_tip = Z where the claw tips touch the desk, z_per_cm = Z units per cm (measure with a block of known height), camera_offset_cm = lens above the claw tips, landing_tip_cm = claw tip height at the landing (below min_clearance_cm only with allow_landing_contact, after checking it on the robot). real: every null measured on the machine and every confirmed item set by hand, otherwise the staged descent is refused (NOT measured yet). dry_run: made-up values for the mock robot only."
+    },
+    "cleanup": {
+      "enabled_real": false,
+      "real": {
+        "jig_xy": null,
+        "jig_grip_z": null,
+        "travel_z": null,
+        "safe_z": null,
+        "claw_grip": "closed",
+        "claw_release": "open",
+        "route_xy": [],
+        "collect_xy": null,
+        "collect_z": null,
+        "collect_dwell_s": 1.0,
+        "park_xy": null,
+        "keep_out": [],
+        "xy_feed_mm_min": null,
+        "step_timeout_s": null,
+        "total_timeout_s": null,
+        "grip_confirm_timeout_s": 60.0,
+        "confirmed": {
+          "jig_xy": false,
+          "jig_grip_z": false,
+          "route": false,
+          "collect": false,
+          "speeds": false
+        }
+      },
+      "dry_run": {
+        "jig_xy": [
+          30.0,
+          20.0
+        ],
+        "jig_grip_z": 25.0,
+        "travel_z": 55.0,
+        "safe_z": 95.0,
+        "claw_grip": "closed",
+        "claw_release": "open",
+        "route_xy": [
+          [
+            110.0,
+            40.0
+          ],
+          [
+            300.0,
+            40.0
+          ],
+          [
+            300.0,
+            100.0
+          ],
+          [
+            110.0,
+            100.0
+          ],
+          [
+            110.0,
+            160.0
+          ],
+          [
+            300.0,
+            160.0
+          ]
+        ],
+        "collect_xy": [
+          360.0,
+          180.0
+        ],
+        "collect_z": 45.0,
+        "collect_dwell_s": 1.0,
+        "park_xy": [
+          195.0,
+          190.0
+        ],
+        "keep_out": [
+          [
+            180.0,
+            0.0,
+            215.0,
+            12.0
+          ]
+        ],
+        "xy_feed_mm_min": 1500.0,
+        "step_timeout_s": 30.0,
+        "total_timeout_s": 240.0,
+        "grip_confirm_timeout_s": 60.0,
+        "auto_confirm_grip_s": null
+      },
+      "_note": "Tidy-up with a magnet jig: claws open over the jig's stand (jig_xy), down to jig_grip_z, close, wait for a grown-up to confirm the grip (Enter; no sensor, never judged automatically; grip_confirm_timeout_s then FAULT), up to travel_z, the fixed route_xy (no free search), the collection spot (collect_xy, down to collect_z, collect_dwell_s), the jig back to its stand, safe_z, park_xy. Every point inside the soft limits and every segment clear of keep_out [x0, y0, x1, y1] is checked before moving. Only magnetic test objects (paper clips): pencils and erasers are not collected. Keep magnets away from children's mouths and electronics. real: off (enabled_real false) and every null measured / confirmed item set on the machine before it may run (NOT measured yet). dry_run: the mock robot only; auto_confirm_grip_s (dry run only) confirms by itself after that many seconds."
+    }
   },
   "auto_catch": {
     "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_zero reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",

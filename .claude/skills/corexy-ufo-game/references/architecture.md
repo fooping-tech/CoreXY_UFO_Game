@@ -56,7 +56,7 @@ Z に関わる値は 3 層あり、混同しやすい:
 | `robot.z_up_is_positive` | config（Godot と Python） | ゲームの Z 単位が大きいほどアームが高いか | 設計上の約束（true） |
 | `backend.z_sign` | config（Python） | `SERVO_TURN 1 +t` でアームが上がるなら 1 | **実機で未確認** |
 | `backend.z_counts_per_unit` | config（Python） | サーボの count / Z 単位（ドラム径で決まる） | **実機で未確認** |
-| Z 基準 | `RealRobot._z_top_counts` / `_z_bottom_counts` | `z_set top`（= `z_zero`）/ `bottom` 時の `abs=` カウント = アーム最上位 / 最下位。両方で `ZCalibration`（`z_counts_per_unit`・`z_sign` を実測、`config/z_calibration.json`） | ファームウェアの起動ごとに手で設定（換算は保存） |
+| Z 基準 | `RealRobot._z_top_counts` / `_z_bottom_counts` | `z_set top`（= `z_zero`）/ `bottom` 時の `abs=` カウント = アーム最上位 / 最下位。両方で `ZCalibration`（`z_counts_per_unit`・`z_sign` を実測、`config/calibration.json` の `z`） | ファームウェアの起動ごとに手で設定（換算は保存） |
 
 実機の Z が逆に動くときに直すのは `z_sign`。`rope_length_for_z` や `z_up_is_positive` を反転させて辻褄を合わせない（MockRobot やテストと矛盾する）。
 
@@ -75,4 +75,4 @@ Z に関わる値は 3 層あり、混同しやすい:
 | E-STOP | 速度 0、目標 = 現在位置。**ALARM にならない** | ALARM + `homed=false`（ファームウェアと同じ） |
 | 用途 | 物理・演出・シナリオ・キー操作 | プロトコル・安全手順・UI の配線 |
 
-安全手順や通信に関わる演出は、GDScript の Mock だけで確認して終わりにしない。`./start.sh mock` で確認する。
+安全手順や通信に関わる演出は、GDScript の Mock だけで確認して終わりにしない。`./start.sh --mock --no-gesture` で確認する。

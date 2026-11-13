@@ -27,7 +27,7 @@ import re
 import shlex
 import shutil
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -258,7 +258,7 @@ class ClaudeCodeStudyAdapter:
         return thread_id
 
     async def ask(self, thread_id: str, text: str, image_path: Path,
-                  on_delta: Callable[[str], Awaitable[None]]) -> str:
+                  on_delta: Callable[[str], Awaitable[None]], more_images: Sequence[Path] = ()) -> str:
         s = self._sessions.get(thread_id)
         if s is None:
             raise StudyAdapterError("unknown Claude Code session")
@@ -266,7 +266,7 @@ class ClaudeCodeStudyAdapter:
             await self._stop(s)
             await self._spawn(s)
             s.restarted = True
-        image = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        images = [base64.b64encode(p.read_bytes()).decode("ascii") for p in (*more_images, image_path)]
         turn = _Turn(on_delta=on_delta, done=asyncio.get_running_loop().create_future(),
                      turn_id=uuid.uuid4().hex)
         s.turn = turn
@@ -275,7 +275,8 @@ class ClaudeCodeStudyAdapter:
                 s.restarted = False
                 await on_delta(RESTARTED_NOTE)
             await self._write(s, {"type": "user", "message": {"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image}},
+                *({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image}}
+                  for image in images),
                 {"type": "text", "text": text},
             ]}})
             # shielded: a cancelled ask must not cancel this future, so that

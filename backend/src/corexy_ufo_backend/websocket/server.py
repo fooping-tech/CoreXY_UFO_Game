@@ -43,6 +43,26 @@ Ordering: commands of one connection run one after another (so enable_motors
 -> move_xy keeps its order), EXCEPT the out-of-band commands in PRIORITY_COMMANDS
 (stop, soft_stop, jog, get_state), which run immediately even while a long move
 of the same connection is still waiting for the firmware.
+
+Study mode (#86): homework_approach {xy?|u, v, camera, stages: "study"} takes the arm camera
+down in stages (camera 10 cm, 5 cm, the landing; heights from study_mode.height: the real
+robot's must be measured and confirmed) and holds at each for the capture
+(homework_approach_release {stage}). xy (a target in mm) is accepted only by the mock robot
+(the mock demo has no overview camera to click in). study_height_status. The tidy-up:
+study_cleanup_start (ACK = started; progress in robot_state.study_cleanup and
+{"type": "study_cleanup"} messages; holds the motion lock), study_cleanup_confirm (a grown-up
+saw the claw hold the jig), study_cleanup_status. Off on the real robot until
+study_mode.cleanup.enabled_real and its confirmed items are set.
+
+Homework messages (type homework_*, never the robot): start / frame / advice / stop, and
+(#79) homework_locate {session_id, kind: stuck|next, image_jpeg_base64} ->
+homework_locate_result {problem, u, v, verified, usable, ...} / homework_locate_error
+(the game then looks there with the homework_approach command {u, v}), and
+homework_say {text} -> homework_speech {wav_base64, engine, credit} / homework_speech_error.
+Study mode (#86): homework_start {worksheet_id} (per-problem answers in the progress),
+homework_locate {kind: problem, problem, worksheet_id}, homework_explain {images: [{role,
+image_jpeg_base64}], problem, grade_label, worksheet_id} -> homework_explain_result /
+homework_explain_error (with the worksheet's own hints as a fallback).
 """
 
 from __future__ import annotations
@@ -63,6 +83,8 @@ from ..robot.state import MachineState
 from ..homework.approach import ApproachParams, ApproachSequencer
 from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
+from ..sequence.cleanup import CleanupProfile, CleanupSequencer
+from ..study_mode.height import HeightCalibration, HeightError
 
 log = logging.getLogger(__name__)
 
@@ -74,19 +96,26 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
-            "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status")
+            "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
+            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
 PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status",
-                     "homework_approach_release", "homework_approach_status")
+                     "homework_approach_release", "homework_approach_status",
+                     "study_cleanup_confirm", "study_cleanup_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
 AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
-                      "gesture_config", "homework_approach_status", "camera_map_status")
+                      "gesture_config", "homework_approach_status", "camera_map_status", "study_cleanup_status",
+                      "study_height_status")
 # Accepted while the arm approaches the homework (anything else is refused as busy).
 APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
                     "homework_approach", "homework_approach_release", "homework_approach_status",
-                    "camera_map_status")
+                    "camera_map_status", "study_cleanup_status", "study_height_status")
+# Accepted while the study mode tidies up (anything else is refused as busy).
+CLEANUP_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
+                   "homework_approach_status", "camera_map_status", "study_cleanup_start", "study_cleanup_confirm",
+                   "study_cleanup_status", "study_height_status")
 
 
 def now_ms() -> int:
@@ -138,15 +167,25 @@ class GameServer:
         # Homework approach (#76): the arm's camera down to a recorded spot and back.
         self.approach = ApproachSequencer(
             robot, getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits()),
-            approach, spot_path=(backend_cfg.z_calibration_path.parent / "homework_spot.json"
-                                 if backend_cfg is not None and backend_cfg.z_calibration_path is not None else None),
+            approach, spot_path=backend_cfg.homework_spot_path if backend_cfg is not None else None,
             lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
-            other_active=lambda: self.auto.active, on_change=self._on_approach_change)
+            other_active=lambda: self.auto.active or self.cleanup.active, on_change=self._on_approach_change)
         self._approach_owner: ServerConnection | None = None
-        # Overview camera -> XY calibration (#78), next to the homework spot.
-        self.camera_map = CameraXYMap.load(
-            self.approach.spot_path.parent / "camera_xy_calibration.json" if self.approach.spot_path else None,
-            camera_map)
+        # Study mode (#86): capture heights and the tidy-up. The real robot uses the "real"
+        # profiles (refused until measured and confirmed), anything else the "dry_run" ones.
+        limits = getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits())
+        raw = backend_cfg.raw if backend_cfg is not None else {}
+        self.study_profile = "real" if robot.name == "real" else "dry_run"
+        self.height = HeightCalibration.from_raw(raw, self.study_profile)
+        self.study_open_claw = bool(((raw.get("study_mode") or {}).get("help") or {}).get("open_claw", False))
+        self.cleanup = CleanupSequencer(
+            robot, limits, CleanupProfile.from_raw(raw, self.study_profile), lock=self._motion_lock,
+            is_jogging=lambda: self._jog_owner is not None,
+            other_active=lambda: self.auto.active or self.approach.active, on_change=self._on_cleanup_change)
+        self._cleanup_owner: ServerConnection | None = None
+        # Overview camera -> XY calibration (#78): calibration.json's camera_xy section (#96).
+        self.camera_map = CameraXYMap.load(backend_cfg.camera_xy_path if backend_cfg is not None else None,
+                                           camera_map)
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -165,6 +204,9 @@ class GameServer:
         if self.approach.active:
             await self.approach.abort("backend shutting down during the homework approach")
             await self.approach.wait()
+        if self.cleanup.active:
+            await self.cleanup.abort("backend shutting down during the tidy-up")
+            await self.cleanup.wait()
         if self.study is not None:
             await self.study.close()
         if self.homework is not None:
@@ -282,6 +324,7 @@ class GameServer:
                 msg = self.robot.snapshot().to_message()
                 msg["data"]["auto_catch"] = self.auto.status()
                 msg["data"]["homework_approach"] = self.approach.status()
+                msg["data"]["study_cleanup"] = self.cleanup.status()
                 await self.broadcast(msg)
             except Exception:  # pragma: no cover
                 log.exception("state loop")
@@ -305,6 +348,13 @@ class GameServer:
             return
         loop.create_task(self.broadcast({"type": "homework_approach", "timestamp": now_ms(), "data": status}))
 
+    def _on_cleanup_change(self, status: dict) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover
+            return
+        loop.create_task(self.broadcast({"type": "study_cleanup", "timestamp": now_ms(), "data": status}))
+
     def _on_vision_event(self, event: dict) -> None:
         asyncio.get_event_loop().create_task(self.broadcast({"type": "vision_event", "timestamp": now_ms(), "data": event}))
 
@@ -314,7 +364,9 @@ class GameServer:
         log.info("client connected (%d)", len(self.clients))
         try:
             await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None,
-                "homework_advice": self.homework is not None and self.homework.advice_available}}))
+                "homework_advice": self.homework is not None and self.homework.advice_available,
+                "homework_speech": self.homework is not None and self.homework.speech_available,
+                "study_profile": self.study_profile}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
@@ -361,6 +413,9 @@ class GameServer:
             if self._approach_owner is ws and self.approach.active:
                 log.warning("the client running the homework approach disconnected: aborting it")
                 await self.approach.abort("operator disconnected during the homework approach")
+            if self._cleanup_owner is ws and self.cleanup.active:
+                log.warning("the client running the tidy-up disconnected: aborting it")
+                await self.cleanup.abort("operator disconnected during the tidy-up")
 
     async def _ordered_worker(self, ws: ServerConnection, queue: asyncio.Queue) -> None:
         while True:
@@ -398,7 +453,7 @@ class GameServer:
             return
         try:
             if msg["type"] == "homework_start":
-                result = await self.homework.start(session_id)
+                result = await self.homework.start(session_id, str(data.get("worksheet_id", "")))
                 self._homework_sessions.setdefault(ws, set()).add(session_id)
                 await self._study_send(ws, {"type": "homework_status", "data": result})
             elif msg["type"] == "homework_frame":
@@ -412,6 +467,22 @@ class GameServer:
                                            lambda reply: self._study_send(ws, reply))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "session_id": session_id, "state": "advising"}})
+            elif msg["type"] == "homework_locate":
+                await self.homework.locate(session_id, rid, str(data.get("kind", "")),
+                                           str(data.get("image_jpeg_base64", "")),
+                                           lambda reply: self._study_send(ws, reply),
+                                           problem=int(data.get("problem", 0) or 0),
+                                           worksheet_id=str(data.get("worksheet_id", "")))
+                await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
+                    "session_id": session_id, "state": "locating", "kind": str(data.get("kind", ""))}})
+            elif msg["type"] == "homework_explain":
+                await self.homework.explain(rid, data.get("images") or [], int(data.get("problem", 3) or 3),
+                                            str(data.get("grade_label", "")), str(data.get("worksheet_id", "")),
+                                            lambda reply: self._study_send(ws, reply))
+                await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
+                    "state": "explaining"}})
+            elif msg["type"] == "homework_say":
+                await self.homework.say(rid, str(data.get("text", "")), lambda reply: self._study_send(ws, reply))
             elif msg["type"] == "homework_stop":
                 result = await self.homework.stop(session_id)
                 self._homework_sessions.get(ws, set()).discard(session_id)
@@ -480,6 +551,8 @@ class GameServer:
             self._auto_owner = ws
         if name == "homework_approach" and reply.get("type") == "ack":
             self._approach_owner = ws
+        if name == "study_cleanup_start" and reply.get("type") == "ack":
+            self._cleanup_owner = ws
         if name == "jog" and reply.get("type") == "ack":
             moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
             self._jog_owner = ws if moving else None
@@ -501,26 +574,59 @@ class GameServer:
                 return self._nack(name, "busy: auto catch running (stop to abort)")
             if self.approach.active and name not in APPROACH_ALLOWED and not self._allowed_during_auto(name, params):
                 return self._nack(name, "busy: the arm is approaching the homework (stop to abort)")
+            if self.cleanup.active and name not in CLEANUP_ALLOWED and not self._allowed_during_auto(name, params):
+                return self._nack(name, "busy: the study mode is tidying up (stop to abort)")
             if name in MOTION_COMMANDS and self._motion_lock.locked():
                 return self._nack(name, "busy: another motion command is running")
             if name == "get_state":
                 data = self.robot.snapshot().to_message()["data"]
                 data["auto_catch"] = self.auto.status()
                 data["homework_approach"] = self.approach.status()
+                data["study_cleanup"] = self.cleanup.status()
                 return self._ack(name, data)
             if name == "homework_approach_status":
                 return self._ack(name, self.approach.status())
             if name == "homework_approach":
                 target = None
-                if "u" in params or "v" in params:
+                if "xy" in params:
+                    # the mock demo has no overview image: a target in mm, never for the real robot
+                    if self.robot.name == "real":
+                        return self._nack(name, "a target in mm (xy) is only for the mock robot: use u, v "
+                                                "and the camera calibration")
+                    xy = params.get("xy")
+                    target = (float(xy[0]), float(xy[1]))
+                elif "u" in params or "v" in params:
                     target = self.camera_map.to_xy(params.get("u"), params.get("v"),
                                                    camera_signature(params.get("camera")))
-                await self.approach.start(target)
+                stages = None
+                if params.get("stages") == "study":
+                    try:
+                        stages = [(st.name, st.z) for st in self.height.stages(self.approach.limits)]
+                    except HeightError as e:
+                        return self._nack(name, f"staged capture refused: {e}")
+                    if target is None:
+                        return self._nack(name, "a staged capture needs a target (u, v or xy)")
+                    await self.approach.start(target, stages, open_claw=self.study_open_claw)
+                else:
+                    await self.approach.start(target)
                 return self._ack(name, self.approach.status())
+            if name == "study_height_status":
+                return self._ack(name, self.height.status(self.approach.limits))
+            if name == "study_cleanup_status":
+                return self._ack(name, self.cleanup.status())
+            if name == "study_cleanup_start":
+                await self.cleanup.start()
+                return self._ack(name, self.cleanup.status())
+            if name == "study_cleanup_confirm":
+                if not self.cleanup.confirm():
+                    return self._nack(name, "nothing to confirm (the tidy-up is not waiting for the jig grip)")
+                return self._ack(name, self.cleanup.status())
             if name.startswith("camera_map_"):
                 return self._camera_map_command(name, params)
             if name == "homework_approach_release":
-                self.approach.release()
+                stage = str(params.get("stage", "") or "")
+                if not self.approach.release(stage) and stage:
+                    return self._nack(name, f"not holding at stage {stage!r} (now {self.approach.stage or '-'})")
                 return self._ack(name, self.approach.status())
             if name == "homework_spot_set":
                 self.approach.set_spot()
@@ -543,12 +649,14 @@ class GameServer:
                 if not bool(params.get("enable", False)):
                     await self.auto.abort("motors disabled during auto catch")
                     await self.approach.abort("motors disabled during the homework approach")
+                    await self.cleanup.abort("motors disabled during the tidy-up")
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
                 # flag first (no new step can start), then ABORT without any wait in between
                 await self.auto.abort("emergency stop (stop)", send_stop=False)
                 await self.approach.abort("emergency stop (stop)", send_stop=False)
+                await self.cleanup.abort("emergency stop (stop)", send_stop=False)
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
@@ -558,6 +666,9 @@ class GameServer:
                     return self._ack(name, self.robot.snapshot().to_message()["data"])
                 if self.approach.active:  # it moves the Z drum too: ABORT as well
                     await self.approach.abort("stopped (soft_stop) during the homework approach")
+                    return self._ack(name, self.robot.snapshot().to_message()["data"])
+                if self.cleanup.active:  # the Z drum and the claw too: ABORT as well
+                    await self.cleanup.abort("stopped (soft_stop) during the tidy-up")
                     return self._ack(name, self.robot.snapshot().to_message()["data"])
                 # outside the motion lock: it must reach a running move
                 await self.robot.soft_stop()
