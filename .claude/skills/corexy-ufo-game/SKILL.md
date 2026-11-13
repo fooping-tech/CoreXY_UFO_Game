@@ -37,7 +37,7 @@ description: >
 | 自動キャッチ（1 ボタン） | `backend/.../sequence/auto_catch.py`（状態機械）, `sequence/params.py`（校正値・範囲検査）, `robot/dry_run.py`（仮想クレーン・故障注入）, `main.gd::request_auto_catch` | `docs/auto_catch.md`。シーケンスはバックエンドがモーションロックを持って実行し、ゲームは表示と手動ロックだけ。異常は必ず FAULT + ABORT。`auto_catch.real` は実機で測って `confirmed` を立てるまで null のまま（推測で埋めない） |
 | Z 軸・座標変換 | `robot/robot_state.gd`, `config/game_config.json`, `real_robot.py::move_z` | [references/architecture.md](references/architecture.md) §3, [robot-protocol.md](references/robot-protocol.md) §3 |
 | ハンドジェスチャー | `backend/.../vision_service/hand_control.py`, `mediapipe_hands.py`（Tasks API）, `input/gesture_control.gd`（安全の枠）, `input/gesture_scheme.gd` / `input/pinch_joystick_scheme.gd` / `input/pose_direction_scheme.gd`（方式）, `input/hand_joystick.gd`, `input/control_arbiter.gd`, `ui/gesture_hud.gd`, `main.gd::_handle_input` | README「ハンドジェスチャー・ジョイスティック」。JOG を送るのは `_send_jog` だけ（調停の後）。強制停止はラッチ（指を離して新しくつまむまで再開しない）。鮮度は受信側の単調時計と sequence で判定。`gesture.allow_real_robot` は実機で確かめるまで false |
-| 設定画面（#93、タイトルの歯車） | `ui/settings_screen.gd`, `game_config.gd::save_local / load_local`, backend `config.py::local_overrides`, `config/settings_schema.json` | 保存先は Git に入らない `config/local_settings.json`。ゲームとバックエンドはスキーマにある項目・値だけを重ねる。**校正・安全の値をスキーマに足さない**。テストは `GameConfig.drop_local()` / `CXUFO_NO_LOCAL_SETTINGS=1` で手元のファイルを無視する |
+| 設定画面（#93、タイトルの歯車） | `ui/settings_screen.gd`, `game_config.gd::save_local / load_local`, backend `config.py::local_overrides`, `game_config.json` の `settings_screen` 節 | 保存先は Git に入らない `config/local_settings.json`。ゲームとバックエンドはスキーマにある項目・値だけを重ねる。**校正・安全の値をスキーマに足さない**。テストは `GameConfig.drop_local()` / `CXUFO_NO_LOCAL_SETTINGS=1` で手元のファイルを無視する |
 | 起動時のタイトル（#90） | `ui/title_screen.gd`, `main.gd::show_title / _on_title_chosen` | README「タイトル画面」。演出だけ（RobotState を書かない、コマンドを送らない）。表示中は `_handle_input` が halt、キーはタイトルが受け取る（Space・F1 / Tab は通す）。ヘッドレスでは出さない |
 | 勉強モード（#86） | `study_mode/study_mode_controller.gd`（体験の状態機械）, `study_mode/study_services.gd`（Mock / Jev / AI / ロボットの窓口）, `ui/study_hud.gd`, backend `study_mode/`・`homework/approach.py`（段階撮影）・`sequence/cleanup.py` | `docs/study_mode.md`。体験の状態は RobotState と別。動きはバックエンドのシーケンス 1 本（モーションロック）かゲーム内 Mock だけ、JOG は送らない。`study_mode.height.real` / `cleanup.real` は実機で測って `confirmed` を立てるまで null（推測で埋めない）。config の `demo.source` は simulated / camera だけで、ロボットは start.sh がつないだもの（#92: simulated は実機を動かさない） |
 | USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
@@ -87,7 +87,7 @@ description: >
 3. ソルバーを変えるなら伸びなし・UFO がロープ長を超えない・減衰・性能のテストを全部通す。詳細は [rope-physics.md](references/rope-physics.md)。
 
 ### C. 「実機の Z 軸と同期して」
-1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/z_calibration.json` に保存、設定値より優先）。
+1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
 2. ゲーム側の逆マッピング（`rope_length_for_z`）は正しい前提で触らない。ずれは backend の換算（`z_sign`, `z_counts_per_unit`）か基準設定の手順で直す。
 3. 実機での確認が必要（§5）。手順は `docs/HANDOFF.md` §6。詳細は [robot-protocol.md](references/robot-protocol.md) §3。
 

@@ -167,8 +167,7 @@ class GameServer:
         # Homework approach (#76): the arm's camera down to a recorded spot and back.
         self.approach = ApproachSequencer(
             robot, getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits()),
-            approach, spot_path=(backend_cfg.z_calibration_path.parent / "homework_spot.json"
-                                 if backend_cfg is not None and backend_cfg.z_calibration_path is not None else None),
+            approach, spot_path=backend_cfg.homework_spot_path if backend_cfg is not None else None,
             lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: self.auto.active or self.cleanup.active, on_change=self._on_approach_change)
         self._approach_owner: ServerConnection | None = None
@@ -184,10 +183,9 @@ class GameServer:
             is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: self.auto.active or self.approach.active, on_change=self._on_cleanup_change)
         self._cleanup_owner: ServerConnection | None = None
-        # Overview camera -> XY calibration (#78), next to the homework spot.
-        self.camera_map = CameraXYMap.load(
-            self.approach.spot_path.parent / "camera_xy_calibration.json" if self.approach.spot_path else None,
-            camera_map)
+        # Overview camera -> XY calibration (#78): calibration.json's camera_xy section (#96).
+        self.camera_map = CameraXYMap.load(backend_cfg.camera_xy_path if backend_cfg is not None else None,
+                                           camera_map)
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
