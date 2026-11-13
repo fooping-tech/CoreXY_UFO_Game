@@ -43,7 +43,13 @@ CoreXY_UFO_Game/
 - 新しいチェックアウトのときや、スクリプト（`.gd`）が Godot のクラスキャッシュより新しいときは、ゲームの前に Godot のインポートを自動で実行する（しないと新しい `class_name` が見つからず、スクリプトのエラーになる）。
 - 「スクリプトの実行が無効」と言われたら `powershell -ExecutionPolicy Bypass -File .\start.ps1 --mock` のように起動する（`-File` で起動すると `--` はそのまま渡る）。
 - カメラは名前の一部（config の `gesture.camera` の `"C270"` など）でも番号でも選べる。Windows では DirectShow の順番が番号になる（`.\start.ps1 --backend-only '--' --list-cameras` で一覧）。
-- Windows でまだ使えないもの: VOICEVOX がないときの予備の声（macOS の `say`）。
+- **Windows での今の制約**（2026-11-14 時点。Windows 11 + Godot 4.7.2 で確認）:
+  - **ゲーム内のカメラの映像は映らない**（俯瞰・アームのカメラ、スコープ、デバッグパネル）。Godot 4.7.2 の CameraServer が Windows ではカメラを 1 台も見つけない（`get_feed_count()` が 0 のまま。OpenCV からは同じカメラが見える）。また Windows では 1 台のカメラを同時に 1 つのアプリしか開けないので、バックエンドがジェスチャーに使っているカメラ（config の `gesture.camera`、既定 C270）は、ゲームの俯瞰カメラ（`camera.overview.match`、既定 C270）と同時には使えない。直すには、バックエンドが映像をゲームに送る経路が要る（未実装）
+  - ハンドジェスチャーは動く（カメラはバックエンドが直接読む。上のカメラの映像とは別）
+  - ポートの自動検出は macOS のポート名向け。実機は `--port COM6` のように指定する
+  - VOICEVOX がないときの予備の声（macOS の `say`）はない
+  - 原点復帰の前に、毎回（接続のたびに）Z の上端を記録し直す。これは Windows に限らない仕様: モーター有効 → ▲ でアームを最上位まで巻き上げる → 上端を記録（`z_set top`）→ 原点復帰。原点復帰が済むまでカーソルキーの JOG も「原点復帰していない」で断られる
+  - 実機での確認はまだ途中（シリアルの応答は確認済み。原点復帰・JOG・終了時の ABORT は Windows では未確認）
 
 ## 起動のしかた（`start.sh`）
 
