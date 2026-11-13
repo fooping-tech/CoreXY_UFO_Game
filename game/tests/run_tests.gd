@@ -61,6 +61,7 @@ func _ready() -> void:
 	_test_study_mode_backend_messages(rs)
 	_test_title_screen(rs)
 	_test_settings(rs)
+	_test_calibration_tab(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2232,6 +2233,73 @@ func _test_settings(rs: Node) -> void:
 		"settings: 既定に戻す + 保存 empties the overrides")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	GameConfig.local_path = real_path
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _find_button(n: Node, text: String) -> Button:
+	if n is Button and (n as Button).text == text:
+		return n
+	for c in n.get_children():
+		var b := _find_button(c, text)
+		if b != null:
+			return b
+	return null
+
+func _test_calibration_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	game.ui_jog_z = 1.0  # as if W were held (the debug panel's hold button uses the same path)
+	game._handle_input(0.1)
+	var held_on_settings: bool = game.control_source == "halt" and not game.calibrating()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._handle_input(0.1)
+	var moves: bool = game.calibrating() and game.control_source != "halt"
+	_ok(held_on_settings and moves and game.title_active(),
+		"calibration: the keys move the arm only on the 校正 tab (the title stays up)", game.control_source)
+	_ok(game.gesture_gate() != "", "calibration: the hand gestures stay off on the 校正 tab")
+	var deg0: float = game.mock.arm_deg
+	game._unhandled_input(_key(KEY_BRACKETRIGHT))
+	var turned: bool = not is_equal_approx(game.mock.arm_deg, deg0)
+	game._unhandled_input(_key(KEY_C))
+	_ok(turned and not rs.auto_catch_active() and st.calibrating(),
+		"calibration: [ ] turn the claw there; C (the auto catch) still goes nowhere")
+	var open_b := _find_button(st.calibration, "ここを開きに記録")
+	open_b.pressed.emit()
+	_ok(is_equal_approx(float(game.mock.arm_marks.get("open", NAN)), game.mock.arm_deg),
+		"calibration: 開きに記録 records the claw position (the game's mock here)")
+	st.calibration.refresh()
+	var z_b := _find_button(st.calibration, "ここを上に記録")
+	_ok(z_b.disabled and st.calibration._link.text.contains("バックエンドなし"),
+		"calibration: without a backend the Z / spot / camera buttons cannot be pressed, with the reason")
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.mock.target.is_equal_approx(game.mock.pos) and st.calibrating(), "calibration: Space still stops")
+	game.ws.ack.emit("r1", false, {"command": "home",
+		"reason": "the arm is not wound up (Z 3.0, top 100): raise it to the top before homing"})
+	st._process(0.0)
+	var refused: String = st._status.text
+	game.ws.ack.emit("r2", false, {"command": "jog", "reason": "busy"})
+	st._process(0.0)
+	_ok(refused.contains("原点復帰 は断られました") and refused.contains("巻き上げ")
+		and st._status.text == refused,
+		"calibration: a refused command shows why under the tab (a jog's refusal does not replace it)", refused)
+	game.ws.ack.emit("r3", true, {"command": "z_set"})
+	st._process(0.0)
+	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	st.show_tab(0)
+	game._handle_input(0.1)
+	var held_again: bool = game.control_source == "halt"
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	game._handle_input(0.1)
+	_ok(held_again and not game.settings_active() and game.title_active() and game.control_source == "halt",
+		"calibration: back on the settings tab or closed, the arm is held again")
+	game.open_settings()
+	_ok(not game.calibrating(), "calibration: the settings screen always opens on the settings tab")
+	game.ui_jog_z = 0.0
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
