@@ -35,11 +35,21 @@ if want secrets; then
   record $? "secrets"
 fi
 
+# start.ps1 (Windows) in its dry run; pwsh is on the CI runners. Skipped (not failed) without it.
+test_start_ps1() {
+  if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -File "$ROOT/tools/test_start_ps1.ps1"
+  else
+    echo "pwsh が見つからないので start.ps1 のテストは省略"
+  fi
+}
+
 if want tooling; then
-  step "dev tooling (guard hook + dev_state + start.sh)"
+  step "dev tooling (guard hook + dev_state + start.sh + start.ps1)"
   python3 "$ROOT/.claude/hooks/guard_git.py" --self-test && \
     python3 -m unittest discover -s "$ROOT/.claude/skills/dev/scripts" -p 'test_*.py' && \
-    "$ROOT/tools/test_start_sh.sh"
+    "$ROOT/tools/test_start_sh.sh" && \
+    test_start_ps1
   record $? "tooling"
 fi
 
