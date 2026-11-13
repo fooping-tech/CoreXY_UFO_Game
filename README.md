@@ -42,7 +42,8 @@ CoreXY_UFO_Game/
 - ゲームを閉じたら（Ctrl-C でも）、バックエンドの標準入力を閉じて、Ctrl-C と同じ順番で止まらせる（サーバー → ロボット。動作中なら ABORT）。`START_SH_STOP_WAIT_S` 秒（既定 15）以内に止まらないときだけ強制終了する。強制終了したときは、実機が動いていたら非常停止ボタンか電源で止める（USB が切れても実機の動きは止まらない）。
 - 新しいチェックアウトのときや、スクリプト（`.gd`）が Godot のクラスキャッシュより新しいときは、ゲームの前に Godot のインポートを自動で実行する（しないと新しい `class_name` が見つからず、スクリプトのエラーになる）。
 - 「スクリプトの実行が無効」と言われたら `powershell -ExecutionPolicy Bypass -File .\start.ps1 --mock` のように起動する（`-File` で起動すると `--` はそのまま渡る）。
-- Windows でまだ使えないもの: カメラを名前で選ぶこと（`--gesture-camera` は番号で）、`--list-cameras`（macOS だけ）、VOICEVOX がないときの予備の声（macOS の `say`）。
+- カメラは名前の一部（config の `gesture.camera` の `"C270"` など）でも番号でも選べる。Windows では DirectShow の順番が番号になる（`.\start.ps1 --backend-only '--' --list-cameras` で一覧）。
+- Windows でまだ使えないもの: VOICEVOX がないときの予備の声（macOS の `say`）。
 
 ## 起動のしかた（`start.sh`）
 
@@ -159,7 +160,7 @@ CoreXY_UFO_Game/
 |---|---|
 | `--mock` | 仮想クレーンを使う（シリアルなし。自動キャッチはドライラン）。`./start.sh --mock` が付ける |
 | `--port <PORT>` / `--baud <速度>` | シリアルポートと速度（既定は config か自動検出） |
-| `--list-ports` / `--list-cameras` | シリアルポート / カメラ（OpenCV の番号）の一覧を出して終わる |
+| `--list-ports` / `--list-cameras` | シリアルポート / カメラ（OpenCV の番号。macOS と Windows）の一覧を出して終わる |
 | `--ws-host <host>` / `--ws-port <port>` | WebSocket の待ち受け（既定は config の `network.websocket_url`）。変えたときはゲームの接続先も合わせる |
 | `--state-hz <Hz>` | 状態の送信頻度 |
 | `--study` | カメラ学習アシスタント（Study タブ）を使う。config の `study.enabled: true` も必要 |

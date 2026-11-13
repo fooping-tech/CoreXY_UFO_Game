@@ -62,8 +62,14 @@ class _CameraWorker:
             self.error = "opencv-python not installed (uv sync --extra vision)"
             log.error(self.error)
             return
-        # AVFoundation explicitly on macOS: its indices follow camera_index_by_name()
-        cap = cv2.VideoCapture(self.cfg.index, cv2.CAP_AVFOUNDATION) if sys.platform == "darwin" else cv2.VideoCapture(self.cfg.index)
+        # the backend whose indices cameras.list_cameras() follows: AVFoundation on macOS,
+        # DirectShow on Windows
+        if sys.platform == "darwin":
+            cap = cv2.VideoCapture(self.cfg.index, cv2.CAP_AVFOUNDATION)
+        elif sys.platform == "win32":
+            cap = cv2.VideoCapture(self.cfg.index, cv2.CAP_DSHOW)
+        else:
+            cap = cv2.VideoCapture(self.cfg.index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.height)
         if not cap.isOpened():

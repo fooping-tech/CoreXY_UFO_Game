@@ -25,7 +25,7 @@ from .sequence import Phase
 from .sequence.dry_run import known_faults, make_dry_run_robot, run_dry
 from .serial_service.transport import list_serial_ports
 from .vision_service import CameraConfig, VisionService
-from .vision_service.cameras import list_cameras_macos, resolve_camera
+from .vision_service.cameras import list_cameras, resolve_camera
 from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
 from .config import REPO_ROOT
@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="hand joystick: pinch events (hand_control) from CAMERA (index or part of its name; "
                         "default config gesture.camera)")
     p.add_argument("--gesture-landmarks", action="store_true", help="include the 21 landmarks in hand_control (debug)")
-    p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS)")
+    p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS / Windows)")
     p.add_argument("--study", action="store_true",
                    help="enable the optional camera study assistant (also requires study.enabled in config)")
     p.add_argument("--stop-on-stdin-close", action="store_true",
@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{p['device']}\t{p['description']}\t{p['hwid']}")
         return 0
     if args.list_cameras:
-        for i, c in enumerate(list_cameras_macos()):
+        for i, c in enumerate(list_cameras()):
             print(f"{i}\t{c['name']}\t{c['unique_id']}")
         return 0
     if args.auto_catch_dry_run is not None:
