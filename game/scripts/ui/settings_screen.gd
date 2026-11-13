@@ -137,12 +137,16 @@ func _on_tab_changed(i: int) -> void:
 	_save_b.visible = not cal
 	_cancel_b.text = "閉じる（Esc）" if cal else "キャンセル（Esc）"
 	_status.text = ""
+	_status.add_theme_color_override("font_color", YELLOW)
 	if cal and calibration != null:
 		calibration.opened()
 
 func _process(_dt: float) -> void:
 	if calibrating():
 		calibration.refresh()
+		if calibration.result_text != "":  # the backend's answer, under the scrolled tab
+			_status.text = calibration.result_text
+			_status.add_theme_color_override("font_color", CalibrationPanel.GOOD if calibration.result_ok else CalibrationPanel.BAD)
 
 func _button(text: String, cb: Callable) -> Button:
 	var b := Button.new()

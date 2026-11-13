@@ -23,10 +23,26 @@ var _cam: Label
 var _overview: OverviewPicker
 var _focus: OverviewPicker
 var _ws_buttons: Array[Button] = []  # need the backend
+## The last calibration command's answer from the backend ("" = none yet), shown by the
+## settings screen under the tabs (visible wherever the tab is scrolled).
+var result_text := ""
+var result_ok := true
+
+## The commands this tab sends (directly or through main.gd / the homework client), with
+## the words shown for their answer.
+const COMMANDS := {
+	"enable_motors": "モーター", "home": "原点復帰", "z_set": "Z の記録",
+	"arm_step": "爪を回す", "arm_set": "爪の記録", "arm_goto": "爪の開け閉め",
+	"homework_spot_set": "宿題の位置の記録",
+	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
+	"camera_map_clear": "カメラの点を消す",
+}
 
 func setup(m: Node) -> void:
 	main = m
 	hw = main.homework_for_calibration()
+	if main.get("ws") != null:
+		main.ws.ack.connect(_on_ack)
 	add_theme_constant_override("separation", 6)
 	_note("この画面を開いている間は、キーでアームを動かせる: 矢印 = XY、W / S = 上下、[ ] = 爪を回す、"
 		+ "Q / A = 爪を開く / 閉じる、Space = 止める。測った値はバックエンドが config/calibration.json に保存する"
@@ -132,12 +148,44 @@ func _ws_button(parent: Control, text: String, cb: Callable) -> Button:
 	_ws_buttons.append(b)
 	return b
 
+## A calibration command answered (ack / nack): kept for the screen while the tab shows.
+func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
+	var cmd := str(data.get("command", ""))
+	if not COMMANDS.has(cmd) or not is_visible_in_tree():
+		return
+	result_ok = ok
+	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
+		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
+
+## A refusal's reason as what to do next (the backend's own words when it is not known).
+static func reason_text(reason: String) -> String:
+	var r := reason.to_lower()
+	if r.contains("wind the arm up") or r.contains("not wound up"):
+		return "先に W でアームを一番上まで巻き上げる（Z の上を記録してから原点復帰）。" + reason
+	if r == "timeout":
+		return "バックエンドから返事がない"
+	if r == "socket_closed":
+		return "バックエンドとの接続が切れた"
+	if r.contains("not connected"):
+		return "実機に未接続（バックエンドとシリアルを確認）"
+	if r.contains("motors not enabled"):
+		return "モーターが無効:「モーター有効」を押す"
+	if r.contains("alarm"):
+		return "アラーム中: デバッグパネル（F1）でアラーム解除 →「原点復帰」"
+	if r.contains("not homed") or r.contains("not_homed"):
+		return "原点復帰が必要:「原点復帰」を押す"
+	if r.contains("busy"):
+		return "ほかの動きの途中: 終わるまで待つか Space で止める"
+	return reason if reason != "" else "理由不明"
+
 func _on_picked(uv: Vector2) -> void:
 	if hw != null:
 		hw.calib_add(uv)
 
 ## When the tab opens: ask the backend for the camera map's state.
 func opened() -> void:
+	result_text = ""
+	result_ok = true
 	if hw != null and backend_ready():
 		hw.request_camera_map()
 	refresh()

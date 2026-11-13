@@ -2277,6 +2277,18 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
 	game._unhandled_input(_key(KEY_SPACE))
 	_ok(game.mock.target.is_equal_approx(game.mock.pos) and st.calibrating(), "calibration: Space still stops")
+	game.ws.ack.emit("r1", false, {"command": "home",
+		"reason": "the arm is not wound up (Z 3.0, top 100): raise it to the top before homing"})
+	st._process(0.0)
+	var refused: String = st._status.text
+	game.ws.ack.emit("r2", false, {"command": "jog", "reason": "busy"})
+	st._process(0.0)
+	_ok(refused.contains("原点復帰 は断られました") and refused.contains("巻き上げ")
+		and st._status.text == refused,
+		"calibration: a refused command shows why under the tab (a jog's refusal does not replace it)", refused)
+	game.ws.ack.emit("r3", true, {"command": "z_set"})
+	st._process(0.0)
+	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
 	st.show_tab(0)
 	game._handle_input(0.1)
 	var held_again: bool = game.control_source == "halt"
