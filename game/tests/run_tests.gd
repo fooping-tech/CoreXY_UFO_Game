@@ -2289,7 +2289,19 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.ws.ack.emit("r3", true, {"command": "z_set"})
 	st._process(0.0)
 	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	var free_here: bool = game.jog_params(Vector3(0, 0, -5)).get("z_free", false) == true
+	RobotState.z_calibrated = true
+	RobotState.z_reference_set = true
+	var hint_here: String = game.z_end_hint_for(-5.0, 0.0)
 	st.show_tab(0)
+	var usual: Dictionary = game.jog_params(Vector3(0, 0, -5))
+	_ok(free_here and not usual.has("z_free"),
+		"calibration: only the 校正 tab's jog goes past the measured Z range (z_free, #102)", str(usual))
+	_ok(game.z_end_hint_for(-5.0, 0.0).contains("校正") and game.z_end_hint_for(-5.0, 50.0) == ""
+		and game.z_end_hint_for(5.0, 0.0) == "" and hint_here.contains("校正"),
+		"calibration: S held at the measured bottom says how to measure it again")
+	RobotState.z_calibrated = false
+	RobotState.z_reference_set = false
 	game._handle_input(0.1)
 	var held_again: bool = game.control_source == "halt"
 	st.show_tab(SettingsScreen.CALIBRATION_TAB)

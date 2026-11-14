@@ -104,6 +104,36 @@ async def test_z_jog_stays_inside_the_range_once_referenced_and_measured():
         await robot.disconnect()
 
 
+async def test_the_calibration_tab_jogs_past_the_measured_range():
+    """#102: a longer rope -> the saved calibration's bottom stops S; the 校正 tab's jog
+    (z_free) goes past both ends so the new top / bottom can be recorded."""
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.set_z_zero()  # z = 100 = top
+        measured(robot)
+        robot.serial.transport.servo_abs[1] -= int(130 * 122.88)  # the arm below the old bottom
+        await poll_z(robot)
+        assert robot.snapshot().z < robot.limits.z_min
+        await robot.jog(0, 0, -10)  # the usual jog stops at the end of the range
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0"
+        await robot.jog(0, 0, -10, z_free=True)  # the 校正 tab goes on down
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 -1229 0"
+        await robot.jog(0, 0, 0)
+    finally:
+        await robot.disconnect()
+    robot = await make_robot()
+    try:
+        await robot.enable_motors(True)
+        await robot.set_z_zero()  # z = 100 = top
+        measured(robot)
+        await robot.jog(0, 0, 10, z_free=True)  # and up past the measured top
+        assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 1229 0"
+        await robot.jog(0, 0, 0)
+    finally:
+        await robot.disconnect()
+
+
 async def test_jog_pos_z_abs_updates_z_during_a_jog():
     robot = await make_robot()
     try:

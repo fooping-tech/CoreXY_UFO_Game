@@ -259,6 +259,26 @@ async def test_server_jog_and_soft_stop(server):
             assert (await _cmd(ws, "j4", "jog", vx=0, vy=0))["type"] == "ack"  # release always allowed
 
 
+async def test_server_passes_z_free_only_when_true(server):
+    """#102: the 校正 tab's jog says z_free: true; anything else is the usual jog."""
+    srv, robot, port = server
+    seen = []
+    orig = robot.jog
+
+    async def spy(vx, vy, vz=0.0, *, z_free=False):
+        seen.append(z_free)
+        await orig(vx, vy, vz, z_free=z_free)
+
+    robot.jog = spy
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _cmd(ws, "e1", "enable_motors", enable=True)
+        await _cmd(ws, "z1", "jog", vx=0, vy=0, vz=-5, z_free=True)
+        await _cmd(ws, "z2", "jog", vx=0, vy=0, vz=-5, z_free="yes")
+        await _cmd(ws, "z3", "jog", vx=0, vy=0, vz=-5)
+        await _cmd(ws, "z4", "jog", vx=0, vy=0, vz=0)
+    assert seen == [True, False, False, False]
+
+
 # ------------------------------------------------------------------ server ordering / responsiveness
 class SlowRobot(MockRobot):
     """move_xy that takes a while (like the real robot waiting for ACK_XY) and a slow tick."""

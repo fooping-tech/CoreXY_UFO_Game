@@ -1042,6 +1042,8 @@ func _process(_dt: float) -> void:
 	var hint: String = main.jog_hint
 	if hint == "" and RobotState.source == "websocket" and RobotState.robot_error.begins_with("jog rejected"):
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
+	if main.z_end_hint != "":
+		hint += ("\n" if hint != "" else "") + main.z_end_hint
 	if RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset and RobotState.z_servo_jog_recovers:
 		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。▲ / ▼ を押せば動く。上下の点を記録し直す"
 	elif RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset:

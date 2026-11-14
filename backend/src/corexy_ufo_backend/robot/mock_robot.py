@@ -122,7 +122,7 @@ class MockRobot(RobotInterface):
             raise RobotCommandError("not connected")
         self.arm_deg = 0.0
 
-    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0, *, z_free: bool = False) -> None:
         if vx_mm_s == 0 and vy_mm_s == 0 and vz_units_s == 0:
             self._end_jog()
             return

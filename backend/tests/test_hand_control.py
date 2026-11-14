@@ -207,9 +207,9 @@ async def test_a_jog_without_refresh_expires_on_the_host():
     robot = await _ready_mock()
     robot_jog_calls = []
     orig = robot.jog
-    async def spy(vx, vy, vz=0.0):
+    async def spy(vx, vy, vz=0.0, *, z_free=False):
         robot_jog_calls.append((vx, vy, vz))
-        await orig(vx, vy, vz)
+        await orig(vx, vy, vz, z_free=z_free)
     robot.jog = spy
     srv, port = await _server(robot)
     srv.jog_expiry_s = 0.15
@@ -292,9 +292,9 @@ async def test_a_stop_ends_the_jog_expiry_watch():
     robot = await _ready_mock()
     calls = []
     orig = robot.jog
-    async def spy(vx, vy, vz=0.0):
+    async def spy(vx, vy, vz=0.0, *, z_free=False):
         calls.append((vx, vy, vz))
-        await orig(vx, vy, vz)
+        await orig(vx, vy, vz, z_free=z_free)
     robot.jog = spy
     srv, port = await _server(robot)
     srv.jog_expiry_s = 0.15
