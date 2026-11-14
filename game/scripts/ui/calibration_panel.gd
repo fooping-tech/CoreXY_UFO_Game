@@ -23,6 +23,13 @@ var _cam: Label
 var _overview: OverviewPicker
 var _focus: OverviewPicker
 var _ws_buttons: Array[Button] = []  # need the backend
+## #114: Jev / the tutor AI / Claude Code / VOICEVOX reachable? (services_check)
+var services: Array = []
+var _services: Label  # the whole list as text (tests; hidden)
+var _services_box: VBoxContainer  # one coloured line per check
+var _services_shown := ""
+var _services_asking := false
+var _asked := false  # this opening's requests went out (the backend may connect later)
 ## #110: the study mode's capture heights
 var height_status: Dictionary = {}
 var _height: Label
@@ -56,6 +63,17 @@ func setup(m: Node) -> void:
 	_note("この画面を開いている間は、キーでアームを動かせる: 矢印 = XY、W / S = 上下、[ ] = 爪を回す、"
 		+ "Q / A = 爪を開く / 閉じる、Space = 止める。測った値はバックエンドが config/calibration.json に保存する"
 		+ "（この機械だけの値。Git には入らない）。")
+
+	_head("0. AI・外部サービス")
+	_note("勉強モードで使う外部のサービスにつながるか（タブを開くと確かめる。推論・課金はしない）。"
+		+ "「AI に試しに質問する」は、サンプルのプリント 1 枚と短い質問を解説の AI に 1 回送る。")
+	_services = _value()
+	_services.visible = false
+	_services_box = VBoxContainer.new()
+	add_child(_services_box)
+	var srow := _row()
+	_ws_button(srow, "もう一度確かめる", func(): check_services(false))
+	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
 
 	_head("つながり")
 	_link = _value()
@@ -265,6 +283,18 @@ func _ws_button(parent: Control, text: String, cb: Callable) -> Button:
 ## A calibration command answered (ack / nack): kept for the screen while the tab shows.
 func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	var cmd := str(data.get("command", ""))
+	if cmd == "services_check":
+		_services_asking = false
+		if ok and data.get("results") is Array:
+			# an "ask" run adds its line to the last check
+			var asked: Array = (data.results as Array).filter(func(r): return r is Dictionary and r.get("name") == "ask")
+			if asked.is_empty() or services.is_empty():
+				services = data.results
+			else:
+				services = services.filter(func(r): return r is Dictionary and r.get("name") != "ask") + asked
+		elif not ok:
+			services = [{"name": "backend", "label": "バックエンド", "status": "ng", "detail": str(data.get("reason", ""))}]
+		return
 	if cmd == "study_height_status":  # asked when the tab opens: no message
 		if ok:
 			show_heights(data)
@@ -326,11 +356,39 @@ func opened() -> void:
 	result_ok = true
 	restore_estimate = {}
 	_z_restore.text = ""
-	if hw != null and backend_ready():
-		hw.request_camera_map()
-	if backend_ready():
-		main.ws.send_command("study_height_status")
+	_asked = false
+	_ask_backend()
 	refresh()
+
+## The tab's questions to the backend, once per opening: at once, or when it connects (the tab
+## opens at start, #114, often before the backend's WebSocket is up).
+func _ask_backend() -> void:
+	if _asked or not backend_ready():
+		return
+	_asked = true
+	if hw != null:
+		hw.request_camera_map()
+	main.ws.send_command("study_height_status")
+	check_services(false)
+
+func check_services(ask: bool) -> void:
+	if not backend_ready():
+		return
+	_services_asking = true
+	main.ws.send_command("services_check", {"ask": ask})
+
+## The checks in words (#114): ✓ ok, ✗ the reason, － not used here.
+static func services_text(rows: Array, asking: bool) -> String:
+	if rows.is_empty():
+		return "確かめています…" if asking else "（バックエンドにつながると確かめる）"
+	var lines: Array[String] = []
+	for r in rows:
+		if r is Dictionary:
+			var mark: String = {"ok": "✓", "ng": "✗"}.get(str(r.get("status", "")), "－")
+			lines.append("%s %s: %s" % [mark, str(r.get("label", r.get("name", ""))), str(r.get("detail", ""))])
+	if asking:
+		lines.append("（確かめています…）")
+	return "\n".join(lines)
 
 func backend_ready() -> bool:
 	return main != null and RobotState.source == "websocket" and main.ws.enabled and main.ws.is_open()
@@ -342,6 +400,21 @@ func refresh() -> void:
 	var ready := backend_ready()
 	for b in _ws_buttons:
 		b.disabled = not ready
+	if ready and not _asked and is_visible_in_tree():
+		_ask_backend()
+	_services.text = services_text(services, _services_asking)
+	if _services.text != _services_shown:  # one line per check, coloured by its own result
+		_services_shown = _services.text
+		for c in _services_box.get_children():
+			c.queue_free()
+		var lines := _services.text.split("\n")
+		for line in lines:
+			var l := StudyHud.label(line, 17, YELLOW, 2)
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(860, 0)
+			var colour: Color = GOOD if line.begins_with("✓") else (BAD if line.begins_with("✗") else (MUTED if line.begins_with("－") else YELLOW))
+			l.add_theme_color_override("font_color", colour)
+			_services_box.add_child(l)
 	_height.text = height_text(height_status)
 	_height.add_theme_color_override("font_color", GOOD if bool(height_status.get("usable", false)) else YELLOW)
 	if RobotState.source != "websocket":

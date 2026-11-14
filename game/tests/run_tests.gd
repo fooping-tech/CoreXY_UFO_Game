@@ -2394,6 +2394,20 @@ func _test_device_test_tab(rs: Node) -> void:
 	rs.clear_samples()
 
 func _test_calibration_tab(rs: Node) -> void:
+	# #114: at start the 校正 tab opens over the title (the backend's checks come when it connects)
+	var g0 := _study_game()
+	g0.show_title()
+	g0.open_startup_screen()
+	var first: bool = g0.settings_active() and g0.settings.calibrating() and g0.title_active()
+	g0._unhandled_input(_key(KEY_ESCAPE))
+	_ok(first and not g0.settings_active() and g0.title_active(),
+		"startup: the 校正 tab opens first, Esc shows the title (#114)")
+	GameConfig.data["title_screen"]["calibration_first"] = false
+	g0.open_startup_screen()
+	_ok(not g0.settings_active(), "startup: calibration_first false keeps the title")
+	GameConfig.data["title_screen"]["calibration_first"] = true
+	remove_child(g0)
+	g0.free()
 	var game := _study_game()
 	var st: SettingsScreen = game.settings
 	game.show_title()
@@ -2436,6 +2450,20 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.ws.ack.emit("r3", true, {"command": "z_set"})
 	st._process(0.0)
 	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	# #114: the AI / outside services, as the backend checked them
+	var cpp: CalibrationPanel = st.calibration
+	game.ws.ack.emit("sv1", true, {"command": "services_check", "results": [
+		{"name": "jev", "label": "Jev（Cloudflare）", "status": "ok", "detail": "トークン有効"},
+		{"name": "voicevox", "label": "VOICEVOX", "status": "ng", "detail": "つながらない"},
+		{"name": "tutor", "label": "学習支援 AI（ローカル LLM）", "status": "skip", "detail": "使っていない"}]})
+	game.ws.ack.emit("sv2", true, {"command": "services_check", "results": [
+		{"name": "jev", "label": "Jev（Cloudflare）", "status": "ok", "detail": "トークン有効"},
+		{"name": "ask", "label": "AI に試しに質問", "status": "ok", "detail": "claude が答えた: OK"}]})
+	cpp.refresh()
+	var svt: String = cpp._services.text
+	_ok(svt.contains("✓ Jev（Cloudflare）") and svt.contains("✗ VOICEVOX: つながらない") and svt.contains("－ 学習支援 AI")
+		and svt.contains("✓ AI に試しに質問: claude が答えた: OK"),
+		"calibration: the AI / outside services are listed, an ask adds its line (#114)", svt)
 	# #110: the capture heights: the saved values fill the inputs, the stages and the state are shown
 	var cp: CalibrationPanel = st.calibration
 	game.ws.ack.emit("h1", true, {"command": "study_height_status", "usable": false, "stages": [],
