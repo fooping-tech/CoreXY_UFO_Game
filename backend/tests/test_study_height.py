@@ -97,6 +97,34 @@ async def test_set_test_confirm_and_any_change_unconfirms(tmp_path):
     assert saved["drum_radius_mm"] == 15.0 and saved["confirmed"] is False
 
 
+async def test_a_new_z_calibration_unconfirms_the_heights(tmp_path):
+    """Review on #111: measuring Z again changes cm per Z: the heights need a new check, and a
+    desk recorded as a Z in the old units must be recorded again."""
+    srv, robot, port = await real_server(tmp_path)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            await _cmd(ws, "study_height_set", {**VALUES, "desk": "bottom"}, rid="set")
+            assert (await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="ok"))["data"]["usable"]
+            from corexy_ufo_backend.robot.z_calibration import ZCalibration
+            robot.z_cal = ZCalibration(counts_per_unit=120.0, sign=1, span_counts=12000)  # measured again
+            st = (await _cmd(ws, "study_height_status", rid="st"))["data"]
+            assert not st["usable"] and st["z_changed"] and "not confirmed" in st["problem"]
+            with pytest.raises(HeightError):
+                srv.height.stages(srv.approach.limits)
+            no = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="no")
+            assert no["type"] == "nack" and "保存" in no["data"]["reason"]
+            await _cmd(ws, "study_height_set", {**VALUES, "desk": "bottom"}, rid="again")
+            ok = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="ok2")
+            assert ok["type"] == "ack" and ok["data"]["usable"] and not ok["data"]["z_changed"]
+            saved = json.loads(section(tmp_path, "study_height").read_text())
+            saved.update({"desk": 12.5, "z_counts_per_unit": 80.42, "confirmed": True})  # a desk Z in old units
+            section(tmp_path, "study_height").write_text(json.dumps(saved))
+            st = (await _cmd(ws, "study_height_status", rid="st2"))["data"]
+            assert not st["usable"] and "z_desk_tip" in st["problem"]
+    finally:
+        await srv.stop()
+
+
 async def test_without_a_measured_z_calibration_it_cannot_be_confirmed(tmp_path):
     srv, robot, port = await real_server(tmp_path, measured=False)
     try:

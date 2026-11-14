@@ -205,6 +205,8 @@ static func height_text(st: Dictionary) -> String:
 	var lines: Array[String] = []
 	if not bool(st.get("z_calibrated", true)):
 		lines.append("1 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
+	if bool(st.get("z_changed", false)):
+		lines.append("Z を測り直したので、撮影の高さを「保存」し直して、試してから「確かめた」")
 	if v.get("z_per_cm") != null:
 		lines.append("1cm = Z %.2f　机 = Z %s" % [float(v.z_per_cm), str(v.get("z_desk_tip", "?"))])
 	var stages: Array = st.get("stages", []) if not (st.get("stages", []) as Array).is_empty() else st.get("trial_stages", [])

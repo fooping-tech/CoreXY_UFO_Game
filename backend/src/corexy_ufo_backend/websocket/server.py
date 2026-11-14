@@ -777,17 +777,30 @@ class GameServer:
         cal = getattr(self.robot, "z_cal", None)
         return float(cal.counts_per_unit) if cal is not None and cal.complete() else None
 
+    def _height_z_changed(self, saved: dict) -> bool:
+        """Review on #111: the Z calibration changed since the heights were saved: the recorded
+        desk Z and the ruler check no longer hold (counts per unit is what turns Z into cm)."""
+        then, now = saved.get("z_counts_per_unit"), self._z_counts_per_unit()
+        if not isinstance(then, (int, float)) or isinstance(then, bool) or now is None:
+            return then is not None or now is not None
+        return abs(float(then) - now) > 1e-6 * max(abs(now), 1.0)
+
     @property
     def height(self) -> HeightCalibration:
         saved = self._height_saved()
         if saved is None:
             return self._height_base
+        if self._height_z_changed(saved):
+            saved = {**saved, "confirmed": False}
+            if saved.get("desk") != "bottom":
+                saved["desk"] = None  # a Z recorded in the old units: record the desk again
         return self._height_base.with_measured(saved, self._z_counts_per_unit(), self.approach.limits)
 
     def _height_status(self) -> dict:
         data = self.height.status(self.approach.limits)
         data["saved"] = self._height_saved()
         data["z_calibrated"] = self._z_counts_per_unit() is not None
+        data["z_changed"] = data["saved"] is not None and self._height_z_changed(data["saved"])
         data["default_drum_radius_mm"] = DRUM_RADIUS_MM
         return data
 
@@ -824,6 +837,7 @@ class GameServer:
             saved = self._height_saved() or {}
             out["desk"] = saved.get("desk", "bottom")  # keep the recorded desk
         out["confirmed"] = False  # every change is checked on the robot again
+        out["z_counts_per_unit"] = self._z_counts_per_unit()  # what these Z values mean (review on #111)
         try:
             self._height_path.write_text(json.dumps(out))
         except (OSError, ValueError) as e:
@@ -838,6 +852,8 @@ class GameServer:
         if saved is None:
             return self._nack(name, "まだ保存していない（値を入れて「保存」）")
         on = params.get("confirmed") is not False
+        if on and self._height_z_changed(saved):
+            return self._nack(name, "Z を測り直したので、撮影の高さを「保存」し直して、試してから確かめる")
         if on:
             try:
                 self._height_base.with_measured({**saved, "confirmed": True}, self._z_counts_per_unit(),
