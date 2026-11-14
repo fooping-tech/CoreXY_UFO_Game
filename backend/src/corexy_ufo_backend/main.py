@@ -17,6 +17,7 @@ import os
 import signal
 import sys
 import threading
+from dataclasses import replace
 
 from .config import load_config
 from .sequence import AutoCatchConfig
@@ -155,7 +156,7 @@ async def run(args: argparse.Namespace) -> int:
     else:
         robot = RealRobot(cfg)
     vision = make_vision(args, cfg.raw.get("gesture", {}))
-    study_cfg = StudyConfig.from_raw(cfg.raw)
+    study_cfg = replace(StudyConfig.from_raw(cfg.raw), root=str(REPO_ROOT), focus_calibration=cfg.focus_camera_path)
     study = None
     if args.study and study_cfg.enabled:
         try:
@@ -175,7 +176,13 @@ async def run(args: argparse.Namespace) -> int:
     except WorksheetError as e:
         log.warning("study mode worksheets unavailable: %s", e)
     # the advice uses the study assistant's provider (Claude Code / Codex) without needing --study
+    # the study mode's explanation may go elsewhere (#104: study.explain_provider, e.g. the tutor AI)
+    explain_provider = study_cfg.explain_provider or study_cfg.provider
+    if explain_provider == "tutor":
+        log.info("study mode explanations: the tutor AI at %s (the worksheet's hints when it fails)",
+                 study_cfg.tutor_url or "(study.tutor_url not set)")
     homework = HomeworkService(hw_cfg, advice_factory=lambda: make_adapter(study_cfg),
+                               explain_factory=lambda: make_adapter(study_cfg, explain_provider),
                                locate=LocateParams.from_raw(cfg.raw),
                                speech=SpeechService(SpeechConfig.from_raw(cfg.raw)),
                                worksheets=worksheets) if (hw_cfg.enabled or study_mode_on) else None

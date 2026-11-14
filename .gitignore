@@ -20,6 +20,8 @@ backend/.pytest_cache/
 id_rsa*
 id_ed25519*
 .claude/settings.local.json
+# the tutor AI's token and certificate (#104): config/secrets/ is never committed
+config/secrets/
 
 # pinned security scanners (tools/security/install_tools.sh)
 tools/.bin/

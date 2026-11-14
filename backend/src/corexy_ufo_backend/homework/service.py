@@ -155,6 +155,7 @@ class HomeworkService:
     def __init__(self, config: HomeworkConfig,
                  client_factory: Callable[[], JevRunner] | None = None,
                  advice_factory: Callable[[], Any] | None = None,
+                 explain_factory: Callable[[], Any] | None = None,
                  locate: LocateParams | None = None, speech: SpeechService | None = None,
                  worksheets: WorksheetCatalog | None = None) -> None:
         self.config = config
@@ -168,6 +169,8 @@ class HomeworkService:
         self._client_factory = client_factory or (lambda: JevClient(load_credentials(config.env_path)))
         # a study adapter (Claude Code / Codex, study.provider): start_session / ask / close_session / close
         self._advice_factory = advice_factory
+        # the study mode's explanation (#104): study.explain_provider (e.g. the tutor AI), else the advice's
+        self._explain_factory = explain_factory or advice_factory
         self._advice_task: asyncio.Task | None = None
         self.sessions: dict[str, _Session] = {}
 
@@ -462,7 +465,7 @@ class HomeworkService:
                       worksheet_id: str, emit: Emit) -> None:
         """images: [{role: overview|10cm|5cm|landing, image_jpeg_base64}] -> homework_explain_result
         (structured, speech_lines) or homework_explain_error. One at a time."""
-        if self._advice_factory is None:
+        if self._explain_factory is None:
             raise ValueError("no assistant to explain (study.provider)")
         if self._explain_task is not None and not self._explain_task.done():
             raise ValueError("an explanation is already being written")
@@ -503,7 +506,7 @@ class HomeworkService:
             chunks.append(text)
 
         try:
-            adapter = self._advice_factory()  # type: ignore[misc]
+            adapter = self._explain_factory()  # type: ignore[misc]
             thread = await adapter.start_session(Path(temp.name), EXPLAIN_SYSTEM_PROMPT)
             prompt = explain_prompt(problem, grade_label, [r for r, _ in images],
                                     {"prompt": known["prompt"]} if known else None)

@@ -59,6 +59,12 @@ var help_phase := ""
 var inject_index := 0
 var _pending_adult := ""  # "help" | "cleanup" | "grip" | "cleanup_failed" | "confirm_complete"
 var _help_target: Dictionary = {}
+## The tutor AI's "not in the picture, look d_mm further" (#104): at most MAX_NAV more captures
+## per HELP; the arm goes on only after it is back from this capture and the words are said.
+const MAX_NAV := 2
+var nav_tries := 0
+var _pending_nav: Array = []
+var _nav_spoken := false
 var _help_arm_done := false
 var _explain_spoken := false
 var _state_t := 0.0
@@ -94,6 +100,8 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	services.motion_fault.connect(_on_motion_fault)
 	services.explained.connect(_on_explained)
 	services.explain_failed.connect(_on_explain_failed)
+	services.navigated.connect(_on_navigated)
+	services.navigate_failed.connect(_on_navigate_failed)
 	var w = GameConfig.get_value("study_mode", "watch", {})
 	tracker.configure(w if w is Dictionary else {})
 	weekday_label = str(GameConfig.get_value("study_mode", "weekday_label", weekday_label))
@@ -146,6 +154,8 @@ func stop() -> void:
 
 func reset_story() -> void:
 	_story += 1
+	_pending_nav = []
+	nav_tries = 0
 	_timers.clear()
 	services.abort()
 	services.watch_stop()
@@ -307,6 +317,8 @@ func request_help() -> void:
 	explain_note = ""
 	_help_arm_done = false
 	_explain_spoken = false
+	nav_tries = 0
+	_pending_nav = []
 	sounds.play("appear")
 	GameState.post_event("study_help", {"problem": help_problem})
 	_say([{"text": "困ったの？", "face": "surprised"}, {"text": "ぼくが近くで見てみるよ！", "face": "excited"}])
@@ -378,6 +390,23 @@ func _begin_explaining() -> void:
 func _on_explained(result: Dictionary) -> void:
 	if state != "AI_EXPLAINING":
 		return
+	var nav: Dictionary = result.navigate if result.get("navigate") is Dictionary else {}
+	if str(nav.get("kind", "")) == "move" and nav.get("d_mm") is Array:
+		if nav_tries < MAX_NAV:
+			nav_tries += 1
+			_pending_nav = nav.d_mm
+			_nav_spoken = false
+			notice = "問題 %d が写っていないので、もう一度見に行きます（%d / %d）" % [help_problem, nav_tries, MAX_NAV]
+			_say([{"text": "あれっ、ここじゃないみたい。", "face": "surprised"},
+				{"text": "さがしに いくね！ 手を はなして まっててね。", "face": "excited"}], func():
+				_nav_spoken = true
+				_maybe_navigate())
+			return
+		# looked MAX_NAV more times without finding it: the worksheet's own hints
+		explanation = StudyServices.fallback_explanation(WorksheetCatalog.problem(worksheet, help_problem), help_problem)
+		explain_note = "（さがしても見つからなかったので、プリントのヒントだよ）"
+		_speak_explanation()
+		return
 	explanation = result
 	explain_note = "" if not bool(result.get("needs_confirmation", false)) else "（読み取りに自信がないので、大人の人も確かめてね）"
 	_speak_explanation()
@@ -409,8 +438,28 @@ func _speak_explanation() -> void:
 		_maybe_resume())
 
 func _maybe_resume() -> void:
+	if not _pending_nav.is_empty():
+		_maybe_navigate()
+		return
 	if state == "AI_EXPLAINING" and _explain_spoken and _help_arm_done:
 		_resume_study()
+
+## Looks again d_mm further once the arm is back and the words are said (#104).
+func _maybe_navigate() -> void:
+	if state != "AI_EXPLAINING" or _pending_nav.is_empty() or not _nav_spoken or not _help_arm_done:
+		return
+	var d := _pending_nav
+	_pending_nav = []
+	_help_arm_done = false
+	_explain_spoken = false
+	_set_state("HELP_LOCATING")
+	services.navigate_help(d)
+
+func _on_navigated(target: Dictionary) -> void:
+	_on_located(target)  # as a found problem: the grown-up's Enter on the real robot, then the capture
+
+func _on_navigate_failed(reason: String) -> void:
+	_on_locate_failed("もう一度見に行けませんでした: " + reason)
 
 func _resume_study() -> void:
 	_set_state("RESUME_STUDY")
@@ -438,6 +487,7 @@ func _on_motion_fault(kind: String, reason: String) -> void:
 
 func _error(text: String) -> void:
 	error_text = text
+	_pending_nav = []  # a stop is a stop: no looking again (#104)
 	services.abort()
 	_set_state("ERROR")
 	sounds.play("pop")
@@ -578,6 +628,9 @@ func on_stop_key() -> void:
 			_cleanup_failed("Space でやめました")
 		return
 	if state in HELP_STATES or state == "CLEANUP" or _pending_adult == "grip":
+		_on_motion_stop_key("Space で止めました")
+	elif state == "AI_EXPLAINING" and (not _pending_nav.is_empty() or services.motion_active()):
+		# about to look again (#104) or the arm still on its way back: a stop is a stop
 		_on_motion_stop_key("Space で止めました")
 
 func _on_motion_stop_key(reason: String) -> void:

@@ -58,6 +58,7 @@ func _ready() -> void:
 	_test_study_worksheets_and_tracker()
 	_test_study_mode_mock_story(rs)
 	_test_study_mode_failures(rs)
+	_test_study_mode_looks_again(rs)
 	_test_study_mode_backend_messages(rs)
 	_test_title_screen(rs)
 	_test_settings(rs)
@@ -2059,6 +2060,64 @@ func _test_study_mode_failures(rs: Node) -> void:
 	var why_ws := ctl.services.motion_blocker()
 	RobotState.source = "mock"
 	_ok(why != "" and why_ws.contains("つながっていません"), "study: the camera demo never moves the game's own mock, nor without a robot link", why + " | " + why_ws)
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## #104: the tutor AI says the problem is not in the picture: the game looks again d_mm
+## further (after the arm is back), at most twice, then the worksheet's hints.
+func _test_study_mode_looks_again(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	var targets: Array = []
+	var helps := func(): return ctl.services.last_help_target.get("xy", Vector2.ZERO)
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 30.0]}]
+	ctl.request_help()
+	_study_pump(game, 30.0, func(): return ctl.nav_tries == 1 and ctl.state == "HELP_MOVING")
+	targets.append(helps.call())
+	_study_pump(game, 60.0, func(): return ctl.state == "STUDYING")
+	var once: bool = ctl.nav_tries == 1 and str(ctl.explanation.get("source", "")) == "demo" \
+		and not ctl.explanation.has("navigate")
+	_ok(once and targets[0] != Vector2.ZERO, "study: not in the picture -> looks again 30 mm further, then explains",
+		"%s %s %s" % [ctl.nav_tries, ctl.explanation.get("source"), targets])
+	# twice "not here": stops looking and gives the worksheet's hints
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 20.0]}, {"kind": "move", "d_mm": [0.0, 20.0]},
+		{"kind": "move", "d_mm": [0.0, 20.0]}]
+	var first := Vector2.ZERO
+	ctl.request_help()
+	_study_pump(game, 20.0, func(): return ctl.state == "HELP_MOVING")
+	first = helps.call()
+	_study_pump(game, 120.0, func(): return ctl.state == "STUDYING")
+	var last: Vector2 = helps.call()
+	_ok(ctl.nav_tries == StudyModeController.MAX_NAV and ctl.explain_note.contains("見つからなかった")
+		and str(ctl.explanation.get("source", "")) == "worksheet" and is_equal_approx(last.y - first.y, 40.0),
+		"study: at most two more looks, then the worksheet's hints", "%s %s %s %s" % [ctl.nav_tries, ctl.explain_note, first, last])
+	# a step the checks refuse (over 60 mm): no motion, the worksheet's hints
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 70.0]}]
+	ctl.request_help()
+	_study_pump(game, 60.0, func(): return ctl.state == "RESUME_STUDY" and ctl.notice.contains("もう一度"))
+	var refused: String = ctl.notice
+	_study_pump(game, 30.0, func(): return ctl.state == "STUDYING")
+	_ok(refused.contains("大きすぎ") and str(ctl.explanation.get("source", "")) == "worksheet",
+		"study: a refused look-again (over 60 mm) moves nothing and gives the hints", refused)
+	# no d_mm (no arm camera calibration): no motion, the AI's own words
+	ctl.services.inject_navigate = [{"kind": "move"}]
+	ctl.request_help()
+	_study_pump(game, 60.0, func(): return ctl.state == "STUDYING")
+	_ok(ctl.nav_tries == 0 and str(ctl.explanation.get("source", "")) == "demo",
+		"study: without d_mm (arm camera not calibrated) the arm does not look again", str(ctl.nav_tries))
+	# Space while waiting to look again: no looking again
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 30.0]}]
+	ctl.request_help()
+	_study_pump(game, 30.0, func(): return ctl.nav_tries == 1)
+	ctl.on_stop_key()
+	_study_pump(game, 5.0, func(): return false)
+	_ok(ctl.state == "ERROR" and ctl._pending_nav.is_empty() and not ctl.services.motion_active(),
+		"study: Space while about to look again stops it", ctl.state)
 	ctl.stop()
 	remove_child(game)
 	game.free()
