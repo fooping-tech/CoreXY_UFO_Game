@@ -321,7 +321,10 @@ func refresh() -> void:
 	_grade_next.visible = choosing
 	# the checklist
 	var t := ctl.tracker
+	var tidy := StudyModeController.cleanup_enabled()
 	var done := [t.complete or ctl.completion_fired, t.is_filled(ctl.help_problem), ctl.cleanup_ok]
+	_check_rows[2][1].text = "おかたづけ" if tidy else "おかたづけ（今はなし）"
+	_check_rows[2][0].visible = tidy
 	for i in 3:
 		var row: Array = _check_rows[i]
 		row[0].text = "☑" if done[i] else ("☒" if i == 2 and st in ["CLEANUP_FAILED"] else "☐")
@@ -376,7 +379,8 @@ func refresh() -> void:
 	_banner.position = Vector2(0, vs.y * 0.18)
 	_banner.pivot_offset = _banner.size * 0.5
 	_sub_banner.visible = unlocked
-	_sub_banner.text = "GAME MODE UNLOCKED!" + ("" if ctl.cleanup_ok else "\n（お片付けは大人の人と確認してね）")
+	_sub_banner.text = "GAME MODE UNLOCKED!" + ("" if ctl.cleanup_ok or not StudyModeController.cleanup_enabled()
+		else "\n（お片付けは大人の人と確認してね）")
 	_sub_banner.size = Vector2(vs.x - RIGHT_W, 120)
 	_sub_banner.position = Vector2(0, vs.y * 0.18 + 110)
 	_play.visible = unlocked

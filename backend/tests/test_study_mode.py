@@ -142,8 +142,12 @@ def test_real_heights_are_refused_until_measured_and_confirmed():
     measured = HeightCalibration(z_desk_tip=20, z_per_cm=4, camera_offset_cm=3, landing_tip_cm=1.5, profile="real")
     with pytest.raises(HeightError, match="not confirmed"):
         measured.stages(LIMITS)
-    st = HeightCalibration.from_raw(RAW, "dry_run").stages(LIMITS)
-    assert [s.name for s in st] == ["10cm", "5cm", "landing"]
+    one = HeightCalibration.from_raw(RAW, "dry_run").stages(LIMITS)
+    assert [s.name for s in one] == ["10cm"]  # #110: the config takes one close-up, 10 cm
+    raw3 = json.loads(json.dumps(RAW))
+    raw3["study_mode"]["height"].update({"capture_heights_cm": [10.0, 5.0], "landing": True})
+    st = HeightCalibration.from_raw(raw3, "dry_run").stages(LIMITS)
+    assert [s.name for s in st] == ["10cm", "5cm", "landing"] and st[0].z == one[0].z
     assert st[0].z > st[1].z > st[2].z  # going down (z_up_is_positive)
     assert st[0].z == pytest.approx(20 + 7 * 4) and st[1].z == pytest.approx(20 + 2 * 4)
 
@@ -345,7 +349,10 @@ async def wait_for(cond, timeout=5.0, what=""):
         await asyncio.sleep(0.01)
 
 
-STAGES = [(s.name, s.z) for s in HeightCalibration.from_raw(RAW, "dry_run").stages(LIMITS)]
+# the sequencer with three close-ups (10 cm, 5 cm, landing): the config takes one since #110
+RAW3 = json.loads(json.dumps(RAW))
+RAW3["study_mode"]["height"].update({"capture_heights_cm": [10.0, 5.0], "landing": True})
+STAGES = [(s.name, s.z) for s in HeightCalibration.from_raw(RAW3, "dry_run").stages(LIMITS)]
 
 
 async def test_staged_capture_goes_down_in_order_under_one_lock():
@@ -463,12 +470,12 @@ async def test_server_staged_help_and_cleanup_on_the_mock():
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
             h = (await _cmd(ws, "study_height_status", rid="h"))["data"]
-            assert h["usable"] and [s["name"] for s in h["stages"]] == ["10cm", "5cm", "landing"]
+            assert h["usable"] and [s["name"] for s in h["stages"]] == ["10cm"]  # #110: one close-up
             m = await _cmd(ws, "homework_approach", {"xy": [200, 100], "stages": "study"}, rid="a")
             assert m["type"] == "ack", m
             jog = await _cmd(ws, "jog", {"vx": 10, "vy": 0}, rid="j")
             assert jog["type"] == "nack"  # no manual moves while HELP holds the arm
-            for i, stage in enumerate(("10cm", "5cm", "landing")):
+            for i, stage in enumerate(("10cm",)):  # #110: one close-up
                 await wait_for(lambda: srv.approach.holding and srv.approach.stage == stage, what=stage)
                 late = await _cmd(ws, "homework_approach_release", {"stage": "nope"}, rid=f"x{i}")
                 assert late["type"] == "nack"

@@ -23,6 +23,11 @@ var _cam: Label
 var _overview: OverviewPicker
 var _focus: OverviewPicker
 var _ws_buttons: Array[Button] = []  # need the backend
+## #110: the study mode's capture heights
+var height_status: Dictionary = {}
+var _height: Label
+var _drum: SpinBox
+var _height_filled := false
 var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
 var _z_use: Button
 var restore_estimate: Dictionary = {}
@@ -39,6 +44,7 @@ const COMMANDS := {
 	"homework_spot_set": "宿題の位置の記録",
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
 	"camera_map_clear": "カメラの点を消す",
+	"study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
 }
 
 func setup(m: Node) -> void:
@@ -127,6 +133,99 @@ func setup(m: Node) -> void:
 	_ws_button(row, "1 点戻す", func(): if hw != null: hw.calib_undo())
 	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear())
 
+	_head("5. 勉強モードの撮影の高さ")
+	_note("HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。1 の Z の上下だけで決まる: 1cm あたりの Z は"
+		+ "巻き上げドラムの半径と Z の換算から計算し、机は 1 の「下」の記録（爪先を机に付けて記録したところ）。"
+		+ "「保存」→「10cm へ動かす（試す）」で爪先と机の間を定規で確かめて「確かめた」。"
+		+ "ロープが重なって巻かれると計算がずれるので、この確認だけは要る。")
+	row = _row()
+	_drum = _spin(row, "巻き上げドラムの半径 mm", 3.0, 100.0, 0.5, 15.0)
+	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"))
+	_ws_button(row, "ここを机に記録して保存", func(): save_height("here"))
+	_height = _value()
+	row = _row()
+	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]))
+	row = _row()
+	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}))
+	_ws_button(row, "確認を外す", func(): main.ws.send_command("study_height_confirm", {"confirmed": false}))
+
+func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v: float) -> SpinBox:
+	parent.add_child(StudyHud.label(label, 16, MUTED, 2))
+	var s := SpinBox.new()
+	s.min_value = lo
+	s.max_value = hi
+	s.step = step
+	s.value = v
+	parent.add_child(s)
+	return s
+
+## #110: the entered values -> the backend (calibration.json#study_height), unconfirmed.
+## desk: "bottom" = the Z calibration's bottom, "here" = the arm's Z now.
+func height_params(desk: String) -> Dictionary:
+	return {"drum_radius_mm": _drum.value, "desk": desk}
+
+func save_height(desk: String) -> void:
+	main.ws.send_command("study_height_set", height_params(desk))
+
+## The Z of a stage as saved (confirmed or not): where the test move goes.
+func stage_z(stage: String) -> float:
+	var stages: Array = height_status.get("stages", []) if not (height_status.get("stages", []) as Array).is_empty() \
+		else height_status.get("trial_stages", [])
+	for s in stages:
+		if s is Dictionary and str(s.get("name", "")) == stage:
+			return float(s.get("z", NAN))
+	return NAN
+
+func try_height(stage: String) -> void:
+	var z := stage_z(stage)
+	if is_nan(z):
+		_set_result(false, "撮影の高さがまだ使えない: " + str(height_status.get("trial_problem", height_status.get("problem", "保存して"))))
+		return
+	main.ws.send_command("move_z", {"z": z})
+
+## The backend's heights; the saved values fill the inputs once (they stay as typed after).
+func show_heights(st: Dictionary) -> void:
+	height_status = st
+	var saved: Dictionary = st.saved if st.get("saved") is Dictionary else {}
+	if not _height_filled and not saved.is_empty():
+		_height_filled = true
+		_drum.value = float(saved.get("drum_radius_mm", _drum.value))
+	elif not _height_filled and st.get("default_drum_radius_mm") != null:
+		_drum.value = float(st.default_drum_radius_mm)
+
+func _set_result(ok: bool, text: String) -> void:
+	result_ok = ok
+	result_text = text
+
+## The backend's heights in words (#110).
+static func height_text(st: Dictionary) -> String:
+	if st.is_empty():
+		return "（まだ問い合わせていない）"
+	var v: Dictionary = st.get("values", {}) if st.get("values") is Dictionary else {}
+	var lines: Array[String] = []
+	if not bool(st.get("z_calibrated", true)):
+		lines.append("1 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
+	if bool(st.get("z_changed", false)):
+		lines.append("Z を測り直したので、撮影の高さを「保存」し直して、試してから「確かめた」")
+	if v.get("z_per_cm") != null:
+		lines.append("1cm = Z %.2f　机 = Z %s" % [float(v.z_per_cm), str(v.get("z_desk_tip", "?"))])
+	var stages: Array = st.get("stages", []) if not (st.get("stages", []) as Array).is_empty() else st.get("trial_stages", [])
+	var parts: Array[String] = []
+	for s in stages:
+		if s is Dictionary:
+			parts.append("%s: Z %.1f（爪先 %.1f cm）" % [str(s.name), float(s.z), float(s.tip_cm)])
+	if not parts.is_empty():
+		lines.append("　".join(parts))
+	if bool(st.get("usable", false)):
+		lines.append("確認済み: 勉強モードで使う")
+	elif st.has("trial_problem"):
+		lines.append("このままでは使えない: " + str(st.trial_problem))
+	elif st.get("saved") != null:
+		lines.append("まだ確認していない: 試してから「確かめた」")
+	else:
+		lines.append("まだ保存していない")
+	return "\n".join(lines)
+
 func _head(text: String) -> void:
 	add_child(StudyHud.label(text, 24, CYAN, 6))
 
@@ -166,8 +265,14 @@ func _ws_button(parent: Control, text: String, cb: Callable) -> Button:
 ## A calibration command answered (ack / nack): kept for the screen while the tab shows.
 func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	var cmd := str(data.get("command", ""))
+	if cmd == "study_height_status":  # asked when the tab opens: no message
+		if ok:
+			show_heights(data)
+		return
 	if not COMMANDS.has(cmd) or not is_visible_in_tree():
 		return
+	if ok and cmd in ["study_height_set", "study_height_confirm"]:
+		show_heights(data)
 	result_ok = ok
 	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
@@ -223,6 +328,8 @@ func opened() -> void:
 	_z_restore.text = ""
 	if hw != null and backend_ready():
 		hw.request_camera_map()
+	if backend_ready():
+		main.ws.send_command("study_height_status")
 	refresh()
 
 func backend_ready() -> bool:
@@ -235,6 +342,8 @@ func refresh() -> void:
 	var ready := backend_ready()
 	for b in _ws_buttons:
 		b.disabled = not ready
+	_height.text = height_text(height_status)
+	_height.add_theme_color_override("font_color", GOOD if bool(height_status.get("usable", false)) else YELLOW)
 	if RobotState.source != "websocket":
 		_link.text = "ゲーム内の仮想クレーン（バックエンドなし）: 爪だけ試せる。Z・宿題の位置・カメラの校正には ./start.sh で起動する"
 	elif not ready:

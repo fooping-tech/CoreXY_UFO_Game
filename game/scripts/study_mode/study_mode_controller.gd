@@ -298,7 +298,12 @@ func _celebrate() -> void:
 func _celebration_spoken() -> void:
 	if state != "CELEBRATION":
 		return
-	_later(maxf(_celebration_min_s - _state_t, 0.0), _begin_cleanup)
+	_later(maxf(_celebration_min_s - _state_t, 0.0), _begin_cleanup if cleanup_enabled() else _unlock)
+
+## study_mode.cleanup.enabled (#110: off = no tidy-up, the game unlocks after the celebration).
+static func cleanup_enabled() -> bool:
+	var c = GameConfig.get_value("study_mode", "cleanup", {})
+	return c is Dictionary and bool(c.get("enabled", true))
 
 # ------------------------------------------------------------------ HELP
 func request_help() -> void:
@@ -379,7 +384,7 @@ func _capture_stage(stage: String) -> void:
 	_later(1.2, func():
 		if state == CAPTURE_STATE[stage]:
 			services.release_stage(stage)
-			if stage == "landing":
+			if stage == StudyServices.last_stage():  # #110: 10 cm only by default
 				_begin_explaining())
 
 func _begin_explaining() -> void:
@@ -719,7 +724,10 @@ func debug_skip() -> void:
 			_resume_study()
 		"CELEBRATION":
 			speech.clear()
-			_begin_cleanup()
+			if cleanup_enabled():
+				_begin_cleanup()
+			else:
+				_unlock()
 		"CLEANUP":
 			services.abort("F6 でスキップ")
 			_cleanup_finished()
