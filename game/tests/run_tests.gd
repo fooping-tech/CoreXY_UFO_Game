@@ -2346,6 +2346,13 @@ func _test_device_test_tab(rs: Node) -> void:
 		and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
 		and st._status.text.contains("REJECTED_STATE"),
 		"device test: the hub, the devices, the status, a refused command and an event are shown", p._log.text)
+	game.ws.ack.emit("sa", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"},
+		"32": {"ok": false, "result": "OFFLINE"}}})
+	var partial: String = p.result_text
+	var partial_bad: bool = not p.result_ok
+	game.ws.ack.emit("sb", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"}}})
+	_ok(partial_bad and partial.contains("M5Dial 1") and p.result_ok and p.result_text.contains("すべて止めた"),
+		"device test: STOP ALL is a success only when every device accepted it (review on #109)", partial)
 	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})
 	p.refresh()
 	_ok(p._hub.text.contains("使っていない"), "device test: no hub in the backend says how to turn it on", p._hub.text)

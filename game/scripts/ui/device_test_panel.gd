@@ -286,12 +286,25 @@ func _on_ack(rid: String, ok: bool, data: Dictionary) -> void:
 			_add_log(("✓ " if good else "✗ ") + line)
 			_result(good, line)
 		"devicehub_stop_all":
+			# review on #109: success only when every device accepted it (mist, relays, servos)
 			var parts: Array[String] = []
+			var failed: Array[String] = []
 			var res: Dictionary = data.results if data.get("results") is Dictionary else {}
 			for k in res.keys():
-				parts.append("%s=%s" % [NAMES.get(int(k), str(k)), str(res[k].get("result", "")) if res[k] is Dictionary else "?"])
-			_add_log("STOP_ALL: " + " ".join(parts))
-			_result(true, "STOP ALL: " + " ".join(parts))
+				var r = res[k]
+				var who: String = NAMES.get(int(k), str(k))
+				var accepted: bool = r is Dictionary and bool(r.get("ok", false))
+				parts.append("%s=%s" % [who, str(r.get("result", "?")) if r is Dictionary else "?"])
+				if not accepted:
+					failed.append(who)
+			var all_ok := not res.is_empty() and failed.is_empty()
+			_add_log(("✓ " if all_ok else "✗ ") + "STOP_ALL: " + " ".join(parts))
+			if all_ok:
+				_result(true, "STOP ALL: すべて止めた（" + " ".join(parts) + "）")
+			elif res.is_empty():
+				_result(false, "STOP ALL: 止まったか確かめられない（機器の返事がない）。機器の電源で止める")
+			else:
+				_result(false, "STOP ALL: 止まったか確かめられない機器がある: %s（%s）。機器を確かめる" % [", ".join(failed), " ".join(parts)])
 
 func _on_message(msg: Dictionary) -> void:
 	if str(msg.get("type", "")) != "devicehub_event" or not msg.get("data") is Dictionary:

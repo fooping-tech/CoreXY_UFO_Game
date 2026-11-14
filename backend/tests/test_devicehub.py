@@ -52,6 +52,29 @@ def test_auto_detect_never_opens_the_robots_port(monkeypatch):
         ExcludingSerialTransport("/dev/cu.usbserial-CORE2", exclude=["/dev/cu.usbserial-CORE2"]).open()
 
 
+def test_a_port_that_cannot_be_opened_does_not_hide_the_hub(monkeypatch):
+    """Review on #109: a locked port first in the list: the next attempt tries the hub."""
+    opened = []
+
+    class FakeSerial:
+        def __init__(self, port, *a, **k):
+            opened.append(port)
+            if port.endswith("LOCKED"):
+                raise OSError("Resource busy")
+
+        def reset_input_buffer(self):
+            pass
+
+    import serial
+    monkeypatch.setattr(serial, "Serial", FakeSerial)
+    monkeypatch.setattr(gwmod, "guess_ports", lambda: ["/dev/cu.usbmodem-LOCKED", "/dev/cu.usbmodem-HUB"])
+    t = ExcludingSerialTransport("auto")
+    with pytest.raises(TransportError):
+        t.open()
+    t.open()
+    assert opened == ["/dev/cu.usbmodem-LOCKED", "/dev/cu.usbmodem-HUB"]
+
+
 async def _server(devicehub):
     robot = MockRobot()
     await robot.connect()

@@ -76,6 +76,10 @@ class ExcludingSerialTransport(SerialLineTransport):
             self._ser = serial.Serial(port, self.baudrate, timeout=0.05, write_timeout=1.0, exclusive=True)
             self._ser.reset_input_buffer()
         except (OSError, serial.SerialException, ValueError) as e:
+            if self.port == "auto":
+                # review on #109: the next attempt tries the other candidates (a locked port first
+                # in the list must not hide the hub); when all are refused the list starts over
+                self._rejected.add(port)
             raise TransportError(f"{port}: {e} (another program, e.g. pc.web_console, may have it open)") from e
         self._buf.clear()
         self._discarding = False
