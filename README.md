@@ -412,6 +412,9 @@ cd CoreXY_UFO_Game/game
   5. 合わない、Jev の鍵がない、問題を決められない、校正が使えないときは、**動かさずに**声とタブで伝える。`homework.locate.require_jev: false` にすると、アシスタントの枠だけで動く。
 - **声**: バックエンドが WAV を作り、ゲームが鳴らす。`homework.speech.engines` の順に試す。
   - 既定は、手元で動いている VOICEVOX のエンジン（`http://127.0.0.1:50021`、`voicevox_speaker` はスタイル ID）。その次が macOS の `say`（`say_voice`、既定 Kyoko）。
+  - **VOICEVOX のエンジンは `./start.sh` が Docker のコンテナとして起動し、終わるときに止める**（#112。`homework.speech.docker`、設定画面の「VOICEVOX を Docker で起動」）。イメージは版とダイジェストで固定（`voicevox/voicevox_engine:cpu-0.26.0`、arm64 / amd64）、`127.0.0.1:50021` だけで開く（LAN からは見えない）。Docker が止まっていれば colima を起動し、start.sh が起動した colima は終わるときに止める。同じ名前のコンテナがすでに動いていれば、それを使って止めない。
+  - 準備はゲームと並行して裏で行う。初回はイメージの取得（数分）、毎回 colima の起動（約 1 分）とモデルの読み込みがかかり、その間の声は `say`（バックエンドは話すたびに VOICEVOX を先に試すので、準備ができたら VOICEVOX の声になる）。Docker が使えないときは理由を出して `say` で続ける。
+  - Windows の `start.ps1` は、まだ VOICEVOX を起動しない（手で起動する）。
   - VOICEVOX の声を使うときは、利用規約に従って「VOICEVOX:キャラクター名」のクレジットを表示する（タブに出る）。キャラクターごとの規約も確かめる。
   - 宿題タブの「声を出す」で、声を止められる。
 - 1 回の位置の読み取りで、アシスタントへの質問 1 回と Jev の呼び出し 1 回がかかる。**実機では未検証**（俯瞰カメラの実際の画像で、位置が合うかも未確認）。

@@ -148,7 +148,9 @@
         {"key": "study_mode.demo.source", "apply": "now", "label": "プリントと解説", "type": "enum", "options": [["simulated", "模擬（カメラも AI も使わない。外部に何も送らない）"], ["camera", "カメラと AI（画像を Jev と Claude / Codex に送る）"]], "note": "アームは start.sh でつないだロボットで動く。模擬のときは実機を動かさない"},
         {"key": "study_mode.demo.auto_answer", "apply": "now", "label": "1・2 問めを自動で記入（模擬）", "type": "bool"},
         {"key": "study_mode.autostart", "apply": "restart", "label": "起動したらすぐ勉強モードで始める", "type": "bool", "note": "オンにするとタイトル画面を出さない"},
-        {"key": "homework.speech.enabled", "apply": "backend", "label": "UFOくんの声", "type": "bool"}
+        {"key": "homework.speech.enabled", "apply": "backend", "label": "UFOくんの声", "type": "bool"},
+        {"key": "homework.speech.docker.enabled", "apply": "backend", "label": "VOICEVOX を Docker で起動（./start.sh）", "type": "bool",
+         "note": "start.sh が VOICEVOX ENGINE のコンテナを起動し、終わるときに止める（Docker が止まっていれば colima も）。初回はイメージの取得に数分。使えないときの声は say"}
       ]},
       {"title": "画面と音", "items": [
         {"key": "title_screen.enabled", "apply": "restart", "label": "起動時にタイトル画面を出す", "type": "bool", "note": "オフにするとこの画面も開けなくなる。戻すときは config/local_settings.json を消す"},
@@ -244,6 +246,12 @@
         "say"
       ],
       "voicevox_url": "http://127.0.0.1:50021",
+      "docker": {
+        "enabled": true,
+        "image": "voicevox/voicevox_engine:cpu-0.26.0@sha256:6c6c07dfebc34294b432864cfce4387738dfa840d3b1a2859e68486b2bd99807",
+        "container": "cxufo-voicevox",
+        "_note": "#112: ./start.sh starts the VOICEVOX ENGINE as its own Docker container (when it starts the backend and speech uses voicevox at 127.0.0.1 / localhost) and stops it when start.sh ends; Docker stopped -> colima is started (and stopped at the end). Bound to 127.0.0.1 only. The image is pinned (version and digest: cpu-0.26.0, 2026-10-23, arm64 / amd64). Prepared in the background: until it answers, the voice is say. A container of that name already running is used and left running."
+      },
       "voicevox_speaker": 3,
       "voicevox_sampling_rate": 24000,
       "say_voice": "Kyoko",
