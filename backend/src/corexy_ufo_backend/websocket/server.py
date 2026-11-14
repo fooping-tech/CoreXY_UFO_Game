@@ -27,6 +27,10 @@ Command names and safety rules:
   robot_state.homework_approach and {"type": "homework_approach"} messages; holds the
   motion lock like the auto catch), homework_approach_release (the frames are captured:
   go back up), homework_approach_status.
+  devicehub_meta / devicehub_devices / devicehub_status {device} / devicehub_diag /
+  devicehub_command {device, name, params} / devicehub_stop_all (#108): the peripherals' hub
+  (UFO-DeviceHub) for the settings screen's テスト tab; never the robot, never queued behind
+  its commands, accepted during the sequences. Its events come as {"type": "devicehub_event"}.
   homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
   instead: mapped to XY by the camera calibration, at the recorded spot's height.
   camera_map_add {u, v, camera: {width, height, flip_h, flip_v}} (pair the clicked overview
@@ -97,11 +101,16 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
             "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
-            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
+            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
+            *("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag", "devicehub_command",
+              "devicehub_stop_all"))
+# The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
+DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
+                      "devicehub_command", "devicehub_stop_all")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
-PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
@@ -127,8 +136,10 @@ class GameServer:
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
                  study: Any | None = None, homework: Any | None = None,
-                 approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None) -> None:
+                 approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None,
+                 devicehub: Any | None = None) -> None:
         self.robot = robot
+        self.devicehub = devicehub  # #108: the peripherals' hub (DeviceHubService), or None
         self.host = host
         self.port = port
         self.state_interval = 1.0 / state_hz
@@ -195,7 +206,12 @@ class GameServer:
         if self.vision is not None:
             self.vision.on_event = self._on_vision_event
         self._start_log_feed()
+        if self.devicehub is not None:
+            self.devicehub.start(self._on_devicehub_event)
         log.info("websocket listening on ws://%s:%d", self.host, self.port)
+
+    async def _on_devicehub_event(self, data: dict) -> None:
+        await self.broadcast({"type": "devicehub_event", "timestamp": now_ms(), "data": data})
 
     async def stop(self) -> None:
         if self.auto.active:
@@ -211,6 +227,8 @@ class GameServer:
             await self.study.close()
         if self.homework is not None:
             await self.homework.close()
+        if self.devicehub is not None:
+            await asyncio.to_thread(self.devicehub.close)
         self._stop_log_feed()
         for t in self._tasks:
             t.cancel()
@@ -569,6 +587,8 @@ class GameServer:
         """Run one command; returns an ack/nack message (without request_id)."""
         if name not in COMMANDS:
             return self._nack(name, f"unknown command {name!r}")
+        if name in DEVICEHUB_COMMANDS:  # the peripherals only: not the robot, not its sequences
+            return await self._devicehub(name, params)
         try:
             if self.auto.active and name not in AUTO_CATCH_ALLOWED and not self._allowed_during_auto(name, params):
                 return self._nack(name, "busy: auto catch running (stop to abort)")
@@ -735,6 +755,28 @@ class GameServer:
         elif name == "camera_map_clear":
             self.camera_map.clear()
         return self._ack(name, self.camera_map.status())
+
+    async def _devicehub(self, name: str, params: dict) -> dict:
+        """The settings screen's テスト tab (#108): UFO-DeviceHub's console commands."""
+        from ..devicehub.service import DeviceHubError
+        hub = self.devicehub
+        if hub is None:
+            return self._nack(name, "周辺機器のハブを使っていない（設定の devicehub.enabled をオンにして ./start.sh）")
+        try:
+            if name == "devicehub_meta":
+                return self._ack(name, hub.meta())
+            if name == "devicehub_devices":
+                return self._ack(name, {"devices": await hub.devices()})
+            if name == "devicehub_diag":
+                return self._ack(name, {"diag": await hub.diag()})
+            if name == "devicehub_status":
+                return self._ack(name, {"device": params.get("device"), "status": await hub.status(int(params.get("device")))})
+            if name == "devicehub_command":
+                result = await hub.command(params.get("device"), params.get("name"), params.get("params") or {})
+                return self._ack(name, {"result": result})
+            return self._ack(name, {"results": await hub.stop_all()})
+        except (DeviceHubError, TypeError, ValueError) as e:
+            return self._nack(name, str(e))
 
     @staticmethod
     def _allowed_during_auto(name: str, params: dict) -> bool:

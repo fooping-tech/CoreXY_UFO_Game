@@ -240,6 +240,17 @@ cd CoreXY_UFO_Game/game
 - 開いている間もアームの手動操作は受け付けない（タイトルと同じ）。Space の停止は効く。F1 のデバッグパネルは設定画面の上に開く。
 - タイトル画面を出さない設定にしたあとで戻すときは、`config/local_settings.json` を消す。
 
+### テストタブ（設定画面）
+
+設定画面の「テスト」タブで、周辺機器（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub): ESP-NOW ハブ M5AtomS3R、イルミ ATOM、M5Dial ×2）の動作を確かめる。UFO-DeviceHub のブラウザの試験画面（`pc.web_console`）と同じ操作を、ゲームのバックエンド経由で行う（#108）。
+
+- 使うには: 設定タブの「実機」で「周辺機器のハブを使う」をオンにして保存し、`./start.sh` で起動し直す（`config/local_settings.json` の `devicehub.enabled`）。ハブのポートは `auto`（ロボット（Core2）のポートは試さない）・ポート名・`mock`（実機なしの模擬ハブ）。システム番号（1 / 2）が違うハブにはつながない。
+- **試験画面（`pc.web_console`）とは同時に使えない**（シリアルポートは 1 つのプログラムだけ。バックエンドは排他で開く）。先に試験画面を止める。
+- できること: 機器の一覧（状態・RTT・セッション・fw）と診断（GET_DIAG）／照明モード（明るさ・速さ・フェード・色）／ミスト（連続・BREATH・PUFF・OFF、時間）／演出（TRIGGER_EFFECT、時間・強さ）／蒸気リレー（パルス・OFF）／M5Dial ×2（GAME・STANDBY・受取待ち・解除・排出）／イベントのログ（ボール受取・排出・リレー完了など）。
+- **ミスト・リレー・サーボが実際に動く**。止めるときは STOP ALL か Space（テストタブを開いている間は、Space でハブにも STOP_ALL を送る）。クレーンには何も送らない。
+- 通信の中身（プロトコル・セッション・ACK・再送）は UFO-DeviceHub の `pc/` をコピーしたもの（`backend/src/corexy_ufo_backend/devicehub/`。元のコミットは `__init__.py`）。DeviceHub 側が変わったらコピーし直す。
+- **実機のハブ・イルミ・M5Dial では未検証**（UFO-DeviceHub の模擬ハブで確認）。
+
 ### 校正タブ（設定画面）
 
 設定画面の「校正」タブで、この机・この機械で測る値（`config/calibration.json`。Git に入らない）を手順どおりに測る。新しい機械や clone し直したときは、ここで 1 から順に。
