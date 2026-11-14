@@ -176,3 +176,37 @@ async def test_the_server_answers_services_check(monkeypatch):
             assert [r["name"] for r in m["data"]["results"]] == ["jev", "ask"]
     finally:
         await srv.stop()
+
+
+async def test_a_disconnect_does_not_wait_for_a_slow_check(monkeypatch):
+    """Review on #115: the disconnect's safety aborts must not wait for an AI's answer."""
+    import asyncio
+    import time
+
+    started = asyncio.Event()
+
+    async def slow_all(raw, *, ask=False, env_path=None, focus_calibration=None, **k):
+        started.set()
+        await asyncio.sleep(30)
+        return []
+    monkeypatch.setattr(sc, "check_all", slow_all)
+    robot = MockRobot()
+    await robot.connect()
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
+    await srv.start()
+    port = next(iter(srv._server.sockets)).getsockname()[1]
+    try:
+        ws = await websockets.connect(f"ws://127.0.0.1:{port}")
+        await ws.send(json.dumps({"type": "command", "request_id": "s", "data": {"name": "services_check",
+                                                                              "params": {"ask": True}}}))
+        await asyncio.wait_for(started.wait(), 5)
+        t0 = time.monotonic()
+        await ws.close()
+        for _ in range(100):
+            if not srv.clients:
+                break
+            await asyncio.sleep(0.02)
+        assert not srv.clients and time.monotonic() - t0 < 2.0  # handled at once, not after 30 s
+    finally:
+        await srv.stop()
+

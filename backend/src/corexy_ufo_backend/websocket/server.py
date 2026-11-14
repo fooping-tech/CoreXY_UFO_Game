@@ -122,6 +122,11 @@ DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status",
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
+# Out-of-band commands that only read: cancelled at once when their client disconnects, so
+# the disconnect's safety aborts never wait for them (review on #115: services_check can wait
+# 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
+CANCEL_ON_DISCONNECT = ("services_check", "devicehub_meta", "devicehub_devices", "devicehub_status",
+                        "devicehub_diag")
 PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status")
@@ -404,6 +409,7 @@ class GameServer:
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
             out_of_band: set[asyncio.Task] = set()
+            readers: dict[asyncio.Task, str] = {}  # out-of-band tasks to cancel on a disconnect
             try:
                 async for raw in ws:
                     try:
@@ -416,6 +422,9 @@ class GameServer:
                         task = asyncio.create_task(self._dispatch(ws, msg))
                         out_of_band.add(task)
                         task.add_done_callback(out_of_band.discard)
+                        if name in CANCEL_ON_DISCONNECT:
+                            readers[task] = name
+                            task.add_done_callback(lambda t: readers.pop(t, None))
                     else:
                         queue.put_nowait(msg)
             finally:
@@ -424,6 +433,8 @@ class GameServer:
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait(None)
+                for task in list(readers):  # nothing waits for a diagnostic (an AI's answer)
+                    task.cancel()
                 await asyncio.gather(worker, *out_of_band, return_exceptions=True)
         except websockets.ConnectionClosed:
             pass
