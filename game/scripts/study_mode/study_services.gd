@@ -410,18 +410,38 @@ func _help_walk(xy: Vector2) -> Array:
 	out.append({"p": Vector3(here.x, here.y, top), "phase": "RETURN_XY"})
 	return out
 
+## The close-ups HELP takes, in order (study_mode.height: capture_heights_cm 10[, 5], then the
+## landing when on). #110: 10 cm only. The last one starts the explanation.
+static func stage_names() -> Array[String]:
+	var h = GameConfig.get_value("study_mode", "height", {})
+	var heights: Array = h.get("capture_heights_cm", [10.0]) if h is Dictionary and h.get("capture_heights_cm") is Array else [10.0]
+	var out: Array[String] = []
+	for i in mini(heights.size(), 2):
+		out.append(["10cm", "5cm"][i])
+	if h is Dictionary and h.get("landing", true) != false:
+		out.append("landing")
+	return out
+
+static func last_stage() -> String:
+	var names := stage_names()
+	return names[-1] if not names.is_empty() else "10cm"
+
 ## The dry-run heights (study_mode.height.dry_run), as the backend computes them.
 static func dry_run_stages() -> Array:
 	var h = GameConfig.get_value("study_mode", "height", {})
 	var d: Dictionary = h.get("dry_run", {}) if h is Dictionary and h.get("dry_run") is Dictionary else {}
-	var heights: Array = h.get("capture_heights_cm", [10.0, 5.0]) if h is Dictionary else [10.0, 5.0]
+	var heights: Array = h.get("capture_heights_cm", [10.0]) if h is Dictionary and h.get("capture_heights_cm") is Array else [10.0]
 	var up := 1.0 if GameConfig.robot().z_up_is_positive else -1.0
 	var desk := float(d.get("z_desk_tip", 20.0))
 	var per := float(d.get("z_per_cm", 4.0))
 	var off := float(d.get("camera_offset_cm", 3.0))
-	return [{"name": "10cm", "z": desk + up * (float(heights[0]) - off) * per},
-		{"name": "5cm", "z": desk + up * (float(heights[1]) - off) * per},
-		{"name": "landing", "z": desk + up * float(d.get("landing_tip_cm", 1.5)) * per}]
+	var out: Array = []
+	for name in stage_names():
+		if name == "landing":
+			out.append({"name": "landing", "z": desk + up * float(d.get("landing_tip_cm", 1.5)) * per})
+		else:
+			out.append({"name": name, "z": desk + up * (float(heights[0 if name == "10cm" else 1]) - off) * per})
+	return out
 
 # ------------------------------------------------------------------ the explanation
 func explain(problem: int) -> void:

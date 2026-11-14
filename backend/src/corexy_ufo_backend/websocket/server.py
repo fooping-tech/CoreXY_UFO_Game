@@ -789,10 +789,13 @@ class GameServer:
                 raise ValueError(f"{key} must be a number in {lo:g}..{hi:g}")
             return round(float(v), 3)
         try:
-            out: dict[str, Any] = {"drum_radius_mm": num("drum_radius_mm", 3.0, 100.0),
-                                   "camera_offset_cm": num("camera_offset_cm", 0.0, 30.0),
-                                   "landing_tip_cm": num("landing_tip_cm", 0.0, 20.0),
-                                   "allow_landing_contact": params.get("allow_landing_contact") is True}
+            out: dict[str, Any] = {"drum_radius_mm": num("drum_radius_mm", 3.0, 100.0)}
+            # optional: the lens above the tips and the closest stage (#110: one 10 cm stage of the tips)
+            if params.get("camera_offset_cm") is not None:
+                out["camera_offset_cm"] = num("camera_offset_cm", 0.0, 30.0)
+            if params.get("landing_tip_cm") is not None:
+                out["landing_tip_cm"] = num("landing_tip_cm", 0.0, 20.0)
+                out["allow_landing_contact"] = params.get("allow_landing_contact") is True
         except ValueError as e:
             return self._nack(name, str(e))
         desk = params.get("desk", "bottom")

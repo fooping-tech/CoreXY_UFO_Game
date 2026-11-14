@@ -27,9 +27,6 @@ var _ws_buttons: Array[Button] = []  # need the backend
 var height_status: Dictionary = {}
 var _height: Label
 var _drum: SpinBox
-var _lens: SpinBox
-var _landing: SpinBox
-var _contact: CheckBox
 var _height_filled := false
 ## The last calibration command's answer from the backend ("" = none yet), shown by the
 ## settings screen under the tabs (visible wherever the tab is scrolled).
@@ -123,28 +120,17 @@ func setup(m: Node) -> void:
 	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear())
 
 	_head("5. 勉強モードの撮影の高さ")
-	_note("HELP でアームのカメラを 10cm・5cm・いちばん近くに下ろす高さ。1cm あたりの Z は、巻き上げドラムの半径と"
-		+ "1 の Z の換算から計算する。机の Z は 1 の「下」の記録（爪先を机に付けて記録したところ）。"
-		+ "爪先からレンズまでの高さは定規で測って入れる。保存したら「試す」で各高さへ動かし、定規でレンズの高さを"
-		+ "確かめてから「確かめた」。値を変えると確認は外れる。")
+	_note("HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。1 の Z の上下だけで決まる: 1cm あたりの Z は"
+		+ "巻き上げドラムの半径と Z の換算から計算し、机は 1 の「下」の記録（爪先を机に付けて記録したところ）。"
+		+ "「保存」→「10cm へ動かす（試す）」で爪先と机の間を定規で確かめて「確かめた」。"
+		+ "ロープが重なって巻かれると計算がずれるので、この確認だけは要る。")
 	row = _row()
-	_drum = _spin(row, "ドラム半径 mm", 3.0, 100.0, 0.5, 15.0)
-	_lens = _spin(row, "爪先からレンズ cm", 0.0, 30.0, 0.1, 3.0)
-	_landing = _spin(row, "いちばん近くの爪先 cm", 0.0, 20.0, 0.1, 1.0)
-	row = _row()
-	_contact = CheckBox.new()
-	_contact.text = "いちばん近くで爪先をプリントに付けてよい（開いた爪で立たせるとき）"
-	_contact.focus_mode = Control.FOCUS_NONE
-	_contact.add_theme_font_size_override("font_size", 16)
-	row.add_child(_contact)
-	row = _row()
+	_drum = _spin(row, "巻き上げドラムの半径 mm", 3.0, 100.0, 0.5, 15.0)
 	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"))
 	_ws_button(row, "ここを机に記録して保存", func(): save_height("here"))
 	_height = _value()
 	row = _row()
-	for st in [["10cm", "10cm へ動かす（試す）"], ["5cm", "5cm へ（試す）"], ["landing", "いちばん近くへ（試す）"]]:
-		var stage: String = st[0]
-		_ws_button(row, st[1], func(): try_height(stage))
+	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]))
 	row = _row()
 	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}))
 	_ws_button(row, "確認を外す", func(): main.ws.send_command("study_height_confirm", {"confirmed": false}))
@@ -162,8 +148,7 @@ func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v:
 ## #110: the entered values -> the backend (calibration.json#study_height), unconfirmed.
 ## desk: "bottom" = the Z calibration's bottom, "here" = the arm's Z now.
 func height_params(desk: String) -> Dictionary:
-	return {"drum_radius_mm": _drum.value, "camera_offset_cm": _lens.value, "landing_tip_cm": _landing.value,
-		"allow_landing_contact": _contact.button_pressed, "desk": desk}
+	return {"drum_radius_mm": _drum.value, "desk": desk}
 
 func save_height(desk: String) -> void:
 	main.ws.send_command("study_height_set", height_params(desk))
@@ -191,9 +176,6 @@ func show_heights(st: Dictionary) -> void:
 	if not _height_filled and not saved.is_empty():
 		_height_filled = true
 		_drum.value = float(saved.get("drum_radius_mm", _drum.value))
-		_lens.value = float(saved.get("camera_offset_cm", _lens.value))
-		_landing.value = float(saved.get("landing_tip_cm", _landing.value))
-		_contact.button_pressed = bool(saved.get("allow_landing_contact", false))
 	elif not _height_filled and st.get("default_drum_radius_mm") != null:
 		_drum.value = float(st.default_drum_radius_mm)
 

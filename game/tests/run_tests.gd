@@ -59,6 +59,7 @@ func _ready() -> void:
 	_test_study_mode_mock_story(rs)
 	_test_study_mode_failures(rs)
 	_test_study_mode_backend_messages(rs)
+	_test_study_mode_without_tidy_up(rs)
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
@@ -1904,6 +1905,7 @@ func _study_pump(game: Node, secs: float, until := Callable()) -> bool:
 
 func _study_game(mode := "simulated") -> Node:
 	GameConfig.data["study_mode"]["enabled"] = true
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true  # the tidy-up's own tests (off in the config, #110)
 	var game: Node = load("res://scenes/main.tscn").instantiate()
 	add_child(game)
 	RobotState.source = "mock"
@@ -1944,7 +1946,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	var halted: bool = game.control_source == "halt"
 	_study_pump(game, 30.0, func(): return ctl.state == "AI_EXPLAINING")
 	var captures := states.filter(func(s): return s.begins_with("CAPTURE_"))
-	var order_ok := captures == ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING"]
+	var order_ok := captures == ["CAPTURE_10CM"]  # #110: one close-up, 10 cm
 	var went_down: bool = game.mock.target != target_before
 	_study_pump(game, 40.0, func(): return ctl.state == "STUDYING")
 	var explained_ok := ctl.state == "STUDYING" and str(ctl.explanation.get("hint", "")) != "" \
@@ -1952,7 +1954,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	_ok(intro_ok and grade_ok and studying_ok and one_ok, "study mock: intro, grade, the sheet is found, a problem filled",
 		"%s %s %s %s" % [intro_ok, grade_ok, studying_ok, one_ok])
 	_ok(help_ok and moving and halted and order_ok and went_down and explained_ok,
-		"study mock: HELP looks at problem 3 with 10cm -> 5cm -> landing close-ups, explains, and the jog is held meanwhile",
+		"study mock: HELP looks at problem 3 with the 10cm close-up, explains, and the jog is held meanwhile",
 		"%s %s %s %s %s %s %s" % [help_ok, moving, halted, captures, went_down, explained_ok, ctl.state])
 	# complete: only after stable readings, celebrated once
 	ctl.handle_key(KEY_2)
@@ -2066,8 +2068,35 @@ func _test_study_mode_failures(rs: Node) -> void:
 
 ## The backend route: the sequences' status messages drive the story (holding at a
 ## stage -> that close-up; the previous run's IDLE / FAULT ignored; NACK and FAULT end it).
+## #110: the tidy-up off (study_mode.cleanup.enabled false): the game unlocks after the celebration.
+func _test_study_mode_without_tidy_up(rs: Node) -> void:
+	var game := _study_game()
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.tracker.confirm_complete()
+	ctl._check_complete()
+	var seen: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): seen.append(c))
+	_study_pump(game, 30.0, func(): return ctl.state == "GAME_UNLOCKED")
+	game.study_hud.refresh()
+	_ok(ctl.state == "GAME_UNLOCKED" and not "CLEANUP" in seen and not ctl.services.motion_active()
+		and game.study_hud._check_rows[2][1].text.contains("今はなし") and not game.study_hud._sub_banner.text.contains("お片付け"),
+		"study: with the tidy-up off the game unlocks after the celebration, no arm motion", str(seen))
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_study_mode_backend_messages(rs: Node) -> void:
 	var game := _study_game()
+	var height: Dictionary = GameConfig.data["study_mode"]["height"]
+	var kept := [height.get("capture_heights_cm"), height.get("landing")]
+	height["capture_heights_cm"] = [10.0, 5.0]  # three close-ups still work (the config has one since #110)
+	height["landing"] = true
 	var ctl: StudyModeController = game.study_mode
 	var sv: StudyServices = ctl.services
 	ctl.start()
@@ -2091,6 +2120,8 @@ func _test_study_mode_backend_messages(rs: Node) -> void:
 	var done_ok := ctl._help_arm_done and not sv.motion_active()
 	_ok(stale_ok and order == ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING"] and done_ok,
 		"study backend: the staged approach's messages give the 3 close-ups in order, then done", "%s %s %s" % [stale_ok, order, done_ok])
+	height["capture_heights_cm"] = kept[0]
+	height["landing"] = kept[1]
 	# a refused approach (NACK) and a refused tidy-up are shown, never retried
 	ctl._set_state("HELP_MOVING")
 	sv._help_active = true
@@ -2199,12 +2230,12 @@ func _test_settings(rs: Node) -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
 	var base_provider = GameConfig.base_value("study.provider")
 	st.set_form_value("study.provider", "codex")
-	st.set_form_value("study_mode.demo.source", "camera")
+	st.set_form_value("study_mode.demo.source", "simulated")  # the default is camera since #110
 	st.set_form_value("audio.volume_db", -20.0)
 	var marked: bool = (st._rows["study.provider"].label as Label).text.ends_with("＊")
 	var err := st.save()
 	var saved = GameConfig.read_json(path)
-	_ok(game.study_mode.services.mode == "camera" and is_equal_approx(game.sfx.volume_db, -20.0),
+	_ok(game.study_mode.services.mode == "simulated" and is_equal_approx(game.sfx.volume_db, -20.0),
 		"settings: the 今すぐ items apply on 保存 (the study mode's source, the volume)")
 	game.open_settings()
 	st.set_form_value("render.screen_shake", false)
@@ -2217,7 +2248,7 @@ func _test_settings(rs: Node) -> void:
 	st.save()
 	_ok(live_ok and game.shake.enabled, "settings: the screen shake and the grade apply on 保存 too (and back)")
 	_ok(err == "" and not game.settings_active() and t.notice().contains("保存") and marked
-		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "camera"}}}
+		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "simulated"}}}
 		and GameConfig.value("study.provider") == "codex" and GameConfig.base_value("study.provider") == base_provider,
 		"settings: 保存 writes only the changed keys to local_settings.json and uses them", str(saved))
 	game.open_settings()
@@ -2225,7 +2256,7 @@ func _test_settings(rs: Node) -> void:
 	_ok(shown and GameConfig.save_local({"robot.x_max_mm": 1.0}) != "" and GameConfig.read_json(path) == saved,
 		"settings: it reopens with the saved values; a key outside the schema is refused")
 	GameConfig.load_local()
-	_ok(GameConfig.local == {"study.provider": "codex", "study_mode.demo.source": "camera", "audio.volume_db": -20.0},
+	_ok(GameConfig.local == {"study.provider": "codex", "study_mode.demo.source": "simulated", "audio.volume_db": -20.0},
 		"settings: the saved file reads back", str(GameConfig.local))
 	st.reset_defaults()
 	st.save()
@@ -2306,7 +2337,7 @@ func _test_calibration_tab(rs: Node) -> void:
 		"stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
 			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
 	cp.refresh()
-	_ok(is_equal_approx(float(hp.camera_offset_cm), 3.0) and is_equal_approx(float(hp.drum_radius_mm), 15.0)
+	_ok(not hp.has("camera_offset_cm") and is_equal_approx(float(hp.drum_radius_mm), 15.0)
 		and hp.desk == "bottom" and unconfirmed_text.contains("1cm = Z 5.40") and unconfirmed_text.contains("10cm: Z 37.8")
 		and unconfirmed_text.contains("まだ確認していない") and cp._height.text.contains("確認済み")
 		and is_equal_approx(cp.stage_z("5cm"), 10.81) and is_nan(cp.stage_z("bogus")),

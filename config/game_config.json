@@ -290,7 +290,7 @@
     "grade": "elem_3",
     "_note": "UFOくん 勉強モード (#86). The title screen, F5, ./start.sh --study-mode or the game's --study-mode start it. enabled = the study mode is there, and the backend starts the homework service it needs (voice, per-problem watch, explanation) even when homework.enabled is false (homework.enabled is only the F1 panel's homework watch). Nothing is sent outside while demo.source is simulated. weekday_label = the day shown and said (fixed to Monday for the demo). grade = the first grade shown (nursery_1..3, elem_1..6, jhs_1..3; , / . change it on the intro screen). Worksheets: config/worksheets.json (python3 tools/build_worksheets.py; printable sheets in docs/worksheets/).",
     "demo": {
-      "source": "simulated",
+      "source": "camera",
       "_note": "What the study mode uses (#92). simulated = no camera, Jev or AI, nothing leaves the machine: the worksheet, the answers (keys 1/2/3), the problem's place (worksheet data + mock_desk) and the explanation (the worksheet's own hints) are simulated; the arm moves on a mock robot only (never the real crane). camera = the overview camera, Jev (Cloudflare) and Claude / Codex: frames are sent to them. Which robot is not set here: it is the one start.sh connected (./start.sh = the real crane, --mock = the backend's mock, --game-only = the game's own mock). With the real crane the backend still refuses what is not calibrated and confirmed below (the tidy-up separately). The earlier mode key is still read (mock = simulated, camera / real = camera).",
       "worksheet_wait_s": 4.0,
       "auto_answer": false,
@@ -319,9 +319,10 @@
     },
     "height": {
       "capture_heights_cm": [
-        10.0,
-        5.0
+        10.0
       ],
+      "landing": false,
+      "_heights_note": "#110: one close-up, the claw tips 10 cm above the desk (capture_heights_cm [10.0], no landing stage). The 校正 tab measures it from the Z calibration alone (calibration.json#study_height: the drum radius gives cm per Z, the Z bottom is the desk, camera_offset 0); [10.0, 5.0] and landing true bring the 5 cm and closest stages back.",
       "real": {
         "z_desk_tip": null,
         "z_per_cm": null,
@@ -347,6 +348,8 @@
       "_note": "Backend Z is an abstract unit, not a height above the desk. Z(camera h cm) = z_desk_tip + (z_up_is_positive ? +1 : -1) * (h - camera_offset_cm) * z_per_cm. z_desk_tip = Z where the claw tips touch the desk, z_per_cm = Z units per cm (measure with a block of known height), camera_offset_cm = lens above the claw tips, landing_tip_cm = claw tip height at the landing (below min_clearance_cm only with allow_landing_contact, after checking it on the robot). real: every null measured on the machine and every confirmed item set by hand, otherwise the staged descent is refused (NOT measured yet). dry_run: made-up values for the mock robot only."
     },
     "cleanup": {
+      "enabled": false,
+      "_enabled_note": "#110: false = no tidy-up at all: after the celebration the game unlocks at once (true = the magnet-jig tidy-up below, still refused on the real robot until enabled_real and measured).",
       "enabled_real": false,
       "real": {
         "jig_xy": null,
