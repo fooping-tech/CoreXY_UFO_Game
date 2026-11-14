@@ -66,6 +66,13 @@ var _locate_rid := ""
 var _explain_rid := ""
 var _help_rid := ""
 var _nav_rid := ""
+## #116: the worksheet's corner marks in the overview frame (as shown): {tl, tr, bl, br: Vector2 0..1}
+const SHEET_FIND_S := 1.5  # how often the frame is sent to find them
+const SHEET_FRESH_MS := 5000  # older than this: the drawn sheet again
+var sheet_corners: Dictionary = {}
+var sheet_seen_ms := -1
+var _sheet_left := 0.0
+var _sheet_rid := ""
 ## The last staged capture's target ({u, v} or {xy}): where "d_mm further" starts from (#104)
 var last_help_target: Dictionary = {}
 var _cleanup_rid := ""
@@ -153,6 +160,7 @@ func abort(reason := "") -> void:
 	_cleanup_started = false
 	_help_rid = ""
 	_nav_rid = ""
+	_sheet_rid = ""
 	_cleanup_rid = ""
 	_last_seq_key.clear()
 	status = reason
@@ -186,6 +194,40 @@ func _process(dt: float) -> void:
 		_mock_tick(dt)
 	if not _walk.is_empty():
 		_walk_tick(dt)
+	_sheet_tick(dt)
+
+## #116: in the camera mode, the overview frame goes to the backend now and then to find the
+## worksheet's corner marks (OpenCV there, no AI, nothing kept); the HUD then shows the real
+## sheet, straightened, from the live camera.
+func _sheet_tick(dt: float) -> void:
+	_sheet_left -= dt
+	if _sheet_left > 0.0 or mode != "camera" or _sheet_rid != "" or not backend_robot():
+		return
+	_sheet_left = SHEET_FIND_S
+	var img := _overview_image()
+	if img == null or img.is_empty():
+		return
+	var jpeg := StudyClient.encode_jpeg(img, 1280, 900000)
+	if jpeg.is_empty():
+		return
+	_sheet_rid = main.ws.send_command("worksheet_find", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
+
+## The corner marks while fresh, else {} (the drawn sheet).
+func sheet_marks(now_ms: int = -1) -> Dictionary:
+	var now := Time.get_ticks_msec() if now_ms < 0 else now_ms
+	return sheet_corners if sheet_seen_ms >= 0 and now - sheet_seen_ms <= SHEET_FRESH_MS else {}
+
+func _on_sheet_found(ok: bool, payload: Dictionary) -> void:
+	if not ok or not bool(payload.get("found", false)) or not payload.get("corners") is Dictionary:
+		return  # the last ones age out (SHEET_FRESH_MS)
+	var c: Dictionary = payload.corners
+	var out := {}
+	for k in ["tl", "tr", "bl", "br"]:
+		if not c.get(k) is Array or (c[k] as Array).size() != 2:
+			return
+		out[k] = Vector2(float(c[k][0]), float(c[k][1]))
+	sheet_corners = out
+	sheet_seen_ms = Time.get_ticks_msec()
 
 # ------------------------------------------------------------------ the watch
 func watch_start() -> void:
@@ -720,6 +762,10 @@ func _on_aux(msg: Dictionary) -> void:
 
 func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:
 	if rid == "":
+		return
+	if rid == _sheet_rid:
+		_sheet_rid = ""
+		_on_sheet_found(ok, payload)
 		return
 	if rid == _help_rid:
 		_help_rid = ""

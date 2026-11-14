@@ -349,6 +349,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
+    { name = "opencv-python" },
     { name = "pyserial" },
     { name = "websockets" },
 ]
@@ -374,6 +375,7 @@ dev = [
 requires-dist = [
     { name = "mediapipe", marker = "extra == 'hands'", specifier = ">=0.10.14" },
     { name = "numpy", specifier = ">=1.26" },
+    { name = "opencv-python", specifier = ">=4.9" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4.9" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "ultralytics", marker = "extra == 'yolo'", specifier = ">=8.2" },
