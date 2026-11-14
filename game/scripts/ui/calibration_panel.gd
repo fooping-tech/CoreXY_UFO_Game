@@ -23,6 +23,9 @@ var _cam: Label
 var _overview: OverviewPicker
 var _focus: OverviewPicker
 var _ws_buttons: Array[Button] = []  # need the backend
+var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
+var _z_use: Button
+var restore_estimate: Dictionary = {}
 ## The last calibration command's answer from the backend ("" = none yet), shown by the
 ## settings screen under the tabs (visible wherever the tab is scrolled).
 var result_text := ""
@@ -31,7 +34,7 @@ var result_ok := true
 ## The commands this tab sends (directly or through main.gd / the homework client), with
 ## the words shown for their answer.
 const COMMANDS := {
-	"enable_motors": "モーター", "home": "原点復帰", "z_set": "Z の記録",
+	"enable_motors": "モーター", "home": "原点復帰", "z_set": "Z の記録", "z_restore": "前回の Z の呼び出し",
 	"arm_step": "爪を回す", "arm_set": "爪の記録", "arm_goto": "爪の開け閉め",
 	"homework_spot_set": "宿題の位置の記録",
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
@@ -56,7 +59,18 @@ func setup(m: Node) -> void:
 	_ws_button(row, "原点復帰", func(): main.ws.send_command("home"))
 
 	_head("1. Z の上下（最初に測る）")
-	_note("W でアームを一番上まで巻き上げて「上を記録」。続けて S で一番下まで下げて「下を記録」。"
+	_note("電源を入れ直したあとは、Z の換算（1 単位あたりのカウントと向き）は残っていて、上下の記録だけが消える。"
+		+ "「前回の上下を呼び出す」→ 表示された Z とアームの高さが合っていれば「これを使う」。合わなければ W で一番上まで"
+		+ "巻き上げて「上を記録」だけでよい（下はロープの長さを変えたときだけ）。")
+	_z_restore = _value()
+	row = _row()
+	_ws_button(row, "前回の上下を呼び出す", func():
+		restore_estimate = {}
+		main.ws.send_command("z_restore", {"apply": false}))
+	_z_use = _ws_button(row, "これを使う（アームの高さを確かめてから）", func():
+		if not restore_estimate.is_empty():
+			main.ws.send_command("z_restore", {"apply": true, "turns": int(restore_estimate.get("turns", 0))}))
+	_note("初めて測るとき・ロープの長さを変えたとき: W でアームを一番上まで巻き上げて「上を記録」。続けて S で一番下まで下げて「下を記録」。"
 		+ "2 点のカウント差から Z の 1 単位あたりのカウントと向きを求める。この画面では前に測った範囲で止まらない"
 		+ "（下ろす量を変えたときに測り直せる）。巻き過ぎ・下ろし過ぎに注意して、押している間だけ動かす。")
 	_z = _value()
@@ -157,6 +171,24 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	result_ok = ok
 	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
+	if cmd == "z_restore":
+		var r: Dictionary = data.restore if ok and data.get("restore") is Dictionary else {}
+		restore_estimate = {} if r.is_empty() or bool(r.get("applied", false)) or bool(r.get("too_far", false)) else r
+		_z_restore.text = restore_text(r) if ok else ""
+		if ok and bool(r.get("applied", false)):
+			result_text = "前回の上下を呼び出しました（Z %.1f）" % float(r.get("z", 0.0))
+
+## The call-back's estimate in words (#106).
+static func restore_text(r: Dictionary) -> String:
+	if r.is_empty():
+		return ""
+	if bool(r.get("applied", false)):
+		return "呼び出しました: いま Z %.1f" % float(r.get("z", 0.0))
+	var s := "前回の記録から: いま Z 約 %.1f（0 = 一番下、100 = 一番上）。前回止めた所から %+.1f 単位" % [
+		float(r.get("z", 0.0)), float(r.get("drift_units", 0.0))]
+	if bool(r.get("too_far", false)):
+		return s + "。ずれが大きすぎる（電源を切っている間に回った）: 一番上まで巻き上げて「上を記録」"
+	return s + "。アームの高さが合っていれば「これを使う」"
 
 ## A refusal's reason as what to do next (the backend's own words when it is not known).
 static func reason_text(reason: String) -> String:
@@ -187,6 +219,8 @@ func _on_picked(uv: Vector2) -> void:
 func opened() -> void:
 	result_text = ""
 	result_ok = true
+	restore_estimate = {}
+	_z_restore.text = ""
 	if hw != null and backend_ready():
 		hw.request_camera_map()
 	refresh()
@@ -216,6 +250,8 @@ func refresh() -> void:
 		"記録済" if RobotState.z_bottom_set else "まだ",
 		"測った値（calibration.json）" if RobotState.z_calibrated else "設定ファイルの仮の値（まだ測っていない）"]
 	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated else BAD)
+	_z_use.disabled = not ready or restore_estimate.is_empty()
+	_z_restore.add_theme_color_override("font_color", YELLOW)
 	_claw.text = "いま %s　開き: %s　閉じ: %s" % ["%.1f°" % RobotState.arm_deg if RobotState.arm_reference_set else "?",
 		deg_text(RobotState.arm_open_deg), deg_text(RobotState.arm_closed_deg)]
 	var claw_ok := not is_nan(RobotState.arm_open_deg) and not is_nan(RobotState.arm_closed_deg)

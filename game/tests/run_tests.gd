@@ -2289,6 +2289,19 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.ws.ack.emit("r3", true, {"command": "z_set"})
 	st._process(0.0)
 	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	# #106: the call-back's estimate is shown, then used only with the same turn shift
+	game.ws.ack.emit("r4", true, {"command": "z_restore", "restore": {"turns": -1, "drift_counts": 150,
+		"drift_units": 1.9, "z": 42.5, "too_far": false, "applied": false}})
+	var est_text: String = st.calibration._z_restore.text
+	var est_kept: bool = int(st.calibration.restore_estimate.get("turns", 0)) == -1
+	game.ws.ack.emit("r5", true, {"command": "z_restore", "restore": {"turns": 4, "drift_units": 22.0, "z": 10.0,
+		"too_far": true, "applied": false}})
+	var far_dropped: bool = st.calibration.restore_estimate.is_empty() and st.calibration._z_restore.text.contains("上を記録")
+	game.ws.ack.emit("r6", true, {"command": "z_restore", "restore": {"turns": -1, "z": 42.5, "applied": true}})
+	st._process(0.0)
+	_ok(est_text.contains("42.5") and est_text.contains("これを使う") and est_kept and far_dropped
+		and st.calibration.restore_estimate.is_empty() and st._status.text.contains("呼び出しました"),
+		"calibration: the last Z points are called back after a look at the estimate (#106)", est_text)
 	var free_here: bool = game.jog_params(Vector3(0, 0, -5)).get("z_free", false) == true
 	RobotState.z_calibrated = true
 	RobotState.z_reference_set = true

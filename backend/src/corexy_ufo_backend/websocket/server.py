@@ -8,7 +8,9 @@ Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
-  measured counts per unit, saved; clear = start over), z_servo_recover (after the drum
+  measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
+  last session's top / bottom after a power cycle; apply false = the estimate only, true =
+  use it when the turn shift is still `turns`), z_servo_recover (after the drum
   servo's power was cut alone: a SERVO_TURN the firmware refuses unmoved, so the next jog
   sets it to multi-turn again; a motion command), grab {close}, stop (ABORT, emergency),
   soft_stop (decelerate, no alarm), jog {vx,vy,vz?,z_free?} (mm/s; vz = Z value/s; z_free = the 校正 tab: past the measured Z range; dead-man: resend ~20 Hz while
@@ -92,7 +94,7 @@ log = logging.getLogger(__name__)
 SERIAL_LOG_SKIP = ("TX POS", "RX POS ", "RX JOG_POS ")
 LOG_QUEUE_MAX = 500
 
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
@@ -687,6 +689,11 @@ class GameServer:
                 await self.robot.set_z_zero()
             elif name == "z_set":
                 await self.robot.set_z_point(str(params.get("which", "")))
+            elif name == "z_restore":
+                turns = params.get("turns")
+                data = await self.robot.restore_z_points(params.get("apply") is True,
+                                                         int(turns) if turns is not None else None)
+                return self._ack(name, {"restore": data, **self.robot.snapshot().to_message()["data"]})
             elif name == "z_servo_recover":
                 await self.robot.recover_z_servo()
             elif name == "arm_zero":

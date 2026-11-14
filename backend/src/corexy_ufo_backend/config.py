@@ -69,6 +69,7 @@ class BackendConfig:
     arm_calibration_path: Any = None
     # the Z calibration from the top / bottom points
     z_calibration_path: Any = None
+    z_points_path: Any = None  # calibration.json#z_points: the last top / bottom / rest counts (#106)
     # where the arm's camera looks at the worksheet (#76)
     homework_spot_path: Any = None
     # overview image -> CoreXY XY (#78)
@@ -171,6 +172,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg = BackendConfig()
     cfg.arm_calibration_path = calibration_section(path.parent, "claw")
     cfg.z_calibration_path = calibration_section(path.parent, "z")
+    cfg.z_points_path = calibration_section(path.parent, "z_points")
     cfg.homework_spot_path = calibration_section(path.parent, "homework_spot")
     cfg.camera_xy_path = calibration_section(path.parent, "camera_xy")
     if not path.exists():
