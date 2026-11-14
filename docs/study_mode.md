@@ -72,6 +72,7 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
   - 判定（ゲーム側 `StudyQuestionTracker`）: 未着手 / 記入中 / 記入済み / 判定保留。記入済みは 2 回続けて（`confirm_readings`）、完了は全問が `complete_readings` 回続けて記入済みのときか、大人の Enter。手で隠れているときは更新しません。**正解かどうかは判定しません。**
   - 位置: `homework_locate {kind: "problem", problem: 3, worksheet_id}`。Claude/Codex が解答欄を答え、Jev が同じ解答欄を探し（一致しないと動かさない）、さらに Jev が見つけた四隅の基準マークからページの位置を計算して、問題 3 の領域と合わないときも動かしません。動く先は camera_map（ホモグラフィ校正）で XY に変換し、校正が使えないとバックエンドが拒否します。
   - 解説: `homework_explain` で俯瞰 + 3 枚の近接画像を 1 回の質問で渡し、構造化 JSON（`problem_number, recognized_problem, confidence, hint, explanation, speech_text, needs_confirmation`）を受け取ります。プリントデータの問題文と照合し、違えば `needs_confirmation`。失敗時はプリントのヒントで解説します（`fallback`）。
+  - 学習支援 AI（#104、§8）: `study.explain_provider: "tutor"` のとき、解説だけを学習支援 AI（UFOくん API）に頼みます。問題が写っていなければ、もう一度見に行きます（最大 2 回）。
 - **演出。** GameState のイベント `study_*` を `vfx_director.gd` が受けて既存の PixelFX（`success_confetti`、`success_sparkle`、`start_energy`、`grab_burst`、`fail_poof`）を出します。クラッカー・フラッシュ・バナーは HUD（`ui/study_hud.gd`）。効果音は `study_mode/study_sounds.gd` がその場で合成（音声ファイルなし）。
 
 | ファイル | 役割 |
@@ -112,3 +113,52 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 - ジグの把持は自動で判定しません（センサーがない）。大人が Enter で確認し、`grip_confirm_timeout_s` で FAULT。
 - 回収はクリップなど磁石につく安全なテスト用の物だけ。鉛筆や消しゴムは回収できません。磁石の誤飲・電子機器への接近に注意。
 - 通信が切れたことの検知は、実機が止まったことの保証ではありません（ファームウェアにホストウォッチドッグはない）。
+
+## 8. 学習支援 AI（UFOくん API、#104）
+
+解説を、別の PC（Windows・RTX）で動く学習支援 AI に頼めます。答えを教えずに段階的なヒントを出し、目的の問題が写っていなければ、どちらにどれだけずれているかを返します。引き継ぎ資料と見本のコードは学習支援 AI 側の `integrations/corexy_ufo/`（`HANDOFF.md`、`PATCHES.md`）。
+
+### つなぎ方
+
+1. 学習支援 AI の PC で `uv run python server/tutor_app.py`（起動時に `https://<IP>:8444/` と許可する接続元を表示）。
+2. この Mac に置く（**Git にもチャットにも出さない**。`config/secrets/` は Git に入らない）:
+   - `config/secrets/tutor_token.txt`: トークン（1 行）
+   - `config/secrets/tutor_cert.pem`: サーバの自己署名証明書（公開してよい方。`key.pem` は受け取らない）。この証明書だけを信頼し、IP で接続するのでホスト名は照合しない（検証そのものは切らない）
+3. 設定画面（歯車 → 設定 → Study タブ）で「勉強モードの解説」を「学習支援 AI」、「学習支援 AI の URL」を `https://192.168.x.x:8444` にして保存し、`./start.sh` で起動し直す（`config/local_settings.json` の `study.explain_provider` / `study.tutor_url`）。
+4. 接続テスト: `python3 tools/check_tutor_api.py`（URL・トークン・証明書は config から。TCP → TLS → 許可 IP → トークン → 推論 3 種の順に確かめ、だめなところで直し方を出す）。
+
+`study.provider`（Claude Code / Codex）は今までどおり、アドバイス・問題の位置の判定（#79）・Study タブに使います。学習支援 AI のアダプタは解説の文（「子どもは問題 N で困っています」）しか読めないので、`provider` を `tutor` にはしません。
+
+### 何を送るか
+
+- 10cm の近接画像 1 枚と「N ばんが わからない」、学年（`tutor_grade`、プリントの学年が読めればそれ）。俯瞰・5cm・いちばん近くの画像は送りません。サーバは画像をディスクに保存しません。
+- 子どものプリントには名前などが写ることがあります。実際の子どものプリントで評価データを集めるときは、保護者の同意と個人情報の除去が必要です。
+
+### つながらないとき
+
+ゲームも勉強モードも止まらず、アームも動かさず、プリントのヒントで解説します（今までの `fallback`）。2 回続けて失敗すると（`tutor_fail_limit`）、`tutor_cooldown_s`（120 秒）は呼ばずにすぐプリントのヒントにします。トークン・URL がないときも同じです。
+
+### 写っていない問題を探しに行く
+
+1. 学習支援 AI が `navigate {kind: "move", offset}`（画像の中心から目的の問題までのずれ。画像の幅・高さを 1000）を返す。
+2. アダプタが先端カメラの校正（`config/calibration.json` の `focus_camera`）で mm に直す（`d_mm`）。**校正がなければ `d_mm` を付けない = アームは動かない**（AI の言葉だけ）。
+3. ゲームは「あれっ、ここじゃないみたい。さがしに いくね！ 手を はなして まっててね。」と言い、**アームが前の撮影から戻り終わってから** `homework_navigate {u, v, camera, d_mm}` を送る。バックエンドは、前の撮影位置 + `d_mm` を全体カメラの u, v に直して返すだけ（**動かさない**）。1 回 60 mm を超える・3 mm 未満・可動範囲の外・全体カメラの校正が信用できる範囲の外は断る。実機では mm の目標は使わない。
+4. いつもの段階撮影（`homework_approach`）をもう一度。実機では毎回、大人の Enter が要る（HELP と同じ）。
+5. 最大 2 回（`MAX_NAV`）。見つからなければプリントのヒント。Space で止めると、もう探しに行かない。
+
+`uncover`（手で隠れている）・`zoom_out` は、AI の言葉を話すだけでアームは動かしません。
+
+### 先端カメラの校正（実機・高さごとに 1 回。未実施）
+
+10cm の高さで先端カメラの画像を保存（`base.jpg`）→ 同じ高さのまま X に +10 mm 動かして `x10.jpg` → 戻して Y に +10 mm 動かして `y10.jpg`（紙や手を動かさない）。
+
+```bash
+cd backend && uv run python ../tools/calibrate_focus.py --height 10cm --base base.jpg --move x10.jpg 10 0 --move y10.jpg 0 10
+```
+
+`config/calibration.json` の `focus_camera` に保存されます。誤差（`residual_px`）が数 px 以内で、「1 mm あたり ○ px」がカメラの高さから見て妥当かを確かめます。
+
+### 未確認（実機未検証）
+
+- 実機・本物の API・先端カメラの校正での動作。確かめたのは、偽の API と Mock のロボット、ゲームの本物のプロンプト・パーサとの組み合わせだけ。
+- 学習支援 AI の評価（学習に使っていない問題）: 番号で言われた問題を選ぶ 100%、位置で 74%、写っていない番号への対応 96%、問題の枠の位置 87%、**正誤判定は約 70%**（正しい答えを「まちがい」と言うことがある）。`needs_confirmation` と大人の確認の表示は残す。

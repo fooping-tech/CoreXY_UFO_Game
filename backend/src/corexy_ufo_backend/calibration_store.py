@@ -32,12 +32,16 @@ LEGACY_FILES = {
     "homework_spot": "homework_spot.json",
     "camera_xy": "camera_xy_calibration.json",
     "study_height": "study_height.json",
+    "focus_camera": "focus_calibration.json",
+    "z_points": "z_points.json",
 }
 NOTE = ("Values measured on this desk / this machine (#96), written by the backend when they are "
         "recorded (the debug panel). z = Z servo counts per unit and sign (z_set top / bottom), claw = "
         "the claw's open / closed angles, homework_spot = where the arm's camera looks at the worksheet, "
-        "camera_xy = overview image -> CoreXY XY, study_height = the study mode's capture heights (drum radius, lens above "
-        "the claw tips, landing; #110). Per machine: not in Git (every machine measures its own).")
+        "camera_xy = overview image -> CoreXY XY, focus_camera = arm camera image shift per mm of arm "
+        "motion (tools/calibrate_focus.py, #104), z_points = the drum counts of the arm's top / bottom and "
+        "at rest, to call them back after a power cycle (#106), study_height = the study mode's capture "
+        "height (the drum radius, #110). Per machine: not in Git (every machine measures its own).")
 
 _lock = threading.Lock()
 
