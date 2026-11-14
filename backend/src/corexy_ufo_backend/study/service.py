@@ -8,7 +8,7 @@ import binascii
 import tempfile
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -37,6 +37,19 @@ class StudyConfig:
     provider: str = "claude"
     claude_command: str = "claude"
     claude_model: str = ""  # "" = the CLI's default model
+    # Who writes the study mode's explanations (#104): "" = provider; "tutor" = the learning
+    # support AI (UFOくん API). The tutor adapter reads only the explanation's prompt, so
+    # the advice, the problem's place and the Study tab stay with provider.
+    explain_provider: str = ""
+    tutor_url: str = ""  # https://<the tutor PC>:8444 (http only on the same PC)
+    tutor_token_file: str = "config/secrets/tutor_token.txt"  # never in Git, never shown
+    tutor_cafile: str = "config/secrets/tutor_cert.pem"  # the server's self-signed cert (https)
+    tutor_grade: int = 3
+    tutor_timeout_s: float = 20.0
+    tutor_fail_limit: int = 2  # failures in a row before the tutor rests...
+    tutor_cooldown_s: float = 120.0  # ...for this long (the worksheet's hints meanwhile)
+    root: str = "."  # relative tutor_* files are under the repository (main.py sets it)
+    focus_calibration: Any = None  # calibration.json#focus_camera (main.py sets it)
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "StudyConfig":
@@ -49,14 +62,44 @@ class StudyConfig:
                    codex_command=str(data.get("codex_command", "codex app-server --listen stdio://")),
                    provider=str(data.get("provider", "claude")).strip().lower(),
                    claude_command=str(data.get("claude_command", "claude")),
-                   claude_model=str(data.get("claude_model", "")))
+                   claude_model=str(data.get("claude_model", "")),
+                   explain_provider=str(data.get("explain_provider", "") or "").strip().lower(),
+                   tutor_url=str(data.get("tutor_url", "") or "").strip(),
+                   tutor_token_file=str(data.get("tutor_token_file", cls.tutor_token_file)),
+                   tutor_cafile=str(data.get("tutor_cafile", cls.tutor_cafile)),
+                   tutor_grade=int(data.get("tutor_grade", 3)),
+                   tutor_timeout_s=max(float(data.get("tutor_timeout_s", 20.0)), 1.0),
+                   tutor_fail_limit=max(int(data.get("tutor_fail_limit", 2)), 1),
+                   tutor_cooldown_s=max(float(data.get("tutor_cooldown_s", 120.0)), 0.0))
 
 
-PROVIDERS = ("claude", "codex")
+PROVIDERS = ("claude", "codex", "tutor")
 
 
-def make_adapter(config: StudyConfig) -> StudyAdapter:
-    """The adapter for study.provider (imported lazily: each one is optional)."""
+def _under_root(config: StudyConfig, name: str) -> Path:
+    p = Path(name).expanduser()
+    return p if p.is_absolute() else Path(config.root) / p
+
+
+def make_adapter(config: StudyConfig, provider: str | None = None) -> StudyAdapter:
+    """The adapter for study.provider, or `provider` (imported lazily: each one is optional)."""
+    provider = provider or config.provider
+    if provider == "tutor":
+        from .errors import StudyAdapterError
+        from .tutor_adapter import TutorStudyAdapter
+        if not config.tutor_url:
+            raise StudyAdapterError("学習支援 AI の URL がありません（study.tutor_url）")
+        token_file = _under_root(config, config.tutor_token_file)
+        try:
+            token = token_file.read_text(encoding="utf-8").strip()
+        except OSError as e:
+            raise StudyAdapterError(f"学習支援 AI のトークンを読めません（{token_file}）") from e
+        cafile = _under_root(config, config.tutor_cafile) if config.tutor_cafile else None
+        return TutorStudyAdapter(config.tutor_url, token, grade=config.tutor_grade,
+                                 cafile=str(cafile) if cafile is not None and cafile.exists() else None,
+                                 focus_calibration=config.focus_calibration, timeout_s=config.tutor_timeout_s,
+                                 fail_limit=config.tutor_fail_limit, cooldown_s=config.tutor_cooldown_s)
+    config = replace(config, provider=provider)
     if config.provider == "claude":
         from .claude_adapter import ClaudeCodeStudyAdapter
         return ClaudeCodeStudyAdapter(config.claude_command, model=config.claude_model)

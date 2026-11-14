@@ -29,6 +29,10 @@ Command names and safety rules:
   go back up), homework_approach_status.
   homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
   instead: mapped to XY by the camera calibration, at the recorded spot's height.
+  homework_navigate {u, v, camera | xy (mock only), d_mm: [dx, dy]} (#104): the tutor AI's "the
+  problem is d_mm away from the last capture" -> the next target {u, v, xy, from}; never moves
+  (the game sends homework_approach next). Refused over 60 mm, under 3 mm, outside the soft
+  limits or the trusted camera calibration.
   camera_map_add {u, v, camera: {width, height, flip_h, flip_v}} (pair the clicked overview
   point with the arm's XY now: its own camera centred on that mark), camera_map_undo,
   camera_map_clear, camera_map_status (never move the robot)
@@ -96,6 +100,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
+            "homework_navigate",
             "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
             "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
@@ -586,6 +591,8 @@ class GameServer:
                 return self._ack(name, data)
             if name == "homework_approach_status":
                 return self._ack(name, self.approach.status())
+            if name == "homework_navigate":
+                return self._homework_navigate(params)
             if name == "homework_approach":
                 target = None
                 if "xy" in params:
@@ -747,6 +754,41 @@ class GameServer:
     @staticmethod
     def _ack(name: str, data: dict) -> dict:
         return {"type": "ack", "data": {"command": name, **data}}
+
+    # The tutor AI's "the problem is d_mm away" (#104) is never a motion: this only says where the
+    # next staged capture (homework_approach, with all its own checks) would look.
+    NAVIGATE_MAX_STEP_MM = 60.0
+
+    def _homework_navigate(self, params: dict) -> dict:
+        """{u, v, camera} (or xy on the mock) of the last capture + d_mm -> the next target as
+        u, v of the overview image (or xy). Refused: a step over 60 mm or under 3 mm, outside the
+        soft limits, outside the trusted camera calibration, xy on the real robot. Never moves."""
+        from ..study_mode.navigation import NavigationError, plan_relative, xy_to_uv
+        name = "homework_navigate"
+        lim = self.approach.limits
+        try:
+            d = params.get("d_mm")
+            if not isinstance(d, (list, tuple)) or len(d) != 2:
+                raise ValueError("d_mm must be [dx, dy] (mm)")
+            step = (float(d[0]), float(d[1]))
+            max_step = min(float(params.get("max_step_mm", self.NAVIGATE_MAX_STEP_MM)), self.NAVIGATE_MAX_STEP_MM)
+            ranges = {"x_range": (lim.x_min, lim.x_max), "y_range": (lim.y_min, lim.y_max), "max_step_mm": max_step}
+            if "xy" in params:
+                if self.robot.name == "real":
+                    return self._nack(name, "a target in mm (xy) is only for the mock robot: use u, v "
+                                            "and the camera calibration")
+                xy = params.get("xy")
+                cur = (float(xy[0]), float(xy[1]))
+                nxt = plan_relative(cur, step, **ranges)
+                return self._ack(name, {"xy": list(nxt), "from": list(cur)})
+            cam = camera_signature(params.get("camera"))
+            cur = self.camera_map.to_xy(params.get("u"), params.get("v"), cam)
+            nxt = plan_relative(cur, step, **ranges)
+            u, v = xy_to_uv(self.camera_map.h_inv, *nxt)
+            self.camera_map.to_xy(u, v, cam)  # the new point too must be inside the trusted calibration
+        except (NavigationError, CameraMapError, TypeError, ValueError, IndexError) as e:
+            return self._nack(name, f"移動先を決められません: {e}")
+        return self._ack(name, {"u": u, "v": v, "xy": list(nxt), "from": list(cur)})
 
     @staticmethod
     def _nack(name: str, reason: str) -> dict:

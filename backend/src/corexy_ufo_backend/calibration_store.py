@@ -31,11 +31,13 @@ LEGACY_FILES = {
     "claw": "arm_calibration.json",
     "homework_spot": "homework_spot.json",
     "camera_xy": "camera_xy_calibration.json",
+    "focus_camera": "focus_calibration.json",
 }
 NOTE = ("Values measured on this desk / this machine (#96), written by the backend when they are "
         "recorded (the debug panel). z = Z servo counts per unit and sign (z_set top / bottom), claw = "
         "the claw's open / closed angles, homework_spot = where the arm's camera looks at the worksheet, "
-        "camera_xy = overview image -> CoreXY XY. Per machine: not in Git (every machine measures its own).")
+        "camera_xy = overview image -> CoreXY XY, focus_camera = arm camera image shift per mm of arm "
+        "motion (tools/calibrate_focus.py, #104). Per machine: not in Git (every machine measures its own).")
 
 _lock = threading.Lock()
 
