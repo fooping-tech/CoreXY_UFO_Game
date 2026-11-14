@@ -69,10 +69,12 @@ class RobotInterface(ABC):
         raise RobotCommandError("arm_zero not supported")
 
     @abstractmethod
-    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0, *, z_free: bool = False) -> None:
         """Velocity jog (dead-man): keep sending while a key is held; all zero stops.
 
-        vz is the Z value per second (+ = larger z). The robot stops by itself if
+        vz is the Z value per second (+ = larger z). z_free (the settings screen's 校正 tab
+        measuring Z again, #102): do not stop at the measured 0..z_max range, so the arm
+        reaches a new top / bottom (still hold-to-move; the firmware's own guard stays). The robot stops by itself if
         refreshes stop for ~250 ms, so this is never retried. Requires enable_motors;
         XY also requires homing (Z alone does not, like the firmware)."""
 

@@ -774,9 +774,9 @@ class RealRobot(RobotInterface):
         except asyncio.CancelledError:
             pass
 
-    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0) -> None:
+    async def jog(self, vx_mm_s: float, vy_mm_s: float, vz_units_s: float = 0.0, *, z_free: bool = False) -> None:
         at_z_limit = False
-        if vz_units_s and self._z_limits_apply():
+        if vz_units_s and not z_free and self._z_limits_apply():
             # with a Z reference, never jog out of the 0..100 range
             z = self._z_units_est
             if (vz_units_s > 0 and z >= self.limits.z_max) or (vz_units_s < 0 and z <= self.limits.z_min):

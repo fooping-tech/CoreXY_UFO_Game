@@ -11,7 +11,7 @@ Command names and safety rules:
   measured counts per unit, saved; clear = start over), z_servo_recover (after the drum
   servo's power was cut alone: a SERVO_TURN the firmware refuses unmoved, so the next jog
   sets it to multi-turn again; a motion command), grab {close}, stop (ABORT, emergency),
-  soft_stop (decelerate, no alarm), jog {vx,vy,vz?} (mm/s; vz = Z value/s; dead-man: resend ~20 Hz while
+  soft_stop (decelerate, no alarm), jog {vx,vy,vz?,z_free?} (mm/s; vz = Z value/s; z_free = the 校正 tab: past the measured Z range; dead-man: resend ~20 Hz while
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than
   jog_expiry_s), clear_alarm,
@@ -679,7 +679,8 @@ class GameServer:
                 vz = float(params.get("vz", 0.0))
                 if (vx or vy or vz) and self._motion_lock.locked():
                     return self._nack(name, "busy: another motion command is running")
-                await self.robot.jog(vx, vy, vz)
+                # z_free: the game's 校正 tab measuring Z again (#102), past the measured range
+                await self.robot.jog(vx, vy, vz, z_free=params.get("z_free") is True)
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
             elif name == "z_zero":

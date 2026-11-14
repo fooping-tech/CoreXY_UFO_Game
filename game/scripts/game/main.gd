@@ -118,6 +118,8 @@ var _unfocused_logged := false
 var _typing_logged := false
 ## Why the last arrow-key jog was refused, as the next thing to do ("" = accepted).
 var jog_hint := ""
+## Z held against the end of its measured range (#102): how to go past it (校正 tab).
+var z_end_hint := ""
 ## request ids of moving (non-zero) jogs: only their acceptance clears jog_hint;
 ## the {0,0} sent on key release is always accepted and says nothing about it.
 var _moving_jog_rids := {}
@@ -829,6 +831,24 @@ static func jog_hint_for(reason: String) -> String:
 		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
 	return "JOG が拒否された: " + reason
 
+## A moving jog's parameters. On the settings screen's 校正 tab, z_free: Z goes past the
+## measured top / bottom, to measure them again (#102; still hold-to-move, Space stops).
+func jog_params(v: Vector3) -> Dictionary:
+	var params := {"vx": v.x, "vy": v.y, "vz": v.z}
+	if calibrating():
+		params["z_free"] = true
+	return params
+
+## The backend stops a Z jog at the measured range's ends (0..z_max, once the top is
+## recorded): said when one is held there, as the way past it (#102).
+func z_end_hint_for(vz: float, z: float) -> String:
+	if vz == 0.0 or not RobotState.z_calibrated or not RobotState.z_reference_set:
+		return ""
+	var r := GameConfig.robot()
+	if (vz < 0.0 and z <= float(r.z_min_mm) + 0.5) or (vz > 0.0 and z >= float(r.z_max_mm) - 0.5):
+		return "Z: 前に測った範囲の端で止まっている。下ろす量を変えたら 設定（歯車）→ 校正 で Z を測り直す（校正タブでは範囲で止まらない）"
+	return ""
+
 ## Catch button debounce (ms) from config/game_config.json auto_catch.<profile>.button_debounce_ms.
 func auto_catch_debounce_ms() -> float:
 	var ac = GameConfig.data.get("auto_catch", {})
@@ -983,7 +1003,7 @@ func _send_jog(v: Vector3, dt: float) -> void:
 	_jog_refresh_left -= dt
 	if _jog_refresh_left <= 0.0:
 		_jog_refresh_left = JOG_REFRESH_S
-		var rid: String = ws.send_command("jog", {"vx": v.x, "vy": v.y, "vz": v.z})
+		var rid: String = ws.send_command("jog", jog_params(v))
 		_moving_jog_rids[rid] = true
 		if _moving_jog_rids.size() > 64:  # acks lost on a disconnect must not pile up
 			_moving_jog_rids.erase(_moving_jog_rids.keys()[0])
@@ -1055,6 +1075,7 @@ func _handle_input(dt: float) -> void:
 	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
 	control_source = d.source
 	var v: Vector3 = d.v
+	z_end_hint = z_end_hint_for(v.z, RobotState.z_mm) if real and not calibrating() else ""
 	if real:
 		_send_jog(v, dt)
 	elif mock.enabled and v != Vector3.ZERO:
