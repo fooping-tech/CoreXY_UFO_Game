@@ -171,7 +171,9 @@
         {"key": "study.provider", "apply": "backend", "label": "アシスタント", "type": "enum", "options": [["claude", "Claude Code"], ["codex", "Codex"]]}
       ]},
       {"title": "実機", "items": [
-        {"key": "backend.serial_port", "apply": "backend", "label": "シリアルポート（空 = 自動検出）", "type": "text", "max_length": 200, "note": "./start.sh --port が優先。校正値はここでは変えられない"}
+        {"key": "backend.serial_port", "apply": "backend", "label": "シリアルポート 1 台目（空 = 自動検出）", "type": "text", "max_length": 200},
+        {"key": "backend.serial_port_2", "apply": "backend", "label": "シリアルポート 2 台目", "type": "text", "max_length": 200,
+         "note": "つながっているほうを使う（両方なら 1 台目）。./start.sh --port が優先。ポート名は ./start.sh --backend-only -- --list-ports で見る。校正値はここでは変えられない"}
       ]}
     ]
   },
@@ -265,6 +267,7 @@
   },
   "backend": {
     "serial_port": "",
+    "serial_port_2": "",
     "baudrate": 115200,
     "status_poll_hz": 10,
     "host_timeout_s": 2.0,
@@ -277,7 +280,7 @@
     "z_poll_hz": 3,
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
-    "_note": "z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
+    "_note": "serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
   },
   "study_mode": {
     "enabled": true,

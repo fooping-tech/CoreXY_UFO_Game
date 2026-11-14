@@ -23,7 +23,7 @@ from .sequence import AutoCatchConfig
 from .robot import RealRobot
 from .sequence import Phase
 from .sequence.dry_run import known_faults, make_dry_run_robot, run_dry
-from .serial_service.transport import list_serial_ports
+from .serial_service.transport import list_serial_ports, pick_port
 from .vision_service import CameraConfig, VisionService
 from .vision_service.cameras import list_cameras, resolve_camera
 from .vision_service.hand_control import HandControl, HandControlConfig
@@ -138,6 +138,9 @@ async def run(args: argparse.Namespace) -> int:
     cfg = load_config()
     if args.port:
         cfg.serial_port = args.port
+    elif cfg.serial_port_2:  # two boards registered (#100): the one connected now
+        cfg.serial_port = pick_port([cfg.serial_port, cfg.serial_port_2],
+                                    [p["device"] for p in list_serial_ports()])
     if args.baud:
         cfg.baudrate = args.baud
     if args.ws_host:

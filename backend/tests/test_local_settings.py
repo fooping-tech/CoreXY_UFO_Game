@@ -95,3 +95,9 @@ def test_tests_and_local_false_skip_the_file(cfg_dir: Path, monkeypatch: pytest.
     monkeypatch.setenv("CXUFO_NO_LOCAL_SETTINGS", "1")
     assert load_config(cfg_dir / "game_config.json").serial_port == ""
     assert config_mod.LOCAL_FILE == "local_settings.json"
+
+
+def test_two_serial_ports_from_the_settings_screen(cfg_dir: Path) -> None:
+    write_local(cfg_dir, {"backend": {"serial_port": "/dev/cu.usbserial-AAAA", "serial_port_2": "/dev/cu.usbserial-BBBB"}})
+    cfg = load_config(cfg_dir / "game_config.json")
+    assert (cfg.serial_port, cfg.serial_port_2) == ("/dev/cu.usbserial-AAAA", "/dev/cu.usbserial-BBBB")

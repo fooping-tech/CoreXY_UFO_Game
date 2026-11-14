@@ -29,6 +29,17 @@ def list_serial_ports() -> list[dict[str, str]]:
     return out
 
 
+def pick_port(registered: list[str], available: list[str]) -> str:
+    """The port to open from the registered boards (#100): the first one connected now;
+    none connected -> the first registered (opening it says why it fails); none registered
+    -> "" (guess_port then)."""
+    ports = [p.strip() for p in registered if p and p.strip()]
+    for p in ports:
+        if p in available:
+            return p
+    return ports[0] if ports else ""
+
+
 def guess_port() -> str | None:
     """Best guess for the Core2's USB serial port (CP210x / CH9102 on macOS)."""
     ports = list_serial_ports()
