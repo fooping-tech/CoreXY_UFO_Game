@@ -304,6 +304,14 @@ var _debug_before_title := false
 ## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
 ## the hand stick lets go, and main holds the manual controls while it shows. The debug
 ## panel goes above the title (hidden; F1 / Tab shows it there, STOP / E-STOP clickable).
+## #114: at start the settings screen's 校正 tab comes first (the Z top, the heights, the AI's
+## reachability); closing it shows the title. title_screen.calibration_first false = the title.
+func open_startup_screen() -> void:
+	if settings == null or not bool(GameConfig.get_value("title_screen", "calibration_first", true)):
+		return
+	open_settings()
+	settings.show_tab(SettingsScreen.CALIBRATION_TAB)
+
 func show_title() -> void:
 	if study_mode != null and study_mode.active():
 		study_mode.stop()
@@ -401,6 +409,7 @@ func _apply_cmdline() -> void:
 			DisplayServer.get_name() == "headless",
 			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
 		show_title()
+		open_startup_screen()
 	for i in range(args.size()):
 		match args[i]:
 			"--scenario":
