@@ -29,6 +29,7 @@ session: a reboot, a new link or a lost one forgets them.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
@@ -53,7 +54,11 @@ ARM_SERVO_ID = 2
 # arm_step: largest single manual step of the claw servo (degrees)
 ARM_STEP_MAX_DEG = 90.0
 CLAW_TOLERANCE_DEG = 0.5  # already there: no turn
-JOG_END_WAIT_S = 2.0  # how long a servo command waits for a jog (and its ramp) to end
+JOG_END_WAIT_S = 2.0
+# #106: the drum at rest is kept when it moved this far since last kept; a call-back whose
+# drift from it is over Z_RESTORE_MAX_DRIFT (3/8 of a turn) is refused (moved while off)
+Z_REST_SAVE_COUNTS = 8
+Z_RESTORE_MAX_DRIFT = 1536  # how long a servo command waits for a jog (and its ramp) to end
 SERVO_SPEED_COUNTS_PER_S = 2400.0
 # Z jog release ramp. The firmware's servo jog holds the position it last READ when
 # the rate drops to 0; at speed that read lags the drum, so the servo overshoots and
@@ -99,6 +104,9 @@ class RealRobot(RobotInterface):
         self.z_cal = ZCalibration.load(cfg.z_calibration_path)
         if self.z_cal.complete():
             self._apply_z_cal()
+        # #106: the last session's points and the drum at rest, in that session's counts
+        self._z_saved: dict = self._load_z_points()
+        self._z_saved_t = 0.0
         self._state = MachineState.UNKNOWN
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
@@ -504,6 +512,97 @@ class RealRobot(RobotInterface):
             return ref_units + delta_units
         return ref_units - delta_units
 
+    # ---------------------------------------------------------------- Z points kept (#106)
+    def _load_z_points(self) -> dict:
+        path = getattr(self.cfg, "z_points_path", None)
+        try:
+            if path is None or not path.exists():
+                return {}
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.warning("Z points not read (%s): record the top again", e)
+            return {}
+        if not isinstance(d, dict) or not isinstance(d.get("last"), int):
+            return {}
+        out = {k: d[k] for k in ("top", "bottom", "last") if isinstance(d.get(k), int) and not isinstance(d[k], bool)}
+        return out if "top" in out or "bottom" in out else {}
+
+    def _save_z_points(self, last: int) -> None:
+        """Keep this session's points with the drum at rest (same counts) for a later z_restore."""
+        path = getattr(self.cfg, "z_points_path", None)
+        if path is None or (self._z_top_counts is None and self._z_bottom_counts is None):
+            return
+        d = {"top": self._z_top_counts, "bottom": self._z_bottom_counts, "last": int(last),
+             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        try:
+            path.write_text(json.dumps(d))
+        except (OSError, ValueError) as e:
+            log.warning("Z points not saved: %s", e)
+            return
+        self._z_saved = {k: v for k, v in d.items() if isinstance(v, int)}
+        self._z_saved_t = time.monotonic()
+
+    def _remember_z_rest(self, st: P.ServoStatus) -> None:
+        """At rest with a valid turn count: keep where the drum is (at most once a second)."""
+        if (self._z_top_counts is None and self._z_bottom_counts is None) or self.z_servo_reset:
+            return
+        if not st.ok or st.abs_counts is None or not st.tracking or st.tracking_lost:
+            return
+        if str(st.extra.get("moving", "0")) not in ("0", ""):
+            return
+        if abs(st.abs_counts - int(self._z_saved.get("last", st.abs_counts + 999))) < Z_REST_SAVE_COUNTS:
+            return
+        if time.monotonic() - self._z_saved_t < 1.0:
+            return
+        self._save_z_points(st.abs_counts)
+
+    async def restore_z_points(self, apply: bool, turns: int | None = None) -> dict:
+        """The last session's top / bottom in today's counts (#106).
+
+        The firmware counts the drum in multi-turn from where it started tracking: the angle in
+        the turn (raw) when the servo itself was powered up, or the old count when only the
+        Core2 restarted. Either way today's counts differ from the saved ones by whole turns
+        (4096), so: shift = the whole turns nearest to (now - last at rest). Moved more than
+        half a turn while off cannot be told from the turn next to it: the estimate is shown
+        and a grown-up checks the arm's height before apply (and a drift over
+        Z_RESTORE_MAX_DRIFT is refused)."""
+        if not self.serial.connected:
+            raise RobotCommandError("not connected")
+        saved = self._z_saved
+        if "last" not in saved or "top" not in saved:
+            raise RobotCommandError("前回の Z の記録がありません（W で一番上まで巻き上げて「上を記録」）")
+        st = await self.serial.servo_status(Z_SERVO_ID)
+        if not st.ok or st.abs_counts is None:
+            raise RobotCommandError(f"SERVO_STATUS {Z_SERVO_ID} failed: {st.raw}")
+        self._note_z_status(st)
+        if self.z_servo_reset or not st.tracking or st.tracking_lost:
+            raise RobotCommandError("巻き上げサーボの回転の追跡がまだ始まっていない: W か S を一瞬押してから、もう一度")
+        now = st.abs_counts
+        d = now - saved["last"]
+        k = round(d / COUNTS_PER_TURN)
+        drift = d - k * COUNTS_PER_TURN
+        top = saved["top"] + k * COUNTS_PER_TURN
+        bottom = saved["bottom"] + k * COUNTS_PER_TURN if "bottom" in saved else None
+        per_unit = abs(self._z_counts_per_unit_signed()) or 1.0
+        z_top = self.limits.z_max if self.limits.z_up_is_positive else self.limits.z_min
+        z_est = z_top + (now - top) / self._z_counts_per_unit_signed()
+        out = {"turns": k, "drift_counts": drift, "drift_units": round(drift / per_unit, 1),
+               "z": round(z_est, 1), "has_bottom": bottom is not None, "applied": False,
+               "too_far": abs(drift) > Z_RESTORE_MAX_DRIFT}
+        if not apply:
+            return out
+        if turns is not None and turns != k:
+            raise RobotCommandError("見積もりのあとにドラムが回った: もう一度「前回の上下を呼び出す」から")
+        if out["too_far"]:
+            raise RobotCommandError(f"前回から {out['drift_units']:+.0f} 単位ずれている（電源を切っている間に回った）: "
+                                    "W で一番上まで巻き上げて「上を記録」")
+        self._z_top_counts, self._z_bottom_counts = top, bottom
+        self._apply_z_counts(now)
+        self._save_z_points(now)
+        out["applied"] = True
+        log.info("Z points restored: shift %+d turns, drift %+d counts, Z %.1f", k, drift, z_est)
+        return out
+
     async def set_z_zero(self) -> None:
         """Define the current drum position as 'arm at top' (Z reference)."""
         await self.set_z_point("top")
@@ -522,6 +621,9 @@ class RealRobot(RobotInterface):
         points and the measured calibration (back to the config's values)."""
         if which == Z_CLEAR:
             self._forget_z_points()
+            self._z_saved = {}
+            if getattr(self.cfg, "z_points_path", None) is not None:
+                self.cfg.z_points_path.unlink(missing_ok=True)
             self.z_cal = ZCalibration()
             ZCalibration.delete(self.cfg.z_calibration_path)
             self.cfg.z_counts_per_unit, self.cfg.z_sign = self._z_cfg_default
@@ -554,6 +656,7 @@ class RealRobot(RobotInterface):
         self._z_counts = counts
         self._z_units_est = self._z_point_units(which)
         self._z_measured = True
+        self._save_z_points(counts)  # for z_restore after a power cycle (#106)
         log.info("Z %s set at %d counts", which, counts)
 
     async def move_z(self, z: float) -> None:
@@ -883,6 +986,7 @@ class RealRobot(RobotInterface):
                 self._note_z_status(st)
                 if st.ok and st.abs_counts is not None:
                     self._apply_z_counts(st.abs_counts)
+                    self._remember_z_rest(st)
             except SerialError:
                 pass  # a missed sample is fine; the next poll retries
             return
