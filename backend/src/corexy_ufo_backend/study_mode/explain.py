@@ -75,6 +75,35 @@ def parse_explanation(text: str, problem_number: int) -> dict[str, Any]:
         out["speech_text"] = out["hint"] or out["explanation"]
     if out["problem_number"] != problem_number or out["confidence"] < 0.5:
         out["needs_confirmation"] = True
+    nav = navigate_of(found)
+    if nav:
+        out["navigate"] = nav
+        out["needs_confirmation"] = True
+    return out
+
+
+NAVIGATE_KINDS = ("move", "uncover", "zoom_out")
+
+
+def navigate_of(found: dict) -> dict[str, Any]:
+    """The tutor AI's "the problem is not in the picture" (#104), checked: kind, and d_mm only
+    as two finite numbers (the arm moves only with d_mm; the backend checks it again)."""
+    nav = found.get("navigate")
+    if not isinstance(nav, dict) or nav.get("kind") not in NAVIGATE_KINDS:
+        return {}
+    out: dict[str, Any] = {"kind": nav["kind"]}
+    for k in ("target", "height", "error"):
+        if k in nav and isinstance(nav[k], (str, int)) and not isinstance(nav[k], bool):
+            out[k] = nav[k] if isinstance(nav[k], int) else str(nav[k])[:200]
+    for k in ("offset", "d_mm"):
+        v = nav.get(k)
+        if isinstance(v, list) and len(v) == 2:
+            try:
+                pair = [float(v[0]), float(v[1])]
+            except (TypeError, ValueError):
+                continue
+            if all(math.isfinite(x) for x in pair):
+                out[k] = pair
     return out
 
 
