@@ -63,6 +63,7 @@ func _ready() -> void:
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
+	_test_device_test_tab(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2304,6 +2305,62 @@ func _find_button(n: Node, text: String) -> Button:
 		if b != null:
 			return b
 	return null
+
+## #108: the テスト tab drives the peripherals' hub like UFO-DeviceHub's console.
+func _test_device_test_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	st.show_tab(SettingsScreen.TEST_TAB)
+	var p: DeviceTestPanel = st.tests
+	st._process(0.0)
+	var no_backend: bool = st.testing() and not game.calibrating() and p._hub.text.contains("つながっていない") \
+		and _find_button(p, "適用").disabled and not st._save_b.visible and st._cancel_b.text.begins_with("閉じる")
+	_ok(no_backend, "device test: the テスト tab shows, without a backend its buttons cannot be pressed (and say why)")
+	p._lm_mode.select(DeviceTestPanel.LIGHT_MODES.find("GAME_PLAY"))
+	p._lm_color.color = Color8(255, 136, 0)
+	var lp := p.light_params()
+	_ok(lp.mode == "GAME_PLAY" and lp.brightness == 160 and lp.speed == 128 and lp.transition_ms == 500
+		and lp.color == [255, 136, 0], "device test: SET_LIGHT_MODE as the console sends it", JSON.stringify(lp))
+	# the backend's answers and the hub's events
+	game.ws.ack.emit("m", true, {"command": "devicehub_meta", "connected": true, "system_id": 1,
+		"port": "/dev/cu.usbmodem1", "session_id": 7})
+	game.ws.ack.emit("d", true, {"command": "devicehub_devices", "devices": [
+		{"id": 16.0, "name": "Ill", "online": true, "state": "NORMAL", "session_ok": true},
+		{"id": 32.0, "name": "Dial", "online": false}]})
+	game.ws.ack.emit("s", true, {"command": "devicehub_status", "device": 16.0, "status": {"state": "NORMAL",
+		"op_mode": "GAME", "mist_pattern": "PUFF", "mist_on": true, "mist_remaining_s": 30, "light_mode": "AURORA",
+		"brightness": 160, "fw": "0.1"}})
+	game.ws.ack.emit("c", true, {"command": "devicehub_command", "result": {"destination": 32.0,
+		"name": "ARM_RECEIVER", "result": "REJECTED_STATE", "ok": false}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:00.000", "source": 32,
+		"name": "BALL_RECEIVED", "data": {"cycle": 1}}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:01.000", "source": null,
+		"name": "HUB_CONNECTED", "data": {}}})
+	p.refresh()
+	st._process(0.0)
+	_ok(p._hub.text.contains("接続") and p._hub.text.contains("usbmodem1") and p._dev.text.contains("● Illumination")
+		and p._dev.text.contains("○ M5Dial 1") and p._ill_kv.text.contains("PUFF") and p._ill_kv.text.contains("AURORA")
+		and p._log.text.contains("M5Dial 1  BALL_RECEIVED {\"cycle\":1}") and p._log.text.contains("hub  HUB_CONNECTED")
+		and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
+		and st._status.text.contains("REJECTED_STATE"),
+		"device test: the hub, the devices, the status, a refused command and an event are shown", p._log.text)
+	game.ws.ack.emit("sa", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"},
+		"32": {"ok": false, "result": "OFFLINE"}}})
+	var partial: String = p.result_text
+	var partial_bad: bool = not p.result_ok
+	game.ws.ack.emit("sb", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"}}})
+	_ok(partial_bad and partial.contains("M5Dial 1") and p.result_ok and p.result_text.contains("すべて止めた"),
+		"device test: STOP ALL is a success only when every device accepted it (review on #109)", partial)
+	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})
+	p.refresh()
+	_ok(p._hub.text.contains("使っていない"), "device test: no hub in the backend says how to turn it on", p._hub.text)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and not st.testing(), "device test: Esc closes the screen")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
 
 func _test_calibration_tab(rs: Node) -> void:
 	var game := _study_game()

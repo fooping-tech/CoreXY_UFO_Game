@@ -20,10 +20,12 @@ var _rows: Dictionary = {}  # key -> {"item", "control", "label"}
 var _status: Label
 var tabs: TabContainer
 var calibration: CalibrationPanel
+var tests: DeviceTestPanel
 var _reset_b: Button
 var _cancel_b: Button
 var _save_b: Button
 const CALIBRATION_TAB := 1
+const TEST_TAB := 2
 var _list: VBoxContainer
 
 func setup() -> void:
@@ -121,6 +123,21 @@ func setup_calibration(main: Node) -> void:
 	scroll.add_child(calibration)
 	calibration.setup(main)
 
+## The テスト tab (#108): the peripherals (UFO-DeviceHub) through the backend.
+func setup_tests(main: Node) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.name = "テスト"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	tabs.add_child(scroll)
+	tests = DeviceTestPanel.new()
+	tests.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(tests)
+	tests.setup(main)
+
+## The テスト tab shows: Space also stops the peripherals (STOP ALL).
+func testing() -> bool:
+	return visible and tests != null and tabs.current_tab == TEST_TAB
+
 ## The 校正 tab shows: main.gd lets the keys move the arm meanwhile.
 func calibrating() -> bool:
 	return visible and calibration != null and tabs.current_tab == CALIBRATION_TAB
@@ -133,15 +150,23 @@ func _on_tab_changed(i: int) -> void:
 	if _save_b == null:
 		return  # the first tab is added while the screen is built
 	var cal := i == CALIBRATION_TAB
-	_reset_b.visible = not cal
-	_save_b.visible = not cal
-	_cancel_b.text = "閉じる（Esc）" if cal else "キャンセル（Esc）"
+	var form := i == 0  # only the 設定 tab saves; 校正 and テスト act at once
+	_reset_b.visible = form
+	_save_b.visible = form
+	_cancel_b.text = "キャンセル（Esc）" if form else "閉じる（Esc）"
 	_status.text = ""
 	_status.add_theme_color_override("font_color", YELLOW)
 	if cal and calibration != null:
 		calibration.opened()
+	if i == TEST_TAB and tests != null:
+		tests.opened()
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
+	if testing():
+		tests.tick(dt)
+		if tests.result_text != "":
+			_status.text = tests.result_text
+			_status.add_theme_color_override("font_color", DeviceTestPanel.GOOD if tests.result_ok else DeviceTestPanel.BAD)
 	if calibrating():
 		calibration.refresh()
 		if calibration.result_text != "":  # the backend's answer, under the scrolled tab

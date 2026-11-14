@@ -177,6 +177,11 @@
       ]},
       {"title": "実機", "items": [
         {"key": "backend.serial_port", "apply": "backend", "label": "シリアルポート 1 台目（空 = 自動検出）", "type": "text", "max_length": 200},
+        {"key": "devicehub.enabled", "apply": "backend", "label": "周辺機器のハブを使う（テストタブ）", "type": "bool",
+         "note": "UFO-DeviceHub のハブ（M5AtomS3R）。ブラウザの試験画面（pc.web_console）とは同時に使えない"},
+        {"key": "devicehub.port", "apply": "backend", "label": "ハブのシリアルポート（auto / mock / ポート名）", "type": "text", "max_length": 200,
+         "note": "auto はロボット（Core2）のポートを外して探す。mock は実機なしの模擬ハブ"},
+        {"key": "devicehub.system_id", "apply": "backend", "label": "ハブのシステム番号", "type": "number", "min": 1, "max": 2, "step": 1},
         {"key": "backend.serial_port_2", "apply": "backend", "label": "シリアルポート 2 台目", "type": "text", "max_length": 200,
          "note": "つながっているほうを使う（両方なら 1 台目）。./start.sh --port が優先。ポート名は ./start.sh --backend-only -- --list-ports で見る。校正値はここでは変えられない"}
       ]}
@@ -278,6 +283,12 @@
       "_note": "The game's helper (#79): when the backend reports a stall, say offer_text once (again after offer_repeat_s while still stalled). keys.stuck (or a thumbs-up held thumb_hold_ms within offer_window_s of the offer, only while the gesture control is off so the thumb never also moves the arm) locates the problem the child is stuck on and takes the arm's camera there; keys.next does it for the next problem to solve (H is the gesture on/off key). Thumbs-ups need the backend's hand camera (--gesture-camera)."
     },
     "_note": "Homework watch (F1 panel tab). enabled = this watch in the F1 panel; the backend's homework service also starts when study_mode.enabled is true (the study mode uses it), and nothing is captured until a watch is started. While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
+  },
+  "devicehub": {
+    "enabled": false,
+    "port": "auto",
+    "system_id": 1,
+    "_note": "The peripherals' hub (UFO-DeviceHub: ESP-NOW hub M5AtomS3R, Illumination ATOM, M5Dial x2), #108. The backend opens it (enabled) and the settings screen's テスト tab tests the devices through it, like UFO-DeviceHub's pc.web_console (which cannot run at the same time: one program per serial port). port: auto (every USB serial port in turn except the robot's (Core2) ports: the hub's auto-detect sends HELLO lines), a port name, or mock (a simulated hub, no hardware). system_id: which UFO system's hub (1 / 2; another system's hub is refused). The protocol and gateway are copies of UFO-DeviceHub's pc/ (backend/src/corexy_ufo_backend/devicehub/__init__.py says which commit). Not yet run with the real hub from the game."
   },
   "backend": {
     "serial_port": "",
