@@ -43,6 +43,10 @@ class RobotInterface(ABC):
         """Bring the drum servo back after its power was cut alone (real robot only)."""
         return None
 
+    async def restore_z_points(self, apply: bool, turns: int | None = None) -> dict:
+        """Call back the last session's Z top / bottom after a power cycle (real robot only, #106)."""
+        raise RobotCommandError("前回の Z の呼び出しは実機だけ（この機械では上を記録する）")
+
     async def set_z_point(self, which: str) -> None:
         """Record the arm's current height as its top ("top") or bottom ("bottom")."""
         if which != "top":
