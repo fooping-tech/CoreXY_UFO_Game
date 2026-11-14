@@ -8,7 +8,9 @@ Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
-  measured counts per unit, saved; clear = start over), z_servo_recover (after the drum
+  measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
+  last session's top / bottom after a power cycle; apply false = the estimate only, true =
+  use it when the turn shift is still `turns`), z_servo_recover (after the drum
   servo's power was cut alone: a SERVO_TURN the firmware refuses unmoved, so the next jog
   sets it to multi-turn again; a motion command), grab {close}, stop (ABORT, emergency),
   soft_stop (decelerate, no alarm), jog {vx,vy,vz?,z_free?} (mm/s; vz = Z value/s; z_free = the 校正 tab: past the measured Z range; dead-man: resend ~20 Hz while
@@ -27,8 +29,16 @@ Command names and safety rules:
   robot_state.homework_approach and {"type": "homework_approach"} messages; holds the
   motion lock like the auto catch), homework_approach_release (the frames are captured:
   go back up), homework_approach_status.
+  devicehub_meta / devicehub_devices / devicehub_status {device} / devicehub_diag /
+  devicehub_command {device, name, params} / devicehub_stop_all (#108): the peripherals' hub
+  (UFO-DeviceHub) for the settings screen's テスト tab; never the robot, never queued behind
+  its commands, accepted during the sequences. Its events come as {"type": "devicehub_event"}.
   homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
   instead: mapped to XY by the camera calibration, at the recorded spot's height.
+  homework_navigate {u, v, camera | xy (mock only), d_mm: [dx, dy]} (#104): the tutor AI's "the
+  problem is d_mm away from the last capture" -> the next target {u, v, xy, from}; never moves
+  (the game sends homework_approach next). Refused over 60 mm, under 3 mm, outside the soft
+  limits or the trusted camera calibration.
   camera_map_add {u, v, camera: {width, height, flip_h, flip_v}} (pair the clicked overview
   point with the arm's XY now: its own camera centred on that mark), camera_map_undo,
   camera_map_clear, camera_map_status (never move the robot)
@@ -92,16 +102,22 @@ log = logging.getLogger(__name__)
 SERIAL_LOG_SKIP = ("TX POS", "RX POS ", "RX JOG_POS ")
 LOG_QUEUE_MAX = 500
 
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
+            "homework_navigate",
             "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
-            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
+            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
+            *("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag", "devicehub_command",
+              "devicehub_stop_all"))
+# The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
+DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
+                      "devicehub_command", "devicehub_stop_all")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
-PRIORITY_COMMANDS = ("stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
@@ -127,8 +143,10 @@ class GameServer:
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
                  study: Any | None = None, homework: Any | None = None,
-                 approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None) -> None:
+                 approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None,
+                 devicehub: Any | None = None) -> None:
         self.robot = robot
+        self.devicehub = devicehub  # #108: the peripherals' hub (DeviceHubService), or None
         self.host = host
         self.port = port
         self.state_interval = 1.0 / state_hz
@@ -195,7 +213,12 @@ class GameServer:
         if self.vision is not None:
             self.vision.on_event = self._on_vision_event
         self._start_log_feed()
+        if self.devicehub is not None:
+            self.devicehub.start(self._on_devicehub_event)
         log.info("websocket listening on ws://%s:%d", self.host, self.port)
+
+    async def _on_devicehub_event(self, data: dict) -> None:
+        await self.broadcast({"type": "devicehub_event", "timestamp": now_ms(), "data": data})
 
     async def stop(self) -> None:
         if self.auto.active:
@@ -211,6 +234,8 @@ class GameServer:
             await self.study.close()
         if self.homework is not None:
             await self.homework.close()
+        if self.devicehub is not None:
+            await asyncio.to_thread(self.devicehub.close)
         self._stop_log_feed()
         for t in self._tasks:
             t.cancel()
@@ -569,6 +594,8 @@ class GameServer:
         """Run one command; returns an ack/nack message (without request_id)."""
         if name not in COMMANDS:
             return self._nack(name, f"unknown command {name!r}")
+        if name in DEVICEHUB_COMMANDS:  # the peripherals only: not the robot, not its sequences
+            return await self._devicehub(name, params)
         try:
             if self.auto.active and name not in AUTO_CATCH_ALLOWED and not self._allowed_during_auto(name, params):
                 return self._nack(name, "busy: auto catch running (stop to abort)")
@@ -586,6 +613,8 @@ class GameServer:
                 return self._ack(name, data)
             if name == "homework_approach_status":
                 return self._ack(name, self.approach.status())
+            if name == "homework_navigate":
+                return self._homework_navigate(params)
             if name == "homework_approach":
                 target = None
                 if "xy" in params:
@@ -687,6 +716,11 @@ class GameServer:
                 await self.robot.set_z_zero()
             elif name == "z_set":
                 await self.robot.set_z_point(str(params.get("which", "")))
+            elif name == "z_restore":
+                turns = params.get("turns")
+                data = await self.robot.restore_z_points(params.get("apply") is True,
+                                                         int(turns) if turns is not None else None)
+                return self._ack(name, {"restore": data, **self.robot.snapshot().to_message()["data"]})
             elif name == "z_servo_recover":
                 await self.robot.recover_z_servo()
             elif name == "arm_zero":
@@ -736,6 +770,28 @@ class GameServer:
             self.camera_map.clear()
         return self._ack(name, self.camera_map.status())
 
+    async def _devicehub(self, name: str, params: dict) -> dict:
+        """The settings screen's テスト tab (#108): UFO-DeviceHub's console commands."""
+        from ..devicehub.service import DeviceHubError
+        hub = self.devicehub
+        if hub is None:
+            return self._nack(name, "周辺機器のハブを使っていない（設定の devicehub.enabled をオンにして ./start.sh）")
+        try:
+            if name == "devicehub_meta":
+                return self._ack(name, hub.meta())
+            if name == "devicehub_devices":
+                return self._ack(name, {"devices": await hub.devices()})
+            if name == "devicehub_diag":
+                return self._ack(name, {"diag": await hub.diag()})
+            if name == "devicehub_status":
+                return self._ack(name, {"device": params.get("device"), "status": await hub.status(int(params.get("device")))})
+            if name == "devicehub_command":
+                result = await hub.command(params.get("device"), params.get("name"), params.get("params") or {})
+                return self._ack(name, {"result": result})
+            return self._ack(name, {"results": await hub.stop_all()})
+        except (DeviceHubError, TypeError, ValueError) as e:
+            return self._nack(name, str(e))
+
     @staticmethod
     def _allowed_during_auto(name: str, params: dict) -> bool:
         if name == "jog":  # a zero jog (key release) is harmless
@@ -747,6 +803,41 @@ class GameServer:
     @staticmethod
     def _ack(name: str, data: dict) -> dict:
         return {"type": "ack", "data": {"command": name, **data}}
+
+    # The tutor AI's "the problem is d_mm away" (#104) is never a motion: this only says where the
+    # next staged capture (homework_approach, with all its own checks) would look.
+    NAVIGATE_MAX_STEP_MM = 60.0
+
+    def _homework_navigate(self, params: dict) -> dict:
+        """{u, v, camera} (or xy on the mock) of the last capture + d_mm -> the next target as
+        u, v of the overview image (or xy). Refused: a step over 60 mm or under 3 mm, outside the
+        soft limits, outside the trusted camera calibration, xy on the real robot. Never moves."""
+        from ..study_mode.navigation import NavigationError, plan_relative, xy_to_uv
+        name = "homework_navigate"
+        lim = self.approach.limits
+        try:
+            d = params.get("d_mm")
+            if not isinstance(d, (list, tuple)) or len(d) != 2:
+                raise ValueError("d_mm must be [dx, dy] (mm)")
+            step = (float(d[0]), float(d[1]))
+            max_step = min(float(params.get("max_step_mm", self.NAVIGATE_MAX_STEP_MM)), self.NAVIGATE_MAX_STEP_MM)
+            ranges = {"x_range": (lim.x_min, lim.x_max), "y_range": (lim.y_min, lim.y_max), "max_step_mm": max_step}
+            if "xy" in params:
+                if self.robot.name == "real":
+                    return self._nack(name, "a target in mm (xy) is only for the mock robot: use u, v "
+                                            "and the camera calibration")
+                xy = params.get("xy")
+                cur = (float(xy[0]), float(xy[1]))
+                nxt = plan_relative(cur, step, **ranges)
+                return self._ack(name, {"xy": list(nxt), "from": list(cur)})
+            cam = camera_signature(params.get("camera"))
+            cur = self.camera_map.to_xy(params.get("u"), params.get("v"), cam)
+            nxt = plan_relative(cur, step, **ranges)
+            u, v = xy_to_uv(self.camera_map.h_inv, *nxt)
+            self.camera_map.to_xy(u, v, cam)  # the new point too must be inside the trusted calibration
+        except (NavigationError, CameraMapError, TypeError, ValueError, IndexError) as e:
+            return self._nack(name, f"移動先を決められません: {e}")
+        return self._ack(name, {"u": u, "v": v, "xy": list(nxt), "from": list(cur)})
 
     @staticmethod
     def _nack(name: str, reason: str) -> dict:

@@ -255,6 +255,7 @@ func _ready() -> void:
 	add_child(settings)
 	settings.setup()
 	settings.setup_calibration(self)
+	settings.setup_tests(self)
 	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
@@ -1386,6 +1387,8 @@ func stop_key() -> void:
 	if ws.enabled and ws.is_open():
 		_jog_active = false
 		ws.send_command("soft_stop")
+		if settings != null and settings.testing():
+			ws.send_command("devicehub_stop_all")  # the テスト tab: the peripherals too (#108)
 
 ## Review on #95: a settings field (camera name, serial port) would take Space as text, and
 ## the title does not end a running sequence (the auto catch), so Space must still stop.

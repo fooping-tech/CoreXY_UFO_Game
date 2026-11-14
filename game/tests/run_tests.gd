@@ -58,10 +58,12 @@ func _ready() -> void:
 	_test_study_worksheets_and_tracker()
 	_test_study_mode_mock_story(rs)
 	_test_study_mode_failures(rs)
+	_test_study_mode_looks_again(rs)
 	_test_study_mode_backend_messages(rs)
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
+	_test_device_test_tab(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2064,6 +2066,64 @@ func _test_study_mode_failures(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
+## #104: the tutor AI says the problem is not in the picture: the game looks again d_mm
+## further (after the arm is back), at most twice, then the worksheet's hints.
+func _test_study_mode_looks_again(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	var targets: Array = []
+	var helps := func(): return ctl.services.last_help_target.get("xy", Vector2.ZERO)
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 30.0]}]
+	ctl.request_help()
+	_study_pump(game, 30.0, func(): return ctl.nav_tries == 1 and ctl.state == "HELP_MOVING")
+	targets.append(helps.call())
+	_study_pump(game, 60.0, func(): return ctl.state == "STUDYING")
+	var once: bool = ctl.nav_tries == 1 and str(ctl.explanation.get("source", "")) == "demo" \
+		and not ctl.explanation.has("navigate")
+	_ok(once and targets[0] != Vector2.ZERO, "study: not in the picture -> looks again 30 mm further, then explains",
+		"%s %s %s" % [ctl.nav_tries, ctl.explanation.get("source"), targets])
+	# twice "not here": stops looking and gives the worksheet's hints
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 20.0]}, {"kind": "move", "d_mm": [0.0, 20.0]},
+		{"kind": "move", "d_mm": [0.0, 20.0]}]
+	var first := Vector2.ZERO
+	ctl.request_help()
+	_study_pump(game, 20.0, func(): return ctl.state == "HELP_MOVING")
+	first = helps.call()
+	_study_pump(game, 120.0, func(): return ctl.state == "STUDYING")
+	var last: Vector2 = helps.call()
+	_ok(ctl.nav_tries == StudyModeController.MAX_NAV and ctl.explain_note.contains("見つからなかった")
+		and str(ctl.explanation.get("source", "")) == "worksheet" and is_equal_approx(last.y - first.y, 40.0),
+		"study: at most two more looks, then the worksheet's hints", "%s %s %s %s" % [ctl.nav_tries, ctl.explain_note, first, last])
+	# a step the checks refuse (over 60 mm): no motion, the worksheet's hints
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 70.0]}]
+	ctl.request_help()
+	_study_pump(game, 60.0, func(): return ctl.state == "RESUME_STUDY" and ctl.notice.contains("もう一度"))
+	var refused: String = ctl.notice
+	_study_pump(game, 30.0, func(): return ctl.state == "STUDYING")
+	_ok(refused.contains("大きすぎ") and str(ctl.explanation.get("source", "")) == "worksheet",
+		"study: a refused look-again (over 60 mm) moves nothing and gives the hints", refused)
+	# no d_mm (no arm camera calibration): no motion, the AI's own words
+	ctl.services.inject_navigate = [{"kind": "move"}]
+	ctl.request_help()
+	_study_pump(game, 60.0, func(): return ctl.state == "STUDYING")
+	_ok(ctl.nav_tries == 0 and str(ctl.explanation.get("source", "")) == "demo",
+		"study: without d_mm (arm camera not calibrated) the arm does not look again", str(ctl.nav_tries))
+	# Space while waiting to look again: no looking again
+	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 30.0]}]
+	ctl.request_help()
+	_study_pump(game, 30.0, func(): return ctl.nav_tries == 1)
+	ctl.on_stop_key()
+	_study_pump(game, 5.0, func(): return false)
+	_ok(ctl.state == "ERROR" and ctl._pending_nav.is_empty() and not ctl.services.motion_active(),
+		"study: Space while about to look again stops it", ctl.state)
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 ## The backend route: the sequences' status messages drive the story (holding at a
 ## stage -> that close-up; the previous run's IDLE / FAULT ignored; NACK and FAULT end it).
 func _test_study_mode_backend_messages(rs: Node) -> void:
@@ -2246,6 +2306,62 @@ func _find_button(n: Node, text: String) -> Button:
 			return b
 	return null
 
+## #108: the テスト tab drives the peripherals' hub like UFO-DeviceHub's console.
+func _test_device_test_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	st.show_tab(SettingsScreen.TEST_TAB)
+	var p: DeviceTestPanel = st.tests
+	st._process(0.0)
+	var no_backend: bool = st.testing() and not game.calibrating() and p._hub.text.contains("つながっていない") \
+		and _find_button(p, "適用").disabled and not st._save_b.visible and st._cancel_b.text.begins_with("閉じる")
+	_ok(no_backend, "device test: the テスト tab shows, without a backend its buttons cannot be pressed (and say why)")
+	p._lm_mode.select(DeviceTestPanel.LIGHT_MODES.find("GAME_PLAY"))
+	p._lm_color.color = Color8(255, 136, 0)
+	var lp := p.light_params()
+	_ok(lp.mode == "GAME_PLAY" and lp.brightness == 160 and lp.speed == 128 and lp.transition_ms == 500
+		and lp.color == [255, 136, 0], "device test: SET_LIGHT_MODE as the console sends it", JSON.stringify(lp))
+	# the backend's answers and the hub's events
+	game.ws.ack.emit("m", true, {"command": "devicehub_meta", "connected": true, "system_id": 1,
+		"port": "/dev/cu.usbmodem1", "session_id": 7})
+	game.ws.ack.emit("d", true, {"command": "devicehub_devices", "devices": [
+		{"id": 16.0, "name": "Ill", "online": true, "state": "NORMAL", "session_ok": true},
+		{"id": 32.0, "name": "Dial", "online": false}]})
+	game.ws.ack.emit("s", true, {"command": "devicehub_status", "device": 16.0, "status": {"state": "NORMAL",
+		"op_mode": "GAME", "mist_pattern": "PUFF", "mist_on": true, "mist_remaining_s": 30, "light_mode": "AURORA",
+		"brightness": 160, "fw": "0.1"}})
+	game.ws.ack.emit("c", true, {"command": "devicehub_command", "result": {"destination": 32.0,
+		"name": "ARM_RECEIVER", "result": "REJECTED_STATE", "ok": false}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:00.000", "source": 32,
+		"name": "BALL_RECEIVED", "data": {"cycle": 1}}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:01.000", "source": null,
+		"name": "HUB_CONNECTED", "data": {}}})
+	p.refresh()
+	st._process(0.0)
+	_ok(p._hub.text.contains("接続") and p._hub.text.contains("usbmodem1") and p._dev.text.contains("● Illumination")
+		and p._dev.text.contains("○ M5Dial 1") and p._ill_kv.text.contains("PUFF") and p._ill_kv.text.contains("AURORA")
+		and p._log.text.contains("M5Dial 1  BALL_RECEIVED {\"cycle\":1}") and p._log.text.contains("hub  HUB_CONNECTED")
+		and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
+		and st._status.text.contains("REJECTED_STATE"),
+		"device test: the hub, the devices, the status, a refused command and an event are shown", p._log.text)
+	game.ws.ack.emit("sa", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"},
+		"32": {"ok": false, "result": "OFFLINE"}}})
+	var partial: String = p.result_text
+	var partial_bad: bool = not p.result_ok
+	game.ws.ack.emit("sb", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"}}})
+	_ok(partial_bad and partial.contains("M5Dial 1") and p.result_ok and p.result_text.contains("すべて止めた"),
+		"device test: STOP ALL is a success only when every device accepted it (review on #109)", partial)
+	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})
+	p.refresh()
+	_ok(p._hub.text.contains("使っていない"), "device test: no hub in the backend says how to turn it on", p._hub.text)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and not st.testing(), "device test: Esc closes the screen")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_calibration_tab(rs: Node) -> void:
 	var game := _study_game()
 	var st: SettingsScreen = game.settings
@@ -2289,6 +2405,19 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.ws.ack.emit("r3", true, {"command": "z_set"})
 	st._process(0.0)
 	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	# #106: the call-back's estimate is shown, then used only with the same turn shift
+	game.ws.ack.emit("r4", true, {"command": "z_restore", "restore": {"turns": -1, "drift_counts": 150,
+		"drift_units": 1.9, "z": 42.5, "too_far": false, "applied": false}})
+	var est_text: String = st.calibration._z_restore.text
+	var est_kept: bool = int(st.calibration.restore_estimate.get("turns", 0)) == -1
+	game.ws.ack.emit("r5", true, {"command": "z_restore", "restore": {"turns": 4, "drift_units": 22.0, "z": 10.0,
+		"too_far": true, "applied": false}})
+	var far_dropped: bool = st.calibration.restore_estimate.is_empty() and st.calibration._z_restore.text.contains("上を記録")
+	game.ws.ack.emit("r6", true, {"command": "z_restore", "restore": {"turns": -1, "z": 42.5, "applied": true}})
+	st._process(0.0)
+	_ok(est_text.contains("42.5") and est_text.contains("これを使う") and est_kept and far_dropped
+		and st.calibration.restore_estimate.is_empty() and st._status.text.contains("呼び出しました"),
+		"calibration: the last Z points are called back after a look at the estimate (#106)", est_text)
 	var free_here: bool = game.jog_params(Vector3(0, 0, -5)).get("z_free", false) == true
 	RobotState.z_calibrated = true
 	RobotState.z_reference_set = true

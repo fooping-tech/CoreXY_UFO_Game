@@ -29,6 +29,9 @@ signal motion_done(kind: String)
 signal motion_fault(kind: String, reason: String)
 signal explained(result: Dictionary)
 signal explain_failed(reason: String, fallback: Dictionary)
+## The tutor AI's "look d_mm further" turned into the next target (#104; nothing moves yet)
+signal navigated(target: Dictionary)
+signal navigate_failed(reason: String)
 
 const MODES := ["simulated", "camera"]
 ## the earlier study_mode.demo.mode values (#86), read as the new ones
@@ -42,6 +45,8 @@ var worksheet: Dictionary = {}
 var grade_label := ""
 ## the next action of this kind fails (debug): "" | locate | motion | ai | cleanup | occlude
 var inject_fail := ""
+## tests: navigate replies the simulated explanation carries, one per explanation (#104)
+var inject_navigate: Array = []
 var status := ""
 ## the mock demo
 var worksheet_wait_s := 4.0
@@ -60,6 +65,9 @@ var seen := false
 var _locate_rid := ""
 var _explain_rid := ""
 var _help_rid := ""
+var _nav_rid := ""
+## The last staged capture's target ({u, v} or {xy}): where "d_mm further" starts from (#104)
+var last_help_target: Dictionary = {}
 var _cleanup_rid := ""
 var _help_active := false
 var _help_started := false
@@ -144,6 +152,7 @@ func abort(reason := "") -> void:
 	_cleanup_active = false
 	_cleanup_started = false
 	_help_rid = ""
+	_nav_rid = ""
 	_cleanup_rid = ""
 	_last_seq_key.clear()
 	status = reason
@@ -362,6 +371,7 @@ func focus_image() -> Image:
 
 # ------------------------------------------------------------------ HELP: the staged capture
 func start_help(target: Dictionary) -> void:
+	last_help_target = target.duplicate()
 	var why := motion_blocker()
 	if why != "":
 		motion_fault.emit("help", why)
@@ -382,6 +392,52 @@ func start_help(target: Dictionary) -> void:
 	_help_active = true
 	_help_started = false
 	_help_rid = main.ws.send_command("homework_approach", params)
+
+## The tutor AI says the problem is d_mm away from the last capture (#104): the next target.
+## The backend checks it (homework_navigate: at most 60 mm, inside the soft limits and the
+## trusted camera calibration) and moves nothing; start_help (the usual staged capture) moves.
+const NAV_MAX_STEP_MM := 60.0
+const NAV_MIN_STEP_MM := 3.0
+
+func navigate_help(d_mm: Array) -> void:
+	if d_mm.size() != 2 or last_help_target.is_empty():
+		navigate_failed.emit("前に撮った場所が分かりません")
+		return
+	var d := Vector2(float(d_mm[0]), float(d_mm[1]))
+	if motion_route() == "game_mock":  # the game's own mock: the same checks here
+		var from: Vector2 = last_help_target.get("xy", Vector2(195, 100))
+		var why := mock_navigate_refusal(from, d)
+		if why != "":
+			navigate_failed.emit(why)
+		else:
+			var tok := _token
+			_after(0.3, func(): if tok == _token: navigated.emit({"xy": from + d, "problem": _help_problem,
+				"source": "navigate"}))
+		return
+	if not backend_robot():
+		navigate_failed.emit("アームにつながっていません")
+		return
+	var params := {"d_mm": [d.x, d.y]}
+	if last_help_target.has("xy"):
+		params["xy"] = [last_help_target.xy.x, last_help_target.xy.y]
+	else:
+		params["u"] = float(last_help_target.get("u", 0.5))
+		params["v"] = float(last_help_target.get("v", 0.5))
+		params["camera"] = homework.camera_signature() if homework != null else {}
+	_nav_rid = main.ws.send_command("homework_navigate", params)
+
+static func mock_navigate_refusal(from: Vector2, d: Vector2) -> String:
+	if not (is_finite(d.x) and is_finite(d.y)):
+		return "移動量が数ではありません"
+	if d.length() > NAV_MAX_STEP_MM:
+		return "1 回の移動が大きすぎます（%.0f mm）" % d.length()
+	if d.length() < NAV_MIN_STEP_MM:
+		return "移動量が小さすぎます（もう写っているはず）"
+	var r := GameConfig.robot()
+	var to := from + d
+	if to.x < float(r.x_min_mm) or to.x > float(r.x_max_mm) or to.y < float(r.y_min_mm) or to.y > float(r.y_max_mm):
+		return "移動先が可動範囲の外です"
+	return ""
 
 ## Mock: the close-up of this stage is taken; the arm moves on.
 func release_stage(stage: String) -> void:
@@ -436,6 +492,8 @@ func explain(problem: int) -> void:
 	if mode == "simulated":
 		var demo := fb.duplicate()
 		demo["source"] = "demo"
+		if not inject_navigate.is_empty():  # tests: the tutor AI's "not in the picture" (#104)
+			demo["navigate"] = inject_navigate.pop_front()
 		_after(2.0, func(): if tok == _token: explained.emit(demo))
 		return
 	if homework == null or not homework.advice_available:
@@ -648,6 +706,17 @@ func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:
 		if not ok:
 			_help_active = false
 			motion_fault.emit("help", "アームを動かせませんでした: " + str(payload.get("reason", "")))
+	elif rid == _nav_rid:
+		_nav_rid = ""
+		if not ok:
+			navigate_failed.emit(str(payload.get("reason", "移動先を決められません")))
+		elif payload.get("u") != null and payload.get("v") != null:
+			navigated.emit({"u": float(payload.u), "v": float(payload.v), "problem": _help_problem, "source": "navigate"})
+		elif payload.get("xy") is Array and payload.xy.size() == 2:
+			navigated.emit({"xy": Vector2(float(payload.xy[0]), float(payload.xy[1])), "problem": _help_problem,
+				"source": "navigate"})
+		else:
+			navigate_failed.emit("移動先が返ってきませんでした")
 	elif rid == _cleanup_rid:
 		_cleanup_rid = ""
 		if not ok:
