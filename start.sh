@@ -143,12 +143,114 @@ wait_for_port() {
   exit 1
 }
 
+# ---- VOICEVOX ENGINE in Docker (#112) --------------------------------------------
+# The voice (homework.speech) runs as its own container, started here and stopped when
+# start.sh ends. Prepared in the background (the first pull and the model load take a
+# while); meanwhile the backend speaks with `say` (it tries VOICEVOX first every time).
+VV_STATE=""  # markers of what this start.sh started: container / colima
+VV_JOB=""
+
+# "on image container port" from homework.speech (+ config/local_settings.json, #93)
+voicevox_config() {
+  python3 -I - "$CONFIG_FILE" "$(dirname "$CONFIG_FILE")/local_settings.json" <<'PY'
+import json, sys, urllib.parse
+def load(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+g, l = load(sys.argv[1]), load(sys.argv[2])
+sp = (g.get("homework") or {}).get("speech") or {}
+lsp = (l.get("homework") or {}).get("speech") or {}
+d = dict(sp.get("docker") or {})
+d.update(lsp.get("docker") or {})
+enabled = lsp.get("enabled", sp.get("enabled", False))
+u = urllib.parse.urlparse(str(sp.get("voicevox_url", "http://127.0.0.1:50021")))
+on = (enabled is True and "voicevox" in (sp.get("engines") or []) and d.get("enabled") is True
+      and u.hostname in ("127.0.0.1", "localhost") and bool(d.get("image")))
+print(1 if on else 0, d.get("image") or "-", d.get("container") or "cxufo-voicevox", u.port or 50021)
+PY
+}
+
+voicevox_up() {  # image container port (in the background; markers in $VV_STATE)
+  local image="$1" name="$2" port="$3"
+  if ! docker info >/dev/null 2>&1; then
+    if command -v colima >/dev/null 2>&1; then
+      echo "VOICEVOX: Docker が止まっているので colima を起動します（終わるときに止める）…" >&2
+      touch "$VV_STATE/colima"  # from here on: stopped at the end even if start.sh ends half-way
+      if ! colima start >"$VV_STATE/colima.log" 2>&1; then
+        echo "VOICEVOX: colima を起動できません（$VV_STATE/colima.log）。声は say で話します" >&2
+        return 0
+      fi
+    else
+      echo "VOICEVOX: Docker が動いていません（Docker Desktop か colima を起動する）。声は say で話します" >&2
+      return 0
+    fi
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then
+    echo "VOICEVOX: 動いているコンテナ $name を使います（start.sh が起動したものではないので、終わっても止めない）" >&2
+    return 0
+  fi
+  docker rm -f "$name" >/dev/null 2>&1 || true  # a stopped leftover of an earlier run
+  docker image inspect "$image" >/dev/null 2>&1 \
+    || echo "VOICEVOX: イメージを取得します（初回だけ、数分かかる）: $image" >&2
+  touch "$VV_STATE/starting"
+  if docker run -d --rm --name "$name" -p "127.0.0.1:$port:50021" "$image" >"$VV_STATE/run.log" 2>&1; then
+    touch "$VV_STATE/container"
+    echo "VOICEVOX: コンテナ $name を起動しました（http://127.0.0.1:${port}。声の準備に少しかかる）" >&2
+  else
+    echo "VOICEVOX: コンテナを起動できません（$VV_STATE/run.log）。声は say で話します" >&2
+  fi
+}
+
+start_voicevox() {
+  local cfg on image name port
+  cfg="$(voicevox_config 2>/dev/null)" || return 0
+  read -r on image name port <<< "$cfg"
+  [[ "$on" == 1 ]] || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "[START_SH_DRY_RUN] voicevox: docker run -d --rm --name $name -p 127.0.0.1:$port:50021 $image"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "VOICEVOX: docker コマンドがありません。声は say で話します（homework.speech.docker.enabled を false にすると、この案内は出ない）" >&2
+    return 0
+  fi
+  VV_STATE="$(mktemp -d "${TMPDIR:-/tmp}/cxufo-voicevox.XXXXXX")"
+  echo "$name" > "$VV_STATE/name"
+  voicevox_up "$image" "$name" "$port" &
+  VV_JOB=$!
+}
+
+stop_voicevox() {
+  [[ -n "$VV_STATE" && -d "$VV_STATE" ]] || return 0
+  if [[ -n "$VV_JOB" ]] && kill -0 "$VV_JOB" 2>/dev/null; then
+    # still preparing: its colima start / docker run too, or they go on after start.sh ends
+    pkill -TERM -P "$VV_JOB" 2>/dev/null || true
+    kill "$VV_JOB" 2>/dev/null || true
+    wait "$VV_JOB" 2>/dev/null || true
+  fi
+  if [[ -e "$VV_STATE/starting" || -e "$VV_STATE/container" ]]; then
+    echo "VOICEVOX: コンテナ $(cat "$VV_STATE/name") を止めます" >&2
+    docker rm -f "$(cat "$VV_STATE/name")" >/dev/null 2>&1 || true
+  fi
+  if [[ -e "$VV_STATE/colima" ]]; then
+    echo "VOICEVOX: start.sh が起動した colima を止めます…" >&2
+    colima stop >/dev/null 2>&1 || true
+  fi
+  rm -rf "$VV_STATE"
+  VV_STATE=""
+}
+
 BACKEND_PID=""
 cleanup() {
   if [[ -n "$BACKEND_PID" ]] && kill -0 "$BACKEND_PID" 2>/dev/null; then
     kill "$BACKEND_PID" 2>/dev/null || true
     wait "$BACKEND_PID" 2>/dev/null || true
   fi
+  stop_voicevox
 }
 trap cleanup EXIT INT TERM
 
@@ -169,6 +271,7 @@ run_game() {
 }
 
 start_backend() {
+  start_voicevox  # the voice in its own container (#112), stopped when start.sh ends
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
     return 0
@@ -188,12 +291,24 @@ start_backend() {
 }
 
 run_backend_only() {  # in the foreground (no game)
+  # the voice for a game started on its own (review on #113), not for a one-shot listing
+  local a oneshot=0
+  for a in "$@"; do
+    case "$a" in --list-ports|--list-cameras|--auto-catch-dry-run|-h|--help) oneshot=1 ;; esac
+  done
+  [[ "$oneshot" == 1 ]] || start_voicevox
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
     return 0
   fi
   require_uv
-  cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
+  if [[ -z "$VV_STATE" ]]; then
+    cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
+  fi
+  # not exec: start.sh stays to stop the VOICEVOX container when the backend ends
+  local code=0
+  (cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@") || code=$?
+  exit "$code"
 }
 
 

@@ -151,5 +151,36 @@ run -- ; has "既定の引数で起動します（.env の CXUFO_START_ARGS）: 
 check ".env CXUFO_START_ARGS alone: the option form" $?
 run -- --game-only ; line "[START_SH_DRY_RUN] game: godot --path $ROOT/game -- --no-gesture" && ! has "既定の"; check "arguments win over CXUFO_START_ARGS" $?
 
+# #112: VOICEVOX ENGINE in its own Docker container, started with the backend
+VV="[START_SH_DRY_RUN] voicevox: docker run -d --rm --name cxufo-voicevox -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-0.26.0@sha256:"
+run -- --mock ; has "$VV" && has "backend: corexy-ufo-backend --mock"
+check "VOICEVOX: the container starts with the backend (pinned image, 127.0.0.1 only)" $?
+run -- --game-only ; ! has "voicevox:"
+check "VOICEVOX: not without a backend" $?
+mkdir -p "$TMP/vv_off" "$TMP/vv_local" "$TMP/vv_remote"
+python3 - "$ROOT/config/game_config.json" "$TMP" <<'PY'
+import json, sys
+g = json.load(open(sys.argv[1], encoding="utf-8"))
+t = sys.argv[2]
+off = json.loads(json.dumps(g)); off["homework"]["speech"]["docker"]["enabled"] = False
+json.dump(off, open(f"{t}/vv_off/game_config.json", "w"))
+json.dump(g, open(f"{t}/vv_local/game_config.json", "w"))
+json.dump({"homework": {"speech": {"docker": {"enabled": False}}}}, open(f"{t}/vv_local/local_settings.json", "w"))
+rem = json.loads(json.dumps(g)); rem["homework"]["speech"]["voicevox_url"] = "http://192.168.1.5:50021"
+json.dump(rem, open(f"{t}/vv_remote/game_config.json", "w"))
+PY
+run -- --backend-only --mock ; has "$VV" && has "backend: corexy-ufo-backend --mock"
+check "VOICEVOX: also for the backend alone (a game started on its own)" $?
+run -- --backend-only -- --list-ports ; ! has "voicevox:" && has "backend: corexy-ufo-backend --list-ports"
+check "VOICEVOX: not for a one-shot listing" $?
+run -- backend --mock ; has "$VV"
+check "VOICEVOX: the earlier backend mode too" $?
+run "START_SH_CONFIG=$TMP/vv_off/game_config.json" -- --mock ; ! has "voicevox:" && has "backend:"
+check "VOICEVOX: off in the config" $?
+run "START_SH_CONFIG=$TMP/vv_local/game_config.json" -- --mock ; ! has "voicevox:" && has "backend:"
+check "VOICEVOX: off from the settings screen (local_settings.json)" $?
+run "START_SH_CONFIG=$TMP/vv_remote/game_config.json" -- --mock ; ! has "voicevox:"
+check "VOICEVOX: an engine on another machine is not started here" $?
+
 if [[ $fails -eq 0 ]]; then echo "start.sh: all passed"; else echo "start.sh: $fails failed"; fi
 exit $(( fails > 0 ))
