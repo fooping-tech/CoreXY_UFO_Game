@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import logging
 import time
 from collections import OrderedDict
@@ -84,7 +85,7 @@ from ..homework.approach import ApproachParams, ApproachSequencer
 from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 from ..sequence.cleanup import CleanupProfile, CleanupSequencer
-from ..study_mode.height import HeightCalibration, HeightError
+from ..study_mode.height import DRUM_RADIUS_MM, HeightCalibration, HeightError
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +98,8 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
             "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
-            "study_height_status", "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
+            "study_height_status", "study_height_set", "study_height_confirm",
+            "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
@@ -176,7 +178,9 @@ class GameServer:
         limits = getattr(robot, "limits", None) or (backend_cfg.limits if backend_cfg else RobotLimits())
         raw = backend_cfg.raw if backend_cfg is not None else {}
         self.study_profile = "real" if robot.name == "real" else "dry_run"
-        self.height = HeightCalibration.from_raw(raw, self.study_profile)
+        self._height_base = HeightCalibration.from_raw(raw, self.study_profile)
+        # #110: the 校正 tab's measured values (calibration.json#study_height) over the config's
+        self._height_path = getattr(backend_cfg, "study_height_path", None) if backend_cfg is not None else None
         self.study_open_claw = bool(((raw.get("study_mode") or {}).get("help") or {}).get("open_claw", False))
         self.cleanup = CleanupSequencer(
             robot, limits, CleanupProfile.from_raw(raw, self.study_profile), lock=self._motion_lock,
@@ -611,7 +615,11 @@ class GameServer:
                     await self.approach.start(target)
                 return self._ack(name, self.approach.status())
             if name == "study_height_status":
-                return self._ack(name, self.height.status(self.approach.limits))
+                return self._ack(name, self._height_status())
+            if name == "study_height_set":
+                return self._study_height_set(params)
+            if name == "study_height_confirm":
+                return self._study_height_confirm(params)
             if name == "study_cleanup_status":
                 return self._ack(name, self.cleanup.status())
             if name == "study_cleanup_start":
@@ -735,6 +743,96 @@ class GameServer:
         elif name == "camera_map_clear":
             self.camera_map.clear()
         return self._ack(name, self.camera_map.status())
+
+    # ------------------------------------------------------------------ study heights (#110)
+    def _height_saved(self) -> dict | None:
+        path = self._height_path
+        if self.study_profile != "real" or path is None:
+            return None
+        try:
+            if not path.exists():
+                return None
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.warning("study heights not read: %s", e)
+            return None
+        return d if isinstance(d, dict) else None
+
+    def _z_counts_per_unit(self) -> float | None:
+        """The measured Z calibration only: the config's guess would give a wrong cm."""
+        cal = getattr(self.robot, "z_cal", None)
+        return float(cal.counts_per_unit) if cal is not None and cal.complete() else None
+
+    @property
+    def height(self) -> HeightCalibration:
+        saved = self._height_saved()
+        if saved is None:
+            return self._height_base
+        return self._height_base.with_measured(saved, self._z_counts_per_unit(), self.approach.limits)
+
+    def _height_status(self) -> dict:
+        data = self.height.status(self.approach.limits)
+        data["saved"] = self._height_saved()
+        data["z_calibrated"] = self._z_counts_per_unit() is not None
+        data["default_drum_radius_mm"] = DRUM_RADIUS_MM
+        return data
+
+    def _study_height_set(self, params: dict) -> dict:
+        """The 校正 tab's values -> calibration.json#study_height, unconfirmed (#110)."""
+        name = "study_height_set"
+        if self.study_profile != "real" or self._height_path is None:
+            return self._nack(name, "仮想クレーンでは模擬の値（study_mode.height.dry_run）を使う。実機でだけ測る")
+
+        def num(key: str, lo: float, hi: float) -> float:
+            v = params.get(key)
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or not lo <= v <= hi:
+                raise ValueError(f"{key} must be a number in {lo:g}..{hi:g}")
+            return round(float(v), 3)
+        try:
+            out: dict[str, Any] = {"drum_radius_mm": num("drum_radius_mm", 3.0, 100.0),
+                                   "camera_offset_cm": num("camera_offset_cm", 0.0, 30.0),
+                                   "landing_tip_cm": num("landing_tip_cm", 0.0, 20.0),
+                                   "allow_landing_contact": params.get("allow_landing_contact") is True}
+        except ValueError as e:
+            return self._nack(name, str(e))
+        desk = params.get("desk", "bottom")
+        if desk == "here":
+            s = self.robot.snapshot()
+            if not s.z_reference_set:
+                return self._nack(name, "Z の基準がない: W で一番上まで巻き上げて「上を記録」してから")
+            out["desk"] = round(float(s.z), 2)
+        elif desk == "bottom":
+            out["desk"] = "bottom"
+        else:
+            saved = self._height_saved() or {}
+            out["desk"] = saved.get("desk", "bottom")  # keep the recorded desk
+        out["confirmed"] = False  # every change is checked on the robot again
+        try:
+            self._height_path.write_text(json.dumps(out))
+        except (OSError, ValueError) as e:
+            return self._nack(name, f"保存できません: {e}")
+        log.info("study heights saved (not confirmed yet): %s", out)
+        return self._ack(name, self._height_status())
+
+    def _study_height_confirm(self, params: dict) -> dict:
+        """A grown-up checked the test moves with a ruler: the staged descent may use them."""
+        name = "study_height_confirm"
+        saved = self._height_saved()
+        if saved is None:
+            return self._nack(name, "まだ保存していない（値を入れて「保存」）")
+        on = params.get("confirmed") is not False
+        if on:
+            try:
+                self._height_base.with_measured({**saved, "confirmed": True}, self._z_counts_per_unit(),
+                                                self.approach.limits).stages(self.approach.limits)
+            except HeightError as e:
+                return self._nack(name, f"このままでは使えない: {e}")
+        try:
+            self._height_path.write_text(json.dumps({**saved, "confirmed": on}))
+        except (OSError, ValueError) as e:
+            return self._nack(name, f"保存できません: {e}")
+        log.info("study heights %s", "confirmed" if on else "unconfirmed")
+        return self._ack(name, self._height_status())
 
     @staticmethod
     def _allowed_during_auto(name: str, params: dict) -> bool:

@@ -2289,6 +2289,28 @@ func _test_calibration_tab(rs: Node) -> void:
 	game.ws.ack.emit("r3", true, {"command": "z_set"})
 	st._process(0.0)
 	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	# #110: the capture heights: the saved values fill the inputs, the stages and the state are shown
+	var cp: CalibrationPanel = st.calibration
+	game.ws.ack.emit("h1", true, {"command": "study_height_status", "usable": false, "stages": [],
+		"problem": "not confirmed", "z_calibrated": true, "default_drum_radius_mm": 15.0,
+		"saved": {"drum_radius_mm": 15.0, "camera_offset_cm": 3.0, "landing_tip_cm": 1.0, "allow_landing_contact": false,
+			"desk": "bottom", "confirmed": false},
+		"values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": false},
+		"trial_stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
+			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
+	cp.refresh()
+	var hp := cp.height_params("bottom")
+	var unconfirmed_text: String = cp._height.text
+	game.ws.ack.emit("h2", true, {"command": "study_height_confirm", "usable": true, "z_calibrated": true,
+		"saved": {"confirmed": true}, "values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": true},
+		"stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
+			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
+	cp.refresh()
+	_ok(is_equal_approx(float(hp.camera_offset_cm), 3.0) and is_equal_approx(float(hp.drum_radius_mm), 15.0)
+		and hp.desk == "bottom" and unconfirmed_text.contains("1cm = Z 5.40") and unconfirmed_text.contains("10cm: Z 37.8")
+		and unconfirmed_text.contains("まだ確認していない") and cp._height.text.contains("確認済み")
+		and is_equal_approx(cp.stage_z("5cm"), 10.81) and is_nan(cp.stage_z("bogus")),
+		"calibration: the study heights are entered, shown, tried and confirmed (#110)", unconfirmed_text)
 	var free_here: bool = game.jog_params(Vector3(0, 0, -5)).get("z_free", false) == true
 	RobotState.z_calibrated = true
 	RobotState.z_reference_set = true

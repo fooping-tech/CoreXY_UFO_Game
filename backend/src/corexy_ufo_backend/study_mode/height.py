@@ -30,6 +30,20 @@ CONFIRM_KEYS = ("z_desk_tip", "z_per_cm", "camera_offset_cm", "landing")
 STAGE_NAMES = ("10cm", "5cm", "landing")
 
 
+COUNTS_PER_TURN = 4096  # the drum servo (STS3020)
+DRUM_RADIUS_MM = 15.0  # the winding drum (#110)
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def z_per_cm_from_drum(counts_per_unit: float, drum_radius_mm: float) -> float:
+    """Z units per cm of rope: one turn winds 2*pi*r mm, one Z unit is counts_per_unit / 4096 turns."""
+    mm_per_unit = counts_per_unit / COUNTS_PER_TURN * 2.0 * math.pi * drum_radius_mm
+    return 10.0 / mm_per_unit
+
+
 class HeightError(ValueError):
     """The staged descent cannot run with these values (the message says why)."""
 
@@ -70,6 +84,29 @@ class HeightCalibration:
                    allow_landing_contact=bool(d.get("allow_landing_contact", False)),
                    capture_heights_cm=tuple(float(v) for v in heights) if isinstance(heights, list) else (10.0, 5.0),
                    confirmed={k: bool(conf.get(k, False)) for k in CONFIRM_KEYS}, profile=profile)
+
+    def with_measured(self, m: dict, counts_per_unit: float | None, limits: RobotLimits) -> "HeightCalibration":
+        """The real profile from the 校正 tab's values (calibration.json#study_height, #110):
+
+        - z_per_cm from the drum: one turn winds 2*pi*r of rope, one Z unit is
+          counts_per_unit / 4096 turns (the measured Z calibration; None = not measured -> refused)
+        - z_desk_tip: "bottom" = the Z calibration's bottom (recorded with the claw tips on the
+          desk), or a Z recorded with "ここを机に記録"
+        - camera_offset_cm / landing_tip_cm / allow_landing_contact as entered
+        - confirmed: one switch for all, set by a grown-up after the test moves (cleared on any change)
+        """
+        radius = _num(m.get("drum_radius_mm"))
+        per_cm = z_per_cm_from_drum(counts_per_unit, radius) if counts_per_unit and radius else None
+        desk = m.get("desk", "bottom")
+        bottom = limits.z_min if limits.z_up_is_positive else limits.z_max
+        z_desk = bottom if desk == "bottom" else _num(desk)
+        ok = bool(m.get("confirmed", False))
+        return HeightCalibration(
+            z_desk_tip=z_desk, z_per_cm=per_cm, camera_offset_cm=_num(m.get("camera_offset_cm")),
+            landing_tip_cm=_num(m.get("landing_tip_cm")), min_clearance_cm=self.min_clearance_cm,
+            allow_landing_contact=bool(m.get("allow_landing_contact", False)),
+            capture_heights_cm=self.capture_heights_cm, confirmed={k: ok for k in CONFIRM_KEYS},
+            profile=self.profile)
 
     def z_for_tip(self, tip_cm: float, limits: RobotLimits) -> float:
         assert self.z_desk_tip is not None and self.z_per_cm is not None
@@ -119,6 +156,19 @@ class HeightCalibration:
         try:
             stages = [{"name": s.name, "camera_cm": round(s.camera_cm, 2), "tip_cm": round(s.tip_cm, 2),
                        "z": round(s.z, 2)} for s in self.stages(limits)]
-            return {"profile": self.profile, "usable": True, "stages": stages, "problem": ""}
+            out = {"profile": self.profile, "usable": True, "stages": stages, "problem": ""}
         except HeightError as e:
-            return {"profile": self.profile, "usable": False, "stages": [], "problem": str(e)}
+            out = {"profile": self.profile, "usable": False, "stages": [], "problem": str(e)}
+        out["values"] = {"z_desk_tip": self.z_desk_tip, "z_per_cm": round(self.z_per_cm, 4) if self.z_per_cm else None,
+                         "camera_offset_cm": self.camera_offset_cm, "landing_tip_cm": self.landing_tip_cm,
+                         "allow_landing_contact": self.allow_landing_contact,
+                         "confirmed": all(self.confirmed.get(k, False) for k in CONFIRM_KEYS)}
+        # what the stages would be once confirmed (for the 校正 tab's test moves)
+        if not out["usable"] and self.profile == "real":
+            try:
+                trial = HeightCalibration(**{**self.__dict__, "confirmed": {k: True for k in CONFIRM_KEYS}})
+                out["trial_stages"] = [{"name": s.name, "camera_cm": round(s.camera_cm, 2), "tip_cm": round(s.tip_cm, 2),
+                                        "z": round(s.z, 2)} for s in trial.stages(limits)]
+            except HeightError as e:
+                out["trial_problem"] = str(e)
+        return out

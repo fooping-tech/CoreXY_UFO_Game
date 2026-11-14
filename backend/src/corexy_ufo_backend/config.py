@@ -73,6 +73,7 @@ class BackendConfig:
     homework_spot_path: Any = None
     # overview image -> CoreXY XY (#78)
     camera_xy_path: Any = None
+    study_height_path: Any = None  # calibration.json#study_height (#110: the 校正 tab)
     # the real robot homes XY only with a Z reference and the arm wound up (within
     # home_z_tolerance of its top): a lowered arm would hit things on the way. On
     # when loaded from the config file (backend.home_requires_z_top, default true);
@@ -173,6 +174,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_calibration_path = calibration_section(path.parent, "z")
     cfg.homework_spot_path = calibration_section(path.parent, "homework_spot")
     cfg.camera_xy_path = calibration_section(path.parent, "camera_xy")
+    cfg.study_height_path = calibration_section(path.parent, "study_height")
     if not path.exists():
         return cfg
     data = json.loads(path.read_text(encoding="utf-8"))
