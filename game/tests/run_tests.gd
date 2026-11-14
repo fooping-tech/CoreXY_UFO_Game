@@ -2164,6 +2164,16 @@ func _test_study_sheet_photo(rs: Node) -> void:
 	view._draw()
 	_ok(photo_on and stale and not view._photo.visible and not sv.sheet_marks().is_empty(),
 		"sheet photo: the real sheet with fresh marks, the drawn sheet without them")
+	# review on #117: a frame in the params never reaches the log; no search after the study mode
+	var red = UfoWebSocketClient.redacted({"image_jpeg_base64": "A".repeat(5000), "images": [{"role": "10cm",
+		"image_jpeg_base64": "B".repeat(900)}], "u": 0.5})
+	var log_ok: bool = str(red.image_jpeg_base64).begins_with("<5000") and str(red.images[0].image_jpeg_base64).begins_with("<900") \
+		and is_equal_approx(float(red.u), 0.5)
+	sv.watch_stop()
+	sv._sheet_left = 0.0
+	sv._sheet_tick(0.1)
+	_ok(log_ok and sv._sheet_rid == "" and sv.sheet_marks().is_empty(),
+		"sheet photo: frames are not logged, no worksheet search outside the study mode")
 	ctl.stop()
 	remove_child(game)
 	game.free()

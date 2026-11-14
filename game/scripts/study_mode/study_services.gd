@@ -201,7 +201,8 @@ func _process(dt: float) -> void:
 ## sheet, straightened, from the live camera.
 func _sheet_tick(dt: float) -> void:
 	_sheet_left -= dt
-	if _sheet_left > 0.0 or mode != "camera" or _sheet_rid != "" or not backend_robot():
+	# only while the study mode watches the sheet (review on #117: not during the game)
+	if not watching or _sheet_left > 0.0 or mode != "camera" or _sheet_rid != "" or not backend_robot():
 		return
 	_sheet_left = SHEET_FIND_S
 	var img := _overview_image()
@@ -248,6 +249,8 @@ func watch_start() -> void:
 func watch_stop() -> void:
 	var was := watching
 	watching = false
+	sheet_corners = {}
+	sheet_seen_ms = -1
 	if mode != "simulated" and homework != null and was:
 		if homework.running():
 			homework.stop("勉強モードの見守りを終えました")
