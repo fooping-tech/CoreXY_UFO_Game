@@ -169,6 +169,12 @@ json.dump({"homework": {"speech": {"docker": {"enabled": False}}}}, open(f"{t}/v
 rem = json.loads(json.dumps(g)); rem["homework"]["speech"]["voicevox_url"] = "http://192.168.1.5:50021"
 json.dump(rem, open(f"{t}/vv_remote/game_config.json", "w"))
 PY
+run -- --backend-only --mock ; has "$VV" && has "backend: corexy-ufo-backend --mock"
+check "VOICEVOX: also for the backend alone (a game started on its own)" $?
+run -- --backend-only -- --list-ports ; ! has "voicevox:" && has "backend: corexy-ufo-backend --list-ports"
+check "VOICEVOX: not for a one-shot listing" $?
+run -- backend --mock ; has "$VV"
+check "VOICEVOX: the earlier backend mode too" $?
 run "START_SH_CONFIG=$TMP/vv_off/game_config.json" -- --mock ; ! has "voicevox:" && has "backend:"
 check "VOICEVOX: off in the config" $?
 run "START_SH_CONFIG=$TMP/vv_local/game_config.json" -- --mock ; ! has "voicevox:" && has "backend:"

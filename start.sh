@@ -291,12 +291,24 @@ start_backend() {
 }
 
 run_backend_only() {  # in the foreground (no game)
+  # the voice for a game started on its own (review on #113), not for a one-shot listing
+  local a oneshot=0
+  for a in "$@"; do
+    case "$a" in --list-ports|--list-cameras|--auto-catch-dry-run|-h|--help) oneshot=1 ;; esac
+  done
+  [[ "$oneshot" == 1 ]] || start_voicevox
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
     return 0
   fi
   require_uv
-  cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
+  if [[ -z "$VV_STATE" ]]; then
+    cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@"
+  fi
+  # not exec: start.sh stays to stop the VOICEVOX container when the backend ends
+  local code=0
+  (cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@") || code=$?
+  exit "$code"
 }
 
 
