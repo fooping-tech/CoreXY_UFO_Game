@@ -35,6 +35,7 @@ from .homework.approach import ApproachParams
 from .homework.camera_map import CameraMapParams
 from .study import StudyConfig, StudyService, make_adapter
 from .study_mode import WorksheetCatalog, WorksheetError
+from .devicehub import DeviceHubConfig, DeviceHubService
 
 log = logging.getLogger("corexy_ufo_backend")
 
@@ -188,13 +189,24 @@ async def run(args: argparse.Namespace) -> int:
                                worksheets=worksheets) if (hw_cfg.enabled or study_mode_on) else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
+    # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
+    hub_cfg = DeviceHubConfig.from_raw(cfg.raw)
+    devicehub = None
+    if hub_cfg.enabled:
+        try:
+            devicehub = DeviceHubService(hub_cfg, exclude_ports=[cfg.serial_port, cfg.serial_port_2])
+        except (ValueError, OSError) as e:
+            log.error("device hub disabled: %s", e)
     server = GameServer(robot, cfg.websocket_host, cfg.websocket_port, state_hz=args.state_hz, vision=vision,
                         auto_catch=auto_cfg, backend_cfg=cfg, study=study, homework=homework, approach=ApproachParams.from_raw(cfg.raw),
-                        camera_map=CameraMapParams.from_raw(cfg.raw))
+                        camera_map=CameraMapParams.from_raw(cfg.raw), devicehub=devicehub)
     try:
         await robot.connect()
     except Exception as e:
         log.error("robot connect failed: %s (server keeps running; Godot will show DISCONNECTED)", e)
+    robot_port = getattr(getattr(robot, "serial", None), "port", None)
+    if devicehub is not None and robot_port and hasattr(devicehub.transport, "exclude"):
+        devicehub.transport.exclude.add(str(robot_port))  # opened by the server's start, just below
     await server.start()
     if vision:
         vision.start()
