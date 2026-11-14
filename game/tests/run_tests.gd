@@ -2276,12 +2276,15 @@ func _test_device_test_tab(rs: Node) -> void:
 	game.ws.ack.emit("c", true, {"command": "devicehub_command", "result": {"destination": 32.0,
 		"name": "ARM_RECEIVER", "result": "REJECTED_STATE", "ok": false}})
 	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:00.000", "source": 32,
-		"name": "BALL_RECEIVED", "cycle": 1}})
+		"name": "BALL_RECEIVED", "data": {"cycle": 1}}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:01.000", "source": null,
+		"name": "HUB_CONNECTED", "data": {}}})
 	p.refresh()
 	st._process(0.0)
 	_ok(p._hub.text.contains("接続") and p._hub.text.contains("usbmodem1") and p._dev.text.contains("● Illumination")
 		and p._dev.text.contains("○ M5Dial 1") and p._ill_kv.text.contains("PUFF") and p._ill_kv.text.contains("AURORA")
-		and p._log.text.contains("BALL_RECEIVED") and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
+		and p._log.text.contains("M5Dial 1  BALL_RECEIVED {\"cycle\":1}") and p._log.text.contains("hub  HUB_CONNECTED")
+		and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
 		and st._status.text.contains("REJECTED_STATE"),
 		"device test: the hub, the devices, the status, a refused command and an event are shown", p._log.text)
 	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})

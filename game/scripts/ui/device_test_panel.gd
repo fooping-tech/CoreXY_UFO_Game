@@ -297,13 +297,14 @@ func _on_message(msg: Dictionary) -> void:
 	if str(msg.get("type", "")) != "devicehub_event" or not msg.get("data") is Dictionary:
 		return
 	var e: Dictionary = msg.data
-	var src := int(e.get("source", 0))
-	var extra := {}
-	for k in e.keys():
-		if not k in ["time", "name", "source", "type", "event_id", "session_id", "raw"]:
-			extra[k] = e[k]
-	_add_log("%s  %s  %s %s" % [str(e.get("time", "")), NAMES.get(src, "hub" if src == 1 else str(src)),
-		str(e.get("name", "")), JSON.stringify(extra) if not extra.is_empty() else ""])
+	# the hub's own link events (DEVICE_ONLINE, HUB_CONNECTED, ...) have no source (null)
+	var source = e.get("source")
+	var who := "hub"
+	if source is float or source is int:
+		who = NAMES.get(int(source), "hub" if int(source) == 1 else str(int(source)))
+	var extra: Dictionary = e.data if e.get("data") is Dictionary else {}
+	_add_log("%s  %s  %s %s" % [str(e.get("time", "")), who, str(e.get("name", "")),
+		JSON.stringify(extra) if not extra.is_empty() else ""])
 
 func _result(ok: bool, text: String) -> void:
 	result_ok = ok
