@@ -46,6 +46,7 @@ class RobotLimits:
 @dataclass
 class BackendConfig:
     serial_port: str = ""
+    serial_port_2: str = ""  # a second board (#100): the one connected is used
     baudrate: int = 115200
     status_poll_hz: float = 10.0
     host_timeout_s: float = 2.0
@@ -197,6 +198,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     )
     b = data.get("backend", {})
     cfg.serial_port = str(b.get("serial_port", ""))
+    cfg.serial_port_2 = str(b.get("serial_port_2", ""))
     cfg.baudrate = int(b.get("baudrate", 115200))
     cfg.status_poll_hz = float(b.get("status_poll_hz", 10.0))
     cfg.host_timeout_s = float(b.get("host_timeout_s", 2.0))
