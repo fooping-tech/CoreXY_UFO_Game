@@ -17,6 +17,8 @@ Command names and safety rules:
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than
   jog_expiry_s), clear_alarm,
+  services_check {ask?} (#114: Jev / the tutor AI / Claude Code / Codex / VOICEVOX reachable? ask =
+  one short question with the sample worksheet; never the robot, never queued),
   get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
   (hand joystick thresholds at run time; vision only), arm_step {deg} (claw servo ID 2 turned
   by deg degrees, relative, |deg| <= 90; a motion command), arm_zero (claw angle reference),
@@ -113,13 +115,19 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             *("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag", "devicehub_command",
               "devicehub_stop_all"))
+COMMANDS = (*COMMANDS, "services_check")
 # The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
 DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
                       "devicehub_command", "devicehub_stop_all")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
-PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+# Out-of-band commands that only read: cancelled at once when their client disconnects, so
+# the disconnect's safety aborts never wait for them (review on #115: services_check can wait
+# 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
+CANCEL_ON_DISCONNECT = ("services_check", "devicehub_meta", "devicehub_devices", "devicehub_status",
+                        "devicehub_diag")
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
@@ -149,6 +157,7 @@ class GameServer:
                  devicehub: Any | None = None) -> None:
         self.robot = robot
         self.devicehub = devicehub  # #108: the peripherals' hub (DeviceHubService), or None
+        self.backend_cfg = backend_cfg  # #114: services_check reads the study / speech settings
         self.host = host
         self.port = port
         self.state_interval = 1.0 / state_hz
@@ -400,6 +409,7 @@ class GameServer:
             queue: asyncio.Queue = asyncio.Queue()
             worker = asyncio.create_task(self._ordered_worker(ws, queue))
             out_of_band: set[asyncio.Task] = set()
+            readers: dict[asyncio.Task, str] = {}  # out-of-band tasks to cancel on a disconnect
             try:
                 async for raw in ws:
                     try:
@@ -412,6 +422,9 @@ class GameServer:
                         task = asyncio.create_task(self._dispatch(ws, msg))
                         out_of_band.add(task)
                         task.add_done_callback(out_of_band.discard)
+                        if name in CANCEL_ON_DISCONNECT:
+                            readers[task] = name
+                            task.add_done_callback(lambda t: readers.pop(t, None))
                     else:
                         queue.put_nowait(msg)
             finally:
@@ -420,6 +433,8 @@ class GameServer:
                 while not queue.empty():
                     queue.get_nowait()
                 queue.put_nowait(None)
+                for task in list(readers):  # nothing waits for a diagnostic (an AI's answer)
+                    task.cancel()
                 await asyncio.gather(worker, *out_of_band, return_exceptions=True)
         except websockets.ConnectionClosed:
             pass
@@ -600,6 +615,12 @@ class GameServer:
             return self._nack(name, f"unknown command {name!r}")
         if name in DEVICEHUB_COMMANDS:  # the peripherals only: not the robot, not its sequences
             return await self._devicehub(name, params)
+        if name == "services_check":  # #114: Jev / the tutor / Claude Code / VOICEVOX; never the robot
+            from ..services_check import check_all
+            cfg = self.backend_cfg
+            results = await check_all(cfg.raw if cfg is not None else {}, ask=params.get("ask") is True,
+                                      focus_calibration=getattr(cfg, "focus_camera_path", None))
+            return self._ack(name, {"results": results})
         try:
             if self.auto.active and name not in AUTO_CATCH_ALLOWED and not self._allowed_during_auto(name, params):
                 return self._nack(name, "busy: auto catch running (stop to abort)")
