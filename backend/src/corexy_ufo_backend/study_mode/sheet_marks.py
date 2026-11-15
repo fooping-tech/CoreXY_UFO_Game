@@ -24,6 +24,8 @@ HOLE_MM = 4.0
 CENTRES_MM = {"tl": (14.0, 14.0), "tr": (196.0, 14.0), "bl": (14.0, 283.0), "br": (196.0, 283.0)}
 RATIO = (283.0 - 14.0) / (196.0 - 14.0)  # 269 / 182
 MAX_CANDIDATES = 14
+# a candidate's side (the square root of its area) against the mark's expected side
+SIZE_TOLERANCE = (0.5, 2.0)
 
 
 def _candidates(gray: np.ndarray) -> list[dict]:
@@ -103,6 +105,16 @@ def _score(q: np.ndarray) -> float:
     return abs(math.log(ratio / RATIO)) + abs(math.log(top / bottom)) + abs(math.log(left / right))
 
 
+def _sizes_fit(q: np.ndarray, sides: np.ndarray) -> bool:
+    """Each blob is about a mark's size for a sheet this big in the image (a 12 mm square on a
+    182 mm wide sheet). A round tape dispenser or a box off the sheet can sit where a rectangle
+    of marks would fit, but it is far bigger (#130); perspective changes a mark by less than 2x."""
+    tl, tr, bl, br = q
+    width = (np.linalg.norm(tr - tl) + np.linalg.norm(br - bl)) / 2
+    mark = width / (196.0 - 14.0) * MARK_MM
+    return bool(np.all(sides >= SIZE_TOLERANCE[0] * mark) and np.all(sides <= SIZE_TOLERANCE[1] * mark))
+
+
 def find_marks(image: np.ndarray, max_score: float = 0.6) -> dict[str, Any] | None:
     """BGR or gray image -> {"corners": {tl, tr, bl, br: [u, v]}, "score"} or None."""
     import cv2
@@ -112,10 +124,11 @@ def find_marks(image: np.ndarray, max_score: float = 0.6) -> dict[str, Any] | No
     if len(cands) < 4:
         return None
     pts = np.array([c["c"] for c in cands], dtype=float)
+    sides = np.sqrt(np.array([c["area"] for c in cands], dtype=float))
     best: tuple[float, np.ndarray] | None = None
     for idx in itertools.combinations(range(len(pts)), 4):
         q = _order(pts[list(idx)])
-        if q is None:
+        if q is None or not _sizes_fit(q, sides[list(idx)]):
             continue
         s = _score(q)
         if best is None or s < best[0]:
