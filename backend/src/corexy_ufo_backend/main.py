@@ -205,6 +205,7 @@ async def run(args: argparse.Namespace) -> int:
         await robot.connect()
     except Exception as e:
         log.error("robot connect failed: %s (server keeps running; Godot will show DISCONNECTED)", e)
+        server.connect_error = str(e)  # #124: shown in the game's 校正 tab
     robot_port = getattr(getattr(robot, "serial", None), "port", None)
     if devicehub is not None and robot_port and hasattr(devicehub.transport, "exclude"):
         devicehub.transport.exclude.add(str(robot_port))  # opened by the server's start, just below

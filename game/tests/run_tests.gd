@@ -2510,6 +2510,32 @@ func _test_calibration_summary() -> void:
 		and by.claw.state == "todo" and cp._next.text.contains("1. つながりとモーター")
 		and (cp._summary["z"] as Button).text.begins_with("－ 2.") and (cp._cards["z"].badge as Label).text == "使えない",
 		"calibration summary: without a backend, connect first; the backend's sections say they need it", cp._next.text)
+	# #124: a real robot that is not connected is a problem of the link, with its reason
+	var missing := {"kind": "real", "connected": false, "problem": "port_missing", "registered": ["/dev/cu.usbserial-AAAA"],
+		"port": "/dev/cu.usbserial-AAAA", "others": ["/dev/cu.usbserial-CCCC"], "error": "could not open port"}
+	var down: Dictionary = CalibrationPanel.link_state("websocket", true, false, false, "real", missing)
+	var long_text := CalibrationPanel.link_problem_text(missing)
+	_ok(down.state == "todo" and str(down.text).contains("登録したポートが見つからない")
+		and long_text.contains("usbserial-AAAA") and long_text.contains("usbserial-CCCC")
+		and long_text.contains("シリアルポート 2 台目") and long_text.contains("起動し直す"),
+		"calibration link: a registered port that is missing is shown with the port seen instead and what to do", long_text)
+	var unplugged := CalibrationPanel.link_problem_text({"problem": "port_missing", "registered": ["A"], "others": []})
+	var none := CalibrationPanel.link_problem_text({"problem": "no_port"})
+	var busy := CalibrationPanel.link_problem_text({"problem": "open_failed", "port": "/dev/cu.usbserial-AAAA", "error": "Resource busy"})
+	_ok(unplugged.contains("USB ケーブル") and not unplugged.contains("2 台目") and none.contains("1 つも見つからない")
+		and busy.contains("usbserial-AAAA") and busy.contains("Resource busy") and busy.contains("ほかのプログラム")
+		and CalibrationPanel.link_problem_text({}).contains("確かめています"),
+		"calibration link: unplugged, no port at all, a port that does not open and no answer yet have their own words", busy)
+	var up: Dictionary = CalibrationPanel.link_state("websocket", true, true, true, "real", {})
+	var motors_off: Dictionary = CalibrationPanel.link_state("websocket", true, true, false, "mock", {})
+	_ok(up.state == "ok" and up.text == "実機" and motors_off.state == "todo" and str(motors_off.text).contains("モーターが無効")
+		and CalibrationPanel.link_state("mock", false, true, true, "", {}).state == "todo",
+		"calibration link: connected is as before (done with the motors on, the motors' hint, no backend)", str(up))
+	cp.link_info = {}
+	cp._on_ack("r", true, {"command": "list_ports", "ports": [], "robot": missing})
+	_ok(cp.link_info.get("problem") == "port_missing" and cp.result_text == "",
+		"calibration link: the backend's list_ports answer is kept, without a result message", str(cp.link_info))
+	cp.link_info = {}
 	var open0 := RobotState.arm_open_deg
 	var closed0 := RobotState.arm_closed_deg
 	RobotState.arm_open_deg = 40.0

@@ -178,6 +178,7 @@ class GameServer:
                  devicehub: Any | None = None) -> None:
         self.robot = robot
         self.devicehub = devicehub  # #108: the peripherals' hub (DeviceHubService), or None
+        self.connect_error = ""  # #124: why the robot's connect at start failed (main.py), for list_ports
         self.backend_cfg = backend_cfg  # #114: services_check reads the study / speech settings
         self.host = host
         self.port = port
@@ -700,7 +701,8 @@ class GameServer:
                 return self._ack(name, cfg)
             if name == "list_ports":
                 from ..serial_service.transport import list_serial_ports
-                return self._ack(name, {"ports": list_serial_ports()})
+                ports = list_serial_ports()
+                return self._ack(name, {"ports": ports, "robot": self._robot_link([p["device"] for p in ports])})
             if name == "enable_motors":
                 if not bool(params.get("enable", False)):
                     for s in self.sequences:
@@ -771,6 +773,23 @@ class GameServer:
         except Exception as e:  # pragma: no cover
             log.exception("command %s failed", name)
             return self._nack(name, f"internal error: {e}")
+
+    def _robot_link(self, available: list[str]) -> dict:
+        """The robot's serial link for the 校正 tab (#124): connected, or why not. Read only."""
+        connected = self.robot.snapshot().connected
+        if not self.robot.is_real:
+            return {"kind": "mock", "connected": connected, "problem": ""}
+        from ..serial_service.transport import link_report
+        cfg = self.backend_cfg
+        registered = [cfg.serial_port, cfg.serial_port_2] if cfg is not None else []
+        serial = getattr(self.robot, "serial", None)
+        error = self.connect_error or str(getattr(serial, "last_error", "") or "")
+        # the hub's own port (#108) is not a board to register for the robot
+        hub = self.devicehub
+        hub_port = getattr(getattr(hub, "transport", None), "current_port", None) \
+            if hub is not None and getattr(getattr(hub, "gw", None), "connected", False) else None
+        return {"kind": "real", **link_report(registered, getattr(serial, "port", None), available, connected, error,
+                                              not_robot=(str(hub_port),) if hub_port else ())}
 
     def _camera_map_command(self, name: str, params: dict) -> dict:
         if name == "camera_map_add":
