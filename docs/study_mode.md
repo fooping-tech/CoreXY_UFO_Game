@@ -122,7 +122,7 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 
 1. 学習支援 AI の PC で `uv run python server/tutor_app.py`（起動時に `https://<IP>:8444/` と許可する接続元を表示）。
 2. この Mac に置く（**Git にもチャットにも出さない**。`config/secrets/` は Git に入らない）:
-   - `config/secrets/tutor_token.txt`: トークン（1 行）
+   - `config/secrets/tutor_token.txt`: トークン（1 行）。**サーバがトークンなしで動いているときは置かない**（ファイルがなければ Authorization を付けずに送る、#128。サーバがトークンを求めると、校正タブの「AI・外部サービス」と接続テストがそう言う）
    - `config/secrets/tutor_cert.pem`: サーバの自己署名証明書（公開してよい方。`key.pem` は受け取らない）。この証明書だけを信頼し、IP で接続するのでホスト名は照合しない（検証そのものは切らない）
 3. 設定画面（歯車 → 設定 → Study タブ）で「勉強モードの解説」を「学習支援 AI」、「学習支援 AI の URL」を `https://192.168.x.x:8444` にして保存し、`./start.sh` で起動し直す（`config/local_settings.json` の `study.explain_provider` / `study.tutor_url`）。
 4. 接続テスト: `python3 tools/check_tutor_api.py`（URL・トークン・証明書は config から。TCP → TLS → 許可 IP → トークン → 推論 3 種の順に確かめ、だめなところで直し方を出す）。
@@ -136,7 +136,7 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 
 ### つながらないとき
 
-ゲームも勉強モードも止まらず、アームも動かさず、プリントのヒントで解説します（今までの `fallback`）。2 回続けて失敗すると（`tutor_fail_limit`）、`tutor_cooldown_s`（120 秒）は呼ばずにすぐプリントのヒントにします。トークン・URL がないときも同じです。
+ゲームも勉強モードも止まらず、アームも動かさず、プリントのヒントで解説します（今までの `fallback`）。2 回続けて失敗すると（`tutor_fail_limit`）、`tutor_cooldown_s`（120 秒）は呼ばずにすぐプリントのヒントにします。URL がないとき・サーバがトークンを求めているのに置いていないときも同じです。
 
 ### 写っていない問題を探しに行く
 

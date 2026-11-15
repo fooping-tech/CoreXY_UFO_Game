@@ -1,4 +1,4 @@
-"""学習支援 AI（UFOくん API）への接続テスト。ゲームを動かす PC で実行する（標準ライブラリだけ）。
+"""学習支援 AI（UFOくん API）への接続テスト（トークンはなくてもよい: サーバをトークンなしで起動したとき、#128）。ゲームを動かす PC で実行する（標準ライブラリだけ）。
 
     python3 tools/check_tutor_api.py --url https://192.168.100.56:8444 \
         --token-file config/secrets/tutor_token.txt --cafile config/secrets/tutor_cert.pem
@@ -63,11 +63,7 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     token = os.environ.get("TUTOR_API_TOKEN", "")
-    if a.token_file:
-        if not Path(a.token_file).exists():
-            print(f"トークンのファイルがありません: {a.token_file}\n  → 学習支援 AI の PC から受け取ったトークンを、"
-                  "このファイルに 1 行で保存する（Git・チャットには貼らない。config/secrets/ は Git に入らない）")
-            return 1
+    if a.token_file and Path(a.token_file).exists():  # #128: no file = no token (a server without one)
         token = Path(a.token_file).read_text(encoding="utf-8").strip()
     if a.cafile and not Path(a.cafile).exists():
         print(f"証明書のファイルがありません: {a.cafile}\n  → 学習支援 AI の PC の server/secrets/cert.pem"
@@ -108,7 +104,7 @@ def main():
 
     def req(path, body=None, auth=True):
         h = {"Content-Type": "application/json"}
-        if auth:
+        if auth and token:
             h["Authorization"] = "Bearer " + token
         r = urllib.request.Request(a.url.rstrip("/") + path, json.dumps(body).encode() if body is not None else None, h)
         t0 = time.time()
@@ -134,6 +130,10 @@ def main():
         line(OK, "4. トークン（/v1/models）", ", ".join(m["id"] for m in models["data"]))
     except urllib.error.HTTPError as e:
         line(NG, "4. トークン（/v1/models）", f"HTTP {e.code}")
+        if e.code == 401 and not token:
+            print("  → 401: サーバがトークンを求めている。サーバをトークンなしで起動し直すか、トークンを "
+                  f"{a.token_file or 'config/secrets/tutor_token.txt'} に 1 行で保存する（Git・チャットには貼らない）")
+            return 1
         print("  → 401: トークンが違う（サーバの server/secrets/token.txt と同じか。前後の空白・改行に注意）。"
               "429: 失敗が続いたため 10 分ブロック中。少し待ってから")
         return 1

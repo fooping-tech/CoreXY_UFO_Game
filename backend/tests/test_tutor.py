@@ -241,8 +241,8 @@ def test_make_adapter_reads_the_token_file_under_the_repository(tmp_path, fake_a
     assert isinstance(ad, TutorStudyAdapter) and ad.token == "secret-token"
     assert make_adapter(cfg).__class__.__name__ == "ClaudeCodeStudyAdapter"  # provider stays for the rest
     assert "secret-token" not in repr(cfg)
-    with pytest.raises(StudyAdapterError, match="トークン"):
-        make_adapter(_cfg(tmp_path / "x", fake_api, token=None), "tutor")
+    # #128: no token file = no token (a server started without one)
+    assert make_adapter(_cfg(tmp_path / "x", fake_api, token=None), "tutor").token == ""
     with pytest.raises(StudyAdapterError, match="URL"):
         make_adapter(_cfg(tmp_path, ""), "tutor")
 
@@ -335,3 +335,50 @@ async def test_navigate_in_mm_is_refused_on_the_real_robot():
             assert m["type"] == "nack" and "only for the mock" in m["data"]["reason"]
     finally:
         await srv.stop()
+
+
+# ---------------------------------------------------------------- #128: a server without a token
+class _NeedsToken(_Fake):
+    def do_POST(self):
+        _Fake.got.append((self.headers.get("Authorization"), None))
+        out = json.dumps({"error": {"message": "トークンが正しくありません"}}).encode()
+        self.send_response(401)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def do_GET(self):
+        self.send_response(401 if self.path.startswith("/v1/") else 200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+def test_without_a_token_no_authorization_header_is_sent(fake_api, tmp_path):
+    img = tmp_path / "10cm.jpg"
+    img.write_bytes(b"x")
+    _Fake.got.clear()
+    _Fake.reply = HINT_REPLY
+    ad = TutorStudyAdapter(fake_api, "")
+    chunks: list[str] = []
+
+    async def on_delta(s):
+        chunks.append(s)
+    asyncio.run(ad.ask("t", explain_prompt(3, "小学3年", ["10cm"], None), img, on_delta))
+    assert _Fake.got[0][0] is None  # no Authorization header at all
+    assert parse_explanation("".join(chunks), 3)["hint"] == "九九を思い出そう"
+
+
+def test_a_server_that_wants_a_token_says_so(tmp_path):
+    srv = HTTPServer(("127.0.0.1", 0), _NeedsToken)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_port}"
+    try:
+        for token, words in (("", "トークンを求めている"), ("wrong", "トークンが違う")):
+            TutorStudyAdapter._breakers.pop(url + "/v1/chat/completions", None)
+            with pytest.raises(StudyAdapterError, match=words):
+                TutorStudyAdapter(url, token)._post({})
+            h = TutorStudyAdapter(url, token).health()
+            assert h["health"]["ok"] and not h["auth"]["ok"] and h["auth"]["status"] == 401
+    finally:
+        srv.shutdown()

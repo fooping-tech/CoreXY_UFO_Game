@@ -119,11 +119,14 @@ def check_tutor(cfg: StudyConfig) -> dict:
     except Exception as e:  # noqa: BLE001 - the reason is the answer (no URL / token / cert)
         return result("tutor", "ng", str(e), t0)
     if h.get("ok"):
-        return result("tutor", "ok", f"{cfg.tutor_url} につながる・トークン有効", t0)
+        return result("tutor", "ok", f"{cfg.tutor_url} につながる・" + ("トークン有効" if adapter.token else "トークンなし"), t0)
     parts = []
     for k, what in (("health", "サーバ"), ("auth", "トークン")):
         v = h.get(k) or {}
         if not v.get("ok"):
+            if k == "auth" and v.get("status") == 401:
+                parts.append(adapter.auth_problem())  # #128: none here / a wrong one
+                continue
             parts.append(f"{what}: " + (f"HTTP {v['status']}" if "status" in v else str(v.get("error", "?"))[:120]))
     return result("tutor", "ng", f"{cfg.tutor_url}: " + "、".join(parts), t0)
 

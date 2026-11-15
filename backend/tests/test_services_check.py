@@ -106,8 +106,30 @@ def test_the_tutor_without_url_or_token_says_why(tmp_path):
     cfg = replace(StudyConfig.from_raw({"study": {"explain_provider": "tutor"}}), root=str(tmp_path))
     r = sc.check_tutor(cfg)
     assert r["status"] == "ng" and "URL" in r["detail"]
+    # #128: no token is no longer a reason by itself: the server is asked (nothing listens on :9)
     cfg = replace(StudyConfig.from_raw({"study": {"tutor_url": "http://127.0.0.1:9"}}), root=str(tmp_path))
-    assert "トークン" in sc.check_tutor(cfg)["detail"]
+    r = sc.check_tutor(cfg)
+    assert r["status"] == "ng" and "サーバ" in r["detail"]
+
+
+def test_the_tutor_check_with_and_without_a_token(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from corexy_ufo_backend.study import StudyConfig
+    from corexy_ufo_backend.study.tutor_adapter import TutorStudyAdapter
+    cfg = replace(StudyConfig.from_raw({"study": {"tutor_url": "http://127.0.0.1:9"}}), root=str(tmp_path))
+    ok = {"ok": True, "health": {"ok": True, "status": 200}, "auth": {"ok": True, "status": 200}}
+    monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: ok)
+    r = sc.check_tutor(cfg)
+    assert r["status"] == "ok" and "トークンなし" in r["detail"]
+    wants = {"ok": False, "health": {"ok": True, "status": 200}, "auth": {"ok": False, "status": 401}}
+    monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: wants)
+    r = sc.check_tutor(cfg)
+    assert r["status"] == "ng" and "トークンを求めている" in r["detail"]
+    (tmp_path / "config" / "secrets").mkdir(parents=True)
+    (tmp_path / "config" / "secrets" / "tutor_token.txt").write_text("tok\n")
+    monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: ok)
+    r = sc.check_tutor(cfg)
+    assert r["status"] == "ok" and "トークン有効" in r["detail"] and "tok" not in r["detail"].replace("トークン", "")
 
 
 async def test_check_all_picks_the_checks_in_use(tmp_path, monkeypatch):
