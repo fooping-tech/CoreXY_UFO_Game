@@ -11,12 +11,12 @@ extends RefCounted
 ## The numbers are tuning values (config game_mode.score), not final.
 
 const DEFAULT_TABLE := {"pin": 10, "bumper": 100, "spinner": 200, "star": 500, "switch": 50, "switch_bonus": 1500,
-	"pop": 50, "target": 150, "sling": 30,
+	"pop": 50, "target": 150, "sling": 30, "gem": 100, "alien": 400, "warp": 300,
 	"goal_left": 100, "goal_right": 100, "goal_center": 1000, "jackpot": 3000}
 ## chain length -> multiplier (the highest step reached counts)
 const DEFAULT_COMBO := [[2, 1.5], [4, 2.0], [6, 3.0]]
 ## Kinds that build the chain (a pin is multiplied but never builds it: there are too many).
-const CHAIN_KINDS := ["bumper", "spinner", "star", "switch", "pop", "target"]
+const CHAIN_KINDS := ["bumper", "spinner", "star", "switch", "pop", "target", "gem", "alien", "warp"]
 const SWITCHES := 3
 
 var table: Dictionary = DEFAULT_TABLE.duplicate()

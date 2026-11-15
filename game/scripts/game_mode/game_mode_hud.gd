@@ -15,6 +15,7 @@ const DARK := Color("050818")
 const PANEL := Color(0.03, 0.05, 0.16, 0.92)
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const LOGO := "SUMMON THE UFO"
+const SCREEN := Vector2(1280, 720)
 const SCORE_RECT := Rect2(8, 6, 164, 62)
 const TIME_RECT := Rect2(1108, 6, 164, 62)
 const HOW_TO := ["クレーンで\nカプセルをつかむ", "左か右の Dial に\n入れる", "ピンボールで\n高得点をねらおう！"]
@@ -37,7 +38,9 @@ var _t := 0.0
 
 func setup(c: GameModeController) -> void:
 	ctl = c
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# a fixed size (the design space): under a CanvasLayer the full-rect anchors left it at
+	# 0 x 0, and a drawing with no area drops out of the picture for a frame when the layer shakes
+	size = SCREEN
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	z_index = 20  # over the effect sheets and the UFO of the field (z 6 / 7)
 	if ResourceLoader.exists(UFO_SHEET):
@@ -45,7 +48,7 @@ func setup(c: GameModeController) -> void:
 	# the drawn parts (panels, pixel numbers, the title screen) under the labels
 	art = Control.new()
 	art.name = "Art"
-	art.set_anchors_preset(Control.PRESET_FULL_RECT)
+	art.size = SCREEN
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	art.draw.connect(_draw_art)

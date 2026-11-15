@@ -47,6 +47,24 @@ const SLOPE_TOP_Y := 530.0
 const SLOPE_W := 110.0
 const SLOPE_BOTTOM_Y := 605.0
 const TRAIL_POINTS := 12
+## warp holes above the side goals: a capsule that falls in is held a moment and shot back up
+const WARPS := [Vector2(350, 588), Vector2(930, 588)]
+const WARP_R := 20.0
+const WARP_HOLD_S := 0.7
+## a capsule is warped this many times at most, then it passes the holes freely (it always
+## gets down, well inside max_stay_s)
+const WARPS_PER_CAPSULE := 1
+## gems above the last row of pins (sensors: they do not block); taken, each comes back later
+const GEMS := [Vector2(297, 312), Vector2(493, 312), Vector2(787, 312), Vector2(983, 312)]
+const GEM_R := 12.0
+const GEM_RESPAWN_S := 10.0
+## the little alien drifts across between the pins and the bumpers (a sensor too)
+const ALIEN_Y := 372.0
+const ALIEN_X0 := 230.0
+const ALIEN_X1 := 1050.0
+const ALIEN_R := 16.0
+const ALIEN_PERIOD_S := 9.0
+const ALIEN_RESPAWN_S := 5.0
 const POSTS_X := [570.0, 710.0]
 const POST_TOP := 606.0
 const LAYER_STATIC := 1
@@ -72,6 +90,7 @@ var bounce := 0.45
 var bumper_kick := 420.0
 var pop_kick := 300.0
 var sling_kick := 230.0
+var warp_speed := 610.0  # px/s up, out of a warp hole
 var spinner_speed := 2.6  # rad/s (the two turn opposite ways)
 var star_respawn_s := 8.0
 var frozen := false
@@ -93,6 +112,14 @@ var _target_lit: Array[float] = [0.0, 0.0, 0.0, 0.0]
 ## the neon of the left / right wall (the Dials' colours; the controller sets them)
 var wall_colors: Array[Color] = [Color("00ffff"), Color("ff00ff")]
 var _goal_flash: Dictionary = {}
+## seconds until each gem / the alien is back (0 = there)
+var gem_left: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var alien_left := 0.0
+var _alien_t := 0.0
+var _alien_area: Area2D
+var _warp_flash: Array[float] = [0.0, 0.0]
+## how many capsules each warp hole holds now (the picture)
+var warp_holding: Array[int] = [0, 0]
 var _rng := RandomNumberGenerator.new()
 var _t := 0.0
 
@@ -214,6 +241,12 @@ func _build() -> void:
 	for i in SWITCH_X.size():
 		_rect(_area("switch", "switch_%d" % i, Vector2(SWITCH_X[i], SWITCH_Y)), Vector2(56, 14))
 	_circle(_area("star", "star", STAR), STAR_R)
+	for i in WARPS.size():
+		_circle(_area("warp", "warp_%d" % i, WARPS[i]), WARP_R)
+	for i in GEMS.size():
+		_circle(_area("gem", "gem_%d" % i, GEMS[i]), GEM_R)
+	_alien_area = _area("alien", "alien", alien_position())
+	_circle(_alien_area, ALIEN_R)
 	# the goals: sensors under the floor line
 	var edges := [LEFT, POSTS_X[0], POSTS_X[1], RIGHT]
 	var names := ["left", "center", "right"]
@@ -244,7 +277,7 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 	_circle(b, CAPSULE_R)
 	b.body_entered.connect(_on_capsule_body.bind(id))
 	add_child(b)
-	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "trail": PackedVector2Array(), "trail_t": 0.0}
+	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "trail": PackedVector2Array(), "trail_t": 0.0}
 
 func remove_capsule(id: String) -> void:
 	if not _capsules.has(id):
@@ -260,6 +293,9 @@ func clear() -> void:
 	switch_lit = [false, false, false]
 	jackpot_on = false
 	star_left = 0.0
+	gem_left = [0.0, 0.0, 0.0, 0.0]
+	alien_left = 0.0
+	warp_holding = [0, 0]
 
 func has_capsule(id: String) -> bool:
 	return _capsules.has(id)
@@ -276,7 +312,18 @@ func set_frozen(on: bool) -> void:
 	frozen = on
 	for c in _capsules.values():
 		if is_instance_valid(c.body):
-			(c.body as RigidBody2D).freeze = on
+			(c.body as RigidBody2D).freeze = on or c.held > 0.0
+
+## Where the alien is now: across and back, bobbing.
+func alien_position() -> Vector2:
+	return Vector2(lerpf(ALIEN_X0, ALIEN_X1, 0.5 - 0.5 * cos(TAU * _alien_t / ALIEN_PERIOD_S)), ALIEN_Y + sin(_alien_t * 3.0) * 6.0)
+
+## +1 / -1: which way the alien is going (it looks that way).
+func alien_heading() -> float:
+	return 1.0 if sin(TAU * _alien_t / ALIEN_PERIOD_S) >= 0.0 else -1.0
+
+func capsule_held(id: String) -> bool:
+	return _capsules.has(id) and _capsules[id].held > 0.0
 
 ## Where a capsule has just been, oldest first (the picture's light trail).
 func capsule_trail(id: String) -> PackedVector2Array:
@@ -341,10 +388,47 @@ func _on_area(body: Node, area: Area2D) -> void:
 			if star_left <= 0.0:
 				star_left = star_respawn_s
 				target_hit.emit(id, "star", "star", pos)
+		"gem":
+			var g := int(str(area.get_meta("target")).get_slice("_", 1))
+			if gem_left[g] <= 0.0:
+				gem_left[g] = GEM_RESPAWN_S
+				target_hit.emit(id, "gem", str(area.get_meta("target")), pos)
+		"alien":
+			if alien_left <= 0.0:
+				alien_left = ALIEN_RESPAWN_S
+				target_hit.emit(id, "alien", "alien", pos)
+		"warp":
+			_enter_warp(id, int(str(area.get_meta("target")).get_slice("_", 1)))
 		_:
 			if kind == "switch":
 				_switch_flash[int(str(area.get_meta("target")).get_slice("_", 1))] = 0.4
 			target_hit.emit(id, kind, str(area.get_meta("target")), pos)
+
+## A capsule fell into warp hole w: it is held there (frozen) and shot back up after
+## WARP_HOLD_S. Only WARPS_PER_CAPSULE times per capsule, so it always gets down.
+func _enter_warp(id: String, w: int) -> void:
+	var c: Dictionary = _capsules[id]
+	if c.held > 0.0 or c.warps >= WARPS_PER_CAPSULE:
+		return
+	c.warps += 1
+	c.held = WARP_HOLD_S
+	c.warp = w
+	warp_holding[w] += 1
+	(c.body as RigidBody2D).set_deferred("freeze", true)
+	target_hit.emit(id, "warp", "warp_%d" % w, WARPS[w])
+
+func _leave_warp(c: Dictionary) -> void:
+	var b: RigidBody2D = c.body
+	var w: int = c.warp
+	c.held = 0.0
+	c.warp = -1
+	warp_holding[w] = maxi(warp_holding[w] - 1, 0)
+	_warp_flash[w] = 0.3
+	b.position = WARPS[w]
+	b.freeze = false
+	# up and towards the middle of the field
+	b.linear_velocity = Vector2((1.0 if w == 0 else -1.0) * _rng.randf_range(60.0, 170.0), -warp_speed * _rng.randf_range(0.92, 1.08))
+	b.angular_velocity = _rng.randf_range(-8.0, 8.0)
 
 func _exit(id: String, goal: String, pos: Vector2) -> void:
 	_capsules[id].done = true
@@ -367,7 +451,10 @@ func advance(dt: float) -> void:
 		_switch_flash[i] = maxf(_switch_flash[i] - dt, 0.0)
 	for i in _spinner_flash.size():
 		_spinner_flash[i] = maxf(_spinner_flash[i] - dt, 0.0)
-	for list in [_pop_flash, _sling_flash, _target_lit]:
+	_alien_t += dt
+	alien_left = maxf(alien_left - dt, 0.0)
+	_alien_area.position = alien_position()
+	for list in [_pop_flash, _sling_flash, _target_lit, gem_left, _warp_flash]:
 		for i in list.size():
 			list[i] = maxf(list[i] - dt, 0.0)
 	for k in _pin_flash.keys():
@@ -382,6 +469,13 @@ func advance(dt: float) -> void:
 			continue
 		var b: RigidBody2D = c.body
 		c.age += dt
+		if c.held > 0.0:  # in a warp hole: drawn into its centre, then out
+			c.held -= dt
+			b.position = b.position.lerp(WARPS[c.warp], 0.3)
+			b.rotation += dt * 14.0
+			if c.held <= 0.0:
+				_leave_warp(c)
+			continue
 		c.trail_t += dt
 		if c.trail_t >= 0.03:  # a fixed-size history: nothing is made or freed for the trail
 			c.trail_t = 0.0

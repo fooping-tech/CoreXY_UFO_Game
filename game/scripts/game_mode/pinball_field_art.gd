@@ -26,6 +26,53 @@ const PURPLE := Color("8a5cff")
 const GREEN := Color("7dffa8")
 const ORANGE := Color("ff9a3c")
 const WHITE := Color("f4f8ff")
+## Small pictures as rows of letters, one letter = one dot (see _bitmap): the gem and the
+## alien (two frames: its legs walk).
+const GEM := [
+	"...#######...",
+	"..#hhhcccd#..",
+	".#hhhcccccd#.",
+	"#hhwcccccccd#",
+	"#ccccccccccd#",
+	".#cccccccdd#.",
+	"..#ccccccd#..",
+	"...#ccccd#...",
+	"....#ccd#....",
+	".....#d#.....",
+	"......#......",
+]
+const GEM_COLORS := [Color("3ff0ff"), Color("ff4fd8"), Color("ffe03c"), Color("7dffa8")]
+const ALIEN := [[
+	"...b........b...",
+	"....b......b....",
+	"....bbbbbbbb....",
+	"..bbbbbbbbbbbb..",
+	".bbbbbwwwwbbbbb.",
+	"bbbbbwwwwwwbbbbb",
+	"bbbbbwwppwwbbbbb",
+	"bbbbbwwppwwbbbbb",
+	"bbbbbbwwwwbbbbbb",
+	".bbmmbbbbbbmmbb.",
+	"..bbbbbbbbbbbb..",
+	"...bb.bbbb.bb...",
+	"..bb..b..b..bb..",
+	".bb...b..b...bb.",
+], [
+	"..b..........b..",
+	"...b........b...",
+	"....bbbbbbbb....",
+	"..bbbbbbbbbbbb..",
+	".bbbbbwwwwbbbbb.",
+	"bbbbbwwwwwwbbbbb",
+	"bbbbbwwppwwbbbbb",
+	"bbbbbwwppwwbbbbb",
+	"bbbbbbwwwwbbbbbb",
+	".bbmmbbbbbbmmbb.",
+	"..bbbbbbbbbbbb..",
+	"...bb.bbbb.bb...",
+	"...bb.b..b.bb...",
+	"....bbb..bbb....",
+]]
 
 var field: PinballField
 ## kind -> points, written beside the targets (the controller copies the score table)
@@ -58,10 +105,13 @@ func _draw() -> void:
 	_draw_switches()
 	_draw_targets()
 	_draw_pins()
+	_draw_warps()
+	_draw_gems()
 	_draw_pops()
 	_draw_bumpers()
 	_draw_spinners()
 	_draw_star()
+	_draw_alien()
 	_draw_slopes()
 	_draw_frame()
 	_draw_capsules()
@@ -417,4 +467,94 @@ func _draw_capsules() -> void:
 				var sz := (4.0 + 12.0 * k) + 4.0 * combo_level * k
 				draw_rect(Rect2((tr[j] - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz).snapped(Vector2(2, 2))),
 					_a(col.lerp(Color.WHITE, 0.6 * k * k), 0.1 + 0.5 * k))
-		PinballField.draw_capsule_at(self, pos, field.capsule_rotation(id), col, 1.0)
+		PinballField.draw_capsule_at(self, pos, field.capsule_rotation(id), col, 0.6 if field.capsule_held(id) else 1.0)
+
+## Draws rows of letters as dots (each `dot` px square; runs of the same letter are one
+## rectangle), centred on `centre`. `palette`: letter -> colour; "." and unknown letters
+## are empty. `outline`: a dark rim one dot wide round the whole picture.
+func _bitmap(rows: Array, centre: Vector2, dot: float, palette: Dictionary, outline := true) -> void:
+	var w: int = str(rows[0]).length()
+	var origin := (centre - Vector2(w, rows.size()) * dot * 0.5).snapped(Vector2(2, 2))
+	if outline:
+		for d in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
+			_bitmap_pass(rows, origin + d * dot, dot, {}, DARK)
+	_bitmap_pass(rows, origin, dot, palette, null)
+
+func _bitmap_pass(rows: Array, origin: Vector2, dot: float, palette: Dictionary, flat) -> void:
+	for y in rows.size():
+		var line: String = rows[y]
+		var start := 0
+		for x in range(1, line.length() + 1):
+			if x < line.length() and line[x] == line[start]:
+				continue
+			var ch := line[start]
+			if ch != "." and (flat != null or palette.has(ch)):
+				draw_rect(Rect2(origin + Vector2(start, y) * dot, Vector2(x - start, 1) * dot), flat if flat != null else palette[ch])
+			start = x
+
+## Warp holes: a black well with arms of light turning into it and dots falling in. A
+## capsule that drops in is shot back up (the hole flashes).
+func _draw_warps() -> void:
+	for i in PinballField.WARPS.size():
+		var p: Vector2 = PinballField.WARPS[i]
+		var r := PinballField.WARP_R
+		var k := clampf(field._warp_flash[i] / 0.3, 0.0, 1.0)
+		var busy: bool = field.warp_holding[i] > 0
+		var b := breath(3.0 + i * 1.7)
+		var spin := _t * (9.0 if busy else 2.2) * (1.0 if i == 0 else -1.0) if effects else 0.0
+		draw_arc(p, r + 10.0 + 6.0 * b, 0, TAU, 24, _a(PURPLE, 0.6 - 0.4 * b), 2.0)
+		PinballField.glow_circle(self, p, r, PURPLE.lerp(Color.WHITE, k), 1.0 + 0.6 * b + 3.0 * k)
+		_disc(p, r + 4.0, PURPLE.lerp(Color.WHITE, 0.25 + 0.75 * k))
+		draw_circle(p, r + 2.0, Color("3a1c8a"))
+		draw_circle(p, r - 4.0, Color("140838"))
+		draw_circle(p, r - 12.0, Color("050212"))
+		for arm in 3:  # the arms: three arcs that tighten towards the middle
+			for ring in 3:
+				var a := spin + TAU * arm / 3.0 + ring * 0.7
+				var col: Color = [PURPLE, MAGENTA, EDGE][ring]
+				draw_arc(p, r - 2.0 - 6.0 * ring, a, a + 1.3, 6, col.lerp(Color.WHITE, maxf(k, 0.2)), 4.0 if ring == 0 else 2.0)
+		if effects:
+			for d in 6:  # dots falling in
+				var f := fmod(_t * (1.6 if busy else 0.6) + d / 6.0, 1.0)
+				var a := spin * 0.5 + TAU * d / 6.0 + f * 3.0
+				var q := p + Vector2(cos(a), sin(a)) * (r + 12.0) * (1.0 - f)
+				draw_rect(Rect2((q - Vector2(1, 1)).snapped(Vector2(2, 2)), Vector2(2, 2)), Color(1, 1, 1, 0.9 * (1.0 - f)))
+		draw_circle(p, 4.0, DARK if not busy else Color.WHITE)
+		for j in 3:  # "up": where it sends the capsule
+			_arrow(Vector2(p.x, p.y - r - 14.0 - 12.0 * j), Vector2.UP, _a(PURPLE.lerp(Color.WHITE, 0.4), 0.9) if k > 0.0 or _chase(2 - j, 3) else _a(PURPLE, 0.3))
+		PixelText.draw_centered(self, _pts("warp"), p + Vector2(0, r + 20.0), 2.0, _a(PURPLE.lerp(Color.WHITE, 0.5), 0.95), DARK)
+
+## Gems: cut stones that bob and glint, each its own colour; a taken one leaves its
+## outline until it grows back.
+func _draw_gems() -> void:
+	for i in PinballField.GEMS.size():
+		var p: Vector2 = PinballField.GEMS[i]
+		var col: Color = GEM_COLORS[i % GEM_COLORS.size()]
+		var left: float = field.gem_left[i]
+		if left > 0.0:
+			var back := 1.0 - left / PinballField.GEM_RESPAWN_S
+			_bitmap_pass(GEM, (p - Vector2(13, 11)).snapped(Vector2(2, 2)), 2.0, {}, _a(col, 0.12 + 0.2 * back))
+			continue
+		var c := p + Vector2(0, sin(_t * 2.4 + i * 1.3) * 3.0 if effects else 0.0)
+		PinballField.glow_circle(self, c, 12.0, col, 1.2 + 1.2 * breath(i * 1.1))
+		_bitmap(GEM, c, 2.0, {"#": col.darkened(0.6), "h": col.lerp(Color.WHITE, 0.6), "w": Color.WHITE, "c": col, "d": col.darkened(0.3)})
+		if effects and int(_t * 1.5 + i * 0.6) % 3 == 0:  # a glint
+			var g := (c + Vector2(-10, -12)).snapped(Vector2(2, 2))
+			draw_rect(Rect2(g - Vector2(4, 0), Vector2(10, 2)), Color.WHITE)
+			draw_rect(Rect2(g - Vector2(0, 4), Vector2(2, 10)), Color.WHITE)
+
+## The little alien: one big eye that looks the way it goes, legs that walk. Caught, it is
+## away for a while and its points stay behind for a moment.
+func _draw_alien() -> void:
+	if field.alien_left > 0.0:
+		return
+	var p := field.alien_position().snapped(Vector2(2, 2))
+	var look := field.alien_heading()
+	draw_rect(Rect2(p + Vector2(-12, 18), Vector2(24, 4)), Color(0, 0, 0, 0.3))
+	PinballField.glow_circle(self, p, 16.0, GREEN, 1.0 + 0.8 * breath(5.0))
+	var frame: Array = ALIEN[int(_t * 5.0) % 2 if effects else 0]
+	_bitmap(frame, p, 2.0, {"b": GREEN, "w": WHITE, "p": DARK, "m": Color("ff8fd0")})
+	# the pupil follows where it is going (two dots over the eye's white)
+	draw_rect(Rect2(p + Vector2(-2.0 + look * 2.0, -2.0), Vector2(4, 4)), DARK)
+	draw_rect(Rect2(p + Vector2(-2.0 + look * 2.0, -2.0), Vector2(2, 2)), Color("3a4a9a"))
+	PixelText.draw_centered(self, _pts("alien"), p + Vector2(0, -28), 2.0, _a(GREEN, 0.95), DARK)

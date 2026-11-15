@@ -77,7 +77,7 @@ const DOT_PX := 2.0
 const BOUNCE_PX := 8.0
 const BOUNCE_MAX_PX := 16.0
 ## the new kinds of target borrow a sound
-const SOUND_OF := {"pop": "bumper", "target": "switch", "sling": "pin"}
+const SOUND_OF := {"pop": "bumper", "target": "switch", "sling": "pin", "gem": "switch", "alien": "star", "warp": "absorb"}
 
 var main: Node
 var devices: GameModeDevices
@@ -650,7 +650,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 
 func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 	var kind := str(r.kind)
-	var big: bool = kind in ["jackpot", "goal_center", "star"] or str(r.bonus) != ""
+	var big: bool = kind in ["jackpot", "goal_center", "star", "alien"] or str(r.bonus) != ""
 	var text := "+%d" % int(r.points)
 	if float(r.mult) > 1.0:
 		text += " x%s" % str(r.mult)

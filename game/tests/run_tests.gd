@@ -3538,6 +3538,39 @@ func _test_game_mode_juice(rs: Node) -> void:
 		and ctl.score.chain_left_k(ctl.clock) == 0.0,
 		"game mode juice: the combo shows a banner, makes the pop-ups bigger and the sky livelier, and it all goes when the chain runs out; the capsule leaves a bounded trail",
 		"%d '%s' %s %d" % [lvl, banner, energy, trail])
+	# the attractions: gems and the alien are taken once and come back; a warp hole holds a capsule and shoots it up, once
+	var area := func(target: String) -> Area2D:
+		return f.get_children().filter(func(n): return n is Area2D and n.get_meta("target") == target)[0]
+	var cap: RigidBody2D = f._capsules[id].body
+	before = ctl.score.score
+	var mult := ctl.score.multiplier(ctl.clock)
+	f._on_area(cap, area.call("gem_1"))
+	f._on_area(cap, area.call("gem_1"))
+	f._on_area(cap, area.call("alien"))
+	f._on_area(cap, area.call("alien"))
+	var taken: bool = f.gem_left[1] == PinballField.GEM_RESPAWN_S and f.gem_left[0] == 0.0 and f.alien_left == PinballField.ALIEN_RESPAWN_S
+	var gained := ctl.score.score - before
+	f._on_area(cap, area.call("warp_0"))
+	var held: bool = f.capsule_held(id) and f.warp_holding[0] == 1
+	for i in 60:
+		f.advance(1.0 / 60.0)
+	var out: bool = not f.capsule_held(id) and f.warp_holding[0] == 0 and cap.linear_velocity.y < -400.0 and cap.linear_velocity.x > 0.0
+	f._on_area(cap, area.call("warp_1"))
+	var once: bool = not f.capsule_held(id)
+	f.gem_left[1] = 0.01
+	f.alien_left = 0.01
+	f._alien_t = 0.0
+	var a0 := f.alien_position()
+	f._alien_t = PinballField.ALIEN_PERIOD_S * 0.5 - 0.02
+	f.advance(0.02)
+	_ok(taken and gained >= t["gem"] + t["alien"] and gained <= int((t["gem"] + t["alien"]) * 3.0) and mult >= 1.0 and held and out and once
+		and f.gem_left[1] == 0.0 and f.alien_left == 0.0 and absf(f.alien_position().x - a0.x) > 300.0
+		and f.alien_position().x >= PinballField.ALIEN_X0 and f.alien_position().x <= PinballField.ALIEN_X1
+		and int(ctl.score.counts.get("warp", 0)) == 1,
+		"game mode field: a gem and the alien score once and come back later, the alien drifts across; a warp hole holds a capsule, shoots it up towards the middle, and takes each capsule only once",
+		"%s %d %s %s %s" % [taken, gained, held, out, once])
+	_ok(ctl.hud.size == Vector2(1280, 720) and ctl.hud.art.size == Vector2(1280, 720),
+		"game mode layout: the HUD's drawing has the screen's size (with none, the score and clock panels dropped out for a frame when the picture shook)")
 	# the sky follows the clock: calm, the last 30 s, the last 10 s
 	var calm: int = ctl.backdrop.urgency
 	var calm_sky := ctl.backdrop.sky_bottom()

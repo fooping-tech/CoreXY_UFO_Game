@@ -133,9 +133,9 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 
 func hit(kind: String, at: Vector2, color: Color) -> void:
 	match kind:
-		"bumper", "pop", "target":
+		"bumper", "pop", "target", "gem":
 			_spawn("hit_bumper", at, color)
-		"star":
+		"star", "alien", "warp":
 			_spawn("hit_star", at, Color.WHITE)
 		"switch_bonus", "jackpot":
 			_spawn("bonus", Vector2(640, 300), Color.WHITE)
