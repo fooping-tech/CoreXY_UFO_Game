@@ -200,7 +200,7 @@ DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`com
 | カプセルの記録 | `capsule_manager.gd`（`CapsuleManager`） |
 | UFO の往復と投下点 | `ufo_drop_controller.gd`（`UfoDropController`） |
 | 盤面（物理） | `pinball_field.gd`（`PinballField`） |
-| 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは既存の pixelfx（`VFXManager`）。ポート・軌跡・光はコードで描く |
+| 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは pixelfx（`VFXManager` 経由。下の表）。ポートの枠と光はコードで描く |
 | 音 | `game_mode_sounds.gd`（合成。音源ファイルなし） |
 | HUD | `game_mode_hud.gd` |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
@@ -209,7 +209,18 @@ DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`com
 | 設定 | `config/game_config.json` の `game_mode` |
 | テスト | `game/tests/run_tests.gd` の `_test_game_mode_*`、`backend/tests/test_devicehub.py` |
 
-演出の名前（Issue の候補のとおり）: `capsule_portal_open` `capsule_absorb` `capsule_transfer_trail` `capsule_materialize` `capsule_release_burst` `capsule_portal_close`（＋ `capsule_return` `capsule_fault`）。今は既存のシート（`start_energy` `grab_burst` `success_sparkle` `end_fade` `fail_poof` `success_confetti`）にその側の色を掛けて使っている。専用のシートを pixelfx で焼くのは今後の作業。
+演出のシート（pixelfx 0.3.0 で焼いたもの。`game/assets/vfx/catalog.json`、作り方は `pixelfx-vfx` スキル）:
+
+| 場面 | シート id | pixelfx の元 | 使いどころ |
+|---|---|---|---|
+| ポートが開く | `capsule_portal_open` | `arcane/portal` | ポートが開いている間ループ（取り込み中・排出中） |
+| 吸い込み | `capsule_absorb` | `shadow/black-hole` | カプセルがポートを通る間、ポートの後ろ |
+| 軌跡 | `capsule_transfer_trail` | `pickups/xp-orb` | ポート ⇔ 投下点・出口を飛ぶカプセルに追従 |
+| 出現 | `capsule_materialize` | `arcane/mana-burst` | 投下点 |
+| 排出 | `capsule_release_burst` | `explosions/firework-burst` | `RELEASE_STARTED` で、Dial 側の画面の端 |
+| ポートが閉じる | `capsule_portal_close` | `explosions/implosion` | 投下の瞬間・排出の完了 |
+
+6 枚とも**灰色で焼いてあり、ゲームがその側の色を掛ける**（左右で同じシートを使う。色を変えても焼き直さない）。異常（`capsule_fault`）と得点（バンパー・スター・ボーナス）は既存のシート（`fail_poof` `grab_burst` `success_sparkle` `success_confetti`）。ポートの枠と Dial 方向への光はコードで描く。人の輪郭が残る `arcane/blink-in` / `blink-out`、`spawn/respawn-beam` は使わない。
 
 ### 動かし方（実機なし）
 

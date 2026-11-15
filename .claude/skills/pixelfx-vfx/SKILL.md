@@ -55,6 +55,8 @@ VFXManager.stop_fx(sprite); VFXManager.stop_all(); VFXManager.enabled = false
 | 失敗 | `RESULT` かつ失敗 | `fail_poof`（UFO の下。顔を隠さない） |
 | ラウンド終了 | `RESULT` を抜けたとき | `end_fade` |
 
+スコアゲーム（#138）の転送の演出は別の持ち主: `game/scripts/game_mode/game_mode_vfx.gd`（`GameModeVFX`。`capsule_*` の 6 シート。灰色で焼き、Dial ごとの色を `color` で掛ける。スコアゲームの CanvasLayer に出すので `spawn_fx` の `parent` を使う）。対応は `docs/game_mode_spec.md` §11。
+
 守ること:
 - 状態は GameState から取る（GameState は実機の報告に従う）。演出側で状態を推定しない。
 - ループは状態ごとに 1 枠。同じ状態に入り直しても積み重ねない。

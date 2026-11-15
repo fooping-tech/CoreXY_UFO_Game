@@ -125,6 +125,7 @@ func setup(m: Node) -> void:
 	bg.color = Color("050818")
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.z_index = -10  # under the "back" effect sheets (z -1) too
 	layer.add_child(bg)
 	field = PinballField.new()
 	field.name = "PinballField"
@@ -476,7 +477,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
-	fx.play("capsule_absorb", l.side)
+	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
 	sounds.play("absorb")
 	_led(l, "TO_SCREEN")

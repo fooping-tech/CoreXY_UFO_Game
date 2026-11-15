@@ -3010,9 +3010,20 @@ func _test_game_mode_round(rs: Node) -> void:
 	var c: Dictionary = l.capsule
 	var left_fx: bool = ctl.fx.played.has("capsule_portal_open:left") and ctl.fx.played.has("capsule_transfer_trail:left") \
 		and ctl.fx.streaming("left", true) and not ctl.fx.streaming("right", true) and ctl.fx.flights() == 1
+	var sheets_in: bool = ctl.fx.port_sheet_running("left") and not ctl.fx.port_sheet_running("right") \
+		and ["capsule_portal_open", "capsule_absorb", "capsule_transfer_trail"].all(func(id): return VFXManager.spawned_log.has(id))
 	_gm_step(ctl, ctl.absorb_s + 0.02)
 	var dropping: bool = l.state == "DROPPING" and not ctl.field.has_capsule(c.capsule_id)
 	_gm_step(ctl, ctl.drop_s + 0.02)
+	var sheets_drop: bool = not ctl.fx.port_sheet_running("left") and VFXManager.spawned_log.has("capsule_materialize") \
+		and VFXManager.spawned_log.has("capsule_portal_close")
+	var baked := true
+	for id in GameModeVFX.MOMENTS:
+		baked = baked and VFXManager.has_fx(id) and str(VFXManager.catalog[id].opts.palette[0]) == "#101014" \
+			and GameModeVFX.SHEETS[id][0] == id
+	_ok(sheets_in and sheets_drop and baked,
+		"game mode vfx: the six capsule sheets (baked grey, tinted per Dial) play; the port's loop runs only while that port is open",
+		"%s %s %s" % [sheets_in, sheets_drop, baked])
 	var cap_x := ctl.field.capsule_position(c.capsule_id).x
 	_ok(absorbing and left_fx and dropping and l.state == "SIMULATING" and is_equal_approx(c.drop_x, x_at_switch)
 		and is_equal_approx(cap_x, x_at_switch) and absf(ctl.ufo.x() - x_at_switch) > 50.0
@@ -3040,7 +3051,8 @@ func _test_game_mode_round(rs: Node) -> void:
 		"%s %s %d" % [l.state, r.state, ctl.score.score])
 	# opposite directions at once: the left goes out while a new right one would come in
 	_gm_step(ctl, ctl.release_sync_s + 0.05)
-	var releasing: bool = l.state == "RELEASING" and hub.dials[GM_L].state == "RELEASING" and ctl.fx.played.has("capsule_release_burst:left")
+	var releasing: bool = l.state == "RELEASING" and hub.dials[GM_L].state == "RELEASING" and ctl.fx.played.has("capsule_release_burst:left") \
+		and VFXManager.spawned_log.has("capsule_release_burst") and ctl.fx.port_sheet_running("left")
 	ctl.field.capsule_exited.emit(rc.capsule_id, "left", Vector2(300, 660))
 	_gm_step(ctl, 0.3)
 	_gm_step(ctl, MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S)

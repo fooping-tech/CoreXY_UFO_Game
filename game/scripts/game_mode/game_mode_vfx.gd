@@ -4,19 +4,23 @@ extends Node2D
 ## ports (bottom-left = Dial 1, bottom-right = Dial 2), the capsule flying from a port to
 ## the UFO and back, the light running between a port and its Dial's side of the screen,
 ## and the score pop-ups. The sheets are the project's pixelfx ones through VFXManager
-## (no second VFX system); the ports, trails and lights are drawn here in the Dial's
-## colour. Left and right are independent: both, and opposite directions, at once.
+## (no second VFX system): the six capsule_* sheets are baked in grey and multiplied by the
+## Dial's colour here, so the same sheets serve both sides. The port's frame and the light
+## to the Dial are drawn here in that colour. Left and right are independent: both, and opposite directions, at once.
 ##
 ## Presentation only: it is told what happened (play(moment, side)) and never decides
 ## anything. Time moves in advance(dt).
 
-## moment -> [sheet id, scale] (the Dial's colour is multiplied in)
+## moment -> [sheet id, scale, offset of the picture's centre from the sheet's pivot (sheet px),
+## playback speed]. The capsule_* sheets are grey (the Dial's colour is multiplied in as
+## it is); the others are the crane game's cyan sheets (tint() shifts them).
 const SHEETS := {
-	"capsule_portal_open": ["start_energy", 1.2],
-	"capsule_absorb": ["grab_burst", 2.0],
-	"capsule_materialize": ["success_sparkle", 1.6],
-	"capsule_release_burst": ["success_sparkle", 2.4],
-	"capsule_portal_close": ["end_fade", 1.2],
+	"capsule_portal_open": ["capsule_portal_open", 1.0, Vector2(0, 48), 1.0],
+	"capsule_absorb": ["capsule_absorb", 0.8, Vector2(0, 58), 1.5],
+	"capsule_transfer_trail": ["capsule_transfer_trail", 1.5, Vector2(0, 20), 1.5],
+	"capsule_materialize": ["capsule_materialize", 1.0, Vector2(0, 49), 2.0],
+	"capsule_release_burst": ["capsule_release_burst", 1.0, Vector2(0, 0), 1.6],
+	"capsule_portal_close": ["capsule_portal_close", 0.6, Vector2(0, 0), 2.2],
 	"capsule_fault": ["fail_poof", 1.5],
 	"hit_bumper": ["grab_burst", 1.2],
 	"hit_star": ["success_sparkle", 2.0],
@@ -38,6 +42,8 @@ var ufo_pos := Vector2(640, 92)
 var ufo_visible := true
 ## "moment:side", newest last (tests, the debug view)
 var played: Array[String] = []
+## side -> the port's looping sheet while it is open (freed ones are checked for)
+var _port_fx := {"left": null, "right": null}
 var _port_open := {"left": 0.0, "right": 0.0}
 var _port_want := {"left": 0.0, "right": 0.0}
 var _flights: Array[Dictionary] = []
@@ -45,10 +51,16 @@ var _streams: Array[Dictionary] = []
 var _popups: Array[Dictionary] = []
 var _marks: Array[Dictionary] = []
 var _ufo_tex: Texture2D
+var _top: Node2D
 var _t := 0.0
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_top = Node2D.new()
+	_top.name = "Top"
+	_top.z_index = VFXManager.Z_FRONT + 1
+	_top.draw.connect(_draw_top)
+	add_child(_top)
 	if ResourceLoader.exists(UFO_SHEET):
 		_ufo_tex = load(UFO_SHEET)
 
@@ -60,9 +72,12 @@ func reset() -> void:
 	_popups.clear()
 	_marks.clear()
 	played.clear()
+	_port_fx = {"left": null, "right": null}
 	for c in get_children():
 		if c.is_in_group("vfx"):
 			VFXManager.stop_fx(c)
+		elif c.has_meta("flight"):
+			c.queue_free()
 
 func port(side: String) -> Vector2:
 	return PORTS[side]
@@ -84,30 +99,28 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 	var p: Vector2 = PORTS[side]
 	match moment:
 		"capsule_portal_open":
-			_port_want[side] = 1.0
 			_stream(side, true, secs)  # the light comes from the Dial to the screen
-			_sheet(moment, side, p)
-		"capsule_absorb":
-			_sheet(moment, side, p)
+			_open_port(side)
+		"capsule_absorb":  # the pull at the port, for as long as the capsule is on its way
+			_sheet(moment, side, p, {"duration": secs})
 		"capsule_transfer_trail":  # port -> the drop point under the UFO
-			_flights.append({"a": p, "b": at, "t": 0.0, "dur": maxf(secs, 0.05), "side": side, "arc": -160.0, "k0": 0.5, "k1": 1.0})
+			_fly(p, at, secs, side, -160.0, 0.5, 1.0)
 		"capsule_materialize":
 			_marks.append({"pos": at, "t": 0.0, "dur": 0.45, "side": side})
 			_sheet(moment, side, at)
 		"capsule_return":  # the exit -> the port, then the light runs to the Dial
-			_port_want[side] = 1.0
-			_flights.append({"a": at, "b": p, "t": 0.0, "dur": maxf(secs, 0.05), "side": side, "arc": 40.0, "k0": 1.0, "k1": 0.4})
+			_open_port(side)
+			_sheet("capsule_absorb", side, p, {"duration": secs})
+			_fly(at, p, secs, side, 40.0, 1.0, 0.4)
 			_stream(side, false, secs + 0.8)
 		"capsule_release_burst":  # the light keeps running to the Dial until the port closes
 			_sheet(moment, side, Vector2(clampf(dial_edge(side).x, 40.0, 1240.0), p.y - 30.0))
 			_stream(side, false, RELEASE_STREAM_MAX_S)
 		"capsule_portal_close":
-			_port_want[side] = 0.0
-			_end_streams(side)
+			_close_port(side)
 			_sheet(moment, side, p)
 		"capsule_fault":
-			_port_want[side] = 0.0
-			_end_streams(side)
+			_close_port(side)
 			_sheet(moment, side, p)
 
 func hit(kind: String, at: Vector2, color: Color) -> void:
@@ -146,14 +159,47 @@ func _end_streams(side: String) -> void:
 func _stream(side: String, to_screen: bool, secs: float) -> void:
 	_streams.append({"side": side, "to_screen": to_screen, "left": secs, "dur": secs})
 
-func _sheet(moment: String, side: String, at: Vector2) -> void:
-	_spawn(moment, at, tint(side))
+## The port opens: its looping sheet runs until the port closes (one per side).
+func _open_port(side: String) -> void:
+	_port_want[side] = 1.0
+	if not is_instance_valid(_port_fx[side]) or (_port_fx[side] as Node).is_queued_for_deletion():
+		_port_fx[side] = _sheet("capsule_portal_open", side, PORTS[side])
 
-func _spawn(moment: String, at: Vector2, color: Color) -> void:
+func _close_port(side: String) -> void:
+	_port_want[side] = 0.0
+	_end_streams(side)
+	VFXManager.stop_fx(_port_fx[side])
+	_port_fx[side] = null
+
+func port_sheet_running(side: String) -> bool:
+	return is_instance_valid(_port_fx[side]) and not (_port_fx[side] as Node).is_queued_for_deletion()
+
+## A capsule in transit; the trail sheet follows it (a node moved along the path).
+func _fly(a: Vector2, b: Vector2, secs: float, side: String, arc: float, k0: float, k1: float) -> void:
+	var node := Node2D.new()
+	node.set_meta("flight", true)
+	node.position = a
+	add_child(node)
+	_flights.append({"a": a, "b": b, "t": 0.0, "dur": maxf(secs, 0.05), "side": side, "arc": arc, "k0": k0, "k1": k1, "node": node})
+	var s: Array = SHEETS["capsule_transfer_trail"]
+	VFXManager.spawn_fx(s[0], a, {"parent": self, "scale": s[1], "speed": s[3], "color": colors[side], "layer": "back",
+		"follow": node, "offset": (s[2] as Vector2) * float(s[1])})
+
+func _sheet(moment: String, side: String, at: Vector2, more: Dictionary = {}) -> AnimatedSprite2D:
+	return _spawn(moment, at, colors[side] if str(SHEETS[moment][0]).begins_with("capsule_") else tint(side), more)
+
+func _spawn(moment: String, at: Vector2, color: Color, more: Dictionary = {}) -> AnimatedSprite2D:
 	if not SHEETS.has(moment):
-		return
+		return null
 	var s: Array = SHEETS[moment]
-	VFXManager.spawn_fx(s[0], at, {"parent": self, "scale": s[1], "color": color, "layer": "front"})
+	var opts := {"parent": self, "scale": s[1], "color": color}
+	if s.size() > 2:  # the picture's centre, not the sheet's pivot (its ground line), goes on `at`
+		at += (s[2] as Vector2) * float(s[1])
+		opts["speed"] = s[3]
+	else:
+		opts["layer"] = "front"
+	opts.merge(more)
+	return VFXManager.spawn_fx(s[0], at, opts)
 
 func advance(dt: float) -> void:
 	_t += dt
@@ -162,8 +208,13 @@ func advance(dt: float) -> void:
 	for list in [_flights, _marks]:
 		for f in list.duplicate():
 			f.t += dt
+			var node = f.get("node")
 			if f.t >= f.dur:
 				list.erase(f)
+				if is_instance_valid(node):
+					node.queue_free()  # its trail sheet goes with it
+			elif is_instance_valid(node):
+				node.position = _along(f, clampf(f.t / f.dur, 0.0, 1.0))
 	for s in _streams.duplicate():
 		s.left -= dt
 		if s.left <= 0.0:
@@ -175,6 +226,8 @@ func advance(dt: float) -> void:
 
 func _process(_dt: float) -> void:
 	queue_redraw()
+	if _top != null:
+		_top.queue_redraw()
 
 func _draw() -> void:
 	# the light between each Dial's side of the screen and its port
@@ -197,34 +250,32 @@ func _draw() -> void:
 		draw_circle(p, 30.0, Color(0.02, 0.03, 0.1, 0.9))
 		draw_arc(p, 30.0, 0, TAU, 28, Color(col.r, col.g, col.b, 0.35), 4.0)
 		if o > 0.01:
-			draw_circle(p, 26.0 * o, Color(col.r, col.g, col.b, 0.35))
-			draw_circle(p, 15.0 * o, Color(1, 1, 1, 0.5 * o))
-			for i in 10:
-				var a := _t * 5.0 + TAU * i / 10.0
-				var q := p + Vector2(cos(a), sin(a) * 0.8) * (22.0 + 10.0 * o)
-				draw_rect(Rect2((q - Vector2(3, 3)).snapped(Vector2(2, 2)), Vector2(6, 6)), col)
+			draw_circle(p, 28.0 * o, Color(col.r, col.g, col.b, 0.25))  # a glow under the port's sheet
 	# the drop marks: a short beam where the capsule appears
 	for m in _marks:
 		var k: float = 1.0 - m.t / m.dur
 		var col: Color = colors[m.side]
 		draw_rect(Rect2(m.pos.x - 10.0 * k, ufo_pos.y + 20.0, 20.0 * k, m.pos.y - ufo_pos.y - 20.0), Color(col.r, col.g, col.b, 0.45 * k))
-	# the capsules in transit, each with a trail
+
+## Above the sheets (z 7): the capsules in transit, UFOくん and the pop-ups stay readable.
+func _draw_top() -> void:
+	var top := _top
 	for f in _flights:
 		var col: Color = colors[f.side]
 		for j in 6:
 			var kk := clampf(f.t / f.dur - 0.035 * j, 0.0, 1.0)
 			var q := _along(f, kk)
 			if j == 0:
-				PinballField.draw_capsule_at(self, q, _t * 9.0, col, lerpf(f.k0, f.k1, kk))
+				PinballField.draw_capsule_at(top, q, _t * 9.0, col, lerpf(f.k0, f.k1, kk))
 			else:
 				var sz := 9.0 - j
-				draw_rect(Rect2((q - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz)), Color(col.r, col.g, col.b, 0.7 - 0.1 * j))
+				top.draw_rect(Rect2((q - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz)), Color(col.r, col.g, col.b, 0.7 - 0.1 * j))
 	# UFOくん
 	if ufo_visible and _ufo_tex != null:
 		var frame := int(_t * 3.0) % 4
 		var size := Vector2(64, 64) * UFO_SCALE
 		var bob := Vector2(0, sin(_t * 2.4) * 3.0)
-		draw_texture_rect_region(_ufo_tex, Rect2(ufo_pos - size * 0.5 + bob, size), Rect2(64 * frame, 0, 64, 64))
+		top.draw_texture_rect_region(_ufo_tex, Rect2(ufo_pos - size * 0.5 + bob, size), Rect2(64 * frame, 0, 64, 64))
 	# score pop-ups
 	var font := ThemeDB.fallback_font
 	for p in _popups:
@@ -233,8 +284,8 @@ func _draw() -> void:
 		col.a = clampf(2.0 - p.t * 2.0, 0.0, 1.0)
 		var pos: Vector2 = p.pos + Vector2(0, -44.0 * p.t)
 		var w := font.get_string_size(p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
-		draw_string_outline(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, 6, Color(0.04, 0.06, 0.18, col.a))
-		draw_string(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col)
+		top.draw_string_outline(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, 6, Color(0.04, 0.06, 0.18, col.a))
+		top.draw_string(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col)
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)
