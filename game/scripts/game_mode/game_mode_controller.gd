@@ -80,6 +80,7 @@ var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
 var field: PinballField
+var backdrop: GameModeBackdrop
 var fx: GameModeVFX
 var sounds: GameModeSounds
 var hud: GameModeHud
@@ -114,6 +115,8 @@ var closing_wait_s := 1.5
 var lights := true
 ## the Dials' own transfer LEDs (SET_DIAL_EFFECT / SET_DIAL_COLOR, firmware 0.3)
 var dial_leds := true
+## "high" / "low": how much the background does (config game_mode.visual_quality)
+var visual_quality := "high"
 var trace_to_file := true
 var devices_wanted := "auto"
 ## --game-mode-demo: with mock Dials, capsules come by themselves (a rehearsal with no hands)
@@ -144,6 +147,10 @@ func setup(m: Node) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bg.z_index = -10  # under the "back" effect sheets (z -1) too
 	layer.add_child(bg)
+	backdrop = GameModeBackdrop.new()
+	backdrop.name = "Backdrop"
+	backdrop.quality = visual_quality
+	layer.add_child(backdrop)
 	field = PinballField.new()
 	field.name = "PinballField"
 	field.configure(cfg.get("field", {}) if cfg.get("field") is Dictionary else {})
@@ -183,6 +190,9 @@ func setup(m: Node) -> void:
 		var c = d.get("color")
 		l.color = Color8(int(c[0]), int(c[1]), int(c[2])) if c is Array and c.size() == 3 else fx.colors[side]
 		fx.colors[side] = l.color
+		backdrop.side_colors[side] = l.color
+		backdrop.ports[side] = fx.port(side)
+		field.wall_colors[0 if side == "left" else 1] = l.color
 		lanes[side] = l
 
 func _configure(cfg: Dictionary) -> void:
@@ -193,6 +203,7 @@ func _configure(cfg: Dictionary) -> void:
 	settle_max_s = float(cfg.get("settle_max_s", settle_max_s))
 	lights = bool(cfg.get("lights", lights))
 	dial_leds = bool(cfg.get("dial_leds", dial_leds))
+	visual_quality = str(cfg.get("visual_quality", visual_quality))
 	trace_to_file = bool(cfg.get("trace", trace_to_file))
 	devices_wanted = str(cfg.get("devices", devices_wanted))
 	var t: Dictionary = cfg.get("timing", {}) if cfg.get("timing") is Dictionary else {}
@@ -317,9 +328,11 @@ func tick(dt: float) -> void:
 	devices.tick(dt)
 	_expire_commands(dt)
 	fx.advance(dt)
+	backdrop.advance(dt)
 	if phase != "STOPPED":
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
+	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
 	match phase:
 		"COUNTDOWN":
 			clock += dt
@@ -379,6 +392,7 @@ func _clock_cues() -> void:
 		_hurry_done = true
 		sounds.play("hurry")
 		sounds.set_bgm(true, true)
+		backdrop.pulse(Color("ff4fd8"), 0.8)
 		_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200})
 		_trace("hurry", null, {})
 	var s := int(ceil(time_left))
@@ -505,6 +519,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 		return
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
+	backdrop.side_pulse(l.side)
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
@@ -545,6 +560,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 	l.t = release_sync_s
 	_set_lane(l, "RETURNING")
 	fx.play("capsule_return", l.side, pos, return_s)
+	backdrop.side_pulse(l.side)
 	sounds.play("return")
 	_led(l, "RETURN_FLOW")
 
@@ -569,6 +585,7 @@ func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 		if k > 0.0:
 			main.shake.add_trauma(k)
 	if kind == "jackpot" or str(r.bonus) != "":
+		backdrop.pulse(Color("ffe03c"), 1.0)
 		_light("TRIGGER_EFFECT", {"effect": "SCORE", "duration_ms": 1200, "intensity": 255})
 	scored.emit(int(r.points), kind, pos)
 

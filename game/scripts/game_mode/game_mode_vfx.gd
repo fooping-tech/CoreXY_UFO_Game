@@ -248,8 +248,17 @@ func _draw() -> void:
 		var p: Vector2 = PORTS[side]
 		var col: Color = colors[side]
 		var o: float = _port_open[side]
-		draw_circle(p, 30.0, Color(0.02, 0.03, 0.1, 0.9))
-		draw_arc(p, 30.0, 0, TAU, 28, Color(col.r, col.g, col.b, 0.35), 4.0)
+		# the socket: a dark well with a neon rim and tick marks, named after its Dial (#141)
+		draw_circle(p, 37.0, Color(col.r, col.g, col.b, 0.08 + 0.1 * o))
+		draw_circle(p, 34.0, Color("050818"))
+		draw_arc(p, 31.0, 0, TAU, 32, Color(col.r, col.g, col.b, 0.55 + 0.45 * o), 4.0)
+		draw_arc(p, 28.0, PI * 1.1, PI * 1.7, 10, Color(1, 1, 1, 0.5), 2.0)
+		draw_circle(p, 25.0, Color(0.02, 0.03, 0.12, 0.95))
+		for i in 8:
+			var ta := TAU * i / 8.0 + _t * 0.3
+			draw_rect(Rect2((p + Vector2(cos(ta), sin(ta)) * 31.0 - Vector2(2, 2)).snapped(Vector2(1, 1)), Vector2(4, 4)),
+				Color.WHITE if (i + int(_t * 4.0)) % 8 == 0 else Color(col.r, col.g, col.b, 0.9))
+		PixelText.draw_centered(self, "DIAL 1" if side == "left" else "DIAL 2", p + Vector2(0, 52), 2.0, col, Color("050818"))
 		if o > 0.01:
 			draw_circle(p, 28.0 * o, Color(col.r, col.g, col.b, 0.25))  # a glow under the port's sheet
 	# the drop marks: a short beam where the capsule appears

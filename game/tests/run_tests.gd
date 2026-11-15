@@ -76,6 +76,7 @@ func _ready() -> void:
 	_test_game_mode_dial_leds(rs)
 	_test_game_mode_clock_and_stop(rs)
 	_test_game_mode_backend_hub(rs)
+	_test_game_mode_visuals(rs)
 	await _test_game_mode_physics()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -3432,6 +3433,51 @@ func _test_game_mode_backend_hub(rs: Node) -> void:
 		and ctl.session == 7,
 		"game mode backend: the backend's ACK / NACK / timeout / status and devicehub_event become the game's answers and events",
 		"%s | %s" % [answers, events])
+	_gm_free(game, rs)
+
+## #141: the new look only shows the game; it changes nothing of it.
+func _test_game_mode_visuals(rs: Node) -> void:
+	var words := ["SUMMON THE UFO", "SCORE", "TIME", "JACKPOT", "1000", "100", "DIAL 1", "DIAL 2", "2:30", "0123456789", "+-:!.x"]
+	_ok(words.all(func(w): return PixelText.supports(w)) and not PixelText.supports("あ") and PixelText.width("100", 3.0) == 51.0
+		and PixelText.height(3.0) == 21.0 and PixelText.width("", 2.0) == 0.0,
+		"game mode art: the pixel font has every arcade word (Japanese stays on the labels)")
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	ctl.tick(1.0 / 60.0)
+	var b := ctl.backdrop
+	var title: bool = ctl.hud.title_showing() and not ctl.fx.ufo_visible and ctl.hud._start.text.contains("Enter")
+	var high := b.star_count()
+	b.quality = "low"
+	var low := b.star_count()
+	b.quality = "high"
+	_ok(title and high == 126 and low == 40 and b.side_colors["left"] == ctl.lanes["left"].color
+		and ctl.field.wall_colors[1] == ctl.lanes["right"].color and ctl.visual_quality == "high",
+		"game mode art: the score game's own title (logo, big UFO, START) while it waits; the walls and conduits take the Dials' colours; low quality has fewer stars",
+		"%s %d %d" % [title, high, low])
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.tick(1.0 / 60.0)
+	var playing_clean: bool = not ctl.hud.title_showing() and ctl.fx.ufo_visible
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.mock_hub.mock_ball(GM_L)
+	var lit: float = b.side_level("left")
+	var other: float = b.side_level("right")
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(ctl.lanes["left"].capsule.capsule_id)
+	var pin: StaticBody2D = ctl.field.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == "pin_3")[0]
+	ctl.field._on_capsule_body(pin, id)
+	var pin_glow: bool = ctl.field._pin_flash.has("pin_3") and ctl.score.score == 10
+	ctl.field.advance(0.5)
+	b.pulse(Color.WHITE, 1.0)
+	var flash := b.flash_level()
+	b.advance(1.0)
+	_ok(playing_clean and lit == 1.0 and other == 0.0 and pin_glow and not ctl.field._pin_flash.has("pin_3")
+		and flash == 1.0 and b.flash_level() == 0.0 and b.side_level("left") == 0.0 and not ctl.hud.title_showing(),
+		"game mode art: no title during play; a hit pin glows and fades; the background's glow and the Dial side's light fade by themselves",
+		"%s %s %s %s" % [playing_clean, lit, pin_glow, flash])
+	_ok(ctl.hud.clock_color() == Color.WHITE and GameModeHud.title_card(0).position.x < GameModeHud.title_card(2).position.x,
+		"game mode art: the clock is white until the last 30 seconds")
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's
