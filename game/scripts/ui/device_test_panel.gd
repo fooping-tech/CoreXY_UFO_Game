@@ -350,6 +350,8 @@ func refresh() -> void:
 		_hub.text = "ハブ: %s　システム %s　ポート %s　セッション %s" % ["接続" if connected else "接続待ち（つなぎ直し中）",
 			str(int(meta.get("system_id", 0))), str(meta.get("port", "?")),
 			str(int(meta.get("session_id", 0))) if connected else "-"]
+		if not connected and str(meta.get("problem", "")) != "":
+			_hub.text += "\n" + str(meta.problem)  # why (another system's hub, no port, not a hub...)
 	_hub.add_theme_color_override("font_color", GOOD if connected else YELLOW)
 	var rows: Array[String] = []
 	for d in devices:

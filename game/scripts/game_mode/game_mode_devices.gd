@@ -28,6 +28,10 @@ func kind() -> String:
 func available() -> bool:
 	return false
 
+## Why the hub does not answer, in words for the screen ("" = it does, or not known yet).
+func problem() -> String:
+	return ""
+
 ## The hub session the game is in (0 = none / unknown yet).
 func session_id() -> int:
 	return 0

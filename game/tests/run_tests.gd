@@ -2546,6 +2546,11 @@ func _test_device_test_tab(rs: Node) -> void:
 	game.ws.ack.emit("sb", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"}}})
 	_ok(partial_bad and partial.contains("M5Dial 1") and p.result_ok and p.result_text.contains("すべて止めた"),
 		"device test: STOP ALL is a success only when every device accepted it (review on #109)", partial)
+	game.ws.ack.emit("w", true, {"command": "devicehub_meta", "connected": false, "system_id": 1, "port": "/dev/cu.usbmodem101",
+		"session_id": 0, "problem": "ポート /dev/cu.usbmodem101 のハブは別のシステムのもの（this hub is system 2）。設定のシステム番号は 1"})
+	p.refresh()
+	_ok(p._hub.text.contains("接続待ち") and p._hub.text.contains("別のシステム") and p._hub.text.contains("システム番号は 1"),
+		"device test: a hub that does not connect says why (another UFO system's hub)", p._hub.text)
 	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})
 	p.refresh()
 	_ok(p._hub.text.contains("使っていない"), "device test: no hub in the backend says how to turn it on", p._hub.text)
@@ -3389,6 +3394,20 @@ func _test_game_mode_backend_hub(rs: Node) -> void:
 	_gm_step(ctl, 0.2)
 	_ok(ctl.phase == "COUNTDOWN" and ctl.lanes["left"].state == "OFFLINE" and ctl.lanes["right"].state == "OFFLINE",
 		"game mode backend: no hub = both lanes wait offline (the round still runs)")
+	# why there is no hub is said on the screen
+	var no_backend: String = ctl.hud.problem_text()
+	hub._problem = ""
+	hub._meta_rid = "why1"
+	game.ws.ack.emit("why1", true, {"command": "devicehub_meta", "connected": false, "port": "/dev/cu.usbmodem101",
+		"session_id": 0, "problem": "ポート /dev/cu.usbmodem101 のハブは別のシステムのもの（this hub is system 2）。設定のシステム番号は 1"})
+	var wrong_system: String = hub._problem
+	hub._meta_rid = "why2"
+	game.ws.ack.emit("why2", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない（設定の devicehub.enabled をオンにして ./start.sh）"})
+	var no_hub: String = hub._problem
+	_ok(no_backend.contains("つながっていない") and no_backend.contains("./start.sh") and wrong_system.contains("別のシステム")
+		and wrong_system.contains("システム番号は 1") and no_hub.contains("devicehub.enabled") and not hub.available(),
+		"game mode backend: why the hub is away is shown (no backend, another system's hub, no hub in the backend)",
+		"%s | %s | %s" % [no_backend, wrong_system, no_hub])
 	# the backend's answers and events, as the server sends them
 	hub._meta_rid = "meta1"
 	game.ws.ack.emit("meta1", true, {"command": "devicehub_meta", "connected": true, "port": "mock", "session_id": 7})

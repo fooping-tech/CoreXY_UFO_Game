@@ -18,6 +18,7 @@ var _lane: Dictionary = {}  # side -> Label
 var _result: PanelContainer
 var _result_text: Label
 var _hint: Label
+var _problem: Label
 var _shown_score := 0.0
 
 func setup(c: GameModeController) -> void:
@@ -41,6 +42,10 @@ func setup(c: GameModeController) -> void:
 		_lane[side] = l
 	_hint = _label("", 13, Color("8fa3c4"), Vector2(390, 2), Vector2(500, 20))  # above the UFO's rail
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# why the hub does not answer (another system's hub, no port...): over the top of the field
+	_problem = _label("", 18, Color("ffd24a"), Vector2(170, 150), Vector2(940, 60))
+	_problem.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_problem.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_result = StudyHud.panel(Color(0.05, 0.08, 0.22, 0.94), YELLOW, 22, 5)
 	_result.position = Vector2(340, 150)
 	_result.custom_minimum_size = Vector2(600, 330)
@@ -62,6 +67,13 @@ func _label(text: String, size: int, color: Color, pos: Vector2, box: Vector2) -
 static func clock_text(seconds: float) -> String:
 	var s := int(ceil(maxf(seconds, 0.0)))
 	return "%d:%02d" % [s / 60, s % 60]
+
+## What keeps the Dials away, said on the screen ("" when the hub answers).
+func problem_text() -> String:
+	if ctl.devices == null or ctl.devices.available():
+		return ""
+	var why := ctl.devices.problem()
+	return "周辺機器のハブにつながっていない\n" + (why if why != "" else "（理由を問い合わせ中）")
 
 ## The result screen's lines (also read by the tests).
 func result_lines() -> String:
@@ -118,6 +130,5 @@ func _process(dt: float) -> void:
 	var hint := "Space: 止める   Esc: タイトル"
 	if ctl.devices != null and ctl.devices.can_mock_ball():
 		hint += "   Mock: Z = 左 / M = 右に入れる"
-	elif ctl.devices != null and not ctl.devices.available():
-		hint = "周辺機器のハブにつながっていない（devicehub.enabled と ./start.sh）"
 	_hint.text = hint
+	_problem.text = problem_text()

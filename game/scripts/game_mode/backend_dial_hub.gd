@@ -10,6 +10,7 @@ var ws: UfoWebSocketClient
 var _session := 0
 var _hub_connected := false
 var _mock := false
+var _problem := ""
 var _meta_rid := ""
 var _meta_left := 0.0
 var _pending: Dictionary = {}  # rid -> "command" / "status" / "ball"
@@ -28,6 +29,15 @@ func available() -> bool:
 
 func session_id() -> int:
 	return _session if available() else 0
+
+## Why there is no hub: no backend, no hub in the backend, or what the backend says about
+## its hub (another UFO system's hub, no port, a port that is not a hub...).
+func problem() -> String:
+	if available():
+		return ""
+	if ws == null or not ws.enabled or not ws.is_open():
+		return "バックエンドにつながっていない（./start.sh で起動する）"
+	return _problem if _problem != "" else "周辺機器のハブに問い合わせ中…"
 
 func can_mock_ball() -> bool:
 	return available() and _mock
@@ -72,6 +82,10 @@ func _on_ack(rid: String, ok: bool, data: Dictionary) -> void:
 		var was := _hub_connected
 		_hub_connected = ok and bool(data.get("connected", false))
 		_mock = ok and str(data.get("port", "")) == "mock"
+		# a NACK = the backend has no hub at all (its reason says how to turn it on)
+		_problem = str(data.get("problem", "")) if ok else "周辺機器のハブを使っていない: " + str(data.get("reason", ""))
+		if ok and not _hub_connected and _problem == "":
+			_problem = "周辺機器のハブの応答を待っている"
 		var s := int(data.get("session_id", 0)) if ok else 0
 		if _hub_connected and (not was or s != _session):
 			_session = s
