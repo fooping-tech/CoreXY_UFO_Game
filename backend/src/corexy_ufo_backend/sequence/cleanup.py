@@ -32,8 +32,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..config import RobotLimits
-from ..homework.approach import ApproachParams, ApproachSequencer, SequenceFault, _Step
+from ..homework.approach import ApproachParams, ApproachSequencer, _Step
 from ..robot.interface import RobotCommandError, RobotInterface
+from .fault import SequenceFault
 
 log = logging.getLogger(__name__)
 
@@ -207,9 +208,7 @@ class CleanupSequencer(ApproachSequencer):
     async def start(self, target=None, stages=None, *, open_claw=None) -> None:  # type: ignore[override]
         if self.active:
             raise RobotCommandError("busy: already tidying up")
-        refresh = getattr(self.robot, "refresh_status", None)
-        if refresh is not None:
-            await refresh()
+        await self.robot.refresh_status()
         prof = self.profile
         errs = list(self.profile_problems)
         errs += [e.replace("already approaching", "already tidying up")
