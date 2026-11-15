@@ -37,7 +37,8 @@ const LOG_MAX := 64
 ## the light to the Dial during a release ends with the port; this only bounds it
 const RELEASE_STREAM_MAX_S := 12.0
 
-var colors := {"left": Color("00e5ff"), "right": Color("ff40d0")}
+## UFO-DeviceHub's default unit colours (the Dials' LEDs): cyan and magenta
+var colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
 var ufo_pos := Vector2(640, 92)
 var ufo_visible := true
 ## "moment:side", newest last (tests, the debug view)

@@ -73,6 +73,7 @@ func _ready() -> void:
 	_test_game_mode_round(rs)
 	_test_game_mode_duplicates_and_sessions(rs)
 	_test_game_mode_release_faults(rs)
+	_test_game_mode_dial_leds(rs)
 	_test_game_mode_clock_and_stop(rs)
 	_test_game_mode_backend_hub(rs)
 	await _test_game_mode_physics()
@@ -3177,10 +3178,20 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 		hub.refuse_next["%d|%s" % [GameModeDevices.ILLUMINATION, n]] = "OFFLINE"
 	_gm_play_capsule(ctl, "right", "center")
 	_gm_step(ctl, 4.0)
-	_ok(waiting and l.state == "FAULT" and l.fault.contains("RELEASE_DONE") and hub.count(GM_L, "RELEASE_BALL") == 1
-		and r.state == "READY" and r.released == 1,
-		"game mode: a lost RELEASE_DONE times out into FAULT (no re-release); refused lights never hold a release",
+	_ok(waiting and l.state == "READY" and l.released == 1 and hub.count(GM_L, "RELEASE_BALL") == 1
+		and ctl.trace.rows.any(func(row): return row.release_status == "timeout") and r.state == "READY" and r.released == 1,
+		"game mode: a lost RELEASE_DONE is settled by the Dial's status (done and empty = go on, no re-release); refused lights never hold a release",
 		"%s %s" % [l.state, r.state])
+	# ... and when the status does not say so either: FAULT
+	hub.lose_release_done[GM_L] = true
+	hub.stuck_ball[GM_L] = true
+	_gm_play_capsule(ctl, "left", "left")
+	_gm_step(ctl, ctl.release_sync_s + ctl.release_timeout_s + ctl.verify_retry_s * ctl.verify_tries + 1.0)
+	_ok(l.state == "FAULT" and l.fault.contains("RELEASE_DONE") and hub.count(GM_L, "RELEASE_BALL") == 2
+		and hub.led_effect(GM_L) == "FLASH",
+		"game mode: no RELEASE_DONE and a Dial that is not done = FAULT (red flash on the Dial), still one RELEASE_BALL per capsule",
+		"%s %s" % [l.state, l.fault])
+	hub.stuck_ball.erase(GM_L)
 	# after the release the Dial still reports a capsule: not armed again blindly
 	hub.mock_ball(GM_R)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
@@ -3192,6 +3203,65 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	_ok(verifying and r.state == "FAULT" and r.fault.contains("BALL_DETECTED") and hub.count(GM_R, "RELEASE_BALL") == 2
 		and hub.dials[GM_R].state == "BALL_DETECTED",
 		"game mode: RELEASE_DONE is not proof: a Dial that is not ready afterwards is not armed again (FAULT)", "%s %s" % [r.state, r.fault])
+	_gm_free(game, rs)
+
+## The Dials' transfer LEDs (UFO-DeviceHub docs/game-mode-interface.md): decoration that
+## follows the game, never something the game waits for.
+func _test_game_mode_dial_leds(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hub := ctl.mock_hub
+	var l: GameModeController.Lane = ctl.lanes["left"]
+	var r: GameModeController.Lane = ctl.lanes["right"]
+	var fx_of := func(dev: int) -> Array:
+		return hub.executed.filter(func(e): return e[0] == dev and e[1] == "SET_DIAL_EFFECT").map(func(e): return e[2])
+	var colours: bool = hub.dials[GM_L].color == [0, 255, 255] and hub.dials[GM_R].color == [255, 0, 255] \
+		and hub.count(GM_L, "SET_DIAL_COLOR") == 1 and ctl.fx.colors["left"] == Color8(0, 255, 255) and ctl.fx.colors["right"] == Color8(255, 0, 255)
+	hub.mock_ball(GM_L)
+	var intake: Dictionary = fx_of.call(GM_L)[-1]
+	var intake_ok: bool = intake.effect == "CHASE" and intake.direction == "TO_SCREEN" and intake.duration_ms == 1500 \
+		and intake.priority == "NORMAL" and intake.target == "BOTH" and not intake.has("color") and hub.led_effect(GM_L) == "CHASE"
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	hub.mock_ball(GM_R)  # the right one comes in ...
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "left", Vector2(300, 660))  # ... as the left one goes out
+	var opposite: bool = hub.dials[GM_L].led.effect == "COMET" and hub.dials[GM_L].led.direction == "TO_DIAL" \
+		and hub.dials[GM_R].led.effect == "CHASE" and hub.dials[GM_R].led.direction == "TO_SCREEN"
+	var sent_before_release: bool = hub.count(GM_L, "RELEASE_BALL") == 0
+	_gm_step(ctl, ctl.release_sync_s + 0.1)
+	var releasing: bool = hub.led_effect(GM_L) == "CHASE" and hub.dials[GM_L].led.direction == "TO_DIAL" and l.state == "RELEASING"
+	_gm_step(ctl, 3.0)
+	_ok(colours and intake_ok and opposite and sent_before_release and releasing and l.state == "READY" and hub.led_effect(GM_L) == "NONE"
+		and fx_of.call(GM_L).map(func(p): return p.effect) == ["CHASE", "COMET", "CHASE"],
+		"game mode LEDs: the unit colour per session, INTAKE (to the screen), RETURN_FLOW then RELEASING (to the Dial); left and right opposite ways at once; the Dial ends it at RELEASE_DONE",
+		"%s %s %s %s %s" % [colours, intake_ok, opposite, releasing, fx_of.call(GM_L)])
+	# a refused effect (a higher priority is running) holds nothing
+	hub.dials[GM_R].led = {"effect": "FLASH", "direction": "NONE", "color": [255, 0, 0], "priority": "HIGH", "left": 0.0}
+	ctl.field.capsule_exited.emit(str(r.capsule.capsule_id), "right", Vector2(900, 660))
+	_gm_step(ctl, 4.0)
+	var refused: bool = ctl.trace.rows.any(func(row): return row.event == "ack" and row.result == "IGNORED_PRIORITY")
+	_ok(refused and r.state == "READY" and r.released == 1 and r.led_ok,
+		"game mode LEDs: IGNORED_PRIORITY changes nothing: the capsule is released as usual", r.state)
+	_gm_free(game, rs)
+	# firmware 0.2: the Dials do not know the LED commands
+	game = _gm_game()
+	game.game_mode.mock_hub.old_firmware = true
+	ctl = _gm_playing(game)
+	hub = ctl.mock_hub
+	l = ctl.lanes["left"]
+	var asked: int = ctl.trace.rows.filter(func(row): return row.event == "command" and row.effect_id in ["SET_DIAL_EFFECT", "SET_DIAL_COLOR"]).size()
+	_gm_play_capsule(ctl, "left", "center")
+	_gm_step(ctl, 4.0)
+	var asked_after: int = ctl.trace.rows.filter(func(row): return row.event == "command" and row.effect_id in ["SET_DIAL_EFFECT", "SET_DIAL_COLOR"]).size()
+	_ok(asked == 2 and asked_after == 2 and not l.led_ok and l.state == "READY" and l.released == 1 and ctl.score.score == 1000
+		and ctl.trace.rows.any(func(row): return row.event == "led" and str(row.led_command).contains("not sent")),
+		"game mode LEDs: older firmware (UNSUPPORTED) = no more LED commands this round, the game is the same", "%d %d" % [asked, asked_after])
+	ctl.dial_leds = false
+	game._unhandled_input(_key(KEY_SPACE))
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	var asked_off: int = ctl.trace.rows.filter(func(row): return row.event == "command" and str(row.effect_id).begins_with("SET_DIAL_")).size()
+	_ok(ctl.phase == "PLAYING" and l.state == "READY" and asked_off == asked_after,
+		"game mode LEDs: game_mode.dial_leds off sends none", "%d %d" % [asked_off, asked_after])
 	_gm_free(game, rs)
 
 func _test_game_mode_clock_and_stop(rs: Node) -> void:

@@ -10,6 +10,11 @@ extends GameModeDevices
 
 const SERVO_HOLD_S := 1.5
 const SERVO_SETTLE_S := 0.6
+## UFO-DeviceHub's default unit colours (config/hardware.h DIAL_UNIT_COLOR_1 / _2)
+const UNIT_COLORS := {DIAL_1: [0, 255, 255], DIAL_2: [255, 0, 255]}
+const LED_PRIORITY := {"BACKGROUND": 0, "NORMAL": 1, "HIGH": 2}
+const LED_EFFECTS := ["NONE", "SOLID", "BREATHE", "CHASE", "COMET", "WIPE", "FLASH", "SPARKLE"]
+const LED_DIRECTIONAL := ["CHASE", "COMET", "WIPE"]
 
 ## seconds before a command's answer comes back
 var latency_s := 0.03
@@ -30,6 +35,8 @@ var fail_release: Dictionary = {}
 var lose_release_done: Dictionary = {}
 ## after a release these devices still see a capsule (it did not leave: the switch stays on)
 var stuck_ball: Dictionary = {}
+## firmware 0.2: the Dials do not know SET_DIAL_EFFECT / SET_DIAL_COLOR (UNSUPPORTED)
+var old_firmware := false
 
 var _seq := 0
 var _event_seq := 0
@@ -37,11 +44,16 @@ var _answers: Array = []  # [seconds left, rid, ok, result, data]
 
 func _init() -> void:
 	for d in [DIAL_1, DIAL_2]:
-		dials[d] = _fresh()
+		dials[d] = _fresh(d)
 
-func _fresh() -> Dictionary:
+## led: the PC's effect now ({} = the Dial shows its own state): {effect, direction, color, priority, left}
+func _fresh(device: int) -> Dictionary:
 	return {"online": true, "op_mode": "STANDBY", "state": "DISABLED", "cycle": 0, "phase_left": 0.0,
-		"release_cmd": 0, "aborted": false, "releases": 0}
+		"release_cmd": 0, "aborted": false, "releases": 0, "led": {}, "color": UNIT_COLORS[device].duplicate()}
+
+## The PC's effect on a Dial now ("NONE" = its own display).
+func led_effect(device: int) -> String:
+	return str(dials[device].led.get("effect", "NONE"))
 
 func kind() -> String:
 	return "mock"
@@ -71,7 +83,8 @@ func status(device: int) -> String:
 	else:
 		var d: Dictionary = dials[device]
 		_answers.append([latency_s, rid, true, "ACCEPTED", {"status": {"dial_state": d.state, "op_mode": d.op_mode,
-			"cycle": d.cycle, "releases": d.releases, "switch_on": d.state == "BALL_DETECTED"}}])
+			"cycle": d.cycle, "releases": d.releases, "switch_on": d.state == "BALL_DETECTED",
+			"front_effect": led_effect(device), "unit_color": d.color}}])
 	return rid
 
 func stop_all() -> void:
@@ -86,6 +99,7 @@ func mock_ball(device: int) -> bool:
 	if d.state != "ARMED" or not d.online:
 		return false
 	d.state = "BALL_DETECTED"
+	d.led = {}  # the Dial's own flash and chase come first: the PC's effect ends
 	_emit(device, "BALL_RECEIVED", {"cycle": d.cycle})
 	return true
 
@@ -121,6 +135,8 @@ func restart_session() -> void:
 	for d in dials.keys():
 		var busy: bool = dials[d].state in ["RELEASING", "RETURNING"]
 		dials[d].op_mode = "STANDBY"
+		dials[d].led = {}
+		dials[d].color = UNIT_COLORS[d].duplicate()
 		if not busy:
 			dials[d].state = "DISABLED"
 	connected = true
@@ -129,6 +145,10 @@ func restart_session() -> void:
 func tick(dt: float) -> void:
 	for id in dials.keys():
 		var d: Dictionary = dials[id]
+		if not d.led.is_empty() and float(d.led.left) > 0.0:  # a timed effect runs out
+			d.led.left -= dt
+			if d.led.left <= 0.0:
+				d.led = {}
 		if d.state != "RELEASING" and d.state != "RETURNING":
 			continue
 		d.phase_left -= dt
@@ -139,9 +159,11 @@ func tick(dt: float) -> void:
 			d.phase_left = SERVO_SETTLE_S
 		elif d.aborted or fail_release.has(id):
 			fail_release.erase(id)
+			d.led = {}
 			d.state = "READY" if d.op_mode == "GAME" else "DISABLED"
 			_emit(id, "RELEASE_FAILED", {"command_id": d.release_cmd, "reason": 1})
 		else:
+			d.led = {}  # the release sequence ended: the Dial ends the PC's effect by itself
 			d.state = "BALL_DETECTED" if stuck_ball.has(id) else ("COMPLETE" if d.op_mode == "GAME" else "DISABLED")
 			if lose_release_done.has(id):
 				lose_release_done.erase(id)
@@ -183,6 +205,7 @@ func _execute(device: int, name: String, params: Dictionary, cid: int) -> String
 	var result := "UNSUPPORTED"
 	match name:
 		"STOP_ALL":
+			d.led = {}
 			d.op_mode = "STANDBY"
 			if busy:
 				d.aborted = true
@@ -191,6 +214,15 @@ func _execute(device: int, name: String, params: Dictionary, cid: int) -> String
 			else:
 				d.state = "DISABLED"
 			result = "ACCEPTED"
+		"SET_DIAL_COLOR":
+			if old_firmware:
+				result = "UNSUPPORTED"
+			else:
+				var c = params.get("color", [0, 0, 0])
+				d.color = c.duplicate() if c is Array and c.size() == 3 and c != [0, 0, 0] else UNIT_COLORS[device].duplicate()
+				result = "ACCEPTED"
+		"SET_DIAL_EFFECT":
+			result = _dial_effect(d, params)
 		"SET_MODE":
 			if str(params.get("mode", "")) == "STANDBY":
 				if busy:
@@ -242,6 +274,25 @@ func _execute(device: int, name: String, params: Dictionary, cid: int) -> String
 	if result == "ACCEPTED":
 		executed.append([device, name, params])
 	return result
+
+## SET_DIAL_EFFECT as the Dial answers it (UFO-DeviceHub docs/game-mode-interface.md §2).
+func _dial_effect(d: Dictionary, params: Dictionary) -> String:
+	if old_firmware:
+		return "UNSUPPORTED"
+	var effect := str(params.get("effect", ""))
+	var direction := str(params.get("direction", "NONE"))
+	var priority := str(params.get("priority", "NORMAL"))
+	if not effect in LED_EFFECTS or not LED_PRIORITY.has(priority) or not direction in ["NONE", "TO_SCREEN", "TO_DIAL"] \
+			or (effect in LED_DIRECTIONAL and direction == "NONE"):
+		return "INVALID_PARAMS"
+	if not d.led.is_empty() and int(LED_PRIORITY[priority]) < int(LED_PRIORITY[d.led.priority]):
+		return "IGNORED_PRIORITY"
+	if effect == "NONE":
+		d.led = {}
+	else:
+		d.led = {"effect": effect, "direction": direction, "color": params.get("color", d.color), "priority": priority,
+			"left": float(params.get("duration_ms", 0)) / 1000.0}
+	return "ACCEPTED"
 
 ## How many times `name` was accepted by `device` (tests).
 func count(device: int, name: String) -> int:

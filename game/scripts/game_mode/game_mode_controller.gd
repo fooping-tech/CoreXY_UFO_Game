@@ -35,6 +35,17 @@ const LANE_STATES := ["OFFLINE", "ARMING", "READY", "ABSORBING", "DROPPING", "SI
 	"VERIFYING", "CLOSING", "CLOSED", "FAULT"]
 const BUSY_STATES := ["ABSORBING", "DROPPING", "SIMULATING", "RETURNING", "RELEASING", "VERIFYING"]
 const LAYER := 2
+## The Dial's transfer LEDs: UFO-DeviceHub's docs/game-mode-interface.md §5 (the same table as
+## its pc/game_mode.py ANIMATIONS). No colour = the Dial's unit colour.
+const LED_ANIMATIONS := {
+	"INTAKE": {"effect": "CHASE", "direction": "TO_SCREEN", "duration_ms": 1500, "priority": "NORMAL", "target": "BOTH"},
+	"RETURN_FLOW": {"effect": "COMET", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "BOTH"},
+	"RELEASING": {"effect": "CHASE", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "BOTH"},
+	"FAULT": {"effect": "FLASH", "direction": "NONE", "duration_ms": 1500, "priority": "HIGH", "target": "BOTH", "color": [255, 0, 0]},
+	"CLEAR": {"effect": "NONE", "direction": "NONE", "duration_ms": 0, "priority": "HIGH", "target": "BOTH"},
+}
+## answers that mean "this firmware has no such command" (Dial 0.2: UNSUPPORTED, Hub 0.2: BAD_REQUEST)
+const LED_UNKNOWN := ["UNSUPPORTED", "BAD_REQUEST"]
 const SIDES := ["left", "right"]
 
 class Lane:
@@ -55,6 +66,10 @@ class Lane:
 	## why it is not ready yet (the Dial's refusal), for the HUD
 	var note := ""
 	var released := 0
+	## false once the Dial said it does not know the LED commands (older firmware): no more are sent
+	var led_ok := true
+	## the wait for RELEASE_DONE ran out: the status decides (COMPLETE = the event was lost)
+	var release_timed_out := false
 
 var main: Node
 var devices: GameModeDevices
@@ -97,6 +112,8 @@ var verify_retry_s := 0.5
 var verify_tries := 4
 var closing_wait_s := 1.5
 var lights := true
+## the Dials' own transfer LEDs (SET_DIAL_EFFECT / SET_DIAL_COLOR, firmware 0.3)
+var dial_leds := true
 var trace_to_file := true
 var devices_wanted := "auto"
 ## --game-mode-demo: with mock Dials, capsules come by themselves (a rehearsal with no hands)
@@ -175,6 +192,7 @@ func _configure(cfg: Dictionary) -> void:
 	warning_s = float(cfg.get("warning_s", warning_s))
 	settle_max_s = float(cfg.get("settle_max_s", settle_max_s))
 	lights = bool(cfg.get("lights", lights))
+	dial_leds = bool(cfg.get("dial_leds", dial_leds))
 	trace_to_file = bool(cfg.get("trace", trace_to_file))
 	devices_wanted = str(cfg.get("devices", devices_wanted))
 	var t: Dictionary = cfg.get("timing", {}) if cfg.get("timing") is Dictionary else {}
@@ -282,6 +300,8 @@ func _reset_round() -> void:
 		l.fault = ""
 		l.note = ""
 		l.released = 0
+		l.led_ok = true
+		l.release_timed_out = false
 
 # ------------------------------------------------------------------ the tick
 func _physics_process(dt: float) -> void:
@@ -400,6 +420,7 @@ func _result() -> void:
 	for side in SIDES:
 		var l: Lane = lanes[side]
 		if l.state == "CLOSED":  # a faulted Dial is left as it is for a person to look at
+			_led(l, "CLEAR")
 			_send(l, "standby", "SET_MODE", {"mode": "STANDBY"})
 	_light("SET_LIGHT_MODE", {"mode": "RESULT", "brightness": 180, "speed": 128, "transition_ms": 500})
 	_light("TRIGGER_EFFECT", {"effect": "GAME_CLEAR", "duration_ms": 2000, "intensity": 220})
@@ -448,7 +469,11 @@ func _tick_lane(l: Lane, dt: float) -> void:
 		"RELEASING":
 			l.t -= dt
 			if l.t <= 0.0:
-				_fault(l, "RELEASE_DONE が来ない（排出できたか分からない）")
+				# no RELEASE_DONE in time: never wait for ever, never release again. The Dial's
+				# status decides (the contract's §7): done and empty = the event was lost.
+				l.release_timed_out = true
+				_trace("release", l, {"release_status": "timeout"})
+				_verify(l)
 		"VERIFYING":
 			if l.t > 0.0:
 				l.t -= dt
@@ -475,6 +500,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 		# time was already up when it landed: no play, no score, straight back out
 		l.t = release_sync_s
 		_set_lane(l, "RETURNING")
+		_led(l, "RETURN_FLOW")
 		fx.play("capsule_return", l.side, fx.port(l.side), return_s)
 		return
 	l.t = absorb_s
@@ -483,7 +509,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
 	sounds.play("absorb")
-	_led(l, "TO_SCREEN")
+	_led(l, "INTAKE")
 	_light("TRIGGER_EFFECT", {"effect": "BALL_RECEIVED", "duration_ms": 800, "intensity": 200})
 
 func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vector2) -> void:
@@ -520,7 +546,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 	_set_lane(l, "RETURNING")
 	fx.play("capsule_return", l.side, pos, return_s)
 	sounds.play("return")
-	_led(l, "TO_DIAL")
+	_led(l, "RETURN_FLOW")
 
 func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 	var kind := str(r.kind)
@@ -557,6 +583,7 @@ func _release(l: Lane) -> void:
 		return
 	l.t = release_timeout_s
 	l.release_started = false
+	l.release_timed_out = false
 	_set_lane(l, "RELEASING")
 	_send(l, "release", "RELEASE_BALL")
 
@@ -583,6 +610,7 @@ func _fault(l: Lane, why: String) -> void:
 		capsules.finish(l.capsule.capsule_id, "failed")
 		field.remove_capsule(l.capsule.capsule_id)
 	_set_lane(l, "FAULT")
+	_led(l, "FAULT")
 	fx.play("capsule_fault", l.side)
 	sounds.play("fault")
 	_trace("fault", l, {"result": why, "release_status": "failed"})
@@ -643,6 +671,7 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 				return
 			if ok:
 				l.mode_ok = true
+				_dial_color(l)
 				if phase == "PLAYING":
 					_arm(l)
 			else:
@@ -682,9 +711,14 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 			else:
 				l.verify_tries -= 1
 				if l.verify_tries <= 0:
-					_fault(l, "排出のあと、Dial が次の準備にならない（%s）" % (ds if ok else result))
+					_fault(l, ("RELEASE_DONE が来ない（排出できたか分からない。Dial: %s）" if l.release_timed_out
+						else "排出のあと、Dial が次の準備にならない（%s）") % (ds if ok else result))
 				else:
 					l.t = verify_retry_s
+		"led":
+			if result in LED_UNKNOWN and l.led_ok:
+				l.led_ok = false  # older firmware: the Dial shows its own LEDs, the game goes on
+				_trace("led", l, {"led_command": "off for this round", "result": result})
 		"disarm":
 			if l.state == "CLOSING" and ok:
 				_set_lane(l, "CLOSED")
@@ -745,6 +779,7 @@ func _on_device_event(ev: Dictionary, hub: GameModeDevices) -> void:
 		"RELEASE_STARTED":
 			if l.state == "RELEASING" and not l.release_started and _same_release(l, data):
 				l.release_started = true
+				_led(l, "RELEASING")
 				fx.play("capsule_release_burst", l.side)
 				sounds.play("release")
 				_light("TRIGGER_EFFECT", {"effect": "BALL_RELEASED", "duration_ms": 800, "intensity": 200})
@@ -848,11 +883,24 @@ func _light(name: String, params: Dictionary) -> void:
 	var rid := devices.command(GameModeDevices.ILLUMINATION, name, params)
 	_cmds[rid] = {"lane": null, "what": "light", "left": command_timeout_s}
 
-## The Dial's own transfer LEDs (colour, direction) need UFO-DeviceHub #8's contract
-## (docs/game-mode-interface.md), which does not exist yet: for now the wish is only
-## written to the trace, and the Dial shows its own state LEDs.
-func _led(l: Lane, direction: String) -> void:
-	_trace("led", l, {"led_command": "%s rgb=%d,%d,%d (not sent: DeviceHub #8)" % [direction, l.color.r8, l.color.g8, l.color.b8]})
+## The Dial's own transfer LEDs (its front LED and the one towards the screen), as
+## UFO-DeviceHub's docs/game-mode-interface.md says: the named animation in the Dial's unit
+## colour. Decoration: sent and forgotten. A refusal (IGNORED_PRIORITY, NOT_CONFIGURED, a
+## timeout) changes nothing, and nothing ever waits for the answer. The Dial ends an effect
+## by itself when it detects a capsule, when a release ends, on STOP_ALL and on a new session.
+func _led(l: Lane, animation: String) -> void:
+	var a: Dictionary = LED_ANIMATIONS[animation]
+	var sent: bool = dial_leds and l.led_ok and devices.available()
+	_trace("led", l, {"effect_id": a.effect, "led_command": "%s %s %s%s" % [animation, a.effect, a.direction,
+		"" if sent else " (not sent)"]})
+	if sent:
+		_send(l, "led", "SET_DIAL_EFFECT", a.duplicate(true))
+
+## The Dial's unit colour for this session = this side's colour on the screen, so the port
+## and the Dial's LEDs match (the Dial forgets it with the session: sent after every SET_MODE).
+func _dial_color(l: Lane) -> void:
+	if dial_leds and l.led_ok:
+		_send(l, "led", "SET_DIAL_COLOR", {"color": [l.color.r8, l.color.g8, l.color.b8]})
 
 func _trace(event: String, l: Lane, extra: Dictionary) -> void:
 	var row := {"event": event, "game_t": snappedf(clock, 0.001), "session_id": session, "game_state": phase}

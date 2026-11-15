@@ -320,6 +320,7 @@
     "settle_max_s": 30,
     "devices": "auto",
     "lights": true,
+    "dial_leds": true,
     "trace": true,
     "ufo": {
       "min": 0.1,
@@ -380,7 +381,7 @@
         "device": 32,
         "color": [
           0,
-          229,
+          255,
           255
         ]
       },
@@ -388,18 +389,19 @@
         "device": 33,
         "color": [
           255,
-          64,
-          208
+          0,
+          255
         ]
       }
     },
-    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), right = Dial 2 (0x21 = 33), color = that side's RGB on the screen (the Dial's own LEDs follow once UFO-DeviceHub #8's LED contract exists). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort: a refusal never holds the game). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
+    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), right = Dial 2 (0x21 = 33), color = that side's RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the defaults are UFO-DeviceHub's own: cyan / magenta). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
   },
   "devicehub": {
     "enabled": false,
     "port": "auto",
     "system_id": 1,
-    "_note": "The peripherals' hub (UFO-DeviceHub: ESP-NOW hub M5AtomS3R, Illumination ATOM, M5Dial x2), #108. The backend opens it (enabled) and the settings screen's テスト tab tests the devices through it, like UFO-DeviceHub's pc.web_console (which cannot run at the same time: one program per serial port). port: auto (every USB serial port in turn except the robot's (Core2) ports: the hub's auto-detect sends HELLO lines), a port name, or mock (a simulated hub, no hardware). system_id: which UFO system's hub (1 / 2; another system's hub is refused). The protocol and gateway are copies of UFO-DeviceHub's pc/ (backend/src/corexy_ufo_backend/devicehub/__init__.py says which commit). Not yet run with the real hub from the game."
+    "trace": "",
+    "_note": "The peripherals' hub (UFO-DeviceHub: ESP-NOW hub M5AtomS3R, Illumination ATOM, M5Dial x2), #108. The backend opens it (enabled) and the settings screen's テスト tab tests the devices through it, like UFO-DeviceHub's pc.web_console (which cannot run at the same time: one program per serial port). port: auto (every USB serial port in turn except the robot's (Core2) ports: the hub's auto-detect sends HELLO lines), a port name, or mock (a simulated hub, no hardware). system_id: which UFO system's hub (1 / 2; another system's hub is refused). The protocol and gateway are copies of UFO-DeviceHub's pc/ (backend/src/corexy_ufo_backend/devicehub/__init__.py says which commit). trace: a file for UFO-DeviceHub's own trace (every command, ACK and event of the hub as JSON Lines; \"\" = none; also the backend's --devicehub-trace), to join with the score game's trace (#138). Not yet run with the real hub from the game."
   },
   "backend": {
     "serial_port": "",
