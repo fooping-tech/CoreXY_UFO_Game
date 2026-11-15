@@ -311,6 +311,90 @@
     },
     "_note": "Homework watch (F1 panel tab). enabled = this watch in the F1 panel; the backend's homework service also starts when study_mode.enabled is true (the study mode uses it), and nothing is captured until a watch is started. While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
+  "game_mode": {
+    "enabled": true,
+    "duration_s": 150,
+    "countdown_s": 3,
+    "hurry_s": 30,
+    "warning_s": 10,
+    "settle_max_s": 30,
+    "devices": "auto",
+    "lights": true,
+    "trace": true,
+    "ufo": {
+      "min": 0.1,
+      "max": 0.9,
+      "one_way_s": 6.0
+    },
+    "timing": {
+      "absorb_s": 0.85,
+      "drop_s": 0.25,
+      "return_s": 0.9,
+      "release_sync_s": 0.6,
+      "release_timeout_s": 8.0,
+      "command_timeout_s": 5.0,
+      "arm_retry_s": 3.0,
+      "verify_retry_s": 0.5,
+      "verify_tries": 4
+    },
+    "field": {
+      "max_stay_s": 15.0,
+      "stall_s": 1.2,
+      "gravity_scale": 0.7,
+      "bounce": 0.45,
+      "star_respawn_s": 8.0
+    },
+    "score": {
+      "table": {
+        "pin": 10,
+        "bumper": 100,
+        "spinner": 200,
+        "star": 500,
+        "switch": 50,
+        "switch_bonus": 1500,
+        "goal_left": 100,
+        "goal_right": 100,
+        "goal_center": 1000,
+        "jackpot": 3000
+      },
+      "combo": [
+        [
+          2,
+          1.5
+        ],
+        [
+          4,
+          2.0
+        ],
+        [
+          6,
+          3.0
+        ]
+      ],
+      "combo_window_s": 2.5,
+      "cooldown_s": 0.4,
+      "jackpot_s": 20.0
+    },
+    "dials": {
+      "left": {
+        "device": 32,
+        "color": [
+          0,
+          229,
+          255
+        ]
+      },
+      "right": {
+        "device": 33,
+        "color": [
+          255,
+          64,
+          208
+        ]
+      }
+    },
+    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), right = Dial 2 (0x21 = 33), color = that side's RGB on the screen (the Dial's own LEDs follow once UFO-DeviceHub #8's LED contract exists). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort: a refusal never holds the game). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
+  },
   "devicehub": {
     "enabled": false,
     "port": "auto",
