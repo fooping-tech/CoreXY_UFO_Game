@@ -38,6 +38,7 @@ class MockRobot(RobotInterface):
         self._homing_until = 0.0
         self._last = time.monotonic()
         self.z_reference_set = True
+        self.z_points: set[str] = set()  # z_set top / bottom recorded (#126)
         self.arm_deg = 0.0  # claw: degrees from its reference
         self.arm_marks: dict[str, float] = {}  # claw positions recorded by arm_set
 
@@ -81,15 +82,20 @@ class MockRobot(RobotInterface):
         self.target[0], self.target[1] = x, y
 
     async def move_z(self, z: float) -> None:
-        self._require()
+        self._require(homed=self.z_points != {"top", "bottom"})  # as the real robot (#126)
         self.target[2] = self.limits.clamp_z(z)
 
     async def set_z_zero(self) -> None:
+        self.z_points.add("top")  # z_zero = z_set top
         self.z_reference_set = True
 
     async def set_z_point(self, which: str) -> None:
         if which not in ("top", "bottom", "clear"):
             raise RobotCommandError("z_set: which must be top, bottom or clear")
+        if which == "clear":
+            self.z_points.clear()
+        else:
+            self.z_points.add(which)
         self.z_reference_set = True
 
     async def grab(self, close: bool) -> None:
@@ -220,6 +226,7 @@ class MockRobot(RobotInterface):
             state=self._state(), x=self.pos[0], y=self.pos[1], z=self.pos[2], measured=True,
             alarm=self.alarm, error=self.error, test_mode=True, timestamp_ms=int(time.time() * 1000),
             z_reference_set=self.z_reference_set, arm_deg=self.arm_deg, arm_reference_set=True,
+            z_top_set="top" in self.z_points, z_bottom_set="bottom" in self.z_points,
             arm_closed_deg=self.arm_marks.get("closed"), arm_open_deg=self.arm_marks.get("open"),
             arm_span_deg=(self.arm_marks["open"] - self.arm_marks["closed"]) if len(self.arm_marks) == 2 else None,
         )

@@ -382,6 +382,10 @@ class RealRobot(RobotInterface):
         bottom = self.limits.z_min if self.limits.z_up_is_positive else self.limits.z_max
         return top if which == "top" else bottom
 
+    def _z_range_recorded(self) -> bool:
+        """Both the top and the bottom recorded this session (#126)."""
+        return self._z_top_counts is not None and self._z_bottom_counts is not None
+
     def _z_reference(self) -> tuple[int, float] | None:
         """(counts, Z) of the point Z is counted from: the top if recorded, else the bottom."""
         if self._z_top_counts is not None:
@@ -660,7 +664,10 @@ class RealRobot(RobotInterface):
         log.info("Z %s set at %d counts", which, counts)
 
     async def move_z(self, z: float) -> None:
-        self._require()
+        # #126: with both Z points recorded this session the move stays inside the measured
+        # range, like the unhomed Z jog: no XY homing needed (the calibration tab's 上げる /
+        # 下げる come before homing, which wants the arm wound up first)
+        self._require(homed=not self._z_range_recorded())
         if self._z_reference() is None:
             raise RobotCommandError("Z reference not set (z_set top with the arm wound up, or bottom with it lowered)")
         z = self.limits.clamp_z(z)

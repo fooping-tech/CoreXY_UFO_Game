@@ -452,3 +452,43 @@ def test_the_config_file_turns_the_home_check_on(tmp_path):
     assert cfg.home_requires_z_top and str(cfg.z_calibration_path) == f"{tmp_path / 'calibration.json'}#z"
     p.write_text(json.dumps({"backend": {"home_requires_z_top": False}}))
     assert not load_config(p).home_requires_z_top
+
+
+async def test_move_z_inside_the_recorded_range_needs_no_homing():
+    """#126: the calibration tab's 上げる / 下げる go to the recorded top / bottom before homing."""
+    robot = await make_cal_robot()
+    fw = robot.serial.transport
+    try:
+        await robot.enable_motors(True)  # not homed
+        await robot.set_z_point("top")
+        with pytest.raises(RobotCommandError, match="not homed"):
+            await robot.move_z(0.0)  # one point: the range is not known yet
+        fw.servo_abs[1] -= 2 * 4096
+        await robot.set_z_point("bottom")
+        await robot.move_z(100.0)  # back up to the top, unhomed
+        assert any(c.startswith("SERVO_TURN 1 ") for c in fw.sent)
+        assert robot.snapshot().z == pytest.approx(100.0, abs=0.5)
+        with pytest.raises(RobotCommandError, match="not homed"):
+            await robot.move_xy(10, 10)  # XY still needs homing
+        await robot.set_z_point("clear")
+        with pytest.raises(RobotCommandError):
+            await robot.move_z(50.0)
+    finally:
+        await robot.disconnect()
+
+
+async def test_mock_move_z_needs_homing_until_both_points():
+    robot = MockRobot(RobotLimits(z_max=100.0))
+    await robot.connect()
+    await robot.enable_motors(True)
+    with pytest.raises(RobotCommandError, match="not homed"):
+        await robot.move_z(0.0)
+    await robot.set_z_point("top")
+    await robot.set_z_point("bottom")
+    s = robot.snapshot()
+    assert s.z_top_set and s.z_bottom_set
+    await robot.move_z(0.0)
+    assert robot.target[2] == 0.0
+    await robot.set_z_point("clear")
+    with pytest.raises(RobotCommandError, match="not homed"):
+        await robot.move_z(50.0)
