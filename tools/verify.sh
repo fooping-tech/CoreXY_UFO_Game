@@ -29,6 +29,41 @@ find_godot() {
   command -v godot 2>/dev/null || true
 }
 
+# The test runner quits by itself after the tests (run_tests.gd). A script that does not parse
+# never gets there and Godot waits forever (#132), so: a load error stops it at once, a run longer
+# than GODOT_TEST_TIMEOUT seconds stops it, and a run without its "N passed, 0 failed" line fails.
+GODOT_TEST_TIMEOUT="${GODOT_TEST_TIMEOUT:-600}"
+run_godot_tests() {
+  local log pid rc why=""
+  log="$(mktemp)"
+  "$GODOT_BIN" --headless --path "$ROOT/game" res://tests/test_runner.tscn >"$log" 2>&1 &
+  pid=$!
+  local start=$SECONDS
+  while kill -0 "$pid" 2>/dev/null; do
+    if grep -qE "Parse Error|Failed to load script" "$log"; then
+      why="スクリプトを読み込めない（構文エラー）"; break
+    fi
+    if (( SECONDS - start > GODOT_TEST_TIMEOUT )); then
+      why="${GODOT_TEST_TIMEOUT} 秒で終わらない（GODOT_TEST_TIMEOUT）"; break
+    fi
+    sleep 1
+  done
+  if [[ -n "$why" ]]; then
+    kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
+    rc=1
+  else
+    wait "$pid"; rc=$?
+  fi
+  grep -E "^(PASS|FAIL)|passed|SCRIPT ERROR|Parse Error|Failed to load script" "$log" | grep -v "^PASS"
+  if [[ -n "$why" ]]; then
+    echo "Godot のテストを止めた: $why"
+  elif [[ $rc -eq 0 ]] && ! grep -qE "^[0-9]+ passed, 0 failed" "$log"; then
+    echo "Godot のテストが結果の行（N passed, 0 failed）を出さずに終わった"; rc=1
+  fi
+  rm -f "$log"
+  return "$rc"
+}
+
 if want secrets; then
   step "security: secrets / history / vulnerabilities / config + scanner self-test (same as security.yml)"
   "$ROOT/tools/security/scan.sh" all && "$ROOT/tools/security/scan.sh" selftest
@@ -72,9 +107,8 @@ if want godot; then
     if [[ ! -d "$ROOT/game/.godot/imported" ]]; then
       "$GODOT_BIN" --headless --path "$ROOT/game" --import >/dev/null 2>&1
     fi
-    "$GODOT_BIN" --headless --path "$ROOT/game" res://tests/test_runner.tscn 2>&1 | \
-      grep -E "^(PASS|FAIL)|passed|SCRIPT ERROR" | grep -v "^PASS"
-    record "${PIPESTATUS[0]}" "godot"
+    run_godot_tests
+    record $? "godot"
   fi
 fi
 
