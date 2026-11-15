@@ -2239,6 +2239,24 @@ func _test_study_sheet_photo(rs: Node) -> void:
 	_ok(not jpeg.is_empty() and jpeg.size() <= StudyServices.SHEET_IMAGE_BYTES and worst.length() < 1048576
 		and game.ws.outbound_buffer_size >= worst.length(),
 		"sheet photo: the camera frame fits the robot link (send buffer, the backend's 1 MiB)", "%d bytes" % jpeg.size())
+	# #130: one odd answer does not throw the picture, two that agree move it, a near one is blended
+	var base := {"tl": Vector2(0.3, 0.2), "tr": Vector2(0.7, 0.2), "bl": Vector2(0.3, 0.8), "br": Vector2(0.7, 0.8)}
+	var far := {"tl": Vector2(0.4, 0.2), "tr": Vector2(0.8, 0.2), "bl": Vector2(0.3, 0.8), "br": Vector2(0.7, 0.8)}
+	sv.sheet_corners = {}
+	sv.sheet_seen_ms = -1
+	sv._sheet_take(base.duplicate(), 1000)
+	sv._sheet_take(far.duplicate(), 2000)
+	var held: bool = sv.sheet_marks(2000).tl.is_equal_approx(Vector2(0.3, 0.2))
+	sv._sheet_take(far.duplicate(), 3000)
+	var moved: bool = sv.sheet_marks(3000).tl.is_equal_approx(Vector2(0.4, 0.2))
+	var near := far.duplicate()
+	near.tl = Vector2(0.41, 0.2)
+	sv._sheet_take(near, 4000)
+	var blended: bool = sv.sheet_marks(4000).tl.is_equal_approx(Vector2(0.405, 0.2))
+	var kept := not sv.sheet_marks(4000 + StudyServices.SHEET_FRESH_MS - 100).is_empty()
+	_ok(held and moved and blended and kept,
+		"sheet photo: an odd answer is held back, two that agree move it, a near one is blended, kept while unseen",
+		str([held, moved, blended, kept]))
 	# the study mode's debug log: the sheet search's outcome once per change, why locating failed
 	var lines: Array = []
 	var grab := func(t): lines.append(t)

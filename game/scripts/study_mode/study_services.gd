@@ -68,7 +68,10 @@ var _help_rid := ""
 var _nav_rid := ""
 ## #116: the worksheet's corner marks in the overview frame (as shown): {tl, tr, bl, br: Vector2 0..1}
 const SHEET_FIND_S := 1.5  # how often the frame is sent to find them
-const SHEET_FRESH_MS := 5000  # older than this: the drawn sheet again
+const SHEET_FRESH_MS := 8000  # older than this: the drawn sheet again
+const SHEET_JUMP := 0.04  # an answer further than this (0..1 of the image) waits for the next
+const SHEET_AGREE := 0.02  # ... which must be this close to it
+const SHEET_BLEND := 0.5  # a near answer moves the shown corners this much of the way
 ## The frame sent to find them: the robot link's backend takes at most 1 MiB per message
 ## (websockets' max_size) and base64 adds a third, so 1024 px / 600 kB stays well inside.
 ## The corners come back as 0..1 of the image, so the size does not move them.
@@ -78,6 +81,7 @@ const SHEET_IMAGE_BYTES := 600000
 const SHEET_SEND_BUFFER := 1048576
 var sheet_corners: Dictionary = {}
 var sheet_seen_ms := -1
+var _sheet_pending: Dictionary = {}
 var _sheet_left := 0.0
 var _sheet_rid := ""
 var _sheet_jpeg_bytes := 0
@@ -243,15 +247,44 @@ func _on_sheet_found(ok: bool, payload: Dictionary) -> void:
 	if not bool(payload.get("found", false)) or not payload.get("corners") is Dictionary:
 		_sheet_note("marks not found in the overview frame")
 		return  # the last ones age out (SHEET_FRESH_MS)
-	_sheet_note("marks found")
 	var c: Dictionary = payload.corners
 	var out := {}
 	for k in ["tl", "tr", "bl", "br"]:
 		if not c.get(k) is Array or (c[k] as Array).size() != 2:
 			return
 		out[k] = Vector2(float(c[k][0]), float(c[k][1]))
-	sheet_corners = out
-	sheet_seen_ms = Time.get_ticks_msec()
+	var inferred := str(payload.get("inferred", ""))
+	_sheet_note("marks found" + ((" (%s computed from the other three)" % inferred) if inferred != "" else ""))
+	_sheet_take(out, Time.get_ticks_msec())
+
+## #130: a new answer far from the shown one is taken only when the next one agrees (one odd
+## frame does not throw the picture), a near one is blended in (no shaking), and the last ones
+## stay while nothing is found for SHEET_FRESH_MS (a hand or a cable over the sheet).
+func _sheet_take(out: Dictionary, now: int) -> void:
+	var shown := sheet_marks(now)
+	if shown.is_empty() or corners_apart(shown, out) <= SHEET_JUMP:
+		_sheet_pending = {}
+		if not shown.is_empty():
+			for k in out.keys():
+				out[k] = shown[k].lerp(out[k], SHEET_BLEND)
+		sheet_corners = out
+		sheet_seen_ms = now
+		return
+	if not _sheet_pending.is_empty() and corners_apart(_sheet_pending, out) <= SHEET_AGREE:
+		trace("sheet search: moved (%.3f of the image)" % corners_apart(shown, out))
+		_sheet_pending = {}
+		sheet_corners = out
+		sheet_seen_ms = now
+		return
+	trace("sheet search: an answer %.3f away held back until the next one agrees" % corners_apart(shown, out))
+	_sheet_pending = out
+
+## The largest distance between two sets of corners (0..1 of the image).
+static func corners_apart(a: Dictionary, b: Dictionary) -> float:
+	var d := 0.0
+	for k in ["tl", "tr", "bl", "br"]:
+		d = maxf(d, (a[k] as Vector2).distance_to(b[k]))
+	return d
 
 ## The sheet search's outcome, logged when it changes (it runs every SHEET_FIND_S).
 func _sheet_note(what: String) -> void:
@@ -305,6 +338,7 @@ func watch_stop() -> void:
 	watching = false
 	sheet_corners = {}
 	sheet_seen_ms = -1
+	_sheet_pending = {}
 	if mode != "simulated" and homework != null and was:
 		if homework.running():
 			homework.stop("勉強モードの見守りを終えました")

@@ -26,6 +26,9 @@ RATIO = (283.0 - 14.0) / (196.0 - 14.0)  # 269 / 182
 MAX_CANDIDATES = 14
 # a candidate's side (the square root of its area) against the mark's expected side
 SIZE_TOLERANCE = (0.5, 2.0)
+# three marks seen: the side ratio's error (stricter than four's), the middle mark's angle
+THREE_MAX_SCORE = 0.3
+THREE_MAX_COS = 0.35  # about 70..110 degrees
 
 
 def _candidates(gray: np.ndarray) -> list[dict]:
@@ -65,7 +68,8 @@ def _candidates(gray: np.ndarray) -> list[dict]:
         m = cv2.moments(c)
         if m["m00"] <= 0:
             continue
-        out.append({"c": (m["m10"] / m["m00"], m["m01"] / m["m00"]), "area": area})
+        out.append({"c": (m["m10"] / m["m00"], m["m01"] / m["m00"]), "area": area,
+                    "quad": approx.reshape(4, 2).astype(float)})
     out.sort(key=lambda d: -d["area"])
     return out[:MAX_CANDIDATES]
 
@@ -116,12 +120,16 @@ def _sizes_fit(q: np.ndarray, sides: np.ndarray) -> bool:
 
 
 def find_marks(image: np.ndarray, max_score: float = 0.6) -> dict[str, Any] | None:
-    """BGR or gray image -> {"corners": {tl, tr, bl, br: [u, v]}, "score"} or None."""
+    """BGR or gray image -> {"corners": {tl, tr, bl, br: [u, v]}, "score"} or None.
+
+    With three marks seen (#130: a cable over one), the fourth is where the three put it (the
+    sheet as a parallelogram: a little off under perspective, close enough to straighten it);
+    the answer then names it in "inferred". Four marks seen always win over three."""
     import cv2
     gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     cands = _candidates(gray)
-    if len(cands) < 4:
+    if len(cands) < 3:
         return None
     pts = np.array([c["c"] for c in cands], dtype=float)
     sides = np.sqrt(np.array([c["area"] for c in cands], dtype=float))
@@ -133,12 +141,96 @@ def find_marks(image: np.ndarray, max_score: float = 0.6) -> dict[str, Any] | No
         s = _score(q)
         if best is None or s < best[0]:
             best = (s, q)
+    inferred = ""
     if best is None or best[0] > max_score:
-        return None
+        three = _three_marks(pts, sides, w, h, [c["quad"] for c in cands])
+        if three is None:
+            return None
+        best, inferred = three
     s, q = best
     names = ("tl", "tr", "bl", "br")
-    return {"corners": {n: [round(float(p[0]) / w, 5), round(float(p[1]) / h, 5)] for n, p in zip(names, q)},
-            "score": round(float(s), 4), "size": [w, h]}
+    out: dict[str, Any] = {"corners": {n: [round(float(p[0]) / w, 5), round(float(p[1]) / h, 5)] for n, p in zip(names, q)},
+                           "score": round(float(s), 4), "size": [w, h]}
+    if inferred:
+        out["inferred"] = inferred
+    return out
+
+
+def _three_marks(pts: np.ndarray, sides: np.ndarray, w: int, h: int,
+                 quads: list[np.ndarray] | None = None) -> tuple[tuple[float, np.ndarray], str] | None:
+    """The best sheet from three marks and a computed fourth, or None.
+
+    Three points always make a parallelogram, so its opposite sides are equal by construction:
+    the checks are the side ratio (THREE_MAX_SCORE), a right angle at the middle mark (give or
+    take perspective, THREE_MAX_COS), the three blobs' size, and the fourth inside the image."""
+    best: tuple[float, np.ndarray, np.ndarray] | None = None
+    for idx in itertools.combinations(range(len(pts)), 3):
+        tri = pts[list(idx)]
+        for k in range(3):  # tri[k]: the corner between the other two (opposite the hidden one)
+            v, a, b = tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]
+            da, db = a - v, b - v
+            na, nb = np.linalg.norm(da), np.linalg.norm(db)
+            if na < 1e-6 or nb < 1e-6 or abs(float(da @ db)) / (na * nb) > THREE_MAX_COS:
+                continue
+            fourth = a + b - v
+            if not (-0.02 * w <= fourth[0] <= 1.02 * w and -0.02 * h <= fourth[1] <= 1.02 * h):
+                continue
+            q = _order(np.vstack([tri, fourth]))
+            if q is None:
+                continue
+            seen = sides[list(idx)]
+            if not _sizes_fit(q, np.append(seen, seen.mean())):
+                continue
+            s = _score(q)
+            if s <= THREE_MAX_SCORE and (best is None or s < best[0]):
+                best = (s, q, fourth, list(idx))
+    if best is None:
+        return None
+    s, q, fourth, idx = best
+    names = ("tl", "tr", "bl", "br")
+    k = int(np.argmin(np.linalg.norm(q - fourth, axis=1)))
+    if quads is not None:
+        better = _perspective_fourth(q, k, [quads[i] for i in idx], [pts[i] for i in idx])
+        if better is not None:
+            q = q.copy()
+            q[k] = better
+    return (s, q), names[k]
+
+
+def _perspective_fourth(q: np.ndarray, k: int, quads: list[np.ndarray], centres: list[np.ndarray]) -> np.ndarray | None:
+    """The hidden centre q[k] again, under the camera's perspective: the three seen marks give
+    their centres and their 4 corners each (12 points of the page in mm), enough for the page's
+    homography; the parallelogram guess only assigns which corner is which. None = keep the guess."""
+    import cv2
+    names = ("tl", "tr", "bl", "br")
+    page_pts, img_pts = [], []
+    half = MARK_MM / 2
+    # the parallelogram's map page mm -> image, to name each blob corner by its nearest page corner
+    src = np.float32([CENTRES_MM[n] for n in names])
+    rough = cv2.getPerspectiveTransform(src, np.float32(q))
+    for quad, centre in zip(quads, centres):
+        n = names[int(np.argmin(np.linalg.norm(q - centre, axis=1)))]
+        cx, cy = CENTRES_MM[n]
+        page_corners = np.float32([[cx - half, cy - half], [cx + half, cy - half], [cx + half, cy + half], [cx - half, cy + half]])
+        guess = cv2.perspectiveTransform(page_corners.reshape(-1, 1, 2), rough).reshape(-1, 2)
+        used = set()
+        for pc, g in zip(page_corners, guess):
+            d = np.linalg.norm(quad - g, axis=1)
+            j = int(np.argmin(d))
+            if j in used:
+                return None
+            used.add(j)
+            page_pts.append(pc)
+            img_pts.append(quad[j])
+        page_pts.append((cx, cy))
+        img_pts.append(centre)
+    hm, _ = cv2.findHomography(np.float32(page_pts), np.float32(img_pts), 0)
+    if hm is None:
+        return None
+    p = hm @ np.array([*CENTRES_MM[names[k]], 1.0])
+    if abs(p[2]) < 1e-9:
+        return None
+    return np.array([p[0] / p[2], p[1] / p[2]])
 
 
 def find_marks_jpeg(data: bytes) -> dict[str, Any] | None:
