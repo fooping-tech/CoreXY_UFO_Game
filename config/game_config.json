@@ -129,7 +129,20 @@
     "focus": {
       "match": "Innomaker",
       "flip_h": false,
-      "flip_v": false
+      "flip_v": false,
+      "stabilize": {
+        "enabled": true,
+        "port": 8766,
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "jpeg_quality": 80,
+        "cutoff_hz": 0.4,
+        "max_shift": 0.12,
+        "max_rot_deg": 6.0,
+        "zoom": 1.08,
+        "_note": "#118: the arm hangs on ball chains and swings. The backend opens the focus camera (match) with OpenCV while the game watches, measures each frame's motion with optical flow (Lucas-Kanade corners, translation + rotation), cancels the part faster than cutoff_hz (a deliberate XY move is followed with a short lag), zooms by zoom to hide the moved edges, and streams JPEG on its own port (never on the robot's connection). The game shows it as the focus camera (scope, panels, the study mode's photo) and opens the camera itself only when the stream stops. max_shift = the largest correction (fraction of the width). Display only."
+      }
     },
     "scope": {
       "enabled": true,
@@ -167,6 +180,8 @@
         {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool", "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
       ]},
       {"title": "カメラ", "items": [
+        {"key": "camera.focus.stabilize.enabled", "apply": "backend", "label": "アームのカメラの揺れ補正（オプティカルフロー）", "type": "bool",
+         "note": "バックエンドがアームのカメラを開いて揺れを打ち消した映像を送る（./start.sh で起動し直すと反映）"},
         {"key": "camera.overview.match", "apply": "restart", "label": "俯瞰カメラ（名前の一部）", "type": "text", "max_length": 80},
         {"key": "camera.focus.match", "apply": "restart", "label": "アームの先のカメラ（名前の一部）", "type": "text", "max_length": 80}
       ]},

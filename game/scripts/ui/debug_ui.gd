@@ -37,6 +37,7 @@ var _vfx_label: Label
 var _palm_invert: bool = bool(GameConfig.get_value("gesture", "palm_invert", false))
 ## The arm-tip camera in the hardware tab: {"view": TextureRect, "info": Label}
 var _arm_cam: Dictionary = {}
+var _stab_info: Label = null  # #118: the arm camera's stabilization
 var _tabs: TabContainer
 var _gesture_overlay: GestureCameraOverlay
 var _study_tab := -1
@@ -822,6 +823,17 @@ func _build_cameras() -> void:
 		info.add_theme_font_size_override("font_size", 10)
 		_vbox.add_child(info)
 		_cam_ui[role] = {"option": opt, "view": view, "info": info}
+		if role == "focus" and hub.stream != null:
+			var stab := CheckBox.new()
+			stab.text = "揺れ補正（オプティカルフロー、バックエンド）"
+			stab.focus_mode = Control.FOCUS_NONE
+			stab.add_theme_font_size_override("font_size", 11)
+			stab.button_pressed = hub.stream.stabilize
+			stab.toggled.connect(func(on): hub.stream.set_stabilize(on))
+			_vbox.add_child(stab)
+			_stab_info = Label.new()
+			_stab_info.add_theme_font_size_override("font_size", 10)
+			_vbox.add_child(_stab_info)
 	var hb := HBoxContainer.new()
 	_vbox.add_child(hb)
 	_button(hb, "Scope open/close (V)", func(): main.scope_trigger.toggle())
@@ -849,12 +861,33 @@ func _update_cameras() -> void:
 		var fs := hub.feed_size("focus")
 		_arm_cam.info.text = ("%s  %dx%d（カメラの選択はカメラタブ）" % [hub.feed_name("focus"), fs.x, fs.y]) if hub.has_feed("focus") \
 			else "NO SIGNAL（カメラタブの Focus で選ぶか、camera.focus.match を設定）"
+	if _stab_info != null and hub.stream != null:
+		_stab_info.text = stabilize_text(hub.stream)
 	for role in _cam_ui.keys():
 		var ui: Dictionary = _cam_ui[role]
 		var w := _inner_w()
 		ui.view.custom_minimum_size = Vector2(w, w / hub.feed_aspect(role))
 		var s := hub.feed_size(role)
 		ui.info.text = ("%s  %dx%d" % [hub.feed_name(role), s.x, s.y]) if hub.has_feed(role) else "NO SIGNAL (pick a camera above, or set camera.%s.match)" % role
+
+## One line on the arm camera's stream (#118).
+static func stabilize_text(fs: FocusStream) -> String:
+	if fs.live():
+		var h := fs.header
+		if not bool(h.get("stabilized", false)):
+			return "揺れ補正: オフ（補正なしの映像）  %.0f fps" % float(h.get("fps", 0.0))
+		return "揺れ補正: %s  補正 %+.0f, %+.0f px  回転 %+.1f°  追跡点 %d  %.0f fps" % [
+			"追跡中" if bool(h.get("tracking", false)) else "見失い（補正を戻し中）",
+			float(h.get("dx", 0.0)), float(h.get("dy", 0.0)), float(h.get("rot_deg", 0.0)),
+			int(h.get("points", 0)), float(h.get("fps", 0.0))]
+	match fs.state:
+		"error":
+			return "揺れ補正: カメラを開けない（%s）。補正なしの映像を表示中" % fs.message
+		"opening", "streaming":
+			return "揺れ補正: バックエンドがカメラを開いています…"
+		"connecting":
+			return "揺れ補正: バックエンドにつないでいます…"
+	return "揺れ補正: バックエンドの映像なし（補正なしの映像を表示中）"
 
 ## A new tab, scrolling; the helpers below add to it.
 func _tab(title: String) -> void:
