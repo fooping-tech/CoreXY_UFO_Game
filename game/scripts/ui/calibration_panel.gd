@@ -12,6 +12,10 @@ const CYAN := Color("7ae0ff")
 const MUTED := Color("8fa3c4")
 const BAD := Color("ff8a8a")
 const GOOD := Color("9ff0a8")
+const INK := Color("e8eefc")
+const CARD_BG := Color("1f2a44")
+const CARD_BORDER := Color("34446a")
+const WIDTH := 800.0  # wrapped text inside a card
 
 var main: Node
 var hw: HomeworkClient
@@ -42,6 +46,22 @@ var restore_estimate: Dictionary = {}
 ## settings screen under the tabs (visible wherever the tab is scrolled).
 var result_text := ""
 var result_ok := true
+## #120: where new rows go (the panel itself, or the card being built)
+var _box: Container = self
+## section key -> {card: PanelContainer, badge: Label, badge_bg: StyleBoxFlat}
+var _cards := {}
+## the summary at the top: section key -> Button; the next thing to do
+var _summary := {}
+var _next: Label
+var _summary_shown := ""
+
+## The sections in order (#120): key, title. The summary lists them; section_states() says how
+## each one is.
+const SECTIONS := [
+	["link", "つながりとモーター"], ["z", "Z の上下と原点復帰"], ["claw", "爪の開き・閉じ"],
+	["spot", "宿題を見に行く位置"], ["camera", "俯瞰カメラ → XY"], ["height", "勉強モードの撮影の高さ"],
+	["services", "AI・外部サービス"],
+]
 
 ## The commands this tab sends (directly or through main.gd / the homework client), with
 ## the words shown for their answer.
@@ -59,77 +79,110 @@ func setup(m: Node) -> void:
 	hw = main.homework_for_calibration()
 	if main.get("ws") != null:
 		main.ws.ack.connect(_on_ack)
-	add_theme_constant_override("separation", 6)
-	_note("この画面を開いている間は、キーでアームを動かせる: 矢印 = XY、W / S = 上下、[ ] = 爪を回す、"
-		+ "Q / A = 爪を開く / 閉じる、Space = 止める。測った値はバックエンドが config/calibration.json に保存する"
-		+ "（この機械だけの値。Git には入らない）。")
+	add_theme_constant_override("separation", 12)
 
-	_head("0. AI・外部サービス")
-	_note("勉強モードで使う外部のサービスにつながるか（タブを開くと確かめる。推論・課金はしない）。"
-		+ "「AI に試しに質問する」は、サンプルのプリント 1 枚と短い質問を解説の AI に 1 回送る。")
-	_services = _value()
-	_services.visible = false
-	_services_box = VBoxContainer.new()
-	add_child(_services_box)
-	var srow := _row()
-	_ws_button(srow, "もう一度確かめる", func(): check_services(false))
-	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
+	# --- the summary: what is done, what is next (#120)
+	var top := _card_panel()
+	add_child(top)
+	var tv := _card_box(top)
+	var th := HBoxContainer.new()
+	tv.add_child(th)
+	th.add_child(StudyHud.label("準備のようす", 24, CYAN, 4))
+	var keys := StudyHud.label("キー: 矢印 = XY　W / S = 上下　[ ] = 爪を回す　Q / A = 開く / 閉じる　Space = 止める",
+		15, MUTED, 2)
+	keys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	keys.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	th.add_child(keys)
+	_next = StudyHud.label("", 19, YELLOW, 3)
+	_next.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_next.custom_minimum_size = Vector2(WIDTH, 0)
+	tv.add_child(_next)
+	var grid := VBoxContainer.new()
+	grid.add_theme_constant_override("separation", 0)
+	tv.add_child(grid)
+	for sec in SECTIONS:
+		var key: String = sec[0]
+		var b := Button.new()
+		b.flat = true
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.custom_minimum_size = Vector2(WIDTH, 0)
+		b.add_theme_font_size_override("font_size", 16)
+		b.focus_mode = Control.FOCUS_NONE
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.pressed.connect(func(): scroll_to(key))
+		grid.add_child(b)
+		_summary[key] = b
 
-	_head("つながり")
+	# --- 1. the backend and the motors
+	_card("link", "つながっているか、モーターが有効かを確かめる。測った値はこの機械だけの値として "
+		+ "config/calibration.json に保存される（Git には入らない）。")
 	_link = _value()
 	var row := _row()
-	_ws_button(row, "モーター有効", func(): main.ws.send_command("enable_motors", {"enable": true}))
+	_ws_button(row, "モーター有効", func(): main.ws.send_command("enable_motors", {"enable": true}), "primary")
 	_ws_button(row, "モーター無効", func(): main.ws.send_command("enable_motors", {"enable": false}))
-	_ws_button(row, "原点復帰", func(): main.ws.send_command("home"))
 
-	_head("1. Z の上下（最初に測る）")
-	_note("電源を入れ直したあとは、Z の換算（1 単位あたりのカウントと向き）は残っていて、上下の記録だけが消える。"
-		+ "「前回の上下を呼び出す」→ 表示された Z とアームの高さが合っていれば「これを使う」。合わなければ W で一番上まで"
-		+ "巻き上げて「上を記録」だけでよい（下はロープの長さを変えたときだけ）。")
+	# --- 2. Z
+	_card("z", "アームの一番上と一番下を記録して、Z（0 = 下、100 = 上）を決める。電源を入れ直すと記録は消えるが、"
+		+ "換算（1 単位あたりの回転と向き）は残る。")
+	_z = _value()
+	_sub("いつもは（電源を入れ直したあと）")
+	_step("①", "「前回の上下を呼び出す」を押す")
+	_step("②", "出た Z とアームの高さが合っていれば「これを使う」。合わなければ下の「初めて・ロープを変えたとき」の ① だけ")
 	_z_restore = _value()
 	row = _row()
 	_ws_button(row, "前回の上下を呼び出す", func():
 		restore_estimate = {}
-		main.ws.send_command("z_restore", {"apply": false}))
+		main.ws.send_command("z_restore", {"apply": false}), "primary")
 	_z_use = _ws_button(row, "これを使う（アームの高さを確かめてから）", func():
 		if not restore_estimate.is_empty():
 			main.ws.send_command("z_restore", {"apply": true, "turns": int(restore_estimate.get("turns", 0))}))
-	_note("初めて測るとき・ロープの長さを変えたとき: W でアームを一番上まで巻き上げて「上を記録」。続けて S で一番下まで下げて「下を記録」。"
-		+ "2 点のカウント差から Z の 1 単位あたりのカウントと向きを求める。この画面では前に測った範囲で止まらない"
-		+ "（下ろす量を変えたときに測り直せる）。巻き過ぎ・下ろし過ぎに注意して、押している間だけ動かす。")
-	_z = _value()
+	_sub("初めて・ロープの長さを変えたとき")
+	_step("①", "W を押し続けて一番上まで巻き上げ、「ここを上に記録」")
+	_step("②", "S を押し続けて一番下まで下げ、「ここを下に記録」（撮影の高さの机にもなる: 爪先を机に付ける）")
 	row = _row()
-	_ws_button(row, "ここを上に記録", func(): main.ws.send_command("z_set", {"which": "top"}))
-	_ws_button(row, "ここを下に記録", func(): main.ws.send_command("z_set", {"which": "bottom"}))
-	_ws_button(row, "Z をやり直す（記録を消す）", func(): main.ws.send_command("z_set", {"which": "clear"}))
+	_ws_button(row, "ここを上に記録", func(): main.ws.send_command("z_set", {"which": "top"}), "primary")
+	_ws_button(row, "ここを下に記録", func(): main.ws.send_command("z_set", {"which": "bottom"}), "primary")
+	_ws_button(row, "Z をやり直す（記録を消す）", func(): main.ws.send_command("z_set", {"which": "clear"}), "danger")
+	_caution("この画面では前に測った範囲で止まらない。押している間だけ動くので、巻き過ぎ・下ろし過ぎに注意。")
+	_sub("最後に")
+	_step("③", "W で一番上まで巻き上げてから「原点復帰」（XY の原点を決める）")
+	row = _row()
+	_ws_button(row, "原点復帰", func(): main.ws.send_command("home"), "primary")
 
-	_head("2. 爪の開き・閉じ")
-	_note("[ ] か下のボタンで爪を回し、開いた位置で「開きに記録」、閉じた位置で「閉じに記録」。"
-		+ "記録すると Q / A で開け閉めできる。")
+	# --- 3. the claw
+	_card("claw", "爪を開いた位置と閉じた位置を記録する。記録すると Q / A で開け閉めできる。")
 	_claw = _value()
+	_step("①", "[ ] か下のボタンで爪を回す")
 	row = _row()
 	for d in [-10.0, -1.0, 1.0, 10.0]:
 		var deg: float = d
 		_button(row, ("%+d°" % int(deg)), func(): main.arm_step(deg))
+	_step("②", "開いた位置で「開きに記録」、閉じた位置で「閉じに記録」")
 	row = _row()
-	_button(row, "ここを開きに記録", func(): main.arm_set("open"))
-	_button(row, "ここを閉じに記録", func(): main.arm_set("closed"))
+	_button(row, "ここを開きに記録", func(): main.arm_set("open"), "primary")
+	_button(row, "ここを閉じに記録", func(): main.arm_set("closed"), "primary")
 	_button(row, "開く（Q）", func(): main.arm_goto("open"))
 	_button(row, "閉じる（A）", func(): main.arm_goto("closed"))
 
-	_head("3. 宿題を見に行く位置")
-	_note("原点復帰と Z の上の記録のあとで。爪を開き（Q）、矢印と S でアームをプリントの上へ下ろし、"
-		+ "開いた爪がプリントに立つ高さで「ここを記録」。子どもの手の上には下ろさない。")
+	# --- 4. the homework spot
+	_card("spot", "宿題を見に行くときにアームを下ろす場所。2 の Z の上と原点復帰のあとで。")
 	_spot = _value()
+	_step("①", "Q で爪を開き、矢印と S でアームをプリントの上へ下ろす")
+	_step("②", "開いた爪がプリントに立つ高さで「ここを宿題の位置に記録」")
+	_caution("子どもの手の上には下ろさない。")
 	row = _row()
-	_ws_button(row, "ここを宿題の位置に記録", func(): if hw != null: hw.record_spot())
+	_ws_button(row, "ここを宿題の位置に記録", func(): if hw != null: hw.record_spot(), "primary")
 
-	_head("4. 俯瞰カメラ → XY")
-	_note("アームの先のカメラ（右）の十字が紙の印に重なるように矢印で動かし、"
-		+ "俯瞰カメラの画像（左）でその印をクリック。場所を変えて 4 点以上。原点復帰のあとで。")
+	# --- 5. the overview camera -> XY
+	_card("camera", "俯瞰カメラの画像のどこがアームの XY のどこかを覚えさせる。原点復帰のあとで。")
+	_cam = _value()
+	_step("①", "アームの先のカメラ（右）の十字が紙の印に重なるように、矢印でアームを動かす")
+	_step("②", "俯瞰カメラの画像（左）で、その印をクリック")
+	_step("③", "場所を変えて 4 点以上")
 	var cams := HBoxContainer.new()
 	cams.add_theme_constant_override("separation", 10)
-	add_child(cams)
+	_box.add_child(cams)
 	_overview = OverviewPicker.new()
 	_overview.hw = hw
 	_overview.clickable = true
@@ -146,26 +199,151 @@ func setup(m: Node) -> void:
 		_overview.use_material(main.cameras.view_material(false))
 		_focus.texture = main.cameras.texture("focus")
 		_focus.use_material(main.cameras.view_material(false))
-	_cam = _value()
 	row = _row()
 	_ws_button(row, "1 点戻す", func(): if hw != null: hw.calib_undo())
-	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear())
+	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear(), "danger")
 
-	_head("5. 勉強モードの撮影の高さ")
-	_note("HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。1 の Z の上下だけで決まる: 1cm あたりの Z は"
-		+ "巻き上げドラムの半径と Z の換算から計算し、机は 1 の「下」の記録（爪先を机に付けて記録したところ）。"
-		+ "「保存」→「10cm へ動かす（試す）」で爪先と机の間を定規で確かめて「確かめた」。"
-		+ "ロープが重なって巻かれると計算がずれるので、この確認だけは要る。")
+	# --- 6. the study mode's capture height
+	_card("height", "HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。2 の Z の上下から計算する"
+		+ "（机 = 2 の「下」の記録）。ロープが重なって巻かれると計算がずれるので、定規で 1 回だけ確かめる。")
+	_height = _value()
+	_step("①", "巻き上げドラムの半径を入れて「保存」")
 	row = _row()
 	_drum = _spin(row, "巻き上げドラムの半径 mm", 3.0, 100.0, 0.5, 15.0)
-	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"))
+	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"), "primary")
 	_ws_button(row, "ここを机に記録して保存", func(): save_height("here"))
-	_height = _value()
+	_step("②", "「10cm へ動かす（試す）」で、爪先と机の間を定規で測る")
 	row = _row()
-	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]))
+	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]), "primary")
+	_step("③", "10cm なら「確かめた」")
 	row = _row()
-	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}))
+	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}), "primary")
 	_ws_button(row, "確認を外す", func(): main.ws.send_command("study_height_confirm", {"confirmed": false}))
+
+	# --- 7. the AI / outside services
+	_card("services", "勉強モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
+		+ "「AI に試しに質問する」は、サンプルのプリント 1 枚と短い質問を解説の AI に 1 回だけ送る。")
+	_services = _value()
+	_services.visible = false
+	_services_box = VBoxContainer.new()
+	_box.add_child(_services_box)
+	var srow := _row()
+	_ws_button(srow, "もう一度確かめる", func(): check_services(false))
+	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
+	_box = self
+
+## How each section is (#120): [{key, title, state: ok|todo|wait|na, text}], in order.
+func section_states() -> Array[Dictionary]:
+	var ready := backend_ready()
+	var out: Array[Dictionary] = []
+	for sec in SECTIONS:
+		var key: String = sec[0]
+		var st := "todo"
+		var text := ""
+		if RobotState.source != "websocket" and key not in ["link", "claw"]:
+			out.append({"key": key, "title": str(sec[1]), "state": "na", "text": "バックエンドが要る（./start.sh）"})
+			continue
+		match key:
+			"link":
+				if RobotState.source != "websocket":
+					text = "バックエンドなし（./start.sh で起動する）"
+				elif not ready:
+					text = "バックエンドにつながっていない"
+				elif not RobotState.motors_enabled:
+					text = "モーターが無効:「モーター有効」を押す"
+				else:
+					st = "ok"
+					text = "実機" if str(main.ws.server_robot) == "real" else "仮想クレーン"
+			"z":
+				var ref: bool = RobotState.z_top_set or RobotState.z_reference_set
+				if RobotState.z_calibrated and ref:
+					if RobotState.homed:
+						st = "ok"
+						text = "上下を記録・原点復帰も済み"
+					else:
+						text = "上下は記録済み。一番上で「原点復帰」"
+				elif RobotState.z_calibrated:
+					text = "電源を入れ直した: 「前回の上下を呼び出す」"
+				else:
+					text = "まだ測っていない: 上と下を記録"
+			"claw":
+				if not is_nan(RobotState.arm_open_deg) and not is_nan(RobotState.arm_closed_deg):
+					st = "ok"
+					text = "開き・閉じを記録済み"
+				else:
+					text = "開き・閉じを記録する"
+			"spot":
+				if hw == null:
+					st = "na"
+					text = "宿題の見守りがない"
+				elif hw.approach.get("spot") is Dictionary:
+					st = "ok"
+					text = "記録済み"
+				else:
+					text = "まだ記録していない"
+			"camera":
+				if hw == null:
+					st = "na"
+					text = "宿題の見守りがない"
+				elif hw.calibration_usable():
+					st = "ok"
+					text = hw.calib_summary()
+				else:
+					text = hw.calib_summary()
+			"height":
+				if bool(height_status.get("usable", false)):
+					st = "ok"
+					text = "確認済み（勉強モードで使う）"
+				elif height_status.get("saved") != null and not height_status.has("trial_problem"):
+					st = "wait"
+					text = "保存済み: 10cm を試して「確かめた」"
+				elif height_status.is_empty():
+					st = "wait"
+					text = "問い合わせ中"
+				else:
+					text = "まだ保存していない"
+			"services":
+				if services.is_empty():
+					st = "wait"
+					text = "確かめています…" if _services_asking else "バックエンドにつながると確かめる"
+				else:
+					var ng: Array[String] = []
+					for r in services:
+						if r is Dictionary and str(r.get("status", "")) == "ng":
+							ng.append(str(r.get("label", r.get("name", ""))))
+					if ng.is_empty():
+						st = "ok"
+						text = "つながる"
+					else:
+						text = "つながらない: " + "、".join(ng)
+		out.append({"key": key, "title": str(sec[1]), "state": st, "text": text})
+	return out
+
+## The first section not done, in words ("" when all are).
+static func next_text(states: Array) -> String:
+	for i in states.size():
+		var s: Dictionary = states[i]
+		if s.state in ["todo", "wait"]:
+			return "次にやること → %d. %s: %s" % [i + 1, s.title, s.text]
+	return "すべて済み。閉じる（Esc）とタイトルへ"
+
+static func mark(state: String) -> String:
+	return {"ok": "✓", "todo": "✗", "wait": "…", "na": "－"}.get(state, "－")
+
+static func state_colour(state: String) -> Color:
+	return {"ok": GOOD, "todo": BAD, "wait": YELLOW}.get(state, MUTED)
+
+static func badge_text(state: String) -> String:
+	return {"ok": "済", "todo": "まだ", "wait": "確認待ち", "na": "使えない"}.get(state, "")
+
+## Scroll the tab so that section's card is at the top (the summary's rows).
+func scroll_to(key: String) -> void:
+	if not _cards.has(key):
+		return
+	var card: Control = _cards[key].card
+	var p := get_parent()
+	if p is ScrollContainer:
+		(p as ScrollContainer).scroll_vertical = int(card.position.y)
 
 func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v: float) -> SpinBox:
 	parent.add_child(StudyHud.label(label, 16, MUTED, 2))
@@ -222,7 +400,7 @@ static func height_text(st: Dictionary) -> String:
 	var v: Dictionary = st.get("values", {}) if st.get("values") is Dictionary else {}
 	var lines: Array[String] = []
 	if not bool(st.get("z_calibrated", true)):
-		lines.append("1 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
+		lines.append("2 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
 	if bool(st.get("z_changed", false)):
 		lines.append("Z を測り直したので、撮影の高さを「保存」し直して、試してから「確かめた」")
 	if v.get("z_per_cm") != null:
@@ -244,39 +422,126 @@ static func height_text(st: Dictionary) -> String:
 		lines.append("まだ保存していない")
 	return "\n".join(lines)
 
-func _head(text: String) -> void:
-	add_child(StudyHud.label(text, 24, CYAN, 6))
+func _card_panel() -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = CARD_BG
+	sb.border_color = CARD_BORDER
+	sb.set_border_width_all(2)
+	sb.set_corner_radius_all(10)
+	sb.content_margin_left = 16
+	sb.content_margin_right = 16
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 14
+	p.add_theme_stylebox_override("panel", sb)
+	return p
+
+func _card_box(p: PanelContainer) -> VBoxContainer:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	p.add_child(v)
+	return v
+
+## A section's card: number and title, its state badge, what it is for. Rows added after go in it.
+func _card(key: String, purpose: String) -> void:
+	var idx := 0
+	var title := key
+	for i in SECTIONS.size():
+		if SECTIONS[i][0] == key:
+			idx = i + 1
+			title = SECTIONS[i][1]
+	var p := _card_panel()
+	add_child(p)
+	_box = _card_box(p)
+	var h := HBoxContainer.new()
+	_box.add_child(h)
+	var t := StudyHud.label("%d. %s" % [idx, title], 24, CYAN, 4)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(t)
+	var bp := PanelContainer.new()
+	var bs := StyleBoxFlat.new()
+	bs.set_corner_radius_all(12)
+	bs.content_margin_left = 12
+	bs.content_margin_right = 12
+	bs.content_margin_top = 2
+	bs.content_margin_bottom = 2
+	bp.add_theme_stylebox_override("panel", bs)
+	bp.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var badge := StudyHud.label("", 16, Color("10182c"))
+	bp.add_child(badge)
+	h.add_child(bp)
+	_cards[key] = {"card": p, "badge": badge, "badge_bg": bs}
+	_note(purpose)
 
 func _note(text: String) -> void:
 	var l := StudyHud.label(text, 16, MUTED, 2)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
-	add_child(l)
+	l.custom_minimum_size = Vector2(WIDTH, 0)
+	_box.add_child(l)
+
+## A small heading inside a card ("いつもは", "最後に").
+func _sub(text: String) -> void:
+	var l := StudyHud.label(text, 17, Color("b8c8ea"), 2)
+	_box.add_child(l)
+
+## One step: its mark (①) and what to do.
+func _step(n: String, text: String) -> void:
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	_box.add_child(h)
+	h.add_child(StudyHud.label(n, 18, YELLOW, 2))
+	var l := StudyHud.label(text, 17, INK, 2)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(WIDTH - 30, 0)
+	h.add_child(l)
+
+func _caution(text: String) -> void:
+	var l := StudyHud.label("⚠ " + text, 15, Color("ffc87a"), 2)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(WIDTH, 0)
+	_box.add_child(l)
 
 func _value() -> Label:
 	var l := StudyHud.label("", 18, Color.WHITE, 3)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
-	add_child(l)
+	l.custom_minimum_size = Vector2(WIDTH, 0)
+	_box.add_child(l)
 	return l
 
 func _row() -> HBoxContainer:
 	var r := HBoxContainer.new()
 	r.add_theme_constant_override("separation", 10)
-	add_child(r)
+	_box.add_child(r)
 	return r
 
-func _button(parent: Control, text: String, cb: Callable) -> Button:
+## kind: "" (plain), "primary" (the step's main button), "danger" (it erases a record).
+func _button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
 	var b := Button.new()
 	b.text = text
 	b.add_theme_font_size_override("font_size", 18)
 	b.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
 	b.pressed.connect(cb)
+	if kind != "":
+		var col := Color("2f6fb3") if kind == "primary" else Color("6a2a35")
+		for st in ["normal", "hover", "pressed", "disabled"]:
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = col.lightened(0.15) if st == "hover" else (col.darkened(0.2) if st == "pressed" else col)
+			if st == "disabled":
+				sb.bg_color = col.darkened(0.55)
+			sb.set_corner_radius_all(6)
+			sb.content_margin_left = 12
+			sb.content_margin_right = 12
+			sb.content_margin_top = 4
+			sb.content_margin_bottom = 4
+			b.add_theme_stylebox_override(st, sb)
+		b.add_theme_color_override("font_color", Color.WHITE)
+		b.add_theme_color_override("font_hover_color", Color.WHITE)
+		b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.35))
 	parent.add_child(b)
 	return b
 
-func _ws_button(parent: Control, text: String, cb: Callable) -> Button:
-	var b := _button(parent, text, cb)
+func _ws_button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
+	var b := _button(parent, text, cb, kind)
 	_ws_buttons.append(b)
 	return b
 
@@ -385,10 +650,15 @@ static func services_text(rows: Array, asking: bool) -> String:
 	for r in rows:
 		if r is Dictionary:
 			var mark: String = {"ok": "✓", "ng": "✗"}.get(str(r.get("status", "")), "－")
-			lines.append("%s %s: %s" % [mark, str(r.get("label", r.get("name", ""))), str(r.get("detail", ""))])
+			lines.append("%s %s: %s" % [mark, str(r.get("label", r.get("name", ""))), short_detail(str(r.get("detail", "")))])
 	if asking:
 		lines.append("（確かめています…）")
 	return "\n".join(lines)
+
+## A check's detail without file paths (#120: "2.1.325 (Claude Code)（/Users/.../claude）" -> "2.1.325 (Claude Code)").
+static func short_detail(d: String) -> String:
+	var re := RegEx.create_from_string("[（(][^（）()]*[/\\\\][^（）()]*[）)]")
+	return re.sub(d, "", true).strip_edges()
 
 func backend_ready() -> bool:
 	return main != null and RobotState.source == "websocket" and main.ws.enabled and main.ws.is_open()
@@ -398,6 +668,7 @@ static func deg_text(v: float) -> String:
 
 func refresh() -> void:
 	var ready := backend_ready()
+	_refresh_summary()
 	for b in _ws_buttons:
 		b.disabled = not ready
 	if ready and not _asked and is_visible_in_tree():
@@ -411,7 +682,7 @@ func refresh() -> void:
 		for line in lines:
 			var l := StudyHud.label(line, 17, YELLOW, 2)
 			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			l.custom_minimum_size = Vector2(860, 0)
+			l.custom_minimum_size = Vector2(WIDTH, 0)
 			var colour: Color = GOOD if line.begins_with("✓") else (BAD if line.begins_with("✗") else (MUTED if line.begins_with("－") else YELLOW))
 			l.add_theme_color_override("font_color", colour)
 			_services_box.add_child(l)
@@ -449,3 +720,27 @@ func refresh() -> void:
 	_cam.text = hw.calib_summary() + ("　" + hw.calib_status if hw.calib_status != "" else "")
 	_cam.add_theme_color_override("font_color", GOOD if hw.calibration_usable() else BAD)
 	_overview.overlay.queue_redraw()
+
+## The summary rows, the next thing to do and each card's badge (#120).
+func _refresh_summary() -> void:
+	var states := section_states()
+	var sig := str(states)
+	if sig == _summary_shown:
+		return
+	_summary_shown = sig
+	for i in states.size():
+		var stt: Dictionary = states[i]
+		var b: Button = _summary.get(stt.key)
+		if b != null:
+			b.text = "%s %d. %s — %s" % [mark(stt.state), i + 1, stt.title, stt.text]
+			b.tooltip_text = b.text
+			var c := state_colour(stt.state)
+			b.add_theme_color_override("font_color", c)
+			b.add_theme_color_override("font_hover_color", c.lightened(0.25))
+			b.add_theme_color_override("font_pressed_color", c.lightened(0.25))
+		if _cards.has(stt.key):
+			var card: Dictionary = _cards[stt.key]
+			(card.badge as Label).text = badge_text(stt.state)
+			(card.badge_bg as StyleBoxFlat).bg_color = state_colour(stt.state)
+	_next.text = next_text(states)
+	_next.add_theme_color_override("font_color", GOOD if _next.text.begins_with("すべて") else YELLOW)

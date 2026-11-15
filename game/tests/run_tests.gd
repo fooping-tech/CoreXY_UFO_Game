@@ -66,6 +66,7 @@ func _ready() -> void:
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
+	_test_calibration_summary()
 	_test_device_test_tab(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -2492,6 +2493,47 @@ func _test_device_test_tab(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+func _test_calibration_summary() -> void:
+	# #120: the summary on top (one row per section, the next thing to do) and each card's badge
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.open_settings()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	var cp: CalibrationPanel = st.calibration
+	cp.refresh()
+	var states := cp.section_states()
+	var by := {}
+	for x in states:
+		by[x.key] = x
+	_ok(states.size() == CalibrationPanel.SECTIONS.size() and by.link.state == "todo" and by.z.state == "na"
+		and by.claw.state == "todo" and cp._next.text.contains("1. つながりとモーター")
+		and (cp._summary["z"] as Button).text.begins_with("－ 2.") and (cp._cards["z"].badge as Label).text == "使えない",
+		"calibration summary: without a backend, connect first; the backend's sections say they need it", cp._next.text)
+	var open0 := RobotState.arm_open_deg
+	var closed0 := RobotState.arm_closed_deg
+	RobotState.arm_open_deg = 40.0
+	RobotState.arm_closed_deg = 5.0
+	cp.refresh()
+	var claw_done: bool = (cp._summary["claw"] as Button).text.begins_with("✓ 3.") and (cp._cards["claw"].badge as Label).text == "済"
+	RobotState.arm_open_deg = open0
+	RobotState.arm_closed_deg = closed0
+	_ok(claw_done, "calibration summary: a recorded claw turns its row and badge to done")
+	var all_ok := []
+	for x in CalibrationPanel.SECTIONS:
+		all_ok.append({"key": x[0], "title": x[1], "state": "ok", "text": ""})
+	var waiting := all_ok.duplicate(true)
+	waiting[5].state = "wait"
+	waiting[5].text = "10cm を試して「確かめた」"
+	_ok(CalibrationPanel.next_text(all_ok).begins_with("すべて済み")
+		and CalibrationPanel.next_text(waiting).contains("6. 勉強モードの撮影の高さ: 10cm を試して"),
+		"calibration summary: the next thing to do is the first section not done")
+	_ok(CalibrationPanel.short_detail("2.1.325 (Claude Code)（/Users/x/.vscode/claude）") == "2.1.325 (Claude Code)"
+		and CalibrationPanel.short_detail("VOICEVOX 0.26.0（http://127.0.0.1:50021）") == "VOICEVOX 0.26.0"
+		and CalibrationPanel.short_detail("つながらない") == "つながらない",
+		"calibration summary: the service lines leave out file paths")
+	remove_child(game)
+	game.free()
 
 func _test_calibration_tab(rs: Node) -> void:
 	# #114: at start the 校正 tab opens over the title (the backend's checks come when it connects)
