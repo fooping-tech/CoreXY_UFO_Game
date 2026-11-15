@@ -34,6 +34,11 @@ var _services_box: VBoxContainer  # one coloured line per check
 var _services_shown := ""
 var _services_asking := false
 var _asked := false  # this opening's requests went out (the backend may connect later)
+## #124: the backend's word on the robot's serial link (list_ports' "robot"), asked again
+## every LINK_ASK_MS while the real robot is not connected.
+var link_info: Dictionary = {}
+const LINK_ASK_MS := 5000
+var _link_asked_ms := -100000
 ## #110: the study mode's capture heights
 var height_status: Dictionary = {}
 var _height: Label
@@ -245,15 +250,10 @@ func section_states() -> Array[Dictionary]:
 			continue
 		match key:
 			"link":
-				if RobotState.source != "websocket":
-					text = "バックエンドなし（./start.sh で起動する）"
-				elif not ready:
-					text = "バックエンドにつながっていない"
-				elif not RobotState.motors_enabled:
-					text = "モーターが無効:「モーター有効」を押す"
-				else:
-					st = "ok"
-					text = "実機" if str(main.ws.server_robot) == "real" else "仮想クレーン"
+				var ls := link_state(RobotState.source, ready, RobotState.connected, RobotState.motors_enabled,
+					str(main.ws.server_robot) if main != null and main.get("ws") != null else "", link_info)
+				st = ls.state
+				text = ls.text
 			"z":
 				var ref: bool = RobotState.z_top_set or RobotState.z_reference_set
 				if RobotState.z_calibrated and ref:
@@ -540,6 +540,50 @@ func _button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
 	parent.add_child(b)
 	return b
 
+## The first section's row in the summary (#124: a real robot that is not connected is a
+## problem of the link, never "done").
+static func link_state(source: String, ready: bool, connected: bool, motors: bool, server_robot: String,
+		info: Dictionary) -> Dictionary:
+	if source != "websocket":
+		return {"state": "todo", "text": "バックエンドなし（./start.sh で起動する）"}
+	if not ready:
+		return {"state": "todo", "text": "バックエンドにつながっていない"}
+	if not connected:
+		return {"state": "todo", "text": link_problem_text(info, true)}
+	if not motors:
+		return {"state": "todo", "text": "モーターが無効:「モーター有効」を押す"}
+	return {"state": "ok", "text": "実機" if server_robot == "real" else "仮想クレーン"}
+
+## Why the robot is not connected, in words (#124), from the backend's list_ports answer
+## (its "robot"). short: the summary's one line; otherwise with what to do about it.
+static func link_problem_text(info: Dictionary, short := false) -> String:
+	var problem := str(info.get("problem", ""))
+	var reg: Array = info.registered if info.get("registered") is Array else []
+	var others: Array = info.others if info.get("others") is Array else []
+	var err := str(info.get("error", ""))
+	var again := "直したら ./start.sh を起動し直す（ポートは起動のときだけ開く）"
+	match problem:
+		"port_missing":
+			if short:
+				return "実機に未接続: 登録したポートが見つからない"
+			var s := "実機に未接続: 登録したシリアルポート（%s）が見つからない。" % "、".join(reg)
+			if others.is_empty():
+				s += "USB ケーブルと基板の電源を確かめる。"
+			else:
+				s += "いま見えているポート: %s。それがロボットの基板（Core2）なら、「設定」タブの「シリアルポート 2 台目」に登録する（周辺機器のハブのポートは登録しない）。" % "、".join(others)
+			return s + again
+		"no_port":
+			if short:
+				return "実機に未接続: シリアルポートが見つからない"
+			return "実機に未接続: シリアルポートが 1 つも見つからない。USB ケーブルと基板の電源を確かめる。" + again
+		"open_failed":
+			if short:
+				return "実機に未接続: ポートを開けない・返事がない"
+			return "実機に未接続: ポート %s はあるが、つながらない%s。ほかのプログラム（シリアルモニターなど）が使っていないか、基板の電源を確かめる。%s" % [
+				str(info.get("port", "")), ("（%s）" % err) if err != "" else "", again]
+	return "実機に未接続（シリアルを確かめています…）" if short else \
+		"実機に未接続（バックエンドがシリアルを確かめています…）"
+
 func _ws_button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
 	var b := _button(parent, text, cb, kind)
 	_ws_buttons.append(b)
@@ -559,6 +603,10 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 				services = services.filter(func(r): return r is Dictionary and r.get("name") != "ask") + asked
 		elif not ok:
 			services = [{"name": "backend", "label": "バックエンド", "status": "ng", "detail": str(data.get("reason", ""))}]
+		return
+	if cmd == "list_ports":  # #124: asked while the robot is not connected: no message
+		if ok and data.get("robot") is Dictionary:
+			link_info = data.robot
 		return
 	if cmd == "study_height_status":  # asked when the tab opens: no message
 		if ok:
@@ -673,6 +721,12 @@ func refresh() -> void:
 		b.disabled = not ready
 	if ready and not _asked and is_visible_in_tree():
 		_ask_backend()
+	if RobotState.connected or not ready:
+		link_info = {}
+		_link_asked_ms = -100000
+	elif is_visible_in_tree() and Time.get_ticks_msec() - _link_asked_ms >= LINK_ASK_MS:
+		_link_asked_ms = Time.get_ticks_msec()
+		main.ws.send_command("list_ports")  # read only: the ports and why the robot's is not open
 	_services.text = services_text(services, _services_asking)
 	if _services.text != _services_shown:  # one line per check, coloured by its own result
 		_services_shown = _services.text
@@ -692,13 +746,16 @@ func refresh() -> void:
 		_link.text = "ゲーム内の仮想クレーン（バックエンドなし）: 爪だけ試せる。Z・宿題の位置・カメラの校正には ./start.sh で起動する"
 	elif not ready:
 		_link.text = "バックエンドにつながっていない"
+	elif not RobotState.connected:
+		_link.text = link_problem_text(link_info)
 	else:
 		var what := "実機" if str(main.ws.server_robot) == "real" else "仮想クレーン（バックエンドの Mock）"
 		_link.text = "%s　モーター: %s　原点: %s　状態: %s%s" % [what,
 			"有効" if RobotState.motors_enabled else "無効（動かすには「モーター有効」）",
 			"済" if RobotState.homed else "まだ", RobotState.machine_state,
 			("　" + RobotState.robot_error) if RobotState.robot_error != "" else ""]
-	_link.add_theme_color_override("font_color", GOOD if ready and RobotState.motors_enabled else YELLOW)
+	_link.add_theme_color_override("font_color", BAD if ready and not RobotState.connected
+		else (GOOD if ready and RobotState.motors_enabled else YELLOW))
 	_z.text = "上: %s　下: %s　換算: %s" % ["記録済" if RobotState.z_top_set or RobotState.z_reference_set else "まだ",
 		"記録済" if RobotState.z_bottom_set else "まだ",
 		"測った値（calibration.json）" if RobotState.z_calibrated else "設定ファイルの仮の値（まだ測っていない）"]
