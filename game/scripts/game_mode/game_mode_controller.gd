@@ -71,6 +71,14 @@ class Lane:
 	## the wait for RELEASE_DONE ran out: the status decides (COMPLETE = the event was lost)
 	var release_timed_out := false
 
+const PIXEL_SIZE := Vector2i(640, 360)
+## one dot of the pixel canvas on the 1280 x 720 screen
+const DOT_PX := 2.0
+const BOUNCE_PX := 8.0
+const BOUNCE_MAX_PX := 16.0
+## the new kinds of target borrow a sound
+const SOUND_OF := {"pop": "bumper", "target": "switch", "sling": "pin", "gem": "switch", "alien": "star", "warp": "absorb"}
+
 var main: Node
 var devices: GameModeDevices
 var mock_hub: MockDialHub
@@ -80,6 +88,15 @@ var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
 var field: PinballField
+var backdrop: GameModeBackdrop
+## the low-resolution canvas (640 x 360, one dot = two screen pixels like the UFO's sprite at
+## 2x): the background, the field's picture and the effects are drawn in it, `screen` shows it
+var pixel_view: SubViewport
+var screen: TextureRect
+var field_art: PinballFieldArt
+## the arm camera as a round aiming scope in the right column (hidden without a camera)
+var scope: ArmScope
+var scope_enabled := true
 var fx: GameModeVFX
 var sounds: GameModeSounds
 var hud: GameModeHud
@@ -114,6 +131,10 @@ var closing_wait_s := 1.5
 var lights := true
 ## the Dials' own transfer LEDs (SET_DIAL_EFFECT / SET_DIAL_COLOR, firmware 0.3)
 var dial_leds := true
+## "high" / "low": how much the background does (config game_mode.visual_quality)
+var visual_quality := "high"
+## false: no bounce, no trails, no breathing (config game_mode.effects; the game is the same)
+var effects := true
 var trace_to_file := true
 var devices_wanted := "auto"
 ## --game-mode-demo: with mock Dials, capsules come by themselves (a rehearsal with no hands)
@@ -128,6 +149,9 @@ var _seen: Dictionary = {}  # "session|source|event_id" -> true
 var _hurry_done := false
 var _warned_at := 99
 var _counted := 99
+var _combo_seen := 0
+var _bounce := 0.0
+var _bounce_t := 0.0
 
 func setup(m: Node) -> void:
 	main = m
@@ -138,12 +162,29 @@ func setup(m: Node) -> void:
 	layer.layer = LAYER
 	layer.visible = false
 	add_child(layer)
-	var bg := ColorRect.new()
-	bg.color = Color("050818")
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.z_index = -10  # under the "back" effect sheets (z -1) too
-	layer.add_child(bg)
+	pixel_view = SubViewport.new()
+	pixel_view.name = "PixelView"
+	pixel_view.size = PIXEL_SIZE
+	pixel_view.disable_3d = true
+	pixel_view.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	add_child(pixel_view)
+	# everything inside keeps the 1280 x 720 design coordinates, drawn at half size
+	pixel_view.canvas_transform = Transform2D(0.0, Vector2.ONE / DOT_PX, 0.0, Vector2.ZERO)
+	screen = TextureRect.new()
+	screen.name = "Screen"
+	screen.texture = pixel_view.get_texture()
+	screen.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	screen.stretch_mode = TextureRect.STRETCH_SCALE
+	screen.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	screen.size = Vector2(PIXEL_SIZE) * DOT_PX
+	screen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(screen)
+	backdrop = GameModeBackdrop.new()
+	backdrop.name = "Backdrop"
+	backdrop.quality = visual_quality
+	pixel_view.add_child(backdrop)
+	# the field is the physics (in the game's own world); its picture is in the pixel canvas
 	field = PinballField.new()
 	field.name = "PinballField"
 	field.configure(cfg.get("field", {}) if cfg.get("field") is Dictionary else {})
@@ -151,9 +192,15 @@ func setup(m: Node) -> void:
 	field.target_hit.connect(_on_target_hit)
 	field.capsule_exited.connect(_on_capsule_exited)
 	field.process_mode = Node.PROCESS_MODE_DISABLED
+	field_art = PinballFieldArt.new()
+	field_art.name = "PinballFieldArt"
+	field_art.field = field
+	field_art.points = score.table
+	field_art.effects = effects
+	pixel_view.add_child(field_art)
 	fx = GameModeVFX.new()
 	fx.name = "GameModeVFX"
-	layer.add_child(fx)
+	pixel_view.add_child(fx)
 	sounds = GameModeSounds.new()
 	sounds.name = "GameModeSounds"
 	add_child(sounds)
@@ -161,6 +208,13 @@ func setup(m: Node) -> void:
 	hud.name = "GameModeHud"
 	layer.add_child(hud)
 	hud.setup(self)
+	scope = ArmScope.new()
+	scope.name = "ArmScope"
+	layer.add_child(scope)
+	scope.setup(main.cameras if main != null and main.get("cameras") != null else null)
+	var sc: Dictionary = cfg.get("scope", {}) if cfg.get("scope") is Dictionary else {}
+	scope_enabled = bool(sc.get("enabled", true))
+	scope.zoom = clampf(float(sc.get("zoom", 1.0)), 1.0, 4.0)
 	mock_hub = MockDialHub.new()
 	mock_hub.name = "MockDialHub"
 	add_child(mock_hub)
@@ -183,6 +237,9 @@ func setup(m: Node) -> void:
 		var c = d.get("color")
 		l.color = Color8(int(c[0]), int(c[1]), int(c[2])) if c is Array and c.size() == 3 else fx.colors[side]
 		fx.colors[side] = l.color
+		backdrop.side_colors[side] = l.color
+		backdrop.ports[side] = fx.port(side)
+		field.wall_colors[0 if side == "left" else 1] = l.color
 		lanes[side] = l
 
 func _configure(cfg: Dictionary) -> void:
@@ -193,6 +250,8 @@ func _configure(cfg: Dictionary) -> void:
 	settle_max_s = float(cfg.get("settle_max_s", settle_max_s))
 	lights = bool(cfg.get("lights", lights))
 	dial_leds = bool(cfg.get("dial_leds", dial_leds))
+	visual_quality = str(cfg.get("visual_quality", visual_quality))
+	effects = bool(cfg.get("effects", effects))
 	trace_to_file = bool(cfg.get("trace", trace_to_file))
 	devices_wanted = str(cfg.get("devices", devices_wanted))
 	var t: Dictionary = cfg.get("timing", {}) if cfg.get("timing") is Dictionary else {}
@@ -231,6 +290,7 @@ func open() -> void:
 	_active = true
 	use_devices(devices_wanted)
 	layer.visible = true
+	pixel_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	field.process_mode = Node.PROCESS_MODE_INHERIT
 	_reset_round()
 	_set_phase("IDLE")
@@ -250,6 +310,9 @@ func close() -> void:
 	trace.close()
 	layer.visible = false
 	layer.offset = Vector2.ZERO
+	screen.position = Vector2.ZERO
+	scope.step(0.0, false)
+	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	field.process_mode = Node.PROCESS_MODE_DISABLED
 	phase = "IDLE"
 
@@ -308,18 +371,67 @@ func _physics_process(dt: float) -> void:
 	if _active:
 		tick(dt)
 
-func _process(_dt: float) -> void:
-	if _active and main != null and main.get("shake") != null:
+func _process(dt: float) -> void:
+	if not _active:
+		return
+	if main != null and main.get("shake") != null:
 		layer.offset = main.shake.offset  # the picture shakes; the physics does not
+	scope.demo = demo  # the rehearsal has its own made-up picture: no camera needed
+	scope.step(dt, scope_enabled and phase != "IDLE")
+	backdrop.planet_visible = not scope.visible
+	if main != null and main.get("gesture_hud") != null:
+		backdrop.moon_visible = not (main.gesture_hud as Control).visible
+	# the bounce: the picture drops a few dots and springs back (whole dots, so it stays crisp)
+	_bounce_t += dt
+	screen.position = Vector2(0, snappedf(bounce_offset(), DOT_PX))
+
+## The picture bounces (a score). Only the picture: the physics, the clock and the devices
+## never wait for it. Stronger calls add up to a limit.
+func bounce(strength: float) -> void:
+	if not effects or strength <= 0.0:
+		return
+	_bounce = minf(absf(bounce_offset()) + strength * BOUNCE_PX, BOUNCE_MAX_PX)
+	_bounce_t = 0.0
+
+## How far down the picture is now (px): a decaying spring.
+func bounce_offset() -> float:
+	var y := _bounce * exp(-9.0 * _bounce_t) * cos(_bounce_t * 26.0)
+	return y if absf(_bounce) * exp(-9.0 * _bounce_t) >= 1.0 else 0.0
+
+## 0..3: which step of the combo table the chain has reached now.
+func combo_level() -> int:
+	var m := score.multiplier(clock)
+	var lvl := 0
+	for i in score.combo_steps.size():
+		if m >= float(score.combo_steps[i][1]):
+			lvl = i + 1
+	return mini(lvl, 3)
+
+## The picture follows the round: the sky by the time left, the stars and lamps by the combo.
+func _present_state() -> void:
+	var playing := phase == "PLAYING"
+	var lvl := combo_level() if playing else 0
+	field_art.combo_level = lvl
+	field_art.effects = effects
+	fx.effects = effects
+	backdrop.energy = lvl / 3.0
+	backdrop.urgency = (2 if time_left <= warning_s else (1 if time_left <= hurry_s else 0)) if playing else 0
+	backdrop.time_k = time_left / maxf(duration_s, 1.0) if playing else 1.0
+	if lvl > _combo_seen:  # the combo climbed a step
+		backdrop.pulse(backdrop.light_color(), 0.3 + 0.2 * lvl)
+		fx.banner("COMBO x%s" % str(score.multiplier(clock)), lvl)
+	_combo_seen = lvl
 
 ## One step of the game mode's time (60 Hz from the physics tick; the tests call it).
 func tick(dt: float) -> void:
 	devices.tick(dt)
 	_expire_commands(dt)
 	fx.advance(dt)
+	backdrop.advance(dt)
 	if phase != "STOPPED":
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
+	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
 	match phase:
 		"COUNTDOWN":
 			clock += dt
@@ -353,6 +465,7 @@ func tick(dt: float) -> void:
 			_tick_lane(lanes[side], dt)
 	field.switch_lit = score.switch_lit
 	field.jackpot_on = score.jackpot_armed(clock)
+	_present_state()
 
 func _go() -> void:
 	_set_phase("PLAYING")
@@ -379,6 +492,7 @@ func _clock_cues() -> void:
 		_hurry_done = true
 		sounds.play("hurry")
 		sounds.set_bgm(true, true)
+		backdrop.pulse(Color("ff4fd8"), 0.8)
 		_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200})
 		_trace("hurry", null, {})
 	var s := int(ceil(time_left))
@@ -505,6 +619,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 		return
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
+	backdrop.side_pulse(l.side)
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
@@ -545,17 +660,29 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 	l.t = release_sync_s
 	_set_lane(l, "RETURNING")
 	fx.play("capsule_return", l.side, pos, return_s)
+	backdrop.side_pulse(l.side)
 	sounds.play("return")
 	_led(l, "RETURN_FLOW")
 
 func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 	var kind := str(r.kind)
-	var big: bool = kind in ["jackpot", "goal_center", "star"] or str(r.bonus) != ""
+	var big: bool = kind in ["jackpot", "goal_center", "star", "alien"] or str(r.bonus) != ""
 	var text := "+%d" % int(r.points)
 	if float(r.mult) > 1.0:
 		text += " x%s" % str(r.mult)
-	fx.popup(text, pos, Color("ffe03c") if big else Color.WHITE, big)
-	var snd := "goal" if kind.begins_with("goal") else kind
+	var lvl := combo_level()
+	fx.popup(text, pos, Color("ffe03c") if big else (l.color.lerp(Color.WHITE, 0.6) if l != null else Color.WHITE), big, lvl)
+	var jolt := 0.0  # how hard the picture bounces: nothing for a pin, most for a jackpot
+	if kind == "jackpot" or str(r.bonus) != "":
+		jolt = 1.2
+	elif big:
+		jolt = 0.8
+	elif kind.begins_with("goal"):
+		jolt = 0.5
+	elif kind != "pin":
+		jolt = 0.3
+	bounce(jolt * (1.0 + 0.25 * lvl))
+	var snd: String = "goal" if kind.begins_with("goal") else SOUND_OF.get(kind, kind)
 	if str(r.bonus) == "switch_bonus":
 		snd = "bonus"
 	sounds.play(snd)
@@ -569,6 +696,7 @@ func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 		if k > 0.0:
 			main.shake.add_trauma(k)
 	if kind == "jackpot" or str(r.bonus) != "":
+		backdrop.pulse(Color("ffe03c"), 1.0)
 		_light("TRIGGER_EFFECT", {"effect": "SCORE", "duration_ms": 1200, "intensity": 255})
 	scored.emit(int(r.points), kind, pos)
 

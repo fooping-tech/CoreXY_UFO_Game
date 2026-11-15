@@ -11,11 +11,12 @@ extends RefCounted
 ## The numbers are tuning values (config game_mode.score), not final.
 
 const DEFAULT_TABLE := {"pin": 10, "bumper": 100, "spinner": 200, "star": 500, "switch": 50, "switch_bonus": 1500,
+	"pop": 50, "target": 150, "sling": 30, "gem": 100, "alien": 400, "warp": 300,
 	"goal_left": 100, "goal_right": 100, "goal_center": 1000, "jackpot": 3000}
 ## chain length -> multiplier (the highest step reached counts)
 const DEFAULT_COMBO := [[2, 1.5], [4, 2.0], [6, 3.0]]
 ## Kinds that build the chain (a pin is multiplied but never builds it: there are too many).
-const CHAIN_KINDS := ["bumper", "spinner", "star", "switch"]
+const CHAIN_KINDS := ["bumper", "spinner", "star", "switch", "pop", "target", "gem", "alien", "warp"]
 const SWITCHES := 3
 
 var table: Dictionary = DEFAULT_TABLE.duplicate()
@@ -75,6 +76,10 @@ func jackpot_armed(now: float) -> bool:
 ## The chain as shown (0 once the window ran out).
 func chain_now(now: float) -> int:
 	return chain if now - _last_chain_t <= combo_window_s else 0
+
+## 1 -> 0: how much of the combo window is left (the HUD's bar).
+func chain_left_k(now: float) -> float:
+	return clampf(1.0 - (now - _last_chain_t) / maxf(combo_window_s, 0.01), 0.0, 1.0) if chain_now(now) > 0 else 0.0
 
 ## A capsule touched a target. `target` names the one thing hit ("pin_12", "bumper_1",
 ## "switch_0"...). Returns {points, base, mult, chain, kind, bonus: "" / "switch_bonus"};

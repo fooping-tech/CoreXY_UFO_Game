@@ -34,6 +34,9 @@ const UFO_SCALE := 2.0
 ## the sheets are baked in cyan: this is what a full-bright pixel of them looks like
 const SHEET_REF := Color(0.31, 0.82, 0.93)
 const LOG_MAX := 64
+const POPUP_S := 1.1
+const BANNER_S := 1.0
+const BANNER_COLORS := [Color("3ff0ff"), Color("3ff0ff"), Color("ffe03c"), Color("ff4fd8")]
 ## the light to the Dial during a release ends with the port; this only bounds it
 const RELEASE_STREAM_MAX_S := 12.0
 
@@ -50,6 +53,9 @@ var _port_want := {"left": 0.0, "right": 0.0}
 var _flights: Array[Dictionary] = []
 var _streams: Array[Dictionary] = []
 var _popups: Array[Dictionary] = []
+var _banner := {"text": "", "t": 9.0, "level": 0}
+## false: the pop-ups do not jump or blink (a debug switch)
+var effects := true
 var _marks: Array[Dictionary] = []
 var _ufo_tex: Texture2D
 var _top: Node2D
@@ -71,6 +77,7 @@ func reset() -> void:
 	_flights.clear()
 	_streams.clear()
 	_popups.clear()
+	_banner.t = 9.0
 	_marks.clear()
 	played.clear()
 	_port_fx = {"left": null, "right": null}
@@ -126,18 +133,37 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 
 func hit(kind: String, at: Vector2, color: Color) -> void:
 	match kind:
-		"bumper":
+		"bumper", "pop", "target", "gem":
 			_spawn("hit_bumper", at, color)
-		"star":
+		"star", "alien", "warp":
 			_spawn("hit_star", at, Color.WHITE)
 		"switch_bonus", "jackpot":
 			_spawn("bonus", Vector2(640, 300), Color.WHITE)
 			_spawn("hit_star", at, Color.WHITE)
 
-func popup(text: String, at: Vector2, color: Color, big := false) -> void:
-	_popups.append({"text": text, "pos": at, "t": 0.0, "color": color, "big": big})
+## The points just scored, shown for a moment where they were scored. `level` (the combo,
+## 0..3) makes it bigger. Words PixelText cannot draw are not shown.
+func popup(text: String, at: Vector2, color: Color, big := false, level := 0) -> void:
+	if not PixelText.supports(text):
+		return
+	_popups.append({"text": text, "pos": at, "t": 0.0, "color": color, "big": big, "level": level})
 	if _popups.size() > 24:
 		_popups.remove_at(0)
+
+func popups() -> int:
+	return _popups.size()
+
+## The dot size of a pop-up: small, bigger for the big scores and as the combo climbs.
+static func popup_scale(big: bool, level: int) -> float:
+	return 2.0 * clampi((2 if big else 1) + (1 if level >= 2 else 0), 1, 3)
+
+## A line across the middle for a moment (the combo climbed a step).
+func banner(text: String, level := 0) -> void:
+	if PixelText.supports(text):
+		_banner = {"text": text, "t": 0.0, "level": level}
+
+func banner_text() -> String:
+	return _banner.text if _banner.t < BANNER_S else ""
 
 func flights() -> int:
 	return _flights.size()
@@ -222,8 +248,9 @@ func advance(dt: float) -> void:
 			_streams.erase(s)
 	for p in _popups.duplicate():
 		p.t += dt
-		if p.t >= 1.0:
+		if p.t >= POPUP_S:
 			_popups.erase(p)
+	_banner.t += dt
 
 func _process(_dt: float) -> void:
 	queue_redraw()
@@ -248,8 +275,17 @@ func _draw() -> void:
 		var p: Vector2 = PORTS[side]
 		var col: Color = colors[side]
 		var o: float = _port_open[side]
-		draw_circle(p, 30.0, Color(0.02, 0.03, 0.1, 0.9))
-		draw_arc(p, 30.0, 0, TAU, 28, Color(col.r, col.g, col.b, 0.35), 4.0)
+		# the socket: a dark well with a neon rim and tick marks, named after its Dial (#141)
+		draw_circle(p, 37.0, Color(col.r, col.g, col.b, 0.08 + 0.1 * o))
+		draw_circle(p, 34.0, Color("050818"))
+		draw_arc(p, 31.0, 0, TAU, 32, Color(col.r, col.g, col.b, 0.55 + 0.45 * o), 4.0)
+		draw_arc(p, 28.0, PI * 1.1, PI * 1.7, 10, Color(1, 1, 1, 0.5), 2.0)
+		draw_circle(p, 25.0, Color(0.02, 0.03, 0.12, 0.95))
+		for i in 8:
+			var ta := TAU * i / 8.0 + _t * 0.3
+			draw_rect(Rect2((p + Vector2(cos(ta), sin(ta)) * 31.0 - Vector2(2, 2)).snapped(Vector2(1, 1)), Vector2(4, 4)),
+				Color.WHITE if (i + int(_t * 4.0)) % 8 == 0 else Color(col.r, col.g, col.b, 0.9))
+		PixelText.draw_centered(self, "DIAL 1" if side == "left" else "DIAL 2", p + Vector2(0, 52), 2.0, col, Color("050818"))
 		if o > 0.01:
 			draw_circle(p, 28.0 * o, Color(col.r, col.g, col.b, 0.25))  # a glow under the port's sheet
 	# the drop marks: a short beam where the capsule appears
@@ -275,18 +311,28 @@ func _draw_top() -> void:
 	if ufo_visible and _ufo_tex != null:
 		var frame := int(_t * 3.0) % 4
 		var size := Vector2(64, 64) * UFO_SCALE
-		var bob := Vector2(0, sin(_t * 2.4) * 3.0)
-		top.draw_texture_rect_region(_ufo_tex, Rect2(ufo_pos - size * 0.5 + bob, size), Rect2(64 * frame, 0, 64, 64))
-	# score pop-ups
-	var font := ThemeDB.fallback_font
+		var bob := Vector2(0, sin(_t * 2.4) * 4.0)
+		# on the dot grid, so the sprite's 64 x 64 dots are the canvas's dots one to one
+		top.draw_texture_rect_region(_ufo_tex, Rect2((ufo_pos - size * 0.5 + bob).snapped(Vector2(2, 2)), size), Rect2(64 * frame, 0, 64, 64))
+	# score pop-ups: pixel numbers that jump in, rise and blink out
 	for p in _popups:
-		var size_px := 34 if p.big else 20
-		var col: Color = p.color
-		col.a = clampf(2.0 - p.t * 2.0, 0.0, 1.0)
-		var pos: Vector2 = p.pos + Vector2(0, -44.0 * p.t)
-		var w := font.get_string_size(p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px).x
-		top.draw_string_outline(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, 6, Color(0.04, 0.06, 0.18, col.a))
-		top.draw_string(font, pos - Vector2(w * 0.5, 0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, col)
+		var k: float = p.t / POPUP_S
+		if effects and k > 0.75 and int(p.t * 20.0) % 2 == 0:
+			continue
+		var sc := popup_scale(p.big, p.level) + (2.0 if effects and p.t < 0.08 else 0.0)
+		var rise := 56.0 * (1.0 - (1.0 - k) * (1.0 - k))
+		var pos: Vector2 = (p.pos + Vector2(0, -24.0 - rise)).snapped(Vector2(2, 2))
+		pos.x = clampf(pos.x, 150.0 + PixelText.width(p.text, sc) * 0.5, 1130.0 - PixelText.width(p.text, sc) * 0.5)
+		var col: Color = p.color if not (p.big and int(p.t * 12.0) % 2 == 0) else Color.WHITE
+		PixelText.draw_centered(top, p.text, pos, sc, col, Color("050818"))
+	if _banner.t < BANNER_S:
+		var bk: float = _banner.t / BANNER_S
+		if not (bk > 0.7 and int(_banner.t * 20.0) % 2 == 0):
+			var bs := 4.0 + (2.0 if _banner.level >= 3 else 0.0) + (2.0 if _banner.t < 0.08 else 0.0)
+			var bc: Color = BANNER_COLORS[clampi(_banner.level, 0, 3)]
+			var bp := Vector2(640, 250.0 - 20.0 * bk).snapped(Vector2(2, 2))
+			PixelText.draw_centered(top, _banner.text, bp + Vector2(4, 4), bs, Color(0.02, 0.03, 0.1, 0.8))
+			PixelText.draw_centered(top, _banner.text, bp, bs, bc if int(_banner.t * 10.0) % 2 == 0 else Color.WHITE, Color("050818"))
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)

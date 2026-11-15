@@ -301,7 +301,7 @@ static func title_on_start(args: PackedStringArray, enabled: bool, headless: boo
 		return true
 	if not enabled or headless or study_autostart:
 		return false
-	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode"]:
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode", "--game-mode-title"]:
 		if args.has(a):
 			return false
 	return true
@@ -477,6 +477,10 @@ func _apply_cmdline() -> void:
 				if game_mode != null:
 					_on_title_chosen("score")
 					game_mode.call_deferred("start")
+			"--game-mode-title":
+				# the score game's own title screen (waiting for Enter): for captures
+				if game_mode != null:
+					_on_title_chosen("score")
 			"--game-mode-devices":
 				if game_mode != null and i + 1 < args.size():
 					game_mode.devices_wanted = args[i + 1]
@@ -1395,6 +1399,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 ## UFO cues and the HUD (render frame).
 func _update_gesture_presentation(dt: float) -> void:
 	gesture_hud.gate = gesture_gate_reason
+	gesture_hud.column = game_mode != null and game_mode.active()  # beside the pinball field, not over it
 	gesture_hud.place(_play_w, get_viewport_rect().size.y)
 	gesture_hud.step(dt)
 	var face := ""
