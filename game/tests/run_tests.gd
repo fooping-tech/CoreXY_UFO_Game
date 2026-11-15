@@ -78,6 +78,7 @@ func _ready() -> void:
 	_test_game_mode_backend_hub(rs)
 	_test_game_mode_visuals(rs)
 	_test_game_mode_juice(rs)
+	_test_game_mode_scope(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -3603,6 +3604,66 @@ func _test_game_mode_juice(rs: Node) -> void:
 	ctl.close()
 	_ok(ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_DISABLED and ctl.screen.position == Vector2.ZERO,
 		"game mode pixels: the canvas stops drawing when the score game is closed")
+	_gm_free(game, rs)
+
+## A grey test picture for the optical flow: blobs on a w x h image, moved by `shift`.
+func _flow_image(w: int, h: int, shift: Vector2i) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(w * h)
+	for y in h:
+		for x in w:
+			var sx := x - shift.x
+			var sy := y - shift.y
+			out[y * w + x] = int(128.0 + 60.0 * sin(sx * 0.9) * cos(sy * 0.7) + 50.0 * sin((sx + sy) * 0.35))
+	return out
+
+## #141: the arm camera's scope in the right column and its optical flow.
+func _test_game_mode_scope(rs: Node) -> void:
+	var of := OpticalFlow.new()
+	var base := _flow_image(48, 48, Vector2i.ZERO)
+	var moved := of.estimate(base, _flow_image(48, 48, Vector2i(2, -1)), 48, 48)
+	var still := of.estimate(base, base, 48, 48)
+	var flat := PackedByteArray()
+	flat.resize(48 * 48)
+	flat.fill(90)
+	var blank := of.estimate(flat, flat, 48, 48)
+	_ok(moved.size() == of.cols * of.rows and OpticalFlow.tracked(moved) == moved.size() and OpticalFlow.mean(moved) == Vector2(2, -1)
+		and OpticalFlow.mean(still) == Vector2.ZERO and OpticalFlow.tracked(still) == still.size()
+		and OpticalFlow.tracked(blank) == 0 and OpticalFlow.mean(blank) == Vector2.ZERO and of.estimate(base, flat.slice(0, 10), 48, 48).is_empty(),
+		"optical flow: a picture moved by (2, -1) px gives that vector in every cell, a still one gives none, a blank one tracks nothing, wrong sizes give nothing",
+		"%s %d" % [OpticalFlow.mean(moved), OpticalFlow.tracked(moved)])
+	var game := _gm_game()
+	var ctl: GameModeController = _gm_playing(game)
+	var sc := ctl.scope
+	ctl._process(0.016)
+	var hidden: bool = not sc.visible and sc.source_role() == "" and sc.state() == "NO SIGNAL" and ctl.backdrop.planet_visible
+	ctl.demo = true  # the rehearsal's made-up picture stands in for the camera
+	ctl._process(0.016)
+	var shown: bool = sc.visible and sc.source_role() == "demo" and not ctl.backdrop.planet_visible and sc.state() == "SCAN"
+	sc.feed_frame(base, 48, 48)
+	for i in 4:
+		sc.feed_frame(_flow_image(48, 48, Vector2i(2 * (i + 1), 0)), 48, 48)
+	var moving := sc.state()
+	var mf := sc.mean_flow
+	var last := _flow_image(48, 48, Vector2i(8, 0))
+	for i in 8:
+		sc.feed_frame(last, 48, 48)
+	var locked := sc.state()
+	sc.flow_enabled = false
+	var off := sc.state()
+	sc.flow_enabled = true
+	var card := ArmScope.RECT
+	var field_rect := Rect2(PinballField.LEFT - 12.0, 0, PinballField.RIGHT - PinballField.LEFT + 24.0, 720)
+	var port := Rect2(GameModeVFX.PORTS["right"] - Vector2(40, 130), Vector2(80, 200))
+	_ok(hidden and shown and moving == "MOVE" and mf.x > 1.0 and absf(mf.y) < 0.2 and locked == "LOCK" and sc.mean_flow.length() < 0.1 and off == "SCAN"
+		and not card.intersects(field_rect) and not card.intersects(GameModeHud.TIME_RECT) and not card.intersects(port)
+		and card.end.x <= 1280.0 and sc.centre().x + ArmScope.RADIUS <= card.size.x and sc.demo_pan() == sc.demo_pan(),
+		"game mode scope: the arm camera is a round scope in the right column (hidden with no camera, the planet shows instead; the demo has its own picture); the flow says MOVE while the view moves and LOCK when it holds still; it covers neither the field, the clock nor the Dial's port",
+		"%s %s %s %s %s %s" % [hidden, shown, moving, mf, locked, off])
+	ctl.close()
+	_ok(not sc.visible and sc.cells.is_empty() and sc._sampler.render_target_update_mode == SubViewport.UPDATE_DISABLED
+		and sc._demo_view.render_target_update_mode == SubViewport.UPDATE_DISABLED,
+		"game mode scope: closed with the score game (no sampling, nothing drawn, the flow forgotten)")
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's

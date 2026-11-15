@@ -94,6 +94,9 @@ var backdrop: GameModeBackdrop
 var pixel_view: SubViewport
 var screen: TextureRect
 var field_art: PinballFieldArt
+## the arm camera as a round aiming scope in the right column (hidden without a camera)
+var scope: ArmScope
+var scope_enabled := true
 var fx: GameModeVFX
 var sounds: GameModeSounds
 var hud: GameModeHud
@@ -205,6 +208,14 @@ func setup(m: Node) -> void:
 	hud.name = "GameModeHud"
 	layer.add_child(hud)
 	hud.setup(self)
+	scope = ArmScope.new()
+	scope.name = "ArmScope"
+	layer.add_child(scope)
+	scope.setup(main.cameras if main != null and main.get("cameras") != null else null)
+	var sc: Dictionary = cfg.get("scope", {}) if cfg.get("scope") is Dictionary else {}
+	scope_enabled = bool(sc.get("enabled", true))
+	scope.flow_enabled = bool(sc.get("optical_flow", true))
+	scope.zoom = clampf(float(sc.get("zoom", 1.0)), 1.0, 4.0)
 	mock_hub = MockDialHub.new()
 	mock_hub.name = "MockDialHub"
 	add_child(mock_hub)
@@ -301,6 +312,8 @@ func close() -> void:
 	layer.visible = false
 	layer.offset = Vector2.ZERO
 	screen.position = Vector2.ZERO
+	scope.step(0.0, false)
+	scope.reset()
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	field.process_mode = Node.PROCESS_MODE_DISABLED
 	phase = "IDLE"
@@ -365,6 +378,11 @@ func _process(dt: float) -> void:
 		return
 	if main != null and main.get("shake") != null:
 		layer.offset = main.shake.offset  # the picture shakes; the physics does not
+	scope.demo = demo  # the rehearsal has its own made-up picture: no camera needed
+	scope.step(dt, scope_enabled and phase != "IDLE")
+	backdrop.planet_visible = not scope.visible
+	if main != null and main.get("gesture_hud") != null:
+		backdrop.moon_visible = not (main.gesture_hud as Control).visible
 	# the bounce: the picture drops a few dots and springs back (whole dots, so it stays crisp)
 	_bounce_t += dt
 	screen.position = Vector2(0, snappedf(bounce_offset(), DOT_PX))

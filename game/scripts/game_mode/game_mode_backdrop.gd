@@ -38,6 +38,9 @@ const MAGENTA := Color("ff4fd8")
 const PURPLE := Color("8a5cff")
 
 var quality := "high"
+## false while a panel stands there (the arm camera's scope on the right, the hand panel on the left)
+var planet_visible := true
+var moon_visible := true
 var urgency := 0
 var time_k := 1.0
 var energy := 0.0
@@ -250,6 +253,12 @@ func _draw_far() -> void:
 		for step in 4:  # the column fades upward in steps
 			var y := SIZE.y - h * (step + 1) / 4.0
 			draw_rect(Rect2(snappedf(x - w * 0.5, 2.0), y, snappedf(w, 2.0), h / 4.0 + 1.0), Color(light.r, light.g, light.b, 0.035 * power * (4 - step) / 4.0))
+	if planet_visible:
+		_draw_planet(light)
+	if moon_visible:
+		_draw_moon()
+
+func _draw_planet(light: Color) -> void:
 	# the planet: bands, a shadow, a ring in front
 	var p := PLANET + Vector2(0, sin(_t * 0.4) * 4.0).snapped(Vector2(2, 2))
 	draw_circle(p, 46.0, Color(light.r, light.g, light.b, 0.08))
@@ -264,6 +273,8 @@ func _draw_far() -> void:
 	draw_arc(Vector2.ZERO, 62.0, 0.1, PI - 0.1, 24, Color("ffe03c"), 6.0)
 	draw_arc(Vector2.ZERO, 72.0, 0.1, PI - 0.1, 24, Color(1.0, 0.6, 0.85, 0.8), 4.0)
 	draw_set_transform(Vector2.ZERO)
+
+func _draw_moon() -> void:
 	# the moon: craters, a shadow
 	var m := MOON + Vector2(0, sin(_t * 0.3 + 1.0) * 4.0).snapped(Vector2(2, 2))
 	draw_circle(m, 30.0, Color("050818"))
