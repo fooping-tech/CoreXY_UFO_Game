@@ -214,7 +214,6 @@ func setup(m: Node) -> void:
 	scope.setup(main.cameras if main != null and main.get("cameras") != null else null)
 	var sc: Dictionary = cfg.get("scope", {}) if cfg.get("scope") is Dictionary else {}
 	scope_enabled = bool(sc.get("enabled", true))
-	scope.flow_enabled = bool(sc.get("optical_flow", true))
 	scope.zoom = clampf(float(sc.get("zoom", 1.0)), 1.0, 4.0)
 	mock_hub = MockDialHub.new()
 	mock_hub.name = "MockDialHub"
@@ -313,7 +312,6 @@ func close() -> void:
 	layer.offset = Vector2.ZERO
 	screen.position = Vector2.ZERO
 	scope.step(0.0, false)
-	scope.reset()
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	field.process_mode = Node.PROCESS_MODE_DISABLED
 	phase = "IDLE"
