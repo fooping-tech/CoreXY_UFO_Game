@@ -85,7 +85,7 @@ func _draw_marks() -> void:
 			i += 1
 			var at := r.position + Vector2(float(p.u), float(p.v)) * r.size
 			o.draw_circle(at, 4.0, Color(0.2, 1.0, 1.0, 0.9))
-			o.draw_string(ThemeDB.fallback_font, at + Vector2(5, -5), str(i), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.2, 1.0, 1.0))
+			o.draw_string(UiFonts.body(), at + Vector2(5, -5), str(i), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.2, 1.0, 1.0))
 	var aim = hw.arm_view_uv()
 	if aim is Vector2 and Rect2(Vector2.ZERO, Vector2.ONE).grow(0.05).has_point(aim):
 		var c2: Vector2 = r.position + aim * r.size

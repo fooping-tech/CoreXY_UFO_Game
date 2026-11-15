@@ -68,6 +68,7 @@ func _ready() -> void:
 	_test_calibration_tab(rs)
 	_test_calibration_summary()
 	_test_device_test_tab(rs)
+	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2834,3 +2835,25 @@ func _test_title_screen(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+
+## #134: the body font is the project's default, titles and big lines are in the dot font.
+func _test_fonts() -> void:
+	var body := UiFonts.body()
+	var title := UiFonts.title()
+	var files_ok := body is FontFile and title is FontFile and body != title \
+		and str(ProjectSettings.get_setting("gui/theme/custom_font", "")) == UiFonts.BODY_PATH
+	var big := StudyHud.label("UFOくん", 96)
+	var small := StudyHud.label("説明", 16)
+	var box := StudyHud.label("☐", 30)
+	var labels_ok := big.get_theme_font("font") == title and not small.has_theme_font_override("font") \
+		and not box.has_theme_font_override("font")
+	var glyphs_ok := true
+	for f in [body, title]:
+		for ch in "UFOくん勉強校正上げる下げる宿題スコア0123456789":
+			glyphs_ok = glyphs_ok and (f as Font).has_char(ch.unicode_at(0))
+	_ok(files_ok and labels_ok and glyphs_ok,
+		"fonts: M PLUS Rounded 1c for the body, DotGothic16 for titles and big lines, both with the game's kana and kanji",
+		str([files_ok, labels_ok, glyphs_ok]))
+	for l in [big, small, box]:
+		l.free()
