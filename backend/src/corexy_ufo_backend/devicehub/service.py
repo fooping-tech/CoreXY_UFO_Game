@@ -35,6 +35,9 @@ class DeviceHubConfig:
     enabled: bool = False
     port: str = "auto"  # "auto" (never the robot's ports), a port name, or "mock" (no hardware)
     system_id: int = 1  # which UFO system's hub (1 / 2): another system's hub is refused
+    # a JSON Lines file for UFO-DeviceHub's trace (every command, ACK and event; pc/trace.py), "" = none.
+    # It joins with the game's own trace by session / dial / cycle / command id (#138).
+    trace: str = ""
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "DeviceHubConfig":
@@ -44,7 +47,8 @@ class DeviceHubConfig:
         except (TypeError, ValueError):
             system_id = 1
         return cls(enabled=bool(d.get("enabled", False)), port=str(d.get("port", "auto") or "auto").strip(),
-                   system_id=system_id if 1 <= system_id <= P.MAX_SYSTEM_ID else 1)
+                   system_id=system_id if 1 <= system_id <= P.MAX_SYSTEM_ID else 1,
+                   trace=str(d.get("trace", "") or "").strip())
 
 
 class ExcludingSerialTransport(SerialLineTransport):
@@ -105,6 +109,10 @@ def enums() -> dict:
         "effects": [e.name for e in P.EffectId if e != P.EffectId.NONE],
         "mist_patterns": [m.name for m in P.MistPattern],
         "devices": [{"id": int(d), "name": d.name} for d in P.DeviceId if d != P.DeviceId.HUB],
+        "dial_effects": [e.name for e in P.DialEffect],
+        "dial_directions": [d.name for d in P.DialDirection],
+        "dial_priorities": [p.name for p in P.EffectPriority],
+        "dial_targets": [t.name for t in P.DialLedTarget],
     }
 
 
@@ -117,7 +125,12 @@ class DeviceHubService:
         if transport is None:
             transport = ExcludingSerialTransport(config.port or "auto", exclude=exclude_ports)
         self.transport = transport
-        self.gw = DeviceGateway(transport=transport, system_id=config.system_id)
+        self.trace = None
+        if config.trace:
+            from .trace import TraceLog
+            self.trace = TraceLog(config.trace)
+        self.gw = DeviceGateway(transport=transport, system_id=config.system_id,
+                                trace=self.trace.record if self.trace is not None else None)
         self._unsubscribe: Callable[[], None] | None = None
 
     def start(self, on_event: Callable[[dict], Awaitable[None]]) -> None:
@@ -139,6 +152,8 @@ class DeviceHubService:
             self._unsubscribe()
             self._unsubscribe = None
         self.gw.disconnect()
+        if self.trace is not None:
+            self.trace.close()
 
     # ---- requests (async: the gateway blocks until the hub answers) -----------------
     def meta(self) -> dict:

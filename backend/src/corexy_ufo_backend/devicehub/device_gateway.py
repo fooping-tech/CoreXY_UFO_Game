@@ -191,6 +191,7 @@ class DeviceGateway:
         reconnect_interval: float = 1.0,
         event_dedup_size: int = 512,
         system_id: int | None = None,
+        trace: Callable[..., None] | None = None,
     ) -> None:
         """system_id: the UFO system (1, 2) this game belongs to. The gateway then
         only attaches to that system's hub (the hub answers SYSTEM_MISMATCH
@@ -198,6 +199,10 @@ class DeviceGateway:
         if system_id is not None and not 1 <= system_id <= P.MAX_SYSTEM_ID:
             raise ValueError(f"system_id must be 1..{P.MAX_SYSTEM_ID}")
         self.system_id = system_id
+        # Game mode trace (pc/trace.py TraceLog.record or any callable(kind, **fields)):
+        # one record per command sent, ACK and device event.
+        self._trace = trace
+        self._cycles: dict[int, int] = {}  # dial -> cycle of its last BALL_RECEIVED
         self._transport: LineTransport = transport or SerialLineTransport(port, baudrate)
         self.command_timeout = command_timeout
         self.heartbeat_interval = heartbeat_interval
@@ -327,6 +332,11 @@ class DeviceGateway:
             msg = P.command(int(destination), self._session_id, cid, name, params)
             fut: Future = Future()
             self._pending[cid] = (fut, name, int(destination))
+        if name != "GET_STATUS":
+            p = msg["params"]
+            self._trace_record("command", source_dial=int(destination), command_id=cid, command=name,
+                               cycle=self._cycles.get(int(destination)), effect_id=p.get("effect"),
+                               rgb=p.get("color"), direction=p.get("direction"), params=p)
         try:
             self._write(msg)
         except TransportError as e:
@@ -336,6 +346,14 @@ class DeviceGateway:
         if not wait:
             return fut
         return self._wait_result(fut, cid, name, int(destination), timeout)
+
+    def _trace_record(self, kind: str, **fields) -> None:
+        if self._trace is None:
+            return
+        try:
+            self._trace(kind, session_id=self._session_id, **fields)
+        except Exception:  # tracing must never disturb the device control
+            log.exception("trace sink failed")
 
     def _wait_result(self, fut: Future, cid: int, name: str, dest: int, timeout: float | None) -> CommandResult:
         try:
@@ -434,6 +452,42 @@ class DeviceGateway:
         (control sequence finished; it does not prove the ball physically left)."""
         return self.send_command(device_id, "RELEASE_BALL", **kw)
 
+    def set_dial_effect(
+        self,
+        device_id: int,
+        effect: str | P.DialEffect,
+        direction: str | P.DialDirection = "NONE",
+        color: tuple[int, int, int] | str | None = None,
+        duration_ms: int = 0,
+        priority: str | P.EffectPriority = "NORMAL",
+        target: str | P.DialLedTarget = "BOTH",
+        **kw,
+    ) -> CommandResult:
+        """LED effect on one dial (docs/game-mode-interface.md).
+
+        effect: NONE (stop) / SOLID / BREATHE / CHASE / COMET / WIPE / FLASH / SPARKLE.
+        direction: TO_SCREEN / TO_DIAL (required for CHASE, COMET, WIPE).
+        color: None = the dial's unit colour. duration_ms = 0: until replaced or
+        cleared by the device (ball detected, release finished, STOP_ALL, ...).
+        target: FRONT (G1) / TRANSFER (G15 LED, NOT_CONFIGURED if not configured) /
+        BOTH (front LED only when the G15 LED is not configured).
+        A running effect of higher priority answers IGNORED_PRIORITY.
+        """
+        params = {"effect": effect, "direction": direction, "duration_ms": duration_ms, "priority": priority,
+                  "target": target}
+        if color is not None:
+            params["color"] = color
+        return self.send_command(device_id, "SET_DIAL_EFFECT", params, **kw)
+
+    def clear_dial_effect(self, device_id: int, priority: str | P.EffectPriority = "HIGH",
+                          target: str | P.DialLedTarget = "BOTH", **kw) -> CommandResult:
+        """Stops the PC effect: the dial shows its own state display again."""
+        return self.set_dial_effect(device_id, "NONE", priority=priority, target=target, **kw)
+
+    def set_dial_color(self, device_id: int, color: tuple[int, int, int] | str | None = None, **kw) -> CommandResult:
+        """Unit colour of one dial for this session (None / (0,0,0) = configured default)."""
+        return self.send_command(device_id, "SET_DIAL_COLOR", {"color": color}, **kw)
+
     def stop_all(self, devices: Iterable[int] | None = None) -> dict[int, CommandResult]:
         targets = list(devices) if devices is not None else [d for d in DeviceId if d != DeviceId.HUB]
         futures = {}
@@ -504,6 +558,7 @@ class DeviceGateway:
             self._session_id = random.randint(1, 0xFFFFFFFF)
             self._next_command_id = random.randint(1, 0x3FFFFFFF)
             self._seen_events.clear()
+            self._cycles.clear()
         self._hello_sent_at = time.monotonic()
         self._write(P.hello(self._session_id, self.system_id))
 
@@ -644,6 +699,10 @@ class DeviceGateway:
             reason=m.get("reason"),
             raw=m,
         )
+        if name != "GET_STATUS":
+            self._trace_record("ack", source_dial=res.destination, command_id=cid, command=name, ack=res.result,
+                               cycle=self._cycles.get(res.destination), duplicate=res.duplicate,
+                               attempts=res.attempts)
         if not fut.done():
             fut.set_result(res)
 
@@ -669,6 +728,12 @@ class DeviceGateway:
             while len(self._seen_events) > self._dedup_size:
                 self._seen_events.popitem(last=False)
         self.stats["events"] += 1
+        name, data = m.get("name", "UNKNOWN"), m.get("data", {}) or {}
+        if name == "BALL_RECEIVED":
+            self._cycles[src] = data.get("cycle")
+        self._trace_record("event", source_dial=src, event_id=eid, event=name, cycle=self._cycles.get(src),
+                           command_id=data.get("command_id"),
+                           release_state=name[len("RELEASE_"):] if name.startswith("RELEASE_") else None, data=data)
         self._emit(DeviceEvent(m.get("name", "UNKNOWN"), src, m.get("data", {}), eid, m.get("session_id")))
 
     def _on_link(self, m: dict) -> None:

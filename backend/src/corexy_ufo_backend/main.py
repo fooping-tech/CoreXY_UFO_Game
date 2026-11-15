@@ -69,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--devicehub", metavar="PORT",
                    help="use the peripherals' hub on PORT for this run, whatever devicehub.enabled says: "
                         "mock (a simulated hub: the game mode's rehearsal without hardware, #138), auto, or a port name")
+    p.add_argument("--devicehub-trace", metavar="FILE",
+                   help="write UFO-DeviceHub's trace (every command, ACK and event of the hub, JSON Lines) to FILE")
     p.add_argument("--stop-on-stdin-close", action="store_true",
                    help="stop cleanly (as on Ctrl-C) when stdin reaches EOF: start.ps1 closes it to end the backend")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -196,7 +198,9 @@ async def run(args: argparse.Namespace) -> int:
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
     hub_cfg = DeviceHubConfig.from_raw(cfg.raw)
     if args.devicehub:
-        hub_cfg = DeviceHubConfig(True, args.devicehub.strip(), hub_cfg.system_id)
+        hub_cfg = DeviceHubConfig(True, args.devicehub.strip(), hub_cfg.system_id, hub_cfg.trace)
+    if args.devicehub_trace:
+        hub_cfg = DeviceHubConfig(hub_cfg.enabled, hub_cfg.port, hub_cfg.system_id, args.devicehub_trace)
     devicehub = None
     if hub_cfg.enabled:
         try:

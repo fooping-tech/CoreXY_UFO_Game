@@ -254,3 +254,57 @@ async def test_the_mock_ball_is_refused_on_a_real_hub():
             assert m["type"] == "nack" and "mock" in m["data"]["reason"], m
     finally:
         await srv.stop()
+
+
+async def test_the_dial_led_contract_on_the_mock_hub(tmp_path):
+    """#138 / UFO-DeviceHub #8 (docs/game-mode-interface.md): the unit colour and the transfer
+    effects reach each Dial for itself; a lower priority is refused, a release ends the effect;
+    the hub's trace is written."""
+    trace = tmp_path / "hub.jsonl"
+    hub = DeviceHubService(DeviceHubConfig(True, "mock", 1, str(trace)))
+    srv, port = await _server(hub)
+    events: list[dict] = []
+
+    async def dial(ws, device, name, params, rid):
+        return await _cmd(ws, "devicehub_command", {"device": device, "name": name, "params": params}, rid=rid, events=events)
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            meta = await _until_connected(ws, events)
+            assert "COMET" in meta["data"]["enums"]["dial_effects"] and "TO_DIAL" in meta["data"]["enums"]["dial_directions"]
+            for i in range(60):
+                devs = (await _cmd(ws, "devicehub_devices", rid=f"ld{i}", events=events))["data"]["devices"]
+                if sum(1 for d in devs if d.get("online")) >= 3:
+                    break
+                await asyncio.sleep(0.1)
+            for d in (DIAL1, DIAL2):
+                assert (await dial(ws, d, "SET_MODE", {"mode": "GAME"}, f"lm{d}"))["data"]["result"]["ok"]
+            assert (await dial(ws, DIAL2, "SET_DIAL_COLOR", {"color": [255, 64, 208]}, "col"))["data"]["result"]["ok"]
+            intake = {"effect": "CHASE", "direction": "TO_SCREEN", "duration_ms": 1500, "priority": "NORMAL", "target": "BOTH"}
+            back = {"effect": "COMET", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "BOTH"}
+            assert (await dial(ws, DIAL1, "SET_DIAL_EFFECT", intake, "fx1"))["data"]["result"]["ok"]
+            assert (await dial(ws, DIAL2, "SET_DIAL_EFFECT", back, "fx2"))["data"]["result"]["ok"]  # the other way at once
+            left, right = hub.transport.devices[DIAL1], hub.transport.devices[DIAL2]
+            assert left.led("FRONT")["source"] == "pc" and left.led("FRONT")["direction"] == "TO_SCREEN"
+            assert right.led("TRANSFER")["effect"] == "COMET" and tuple(right.led("FRONT")["color"]) == (255, 64, 208)
+            st = await _cmd(ws, "devicehub_status", {"device": DIAL2}, rid="lst", events=events)
+            assert st["data"]["status"]["front_effect"] == "COMET" and st["data"]["status"]["unit_color"] == [255, 64, 208]
+            fault = {"effect": "FLASH", "duration_ms": 1500, "priority": "HIGH", "color": [255, 0, 0]}
+            assert (await dial(ws, DIAL1, "SET_DIAL_EFFECT", fault, "hi"))["data"]["result"]["ok"]
+            low = await dial(ws, DIAL1, "SET_DIAL_EFFECT", intake, "low")
+            assert low["data"]["result"]["result"] == "IGNORED_PRIORITY"  # decoration: refused, nothing else changes
+            bad = await dial(ws, DIAL1, "SET_DIAL_EFFECT", {"effect": "CHASE"}, "nodir")
+            assert bad["type"] == "nack"  # CHASE needs a direction: refused before it is sent
+            # a release ends the PC effect by itself
+            assert (await dial(ws, DIAL2, "ARM_RECEIVER", {}, "larm"))["data"]["result"]["ok"]
+            assert (await _cmd(ws, "devicehub_mock_ball", {"device": DIAL2}, rid="lball", events=events))["data"]["accepted"]
+            assert (await dial(ws, DIAL2, "SET_DIAL_EFFECT", back, "fx3"))["data"]["result"]["ok"]
+            assert (await dial(ws, DIAL2, "RELEASE_BALL", {}, "lrel"))["data"]["result"]["ok"]
+            assert await _wait_event(ws, events, "RELEASE_DONE", DIAL2, tries=120)
+            assert right.led("FRONT")["source"] == "local"
+    finally:
+        await srv.stop()
+    rows = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    fx = [r for r in rows if r["kind"] == "command" and r["command"] == "SET_DIAL_EFFECT"]
+    assert fx and fx[0]["effect_id"] == "CHASE" and fx[0]["direction"] == "TO_SCREEN" and fx[0]["source_dial"] == DIAL1
+    assert any(r["kind"] == "event" and r["release_state"] == "DONE" and r["source_dial"] == DIAL2 for r in rows)
