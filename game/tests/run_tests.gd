@@ -61,6 +61,7 @@ func _ready() -> void:
 	_test_study_mode_looks_again(rs)
 	_test_study_mode_backend_messages(rs)
 	_test_study_mode_without_tidy_up(rs)
+	_test_study_sheet_photo(rs)
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
@@ -2129,6 +2130,55 @@ func _test_study_mode_looks_again(rs: Node) -> void:
 ## The backend route: the sequences' status messages drive the story (holding at a
 ## stage -> that close-up; the previous run's IDLE / FAULT ignored; NACK and FAULT end it).
 ## #110: the tidy-up off (study_mode.cleanup.enabled false): the game unlocks after the celebration.
+## #116: the real worksheet from the overview camera, straightened by its corner marks.
+func _test_study_sheet_photo(rs: Node) -> void:
+	# the homography takes the four page points to the image points (and the middle where it belongs)
+	var src := [Vector2(0.1, 0.1), Vector2(0.9, 0.1), Vector2(0.1, 0.9), Vector2(0.9, 0.9)]
+	var dst := [Vector2(0.3, 0.2), Vector2(0.7, 0.25), Vector2(0.25, 0.8), Vector2(0.75, 0.85)]
+	var h = StudyWorksheetView.homography(src, dst)
+	var good := h != null
+	for i in 4:
+		var q: Vector3 = h * Vector3(src[i].x, src[i].y, 1.0)
+		good = good and (Vector2(q.x, q.y) / q.z).distance_to(dst[i]) < 1e-4
+	_ok(good and StudyWorksheetView.homography([Vector2.ZERO, Vector2(1, 0), Vector2(0, 1), Vector2.ONE],
+		[Vector2.ZERO, Vector2(1, 0), Vector2(0, 1), Vector2.ONE]) != null
+		and StudyWorksheetView.homography([Vector2.ZERO, Vector2(0.5, 0.5), Vector2.ONE, Vector2(2, 2)], dst) == null,
+		"sheet photo: the homography maps the four marks (and refuses three on a line)")
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	var sv: StudyServices = ctl.services
+	sv._on_sheet_found(true, {"found": true, "corners": {"tl": [0.3, 0.2], "tr": [0.7, 0.25], "bl": [0.25, 0.8], "br": [0.75, 0.85]}})
+	var view: StudyWorksheetView = game.study_hud.sheet
+	view.photo_texture = ImageTexture.create_from_image(Image.create(64, 48, false, Image.FORMAT_RGB8))
+	view.marks = sv.sheet_marks()
+	view.worksheet = ctl.worksheet
+	view.size = Vector2(230, 325)
+	view._draw()
+	var photo_on: bool = view.showing_photo() and view._photo.visible
+	var stale := sv.sheet_marks(Time.get_ticks_msec() + StudyServices.SHEET_FRESH_MS + 100).is_empty()
+	sv._on_sheet_found(true, {"found": false})  # not found now: the last ones age out
+	view.marks = {}
+	view._draw()
+	_ok(photo_on and stale and not view._photo.visible and not sv.sheet_marks().is_empty(),
+		"sheet photo: the real sheet with fresh marks, the drawn sheet without them")
+	# review on #117: a frame in the params never reaches the log; no search after the study mode
+	var red = UfoWebSocketClient.redacted({"image_jpeg_base64": "A".repeat(5000), "images": [{"role": "10cm",
+		"image_jpeg_base64": "B".repeat(900)}], "u": 0.5})
+	var log_ok: bool = str(red.image_jpeg_base64).begins_with("<5000") and str(red.images[0].image_jpeg_base64).begins_with("<900") \
+		and is_equal_approx(float(red.u), 0.5)
+	sv.watch_stop()
+	sv._sheet_left = 0.0
+	sv._sheet_tick(0.1)
+	_ok(log_ok and sv._sheet_rid == "" and sv.sheet_marks().is_empty(),
+		"sheet photo: frames are not logged, no worksheet search outside the study mode")
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_study_mode_without_tidy_up(rs: Node) -> void:
 	var game := _study_game()
 	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false

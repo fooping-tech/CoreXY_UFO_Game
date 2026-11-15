@@ -17,6 +17,8 @@ Command names and safety rules:
   held, {0,0} on release; the firmware stops after 250 ms without one; the host also
   sends a zero jog when the jogging client disconnects or its refresh is older than
   jog_expiry_s), clear_alarm,
+  worksheet_find {image_jpeg_base64} (#116: the study worksheet's corner marks in the overview
+  frame -> {found, corners: {tl, tr, bl, br: [u, v]}, score}; OpenCV only, nothing kept),
   services_check {ask?} (#114: Jev / the tutor AI / Claude Code / Codex / VOICEVOX reachable? ask =
   one short question with the sample worksheet; never the robot, never queued),
   get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
@@ -115,7 +117,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             *("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag", "devicehub_command",
               "devicehub_stop_all"))
-COMMANDS = (*COMMANDS, "services_check")
+COMMANDS = (*COMMANDS, "services_check", "worksheet_find")
 # The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
 DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
                       "devicehub_command", "devicehub_stop_all")
@@ -125,9 +127,9 @@ MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", 
 # Out-of-band commands that only read: cancelled at once when their client disconnects, so
 # the disconnect's safety aborts never wait for them (review on #115: services_check can wait
 # 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
-CANCEL_ON_DISCONNECT = ("services_check", "devicehub_meta", "devicehub_devices", "devicehub_status",
+CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "devicehub_meta", "devicehub_devices", "devicehub_status",
                         "devicehub_diag")
-PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
@@ -615,6 +617,8 @@ class GameServer:
             return self._nack(name, f"unknown command {name!r}")
         if name in DEVICEHUB_COMMANDS:  # the peripherals only: not the robot, not its sequences
             return await self._devicehub(name, params)
+        if name == "worksheet_find":  # #116: the sheet's corner marks in the overview frame; never the robot
+            return await self._worksheet_find(params)
         if name == "services_check":  # #114: Jev / the tutor / Claude Code / VOICEVOX; never the robot
             from ..services_check import check_all
             cfg = self.backend_cfg
@@ -907,6 +911,30 @@ class GameServer:
             return self._nack(name, f"保存できません: {e}")
         log.info("study heights %s", "confirmed" if on else "unconfirmed")
         return self._ack(name, self._height_status())
+    WORKSHEET_FIND_MAX_BYTES = 1_500_000
+
+    async def _worksheet_find(self, params: dict) -> dict:
+        """The study mode shows the real worksheet (#116): its four corner marks in the frame the
+        game sends (as it shows it), found here with OpenCV. Nothing is kept or sent anywhere."""
+        import base64
+        import binascii
+        from ..study_mode.sheet_marks import find_marks_jpeg
+        name = "worksheet_find"
+        b64 = params.get("image_jpeg_base64")
+        if not isinstance(b64, str) or not b64:
+            return self._nack(name, "image_jpeg_base64 is required")
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            return self._nack(name, "image_jpeg_base64 is not base64")
+        if len(data) > self.WORKSHEET_FIND_MAX_BYTES:
+            return self._nack(name, "the image is too large")
+        try:
+            found = await asyncio.to_thread(find_marks_jpeg, data)
+        except ValueError as e:
+            return self._nack(name, str(e))
+        return self._ack(name, {"found": found is not None, **(found or {})})
+
     async def _devicehub(self, name: str, params: dict) -> dict:
         """The settings screen's テスト tab (#108): UFO-DeviceHub's console commands."""
         from ..devicehub.service import DeviceHubError

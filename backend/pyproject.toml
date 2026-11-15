@@ -7,6 +7,8 @@ dependencies = [
     "pyserial>=3.5",
     "websockets>=13.0",
     "numpy>=1.26",
+    # the study mode finds the worksheet's corner marks in the overview frame (#116)
+    "opencv-python>=4.9",
 ]
 
 [project.optional-dependencies]

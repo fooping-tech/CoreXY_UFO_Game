@@ -359,7 +359,11 @@ func refresh() -> void:
 	sheet.worksheet = ctl.worksheet
 	sheet.tracker = ctl.tracker
 	sheet.highlight = ctl.help_problem if st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING" else 0
-	sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else "プリント（%s）" % ctl.worksheet.get("worksheet_id", "")
+	sheet.marks = ctl.services.sheet_marks() if ctl.services.mode == "camera" else {}
+	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
+	sheet.photo_texture = cams.texture("overview") if cams != null and cams.has_feed("overview") else null
+	sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
+		("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
 	sheet.visible = st not in ["CELEBRATION", "GAME_UNLOCKED", "HOMEWORK_COMPLETE"]
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)

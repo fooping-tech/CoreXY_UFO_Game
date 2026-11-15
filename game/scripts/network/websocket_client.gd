@@ -228,12 +228,32 @@ func has_pending_motion() -> bool:
 			return true
 	return false
 
+## What the log shows of a command's params (review on #117): a long string (a camera
+## frame's base64, ...) is replaced by its length, in nested arrays / dictionaries too, so the
+## debug log and its copied report never hold a photo of the desk.
+const LOG_STRING_MAX := 200
+
+static func redacted(v: Variant) -> Variant:
+	if v is String and (v as String).length() > LOG_STRING_MAX:
+		return "<%d 文字（ログには出さない）>" % (v as String).length()
+	if v is Dictionary:
+		var out := {}
+		for k in v.keys():
+			out[k] = redacted(v[k])
+		return out
+	if v is Array:
+		var arr: Array = []
+		for x in v:
+			arr.append(redacted(x))
+		return arr
+	return v
+
 ## Send a command and track it. Returns the request id.
 func send_command(name: String, params: Dictionary = {}) -> String:
 	_seq += 1
 	var rid := "g%d-%d" % [Time.get_ticks_msec(), _seq]
 	_pending[rid] = {"sent_ms": Time.get_ticks_msec(), "type": name}
 	if name != "jog":  # jog repeats at 20 Hz while a key is held
-		log_line.emit("send %s %s %s" % [rid, name, JSON.stringify(params)])
+		log_line.emit("send %s %s %s" % [rid, name, JSON.stringify(redacted(params))])
 	send({"type": "command", "request_id": rid, "data": {"name": name, "params": params}})
 	return rid
