@@ -308,3 +308,47 @@ async def test_the_dial_led_contract_on_the_mock_hub(tmp_path):
     fx = [r for r in rows if r["kind"] == "command" and r["command"] == "SET_DIAL_EFFECT"]
     assert fx and fx[0]["effect_id"] == "CHASE" and fx[0]["direction"] == "TO_SCREEN" and fx[0]["source_dial"] == DIAL1
     assert any(r["kind"] == "event" and r["release_state"] == "DONE" and r["source_dial"] == DIAL2 for r in rows)
+
+
+async def test_why_the_hub_is_not_connected_is_said():
+    """A hub that does not connect says why (the テスト tab, the score game): another UFO
+    system's hub, no port, a port that is not a hub."""
+    from corexy_ufo_backend.devicehub.mock_hub import MockConfig, MockHub
+
+    # the hub on the cable belongs to system 2, the settings say system 1
+    hub = DeviceHubService(DeviceHubConfig(True, "mock", 1), transport=MockHub(MockConfig(system_id=2)))
+    srv, port = await _server(hub)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            for i in range(80):
+                m = await _cmd(ws, "devicehub_meta", rid=f"p{i}")
+                if "別のシステム" in m["data"]["problem"]:
+                    break
+                await asyncio.sleep(0.1)
+            assert not m["data"]["connected"] and "別のシステム" in m["data"]["problem"], m["data"]["problem"]
+            assert "システム番号は 1" in m["data"]["problem"] and "2" in m["data"]["problem"]
+    finally:
+        await srv.stop()
+    ok = DeviceHubService(DeviceHubConfig(True, "mock", 1))
+    srv, port = await _server(ok)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            assert (await _until_connected(ws, []))["data"]["problem"] == ""
+    finally:
+        await srv.stop()
+
+
+def test_the_serial_port_problems_are_said(monkeypatch):
+    monkeypatch.setattr(gwmod, "guess_ports", lambda: [])
+    svc = DeviceHubService(DeviceHubConfig(True, "auto", 1))
+    assert "待っている" in svc.problem()
+    with pytest.raises(TransportError):
+        svc.transport.open()
+    assert "見つからない" in svc.problem()
+    svc.transport.last_open_error = "/dev/cu.usbmodem1: Resource busy"
+    assert "開けない" in svc.problem() and "Resource busy" in svc.problem()
+    svc.transport.last_open_error = ""
+    svc.transport.current_port = "/dev/cu.usbmodem1"
+    svc.transport.reject_current()  # the gateway: no hub handshake on this port
+    assert "ハブとして応答しない" in svc.problem() and "usbmodem1" in svc.problem()
+    svc.close()
