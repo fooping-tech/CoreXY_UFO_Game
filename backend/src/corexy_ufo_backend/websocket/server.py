@@ -37,6 +37,8 @@ Command names and safety rules:
   devicehub_command {device, name, params} / devicehub_stop_all (#108): the peripherals' hub
   (UFO-DeviceHub) for the settings screen's テスト tab; never the robot, never queued behind
   its commands, accepted during the sequences. Its events come as {"type": "devicehub_event"}.
+  devicehub_mock_ball {device} (#138): with the simulated hub (devicehub.port "mock") only, a
+  capsule lands in that Dial (BALL_RECEIVED when it is armed); the real hub refuses it.
   homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
   instead: mapped to XY by the camera calibration, at the recorded spot's height.
   homework_navigate {u, v, camera | xy (mock only), d_mm: [dx, dy]} (#104): the tutor AI's "the
@@ -110,7 +112,7 @@ LOG_QUEUE_MAX = 500
 
 # The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
 DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
-                      "devicehub_command", "devicehub_stop_all")
+                      "devicehub_command", "devicehub_stop_all", "devicehub_mock_ball")
 COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
@@ -959,6 +961,8 @@ class GameServer:
             if name == "devicehub_command":
                 result = await hub.command(params.get("device"), params.get("name"), params.get("params") or {})
                 return self._ack(name, {"result": result})
+            if name == "devicehub_mock_ball":  # the simulated hub only (#138)
+                return self._ack(name, await hub.mock_ball(params.get("device")))
             return self._ack(name, {"results": await hub.stop_all()})
         except (DeviceHubError, TypeError, ValueError) as e:
             return self._nack(name, str(e))

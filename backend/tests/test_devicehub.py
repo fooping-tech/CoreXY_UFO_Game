@@ -16,7 +16,7 @@ from corexy_ufo_backend.devicehub.service import ExcludingSerialTransport
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
 
-ILL, DIAL1 = 0x10, 0x20
+ILL, DIAL1, DIAL2 = 0x10, 0x20, 0x21
 
 
 def test_config_from_raw():
@@ -168,5 +168,89 @@ async def test_stop_all_goes_through_during_the_auto_catch():
             finally:
                 del type(srv.auto).active
             assert m["type"] == "ack"
+    finally:
+        await srv.stop()
+
+
+async def _wait_event(ws, events, name, source, tries=80):
+    for i in range(tries):
+        if any(e.get("name") == name and e.get("source") == source for e in events):
+            return True
+        await _cmd(ws, "devicehub_meta", rid=f"we{name}{source}{i}", events=events)
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_the_game_mode_round_on_the_mock_hub_left_and_right():
+    """#138: a capsule lands in each Dial (devicehub_mock_ball), the game releases it from the
+    same Dial; both Dials at once, each with its own cycle and events."""
+    hub = DeviceHubService(DeviceHubConfig(True, "mock", 1))
+    srv, port = await _server(hub)
+    events: list[dict] = []
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            meta = await _until_connected(ws, events)
+            assert meta["data"]["port"] == "mock" and meta["data"]["session_id"] > 0
+            for i in range(60):
+                devs = (await _cmd(ws, "devicehub_devices", rid=f"gd{i}", events=events))["data"]["devices"]
+                if sum(1 for d in devs if d.get("online")) >= 3:
+                    break
+                await asyncio.sleep(0.1)
+            early = await _cmd(ws, "devicehub_mock_ball", {"device": DIAL1}, rid="early", events=events)
+            assert early["type"] == "ack" and early["data"]["accepted"] is False  # not armed: no capsule is taken
+            for d in (DIAL1, DIAL2):
+                assert (await _cmd(ws, "devicehub_command", {"device": d, "name": "SET_MODE", "params": {"mode": "GAME"}},
+                                   rid=f"m{d}", events=events))["data"]["result"]["ok"]
+                assert (await _cmd(ws, "devicehub_command", {"device": d, "name": "ARM_RECEIVER", "params": {}},
+                                   rid=f"a{d}", events=events))["data"]["result"]["ok"]
+            for d in (DIAL1, DIAL2):  # both sides at once
+                ball = await _cmd(ws, "devicehub_mock_ball", {"device": d}, rid=f"b{d}", events=events)
+                assert ball["type"] == "ack" and ball["data"]["accepted"] is True, ball
+            again = await _cmd(ws, "devicehub_mock_ball", {"device": DIAL1}, rid="again", events=events)
+            assert again["data"]["accepted"] is False  # one capsule per Dial
+            for d in (DIAL1, DIAL2):
+                assert await _wait_event(ws, events, "BALL_RECEIVED", d), events
+            received = [e for e in events if e.get("name") == "BALL_RECEIVED"]
+            assert len(received) == 2 and all(e["data"]["cycle"] == 1 and e["session_id"] == meta["data"]["session_id"]
+                                              and e["event_id"] is not None for e in received), received
+            for d in (DIAL2, DIAL1):  # released in the other order: each Dial its own
+                rel = await _cmd(ws, "devicehub_command", {"device": d, "name": "RELEASE_BALL", "params": {}},
+                                 rid=f"r{d}", events=events)
+                assert rel["data"]["result"]["ok"] and rel["data"]["result"]["command_id"] > 0, rel
+            twice = await _cmd(ws, "devicehub_command", {"device": DIAL1, "name": "RELEASE_BALL", "params": {}},
+                               rid="twice", events=events)
+            assert not twice["data"]["result"]["ok"]  # busy: a second release is refused, never queued
+            for d in (DIAL1, DIAL2):
+                assert await _wait_event(ws, events, "RELEASE_DONE", d, tries=120), events
+                assert sum(1 for e in events if e.get("name") == "RELEASE_STARTED" and e.get("source") == d) == 1
+                st = await _cmd(ws, "devicehub_status", {"device": d}, rid=f"s{d}", events=events)
+                assert st["data"]["status"]["dial_state"] == "COMPLETE" and st["data"]["status"]["releases"] == 1, st
+            bad = await _cmd(ws, "devicehub_mock_ball", {"device": "left"}, rid="bad", events=events)
+            assert bad["type"] == "nack"
+    finally:
+        await srv.stop()
+
+
+async def test_the_mock_ball_is_refused_on_a_real_hub():
+    """#138: only the simulated hub fakes a capsule; a real hub's switch is the only source."""
+
+    class Quiet:  # a transport that never answers (stands for a real serial port)
+        current_port = "/dev/cu.usbmodem-HUB"
+
+        def open(self): ...
+        def close(self): ...
+        def write_line(self, line): ...
+
+        def read_line(self, timeout):
+            import time
+            time.sleep(min(timeout, 0.01))
+            return None
+
+    hub = DeviceHubService(DeviceHubConfig(True, "auto", 1), transport=Quiet())
+    srv, port = await _server(hub)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            m = await _cmd(ws, "devicehub_mock_ball", {"device": DIAL1})
+            assert m["type"] == "nack" and "mock" in m["data"]["reason"], m
     finally:
         await srv.stop()

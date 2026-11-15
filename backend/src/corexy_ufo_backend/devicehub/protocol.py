@@ -172,6 +172,7 @@ class DialState(IntEnum):
     RETURNING = 0x05
     COMPLETE = 0x06
     ERROR = 0x07
+    SETTINGS = 0x08  # settings / hardware test mode on the device (commands rejected)
 
 
 class IlluminationState(IntEnum):

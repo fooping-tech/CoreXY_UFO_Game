@@ -66,6 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS / Windows)")
     p.add_argument("--study", action="store_true",
                    help="enable the optional camera study assistant (also requires study.enabled in config)")
+    p.add_argument("--devicehub", metavar="PORT",
+                   help="use the peripherals' hub on PORT for this run, whatever devicehub.enabled says: "
+                        "mock (a simulated hub: the game mode's rehearsal without hardware, #138), auto, or a port name")
     p.add_argument("--stop-on-stdin-close", action="store_true",
                    help="stop cleanly (as on Ctrl-C) when stdin reaches EOF: start.ps1 closes it to end the backend")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -192,6 +195,8 @@ async def run(args: argparse.Namespace) -> int:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
     hub_cfg = DeviceHubConfig.from_raw(cfg.raw)
+    if args.devicehub:
+        hub_cfg = DeviceHubConfig(True, args.devicehub.strip(), hub_cfg.system_id)
     devicehub = None
     if hub_cfg.enabled:
         try:

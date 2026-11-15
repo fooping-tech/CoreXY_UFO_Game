@@ -170,5 +170,18 @@ class DeviceHubService:
             raise DeviceHubError("device (int), name (str) and params (object) are needed")
         return result_dict(await self._call(lambda: self.gw.send_command(device, name, params)))
 
+    async def mock_ball(self, device: Any) -> dict:
+        """The simulated hub only (port "mock"): a capsule lands in a Dial, as if its switch
+        closed (the game mode's rehearsal without hardware, #138). The real hub never fakes it."""
+        ball = getattr(self.transport, "ball", None)
+        if self.config.port != "mock" or ball is None:
+            raise DeviceHubError("devicehub_mock_ball は仮想ハブ（devicehub.port が mock）のときだけ")
+        if not isinstance(device, int) or isinstance(device, bool):
+            raise DeviceHubError("device (int) is needed")
+        try:
+            return {"device": device, "accepted": bool(await asyncio.to_thread(ball, device))}
+        except KeyError as e:
+            raise DeviceHubError(f"unknown device {device}") from e
+
     async def stop_all(self) -> dict:
         return {str(k): result_dict(v) for k, v in (await self._call(self.gw.stop_all)).items()}
