@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from ..config import RobotLimits
 from .state import RobotSnapshot
 
 
@@ -13,6 +14,15 @@ class RobotCommandError(Exception):
 
 class RobotInterface(ABC):
     name: str = "robot"
+    # The soft limits this robot enforces; None when it has none of its own (the server
+    # then uses the config's).
+    limits: RobotLimits | None = None
+
+    @property
+    def is_real(self) -> bool:
+        """True for the real machine: the "real" profiles (refused until measured and
+        confirmed) apply, anything else uses the "dry_run" ones."""
+        return self.name == "real"
 
     @abstractmethod
     async def connect(self) -> None: ...

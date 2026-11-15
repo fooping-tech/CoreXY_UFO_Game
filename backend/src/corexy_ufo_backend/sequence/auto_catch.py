@@ -33,6 +33,7 @@ from enum import StrEnum
 from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
 from ..robot.state import MachineState, RobotSnapshot
+from .fault import SequenceFault
 from .params import COUNTS_PER_TURN, AutoCatchParams, height, validate
 
 log = logging.getLogger(__name__)
@@ -71,10 +72,6 @@ class Step:
         if self.kind == "z":
             return f"Z -> {self.z:g}"
         return f"XY -> ({self.x:g}, {self.y:g})"
-
-
-class SequenceFault(Exception):
-    pass
 
 
 def build_steps(p: AutoCatchParams) -> list[Step]:
@@ -235,9 +232,7 @@ class AutoCatchSequencer:
         self._last_press = now
         if self.active:
             raise RobotCommandError("busy: auto catch already running")
-        refresh = getattr(self.robot, "refresh_status", None)
-        if refresh is not None:
-            await refresh()  # fresh limits / alarm before deciding
+        await self.robot.refresh_status()  # fresh limits / alarm before deciding
         errs = self.preconditions()
         if errs:
             raise RobotCommandError("auto catch refused: " + "; ".join(errs))
@@ -387,11 +382,8 @@ class AutoCatchSequencer:
             await asyncio.sleep(self.poll_s)
 
     async def _refresh_after_move(self) -> None:
-        refresh = getattr(self.robot, "refresh_status", None)
-        if refresh is None:
-            return
         try:
-            await refresh()
+            await self.robot.refresh_status()
         except RobotCommandError as e:
             raise SequenceFault(f"status read after the move failed: {e}") from e
 

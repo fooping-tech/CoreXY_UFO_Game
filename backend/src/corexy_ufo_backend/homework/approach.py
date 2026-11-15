@@ -52,6 +52,7 @@ from typing import Any
 from ..config import RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
 from ..robot.state import MachineState
+from ..sequence.fault import SequenceFault
 
 log = logging.getLogger(__name__)
 
@@ -147,10 +148,6 @@ class _Step:
         if self.kind == "confirm":
             return "wait for the operator's confirmation"
         return "wait for the capture" + (f" ({self.stage})" if self.stage else "")
-
-
-class SequenceFault(Exception):
-    pass
 
 
 class ApproachSequencer:
@@ -297,9 +294,7 @@ class ApproachSequencer:
         `stages` (staged capture, needs `target`) go down through those Z values instead."""
         if self.active:
             raise RobotCommandError("busy: already approaching")
-        refresh = getattr(self.robot, "refresh_status", None)
-        if refresh is not None:
-            await refresh()
+        await self.robot.refresh_status()
         use_claw = self.params.open_claw if open_claw is None else open_claw
         errs = self.preconditions(need_spot=not stages, need_claw=use_claw)
         if stages:
