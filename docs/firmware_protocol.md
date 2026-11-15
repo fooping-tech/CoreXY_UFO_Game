@@ -71,7 +71,7 @@ JOG / STOP の詳細はファームウェア側の `docs/handoff/REPLY_FIRMWARE_
 | `z_restore {apply, turns?}`（#106） | `SERVO_STATUS 1` | 前回のセッションの上・下を呼び出す。バックエンドは上・下を記録したときと、止まっているとき（多回転の追跡が有効で動いていない `SERVO_STATUS`、8 カウント以上動いたら 1 秒に 1 回まで）のカウントを `config/calibration.json` の `z_points` に保存する（そのセッションで記録か呼び出しをしたときだけ）。ファームウェアの数え方は、Core2 だけの再起動では同じ（`abs = goal + offset`）、サーボの電源断のあとは 1 回転の中の角度から（`abs = raw`）で、どちらも前とは 4096 の倍数だけ違う。今の `abs` と保存した last の差に最も近い回転数だけ上・下をずらす。`apply: false` は見積もり（`turns`、`drift_counts`、`z`）だけ。`apply: true` は `turns` が見積もりと同じで、ずれが 1536 カウント以下のときだけ。追跡が有効でない（電源投入後まだジョグしていない）ときは断る。半回転以上回っていると 1 回転分ずれて見分けられないので、ゲームは大人がアームの高さを確かめてから使う |
 | `z_servo_recover` | `SERVO_STATUS 1` → （多回転が失われているときだけ）`SERVO_TURN 1 ±0.01` | **旧ファームウェア向け。** #11 以降は `tracking=LOST` を出し、次の Z の JOG が自分で多回転に戻す（`tracking=RESET`）ので不要（送っても害はない）。バックエンドは LOST のときは Z の JOG を拒否しない。巻き上げサーボだけ電源が切れた後の復帰。`moveRelative` が動かす前に `result=REJECTED reason=multi_turn_lost (retry)` で拒否して追跡を無効にし、次の JOG の `beginJog` → `enableTracking` で多回転に戻る。`SERVO_STATUS` の `limits=` と `tracking=` の組み合わせで検知（[HANDOFF_FIRMWARE_Z_SERVO.md](HANDOFF_FIRMWARE_Z_SERVO.md)） |
 | （定期） | `SERVO_STATUS 1`（3 Hz、ジョグ中は `JOG_POS` の `Z_ABS`） | ジョイスティックなどで動いたアームを Z に反映 |
-| `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算 |
+| `move_z {z}` | `TEST_MODE ON`（初回）→ `SERVO_TURN 1 ±t`（≤3回転ずつ） | `z` は 0..100 の抽象単位。`z_counts_per_unit`, `z_sign` で換算。原点復帰が必要。ただし、そのセッションで上・下の両方を記録済み（`z_set top` / `bottom`）なら原点復帰の前でも受け付ける（#126、校正タブの「上げる」「下げる」。Z のジョグと同じ扱い） |
 | `grab {close}` | `SERVO_TURN 2 ±arm_open_turns` | |
 | `stop` | `ABORT` | 非常停止。ロック外で即送信。以後 `clear_alarm` と `home` が必要 |
 | `soft_stop` | `STOP` | 減速停止。ロック外で即送信し `STOP complete` を待つ。実行中の `move_xy` は `reason=stopped` で NACK になる |
