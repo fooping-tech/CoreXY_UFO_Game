@@ -11,6 +11,10 @@ extends Node
 ## `texture(role)`, a plain RGB texture: the debug panel at full frame, the
 ## scope cropped round (shaders/camera_view.gdshader).
 ##
+## #118: the focus camera may come stabilized from the backend (FocusStream, its own port):
+## while those frames arrive the focus role shows them and this hub switches its own focus
+## feed off (one reader of the camera); when they stop it opens the feed again.
+##
 ## Presentation only: frames are drawn on screen, never saved, sent anywhere or
 ## used for robot commands.
 
@@ -33,6 +37,9 @@ var _viewport := {}  # role -> SubViewport
 var _convert := {}   # role -> ShaderMaterial (YCbCr -> RGB)
 var _activated := {}  # feed id -> true: feeds this hub switched on
 var _last_sig := {}   # role -> "mode/size" of the last update
+## The stabilized focus camera from the backend (#118), or null.
+var stream: FocusStream = null
+var _stream_live := false
 
 func _init() -> void:
 	# built here, not in _ready, so views can take the textures right away
@@ -71,12 +78,20 @@ func _ready() -> void:
 			_match[role] = str(c.get("match", ""))
 			_convert[role].set_shader_parameter("flip_h", bool(c.get("flip_h", false)))
 			_convert[role].set_shader_parameter("flip_v", bool(c.get("flip_v", false)))
+	var fc = GameConfig.get_value("camera", "focus", {})
+	var stab = fc.get("stabilize", {}) if fc is Dictionary else {}
 	# headless (tests, CI) has no cameras and must not ask for camera access
 	if enabled and DisplayServer.get_name() != "headless":
 		CameraServer.camera_feed_added.connect(func(_id): _refresh.call_deferred())
 		CameraServer.camera_feed_removed.connect(func(_id): _refresh.call_deferred())
 		CameraServer.monitoring_feeds = true
 		_refresh.call_deferred()
+		if stab is Dictionary and bool(stab.get("enabled", false)):
+			stream = FocusStream.new()
+			stream.name = "FocusStream"
+			stream.url = FocusStream.url_for(str(GameConfig.get_value("network", "websocket_url", "ws://127.0.0.1:8765")),
+				int(stab.get("port", 8766)))
+			add_child(stream)
 	_apply_feeds()
 
 func _exit_tree() -> void:
@@ -119,14 +134,23 @@ func feed_id(role: String) -> int:
 	return int(_feed_id.get(role, -1))
 
 func feed_name(role: String) -> String:
+	if external_live(role):
+		return "%s（揺れ補正%s）" % [str(_match.get(role, "")), "" if bool(stream.header.get("stabilized", true)) else "オフ"]
 	var f := _feed(feed_id(role))
 	return f.get_name() if f != null else ""
 
 func has_feed(role: String) -> bool:
-	return _feed(feed_id(role)) != null
+	return external_live(role) or _feed(feed_id(role)) != null
+
+## True while `role` shows the backend's stabilized frames (#118). A Focus camera picked by
+## hand in the debug panel wins (review on #119): the stream stops until that pick is undone.
+func external_live(role: String) -> bool:
+	return role == "focus" and stream != null and stream.live()
 
 ## Frame size in pixels (zero until frames arrive).
 func feed_size(role: String) -> Vector2:
+	if external_live(role):
+		return stream.texture.get_size()
 	var mode := _mode_for(role)
 	if mode == 0:
 		return Vector2.ZERO
@@ -182,6 +206,8 @@ static func fill_roles(feeds: Array, current: Dictionary, patterns: Dictionary, 
 	return out
 
 func _apply_feeds() -> void:
+	if stream != null:
+		stream.active = not bool(_manual.get("focus", false))
 	var used := {}
 	for role in ROLES:
 		var id := feed_id(role)
@@ -189,7 +215,7 @@ func _apply_feeds() -> void:
 		for k in t.keys():
 			t[k].camera_feed_id = maxi(id, 0)
 		var f := _feed(id)
-		if f != null:
+		if f != null and not external_live(role):  # the stream reads that camera now
 			used[id] = true
 			if not f.feed_is_active:
 				f.feed_is_active = true
@@ -206,6 +232,8 @@ func _apply_feeds() -> void:
 
 ## 0 none, 1 RGB, 2 YCbCr planes, 3 YCbCr packed (see camera_feed.gdshader).
 func _mode_for(role: String) -> int:
+	if external_live(role):
+		return 1
 	var f := _feed(feed_id(role))
 	if f == null:
 		return 0
@@ -231,9 +259,15 @@ func _update_role(role: String) -> void:
 	_viewport[role].size = Vector2i(size) if size != Vector2.ZERO else DEFAULT_SIZE
 
 func _process(_dt: float) -> void:
+	var live := external_live("focus")
+	if live != _stream_live:
+		_stream_live = live
+		_apply_feeds()  # switch the focus feed off while the stream shows it, on again after
 	for role in ROLES:
 		_update_role(role)
-		if has_feed(role):
+		if external_live(role):
+			_convert[role].set_shader_parameter("rgb_tex", stream.texture)
+		elif has_feed(role):
 			# The feed replaces its textures when frames start and when the format
 			# changes, and a material keeps the texture it resolved when a parameter
 			# was last set: set them again every frame or it shows a stale one.

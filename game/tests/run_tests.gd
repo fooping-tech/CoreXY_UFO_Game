@@ -62,6 +62,7 @@ func _ready() -> void:
 	_test_study_mode_backend_messages(rs)
 	_test_study_mode_without_tidy_up(rs)
 	_test_study_sheet_photo(rs)
+	_test_focus_stream()
 	_test_title_screen(rs)
 	_test_settings(rs)
 	_test_calibration_tab(rs)
@@ -2131,6 +2132,55 @@ func _test_study_mode_looks_again(rs: Node) -> void:
 ## stage -> that close-up; the previous run's IDLE / FAULT ignored; NACK and FAULT end it).
 ## #110: the tidy-up off (study_mode.cleanup.enabled false): the game unlocks after the celebration.
 ## #116: the real worksheet from the overview camera, straightened by its corner marks.
+func _test_focus_stream() -> void:
+	# #118: the backend's stabilized arm camera: packet, URL, and CameraHub showing it while live
+	var head := JSON.stringify({"seq": 7, "w": 32, "h": 24, "stabilized": true, "dx": 3.0}).to_utf8_buffer()
+	var pkt := "FCS1".to_ascii_buffer()
+	var n := PackedByteArray()
+	n.resize(4)
+	n.encode_u32(0, head.size())
+	pkt.append_array(n)
+	pkt.append_array(head)
+	pkt.append_array(PackedByteArray([0xff, 0xd8, 1, 2]))
+	var p := FocusStream.parse(pkt)
+	_ok(not p.is_empty() and int(p.header.seq) == 7 and p.jpeg == PackedByteArray([0xff, 0xd8, 1, 2])
+		and FocusStream.parse("nope".to_ascii_buffer()).is_empty() and FocusStream.parse(pkt.slice(0, 12)).is_empty(),
+		"focus stream: the frame packet (magic, header, JPEG)")
+	_ok(FocusStream.url_for("ws://127.0.0.1:8765", 8766) == "ws://127.0.0.1:8766"
+		and FocusStream.url_for("ws://robot.local:8765/x", 9000) == "ws://robot.local:9000"
+		and FocusStream.url_for("ws://[::1]:8765", 8766) == "ws://[::1]:8766",
+		"focus stream: next to the backend's address")
+	var hub := CameraHub.new()
+	add_child(hub)
+	var fs := FocusStream.new()
+	hub.stream = fs
+	hub.add_child(fs)
+	var before := hub.external_live("focus")
+	var img := Image.create(32, 24, false, Image.FORMAT_RGB8)
+	img.fill(Color(1, 0, 0))
+	fs.apply_frame(p.header, img)
+	hub._process(0.0)
+	var live := hub.external_live("focus") and hub.has_feed("focus") and hub.feed_size("focus") == Vector2(32, 24) \
+		and hub._mode_for("focus") == 1 and not hub.external_live("overview")
+	var shown: bool = hub._convert["focus"].get_shader_parameter("rgb_tex") == fs.texture
+	fs._last_frame_ms -= FocusStream.STALE_MS + 10  # frames stopped: back to the direct feed
+	hub._process(0.0)
+	var back := not hub.external_live("focus") and not hub.has_feed("focus")
+	var txt: String = load("res://scripts/ui/debug_ui.gd").stabilize_text(fs)
+	_ok(not before and live and shown and back and txt.contains("映像なし"),
+		"focus stream: CameraHub shows the stabilized frames while they arrive, its own feed after")
+	# review on #119: a Focus camera picked by hand wins over the stream
+	fs.apply_frame(p.header, img)
+	hub.assign("focus", -1)
+	var picked := not fs.active and not hub.external_live("focus") and not hub.has_feed("focus")
+	fs._process(0.0)
+	var picked_txt: String = load("res://scripts/ui/debug_ui.gd").stabilize_text(fs)
+	hub._manual["focus"] = false  # the pick undone (its camera unplugged): the stream again
+	hub._apply_feeds()
+	_ok(picked and fs.state == "off" and picked_txt.contains("休止中") and fs.active and hub.external_live("focus"),
+		"focus stream: a Focus camera picked by hand pauses the stream")
+	hub.queue_free()
+
 func _test_study_sheet_photo(rs: Node) -> void:
 	# the homography takes the four page points to the image points (and the middle where it belongs)
 	var src := [Vector2(0.1, 0.1), Vector2(0.9, 0.1), Vector2(0.1, 0.9), Vector2(0.9, 0.9)]

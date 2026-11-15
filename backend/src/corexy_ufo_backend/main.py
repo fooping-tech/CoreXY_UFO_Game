@@ -27,6 +27,7 @@ from .sequence.dry_run import known_faults, make_dry_run_robot, run_dry
 from .serial_service.transport import list_serial_ports, pick_port
 from .vision_service import CameraConfig, VisionService
 from .vision_service.cameras import list_cameras, resolve_camera
+from .vision_service.focus_stream import FocusStream, FocusStreamParams
 from .vision_service.hand_control import HandControl, HandControlConfig
 from .websocket import GameServer
 from .config import REPO_ROOT
@@ -210,6 +211,15 @@ async def run(args: argparse.Namespace) -> int:
     await server.start()
     if vision:
         vision.start()
+    # #118: the arm-tip camera, stabilized, on its own port (opened only while the game watches)
+    focus_params = FocusStreamParams.from_raw(cfg.raw)
+    focus_stream = FocusStream(focus_params, cfg.websocket_host) if focus_params.enabled else None
+    if focus_stream is not None:
+        try:
+            await focus_stream.start()
+        except OSError as e:
+            log.error("arm camera stream disabled: %s", e)
+            focus_stream = None
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     install_stop_handlers(loop, stop)
@@ -220,6 +230,8 @@ async def run(args: argparse.Namespace) -> int:
     log.info("shutting down")
     if vision:
         vision.stop()
+    if focus_stream is not None:
+        await focus_stream.stop()
     await server.stop()
     await robot.disconnect()
     return 0
