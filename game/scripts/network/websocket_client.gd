@@ -50,6 +50,8 @@ var _pending: Dictionary = {} # request_id -> {sent_ms, type}
 var _last_state_ms: int = 0
 var _seq: int = 0
 var rtt_ms: int = 0
+## What the last send_command's send returned (OK, or why it was not sent).
+var last_send_error: Error = OK
 
 func _ready() -> void:
 	url = str(GameConfig.get_value("network", "websocket_url", url))
@@ -255,5 +257,9 @@ func send_command(name: String, params: Dictionary = {}) -> String:
 	_pending[rid] = {"sent_ms": Time.get_ticks_msec(), "type": name}
 	if name != "jog":  # jog repeats at 20 Hz while a key is held
 		log_line.emit("send %s %s %s" % [rid, name, JSON.stringify(redacted(params))])
-	send({"type": "command", "request_id": rid, "data": {"name": name, "params": params}})
+	last_send_error = send({"type": "command", "request_id": rid, "data": {"name": name, "params": params}})
 	return rid
+
+## Stop waiting for a command that was never sent (no timeout NACK for it).
+func forget(rid: String) -> void:
+	_pending.erase(rid)

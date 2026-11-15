@@ -7,6 +7,10 @@ extends CanvasLayer
 
 const PANEL_W := 360.0
 const LOG_MAX := 500
+## Every log line also goes to Godot's log file (user://logs/godot.log) for debugging
+## after the fact; a very long line is cut there (frames are already left out, redacted()).
+const FILE_LINE_MAX := 2000
+var log_to_file := true
 const MINI_LOG_LINES := 6
 
 var main: Node2D
@@ -1019,7 +1023,10 @@ func _log_buttons(parent: Node) -> void:
 func _append_log(t: String) -> void:
 	var unix := Time.get_unix_time_from_system()
 	var now := Time.get_time_dict_from_unix_time(int(unix) + _utc_offset_s)
-	_log_lines.append("%02d:%02d:%02d.%03d %s" % [now.hour, now.minute, now.second, int(fmod(unix, 1.0) * 1000.0), t])
+	var line := "%02d:%02d:%02d.%03d %s" % [now.hour, now.minute, now.second, int(fmod(unix, 1.0) * 1000.0), t]
+	_log_lines.append(line)
+	if log_to_file:
+		print("[log] " + (line if line.length() <= FILE_LINE_MAX else line.left(FILE_LINE_MAX) + " …"))
 	if _log_lines.size() > LOG_MAX:
 		_log_lines.remove_at(0)
 	_log_dirty = true  # redrawn once per frame: serial lines can come in bursts

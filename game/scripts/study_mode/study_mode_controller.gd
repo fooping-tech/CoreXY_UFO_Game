@@ -128,6 +128,8 @@ func _set_state(s: String) -> void:
 	state = s
 	_state_t = 0.0
 	GameState.post_event("study_state", {"previous": prev, "state": s})
+	if services != null:
+		services.trace("state %s -> %s%s" % [prev, s, (" (%s)" % notice) if notice != "" else ""])
 	state_changed.emit(prev, s)
 	changed.emit()
 
