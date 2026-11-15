@@ -322,6 +322,7 @@
     "lights": true,
     "dial_leds": true,
     "visual_quality": "high",
+    "effects": true,
     "trace": true,
     "ufo": {
       "min": 0.1,
@@ -354,6 +355,9 @@
         "star": 500,
         "switch": 50,
         "switch_bonus": 1500,
+        "pop": 50,
+        "target": 150,
+        "sling": 30,
         "goal_left": 100,
         "goal_right": 100,
         "goal_center": 1000,
@@ -395,7 +399,7 @@
         ]
       }
     },
-    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), right = Dial 2 (0x21 = 33), color = that side's RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the defaults are UFO-DeviceHub's own: cyan / magenta). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). visual_quality: high / low (low = a still, plain background for a slow machine; the game is the same). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
+    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), right = Dial 2 (0x21 = 33), color = that side's RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the defaults are UFO-DeviceHub's own: cyan / magenta). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). visual_quality: high / low (low = a still, plain background for a slow machine; the game is the same). effects: false = no bounce, no light trails, no breathing glow (for debugging; the game is the same). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
   },
   "devicehub": {
     "enabled": false,

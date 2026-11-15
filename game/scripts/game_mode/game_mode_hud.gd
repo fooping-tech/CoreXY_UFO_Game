@@ -15,6 +15,8 @@ const DARK := Color("050818")
 const PANEL := Color(0.03, 0.05, 0.16, 0.92)
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const LOGO := "SUMMON THE UFO"
+const SCORE_RECT := Rect2(8, 6, 164, 62)
+const TIME_RECT := Rect2(1108, 6, 164, 62)
 const HOW_TO := ["クレーンで\nカプセルをつかむ", "左か右の Dial に\n入れる", "ピンボールで\n高得点をねらおう！"]
 
 var ctl: GameModeController
@@ -48,7 +50,8 @@ func setup(c: GameModeController) -> void:
 	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	art.draw.connect(_draw_art)
 	add_child(art)
-	_combo = _label("", 20, CYAN, Vector2(26, 82), Vector2(420, 28))
+	_combo = _label("", 14, YELLOW, Vector2(1100, 70), Vector2(172, 24))  # under the clock
+	_combo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_centre = _label("", 120, YELLOW, Vector2(240, 230), Vector2(800, 150))
 	_centre.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_message = _label("", 22, Color("e8f0ff"), Vector2(140, 386), Vector2(1000, 70))
@@ -135,9 +138,8 @@ func _process(dt: float) -> void:
 	_t += dt
 	art.queue_redraw()
 	_shown_score = move_toward(_shown_score, float(ctl.score.score), maxf(absf(ctl.score.score - _shown_score) * 8.0, 200.0) * dt)
-	var chain := ctl.score.chain_now(ctl.clock)
-	var mult := ctl.score.multiplier(ctl.clock)
-	_combo.text = ("COMBO %d  x%s" % [chain, str(mult)]) if chain >= 2 else ("JACKPOT チャンス！" if ctl.score.jackpot_armed(ctl.clock) else "")
+	_combo.text = "JACKPOT チャンス！" if ctl.score.jackpot_armed(ctl.clock) else ""
+	_combo.modulate.a = 0.6 + 0.4 * sin(_t * 8.0)
 	var title := title_showing()
 	var centre := ""
 	match ctl.phase:
@@ -182,13 +184,25 @@ func _draw_art() -> void:
 		return
 	if title_showing():
 		_draw_title()
-	_panel(Rect2(14, 8, 300, 70), YELLOW)
-	PixelText.draw(art, "SCORE", Vector2(26, 15), 2.0, YELLOW)
-	PixelText.draw(art, "%d" % int(round(_shown_score)), Vector2(26, 36), 5.0, Color.WHITE, DARK)
+	# the score (top left) and the clock (top right): narrow, so the UFO's rail between them is clear
+	var rising := float(ctl.score.score) - _shown_score > 0.5
+	_panel(SCORE_RECT, YELLOW.lerp(Color.WHITE, 0.6) if rising else YELLOW)
+	PixelText.draw(art, "SCORE", SCORE_RECT.position + Vector2(10, 8), 2.0, YELLOW)
+	var st := "%d" % int(round(_shown_score))
+	PixelText.draw_right(art, st, Vector2(SCORE_RECT.end.x - 10.0, 32.0 - (2.0 if rising else 0.0)), 4.0 if st.length() <= 6 else 2.0,
+		YELLOW if rising else Color.WHITE, DARK)
 	var cc := clock_color()
-	_panel(Rect2(1046, 8, 220, 70), cc if cc != Color.WHITE else CYAN)
-	PixelText.draw(art, "TIME", Vector2(1058, 15), 2.0, CYAN)
-	PixelText.draw_right(art, clock_text(ctl.time_left), Vector2(1254, 36), 5.0, cc, DARK)
+	_panel(TIME_RECT, cc if cc != Color.WHITE else CYAN)
+	PixelText.draw(art, "TIME", TIME_RECT.position + Vector2(10, 8), 2.0, CYAN)
+	PixelText.draw_right(art, clock_text(ctl.time_left), Vector2(TIME_RECT.end.x - 10.0, 32), 4.0, cc, DARK)
+	# the combo, under the score: the chain, the multiplier and how long it still holds
+	var chain := ctl.score.chain_now(ctl.clock)
+	if chain >= 2 and ctl.phase == "PLAYING":
+		var col: Color = GameModeVFX.BANNER_COLORS[ctl.combo_level()]
+		PixelText.draw(art, "COMBO %d" % chain, Vector2(12, 74), 2.0, col, DARK)
+		PixelText.draw_right(art, "x%s" % str(ctl.score.multiplier(ctl.clock)), Vector2(168, 74), 2.0, Color.WHITE, DARK)
+		art.draw_rect(Rect2(10, 90, 160, 6), DARK)
+		art.draw_rect(Rect2(12, 92, snappedf(156.0 * ctl.score.chain_left_k(ctl.clock), 2.0), 2), col)
 
 ## An arcade panel: dark glass, a neon rim, a shine along the top.
 func _panel(r: Rect2, col: Color) -> void:
@@ -204,7 +218,7 @@ func _panel(r: Rect2, col: Color) -> void:
 func _draw_title() -> void:
 	art.draw_rect(Rect2(0, 96, 1280, 624), Color(0.01, 0.02, 0.1, 0.8))
 	# the logo: a magenta shadow, a cyan rim, yellow letters with a shine passing over
-	var scale := 9.0
+	var scale := 8.0
 	var w := PixelText.width(LOGO, scale)
 	var pos := Vector2((1280.0 - w) * 0.5, 126.0 + sin(_t * 1.6) * 3.0).snapped(Vector2(1, 1))
 	PinballField.glow_rect(art, Rect2(pos - Vector2(20, 14), Vector2(w + 40.0, PixelText.height(scale) + 28.0)), PURPLE, 0.7)
@@ -253,7 +267,7 @@ func _draw_title() -> void:
 		art.draw_rect(r, cols[i], false, 2.0)
 		var badge := Rect2(r.position + Vector2(10, 10), Vector2(26, 26))
 		art.draw_rect(badge, cols[i])
-		PixelText.draw_centered(art, str(i + 1), badge.get_center(), 3.0, DARK)
+		PixelText.draw_centered(art, str(i + 1), badge.get_center(), 2.0, DARK)
 		var ic := r.position + Vector2(52, 52)
 		match i:
 			0:  # a claw over a capsule

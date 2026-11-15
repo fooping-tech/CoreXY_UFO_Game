@@ -77,6 +77,7 @@ func _ready() -> void:
 	_test_game_mode_clock_and_stop(rs)
 	_test_game_mode_backend_hub(rs)
 	_test_game_mode_visuals(rs)
+	_test_game_mode_juice(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -3479,6 +3480,96 @@ func _test_game_mode_visuals(rs: Node) -> void:
 		"%s %s %s %s" % [playing_clean, lit, pin_glow, flash])
 	_ok(ctl.hud.clock_color() == Color.WHITE and GameModeHud.title_card(0).position.x < GameModeHud.title_card(2).position.x,
 		"game mode art: the clock is white until the last 30 seconds")
+	_gm_free(game, rs)
+
+## #141 (the feedback round): the pixel canvas, the new things to hit, the bounce, the combo
+## and the sky that follow the round, the gesture panel beside the field.
+func _test_game_mode_juice(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = _gm_playing(game)
+	# one dot = two screen pixels, like the UFO's 64 x 64 sprite at 2x; the picture is in the canvas
+	_ok(ctl.pixel_view.size == Vector2i(640, 360) and GameModeController.DOT_PX == GameModeVFX.UFO_SCALE
+		and ctl.screen.size == Vector2(1280, 720) and ctl.field_art.get_parent() == ctl.pixel_view
+		and ctl.fx.get_parent() == ctl.pixel_view and ctl.backdrop.get_parent() == ctl.pixel_view
+		and ctl.field.get_parent() == ctl.layer and ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_ALWAYS,
+		"game mode pixels: the background, the field's picture and the effects are drawn in a 640 x 360 canvas shown at 2x (the UFO's dot size); the physics stays in the game's world")
+	# the new kinds score, light up and kick
+	ctl.mock_hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(ctl.lanes["left"].capsule.capsule_id)
+	var f := ctl.field
+	var body := func(target: String) -> Node:
+		return f.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == target)[0]
+	var before := ctl.score.score
+	f._on_capsule_body(body.call("pop_0"), id)
+	f._on_capsule_body(body.call("target_2"), id)
+	f._on_capsule_body(body.call("sling_1"), id)
+	var t := ctl.score.table
+	_ok(ctl.score.score - before == int(round(t["pop"] + t["target"] * 1.5 + t["sling"] * 1.5)) and f._pop_flash[0] > 0.0
+		and f._target_lit[2] == PinballField.TARGET_LIT_S and f._sling_flash[1] > 0.0 and ctl.score.chain == 2
+		and PinballField.slope_normal(0).x > 0.0 and PinballField.slope_normal(1).x < 0.0 and PinballField.slope_normal(0).y < 0.0
+		and PinballField.CAPSULE_R == 18.0,
+		"game mode field: pop bumpers, wall targets and the slingshot slopes score (the pop and the target build the combo), light up, and the slopes kick up and inward; the capsule is bigger",
+		"%d %s" % [ctl.score.score - before, f._target_lit])
+	# the picture bounces on a score and comes to rest by itself; nothing else waits for it
+	var jolted := ctl.bounce_offset()
+	var clock_before := ctl.time_left
+	ctl._process(0.5)
+	_gm_step(ctl, 0.5)
+	var rested: bool = ctl.bounce_offset() == 0.0 and ctl.screen.position == Vector2.ZERO
+	ctl.effects = false
+	ctl.bounce(1.0)
+	var off: bool = ctl.bounce_offset() == 0.0
+	ctl.effects = true
+	_ok(jolted > 0.0 and jolted <= GameModeController.BOUNCE_MAX_PX and rested and off and ctl.time_left < clock_before,
+		"game mode juice: a score makes the picture bounce (whole dots, bounded) and it settles by itself while the clock runs; effects off = no bounce",
+		"%s %s %s" % [jolted, rested, off])
+	# the combo: a banner when it climbs, bigger pop-ups, the sky's energy; all gone when it runs out
+	var lvl := ctl.combo_level()
+	var banner := ctl.fx.banner_text()
+	var energy: float = ctl.backdrop.energy
+	for i in 40:
+		f.advance(0.04)
+	var trail := f.capsule_trail(id).size()
+	_gm_step(ctl, ctl.score.combo_window_s + 1.2)
+	_ok(lvl == 1 and banner == "COMBO x1.5" and energy > 0.0 and ctl.combo_level() == 0 and ctl.backdrop.energy == 0.0
+		and ctl.fx.banner_text() == "" and ctl.fx.popups() == 0 and trail > 0 and trail <= PinballField.TRAIL_POINTS
+		and GameModeVFX.popup_scale(false, 0) == 2.0 and GameModeVFX.popup_scale(false, 3) == 4.0 and GameModeVFX.popup_scale(true, 3) == 6.0
+		and ctl.score.chain_left_k(ctl.clock) == 0.0,
+		"game mode juice: the combo shows a banner, makes the pop-ups bigger and the sky livelier, and it all goes when the chain runs out; the capsule leaves a bounded trail",
+		"%d '%s' %s %d" % [lvl, banner, energy, trail])
+	# the sky follows the clock: calm, the last 30 s, the last 10 s
+	var calm: int = ctl.backdrop.urgency
+	var calm_sky := ctl.backdrop.sky_bottom()
+	ctl.time_left = ctl.hurry_s - 1.0
+	ctl.tick(1.0 / 60.0)
+	var hurry: int = ctl.backdrop.urgency
+	ctl.time_left = ctl.warning_s - 1.0
+	ctl.tick(1.0 / 60.0)
+	var last: int = ctl.backdrop.urgency
+	ctl.backdrop.advance(2.0)
+	_ok(calm == 0 and hurry == 1 and last == 2 and ctl.backdrop.sky_bottom() != calm_sky and ctl.backdrop.time_k < 0.2
+		and ctl.backdrop.light_color().r > ctl.backdrop.light_color().b,
+		"game mode juice: the sky and its light change with the time left (calm, the last 30 s, the last 10 s)",
+		"%d %d %d" % [calm, hurry, last])
+	# the gesture panel stands in the left column, clear of the field, the score and the Dial's port
+	game.gesture_hud.column = true
+	game.gesture_hud.place(1280.0, 720.0)
+	var card := Rect2(game.gesture_hud.position, game.gesture_hud.size)
+	var field_rect := Rect2(PinballField.LEFT - 12.0, 0, PinballField.RIGHT - PinballField.LEFT + 24.0, 720)
+	var port := Rect2(GameModeVFX.PORTS["left"] - Vector2(40, 130), Vector2(80, 200))
+	var ufo_left := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 64.0, 128, 128)
+	_ok(not card.intersects(field_rect) and not card.intersects(GameModeHud.SCORE_RECT) and not card.intersects(port)
+		and not GameModeHud.SCORE_RECT.intersects(ufo_left) and GameModeHud.TIME_RECT.position.x > ctl.ufo.x_max + 64.0
+		and game.gesture_hud.ring()[0].x < card.size.x,
+		"game mode layout: the hand panel (camera, state, speed) is a column beside the field: it covers neither the field, the goals, the score nor the Dial's port, and the UFO's rail is clear of the score and the clock",
+		str(card))
+	game.gesture_hud.column = false
+	game.gesture_hud.place(1280.0, 720.0)
+	_ok(game.gesture_hud.size == GestureHud.SIZE, "game mode layout: outside the score game the hand panel is the wide one as before")
+	ctl.close()
+	_ok(ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_DISABLED and ctl.screen.position == Vector2.ZERO,
+		"game mode pixels: the canvas stops drawing when the score game is closed")
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's

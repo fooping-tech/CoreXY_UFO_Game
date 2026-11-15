@@ -1399,6 +1399,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 ## UFO cues and the HUD (render frame).
 func _update_gesture_presentation(dt: float) -> void:
 	gesture_hud.gate = gesture_gate_reason
+	gesture_hud.column = game_mode != null and game_mode.active()  # beside the pinball field, not over it
 	gesture_hud.place(_play_w, get_viewport_rect().size.y)
 	gesture_hud.step(dt)
 	var face := ""
