@@ -40,6 +40,31 @@ def pick_port(registered: list[str], available: list[str]) -> str:
     return ports[0] if ports else ""
 
 
+def link_report(registered: list[str], port: str | None, available: list[str], connected: bool,
+                error: str = "", *, not_robot: tuple[str, ...] = ()) -> dict:
+    """Why the robot's serial link is down, for the game's 校正 tab (#124). Only looks at
+    the port names: nothing is opened, nothing is sent.
+
+    problem: "" (connected) | "port_missing" (the registered boards are not plugged in;
+    `others` are the ports seen instead: maybe another board) | "no_port" (nothing
+    registered and no serial port at all) | "open_failed" (the port is there but the link
+    is down: used by another program, the board did not answer, unplugged since).
+    not_robot: ports known to be something else (the peripherals' hub), never in `others`."""
+    reg = [p.strip() for p in registered if p and p.strip()]
+    tried = (port or "").strip()
+    others = [p for p in available if p not in reg and p not in not_robot and "Bluetooth" not in p and "debug-console" not in p]
+    if connected:
+        problem = ""
+    elif reg and not any(p in available for p in reg):
+        problem = "port_missing"
+    elif not reg and (not tried or tried not in available) and not others:
+        problem = "no_port"
+    else:
+        problem = "open_failed"
+    return {"connected": connected, "problem": problem, "registered": reg, "port": tried, "others": others,
+            "error": error}
+
+
 def guess_port() -> str | None:
     """Best guess for the Core2's USB serial port (CP210x / CH9102 on macOS)."""
     ports = list_serial_ports()
