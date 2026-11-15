@@ -46,6 +46,9 @@ var _drum: SpinBox
 var _height_filled := false
 var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
 var _z_use: Button
+## #126: to the recorded top / bottom (move_z), like the claw's 開く / 閉じる
+var _z_up: Button
+var _z_down: Button
 var restore_estimate: Dictionary = {}
 ## The last calibration command's answer from the backend ("" = none yet), shown by the
 ## settings screen under the tabs (visible wherever the tab is scrolled).
@@ -145,13 +148,18 @@ func setup(m: Node) -> void:
 	_sub("初めて・ロープの長さを変えたとき")
 	_step("①", "W を押し続けて一番上まで巻き上げ、「ここを上に記録」")
 	_step("②", "S を押し続けて一番下まで下げ、「ここを下に記録」（撮影の高さの机にもなる: 爪先を机に付ける）")
+	_step("③", "「下げる」「上げる」で、記録した下・上まで動くか確かめる（上下を両方記録すると押せる）")
 	row = _row()
 	_ws_button(row, "ここを上に記録", func(): main.ws.send_command("z_set", {"which": "top"}), "primary")
 	_ws_button(row, "ここを下に記録", func(): main.ws.send_command("z_set", {"which": "bottom"}), "primary")
+	_z_up = _ws_button(row, "上げる（上の記録へ）", func(): move_z_to("top"))
+	_z_down = _ws_button(row, "下げる（下の記録へ）", func(): move_z_to("bottom"))
+	row = _row()
 	_ws_button(row, "Z をやり直す（記録を消す）", func(): main.ws.send_command("z_set", {"which": "clear"}), "danger")
-	_caution("この画面では前に測った範囲で止まらない。押している間だけ動くので、巻き過ぎ・下ろし過ぎに注意。")
+	_caution("W / S では前に測った範囲で止まらない。押している間だけ動くので、巻き過ぎ・下ろし過ぎに注意。"
+		+ "「上げる」「下げる」は記録した上・下で止まる（Space で止める）。")
 	_sub("最後に")
-	_step("③", "W で一番上まで巻き上げてから「原点復帰」（XY の原点を決める）")
+	_step("④", "W か「上げる」で一番上まで巻き上げてから「原点復帰」（XY の原点を決める）")
 	row = _row()
 	_ws_button(row, "原点復帰", func(): main.ws.send_command("home"), "primary")
 
@@ -372,6 +380,25 @@ func stage_z(stage: String) -> float:
 			return float(s.get("z", NAN))
 	return NAN
 
+## #126: the Z of the recorded top / bottom (the backend counts Z from them: top = the
+## upper end of the range, bottom = the lower one).
+static func z_end(which: String) -> float:
+	var r := GameConfig.robot()
+	var top: float = r.z_max_mm if r.z_up_is_positive else r.z_min_mm
+	var bottom: float = r.z_min_mm if r.z_up_is_positive else r.z_max_mm
+	return top if which == "top" else bottom
+
+## Both Z points recorded this session: 上げる / 下げる can go there.
+static func z_range_recorded() -> bool:
+	return RobotState.z_top_set and RobotState.z_bottom_set
+
+## 上げる / 下げる (#126): move_z to the recorded top / bottom (the backend checks the rest).
+func move_z_to(which: String) -> void:
+	if not z_range_recorded():
+		_set_result(false, "Z の上と下を両方記録してから")
+		return
+	main.ws.send_command("move_z", {"z": z_end(which)})
+
 func try_height(stage: String) -> void:
 	var z := stage_z(stage)
 	if is_nan(z):
@@ -424,6 +451,11 @@ static func height_text(st: Dictionary) -> String:
 
 func _card_panel() -> PanelContainer:
 	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", card_style())
+	return p
+
+## A card's frame (#120; the settings tab's sections use it too, #126).
+static func card_style() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = CARD_BG
 	sb.border_color = CARD_BORDER
@@ -433,8 +465,7 @@ func _card_panel() -> PanelContainer:
 	sb.content_margin_right = 16
 	sb.content_margin_top = 12
 	sb.content_margin_bottom = 14
-	p.add_theme_stylebox_override("panel", sb)
-	return p
+	return sb
 
 func _card_box(p: PanelContainer) -> VBoxContainer:
 	var v := VBoxContainer.new()
@@ -761,6 +792,10 @@ func refresh() -> void:
 		"測った値（calibration.json）" if RobotState.z_calibrated else "設定ファイルの仮の値（まだ測っていない）"]
 	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated else BAD)
 	_z_use.disabled = not ready or restore_estimate.is_empty()
+	_z_up.disabled = not ready or not z_range_recorded()
+	_z_down.disabled = _z_up.disabled
+	_z_up.tooltip_text = "" if z_range_recorded() else "Z の上と下を両方記録すると押せる"
+	_z_down.tooltip_text = _z_up.tooltip_text
 	_z_restore.add_theme_color_override("font_color", YELLOW)
 	_claw.text = "いま %s　開き: %s　閉じ: %s" % ["%.1f°" % RobotState.arm_deg if RobotState.arm_reference_set else "?",
 		deg_text(RobotState.arm_open_deg), deg_text(RobotState.arm_closed_deg)]

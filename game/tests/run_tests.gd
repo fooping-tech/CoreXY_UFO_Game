@@ -2367,6 +2367,15 @@ func _test_settings(rs: Node) -> void:
 		"settings: S opens it over the title; the arm stays held; the debug panel above it", game.control_source)
 	game._unhandled_input(_key(KEY_2))
 	_ok(game.settings_active() and game.title_active(), "settings: the title's keys do not reach through it")
+	# #126: each section of the schema is a card holding its own rows
+	var in_card := true
+	for key in st._rows.keys():
+		var n: Node = st._rows[key].control
+		while n != null and not (n is PanelContainer and st.cards.has(n)):
+			n = n.get_parent()
+		in_card = in_card and n != null
+	_ok(st.cards.size() == (GameConfig.schema.get("sections", []) as Array).size() and in_card and not st._rows.is_empty(),
+		"settings: one card per section, every setting inside its card (#126)", str(st.cards.size()))
 	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
 	game._unhandled_input(_key(KEY_SPACE))
 	_ok(game.settings_active() and game.mock.target.is_equal_approx(game.mock.pos), "settings: Space still stops")
@@ -2603,6 +2612,31 @@ func _test_calibration_tab(rs: Node) -> void:
 	var z_b := _find_button(st.calibration, "ここを上に記録")
 	_ok(z_b.disabled and st.calibration._link.text.contains("バックエンドなし"),
 		"calibration: without a backend the Z / spot / camera buttons cannot be pressed, with the reason")
+	# #126: 上げる / 下げる beside the record buttons go to the recorded top / bottom (move_z)
+	var up_b := _find_button(st.calibration, "上げる（上の記録へ）")
+	var down_b := _find_button(st.calibration, "下げる（下の記録へ）")
+	var bottom_b := _find_button(st.calibration, "ここを下に記録")
+	var sent: Array[String] = []
+	var cap := func(l: String): if l.contains(" move_z "): sent.append(l)
+	game.ws.log_line.connect(cap)
+	rs.z_top_set = true
+	rs.z_bottom_set = false
+	st.calibration.refresh()
+	var one_point_off: bool = up_b.disabled and down_b.disabled
+	st.calibration.move_z_to("bottom")
+	var refused_one: bool = sent.is_empty() and st.calibration.result_text.contains("両方")
+	rs.z_bottom_set = true
+	st.calibration.move_z_to("bottom")
+	st.calibration.move_z_to("top")
+	game.ws.log_line.disconnect(cap)
+	rs.z_top_set = false
+	rs.z_bottom_set = false
+	var zb := JSON.stringify({"z": CalibrationPanel.z_end("bottom")})
+	var zt := JSON.stringify({"z": CalibrationPanel.z_end("top")})
+	_ok(up_b != null and down_b != null and up_b.get_parent() == bottom_b.get_parent() and one_point_off and refused_one
+		and sent.size() == 2 and sent[0].contains(zb) and sent[1].contains(zt)
+		and CalibrationPanel.z_end("top") != CalibrationPanel.z_end("bottom"),
+		"calibration: 上げる / 下げる beside the record buttons move Z to the recorded top / bottom, only with both (#126)", str(sent))
 	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
 	game._unhandled_input(_key(KEY_SPACE))
 	_ok(game.mock.target.is_equal_approx(game.mock.pos) and st.calibrating(), "calibration: Space still stops")

@@ -27,6 +27,9 @@ var _save_b: Button
 const CALIBRATION_TAB := 1
 const TEST_TAB := 2
 var _list: VBoxContainer
+## #126: each schema section is a card (as on the 校正 tab); rows go in the current one
+var _box: VBoxContainer
+var cards: Array[PanelContainer] = []
 
 func setup() -> void:
 	layer = 21  # over the title (20); main.gd moves the debug panel above both
@@ -84,13 +87,19 @@ func setup() -> void:
 	page.add_child(scroll)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_list.add_theme_constant_override("separation", 6)
+	_list.add_theme_constant_override("separation", 12)
 	scroll.add_child(_list)
 	for sec in GameConfig.schema.get("sections", []):
 		if not sec is Dictionary:
 			continue
-		var head := StudyHud.label(str(sec.get("title", "")), 24, CYAN, 6)
-		_list.add_child(head)
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", CalibrationPanel.card_style())
+		_list.add_child(card)
+		cards.append(card)
+		_box = VBoxContainer.new()
+		_box.add_theme_constant_override("separation", 8)
+		card.add_child(_box)
+		_box.add_child(StudyHud.label(str(sec.get("title", "")), 24, CYAN, 4))
 		for it in sec.get("items", []):
 			if it is Dictionary and it.has("key"):
 				_add_row(it)
@@ -186,7 +195,7 @@ func _add_row(it: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	var label := StudyHud.label(str(it.get("label", key)), 20, Color.WHITE, 3)
-	label.custom_minimum_size = Vector2(340, 0)
+	label.custom_minimum_size = Vector2(320, 0)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.add_child(label)
 	var c: Control
@@ -200,7 +209,7 @@ func _add_row(it: Dictionary) -> void:
 			var ob := OptionButton.new()
 			ob.focus_mode = Control.FOCUS_NONE
 			ob.fit_to_longest_item = false
-			ob.custom_minimum_size = Vector2(380, 0)
+			ob.custom_minimum_size = Vector2(360, 0)
 			ob.clip_text = true
 			for o in it.get("options", []):
 				if o is Array and o.size() > 0:
@@ -228,25 +237,26 @@ func _add_row(it: Dictionary) -> void:
 		"text":
 			var le := LineEdit.new()
 			le.max_length = int(it.get("max_length", 200))
-			le.custom_minimum_size = Vector2(380, 0)
+			le.custom_minimum_size = Vector2(360, 0)
 			le.text_changed.connect(func(_t): _mark(key))
 			c = le
 		_:
 			return
 	var cell := HBoxContainer.new()  # one width for every control: the badges line up
-	cell.custom_minimum_size = Vector2(380, 0)
+	cell.custom_minimum_size = Vector2(360, 0)
 	cell.add_child(c)
 	row.add_child(cell)
 	var badge := StudyHud.label(APPLY_LABELS.get(str(it.get("apply", "restart")), "次の起動から"), 14,
 		Color("9ff0a8") if str(it.get("apply", "")) == "now" else MUTED, 2)
 	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(badge)
-	_list.add_child(row)
+	var parent: VBoxContainer = _box if _box != null else _list
+	parent.add_child(row)
 	if it.has("note"):
 		var note := StudyHud.label("    " + str(it["note"]), 15, MUTED, 2)
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		note.custom_minimum_size = Vector2(860, 0)
-		_list.add_child(note)
+		note.custom_minimum_size = Vector2(800, 0)
+		parent.add_child(note)
 	_rows[key] = {"item": it, "control": c, "label": label}
 
 # ------------------------------------------------------------------ state
