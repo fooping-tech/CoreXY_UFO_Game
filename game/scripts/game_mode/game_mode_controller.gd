@@ -376,12 +376,15 @@ func _time_up() -> void:
 	for side in SIDES:
 		var l: Lane = lanes[side]
 		match l.state:
-			"READY":
-				_send(l, "disarm", "DISARM_RECEIVER")
-				l.t = closing_wait_s
-				_set_lane(l, "CLOSING")
-			"ARMING", "OFFLINE":
-				_set_lane(l, "CLOSED")
+			"READY", "ARMING", "OFFLINE":
+				# ARMING / OFFLINE too (review on #139): an ARM_RECEIVER still on its way, or one
+				# whose answer was lost, may have armed the Dial
+				if devices.available():
+					_send(l, "disarm", "DISARM_RECEIVER")
+					l.t = closing_wait_s
+					_set_lane(l, "CLOSING")
+				else:
+					_set_lane(l, "CLOSED")
 
 func _all_settled() -> bool:
 	for side in SIDES:
@@ -760,7 +763,10 @@ func _on_ball(l: Lane, cycle: int) -> void:
 	if l.cycle_session == session and cycle <= l.last_cycle:
 		_trace("ball_ignored", l, {"cycle": cycle, "result": "old_cycle"})  # a bounce of the switch, a re-sent event
 		return
-	if phase == "PLAYING" and l.state == "READY":
+	# ARMING / OFFLINE as well as READY (review on #139): a new cycle's BALL_RECEIVED in this
+	# session says the Dial was armed and holds a capsule, even if the ARM_RECEIVER's answer
+	# is still on its way or was lost. Ignoring it would leave the capsule in the Dial.
+	if phase == "PLAYING" and l.state in ["READY", "ARMING", "OFFLINE"]:
 		_take(l, cycle, false)
 	elif phase == "SETTLING" and l.state in ["READY", "CLOSING", "CLOSED"]:
 		_take(l, cycle, true)  # it landed as the time ran out

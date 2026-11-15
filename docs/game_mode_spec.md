@@ -37,7 +37,7 @@
 | `STOPPED` | Space（停止）で止めた。Enter でやり直し |
 
 - 残り 30 秒（`hurry_s`）: 音楽を速くし、イルミを速くする。残り 10 秒（`warning_s`）: 毎秒の警告音、時計が赤く点滅。
-- 0 秒の境界: 0 秒より前に `BALL_RECEIVED` が届いたカプセルはプレイする。0 秒の時点で空いている Dial には `DISARM_RECEIVER` を送る。それでも 0 秒の直前に入って後から届いたカプセル（遅れカプセル）は、**盤面に出さず・得点せず**、そのまま排出する。
+- 0 秒の境界: 0 秒より前に `BALL_RECEIVED` が届いたカプセルはプレイする。0 秒の時点で空いている Dial には `DISARM_RECEIVER` を送る（受取待ちにする途中・応答待ちの Dial にも送る）。それでも 0 秒の直前に入って後から届いたカプセル（遅れカプセル）は、**盤面に出さず・得点せず**、そのまま排出する。
 - `SETTLING` が 30 秒で終わらないとき: まだ終わっていない側を `FAULT` にして `RESULT` に進む（その Dial は係の人が確かめる）。
 
 ## 4. 画面の配置（1280 × 720 の固定座標）
@@ -84,7 +84,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 |---|---|---|---|
 | `OFFLINE` | じゅんび中 | Dial が応えない。3 秒ごとに `SET_MODE GAME` からやり直す | 応答 → `ARMING` |
 | `ARMING` | じゅんび中 | `SET_MODE GAME` → （`PLAYING` になってから）`ARM_RECEIVER` | ACK → `READY` |
-| `READY` | ここに入れてね | 受取待ち | `BALL_RECEIVED` → `ABSORBING` |
+| `READY` | ここに入れてね | 受取待ち | `BALL_RECEIVED` → `ABSORBING`（`ARM_RECEIVER` の ACK より先に届いた・ACK が失われた場合も、新しい cycle の `BALL_RECEIVED` なら `ARMING` / `OFFLINE` から受け取る） |
 | `ABSORBING` | ポートが開き、カプセルがポートから投下点へ飛ぶ（0.85 秒） | — | 時間 → `DROPPING` |
 | `DROPPING` | 投下点に現れる（0.25 秒） | — | 時間 → `SIMULATING` |
 | `SIMULATING` | 盤面を転がって得点 | — | ゴール / 15 秒 → `RETURNING` |

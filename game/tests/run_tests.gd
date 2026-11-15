@@ -3116,6 +3116,23 @@ func _test_game_mode_duplicates_and_sessions(rs: Node) -> void:
 		and hub.dials[GM_R].state == "ARMED" and ctl.lane_text("left").contains("係の人"),
 		"game mode: after a reconnection the capsule in play still scores but is NOT released by itself (FAULT); the other Dial arms again",
 		"%s %s %d" % [l.state, r.state, hub.count(GM_L, "RELEASE_BALL")])
+	# review on #139: a capsule lands before the ARM_RECEIVER's answer is back
+	hub.latency_s = 1.0
+	hub.command(GM_R, "DISARM_RECEIVER")
+	r.state = "ARMING"
+	ctl._arm(r)
+	var arming: bool = r.state == "ARMING" and hub.dials[GM_R].state == "ARMED"
+	hub.mock_ball(GM_R)
+	var taken_early: bool = r.state == "ABSORBING" and not r.capsule.is_empty()
+	_gm_step(ctl, 1.2)  # the late ACK changes nothing
+	var rid := str(r.capsule.capsule_id)
+	var in_play: bool = r.state == "SIMULATING" and ctl.field.has_capsule(rid)
+	hub.latency_s = 0.03
+	ctl.field.capsule_exited.emit(rid, "right", Vector2(900, 660))
+	_gm_step(ctl, 4.0)
+	_ok(arming and taken_early and in_play and r.state == "READY" and hub.count(GM_R, "RELEASE_BALL") == 1,
+		"game mode: a capsule reported before the arm's ACK is still played and released (not left in the Dial)",
+		"%s %s %s %s" % [arming, taken_early, in_play, r.state])
 	# one Dial offline for a moment: its lane waits and arms again, the other is not disturbed
 	hub.set_online(GM_R, false)
 	var off: bool = r.state == "OFFLINE"
@@ -3202,6 +3219,22 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_ok(hurry and warned and settling and disarmed and l.state == "SIMULATING" and ctl.time_left == 0.0,
 		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the free Dial is disarmed and the capsule in play goes on",
 		"%s %s %s %s %s" % [hurry, warned, settling, disarmed, l.state])
+	# review on #139: time runs out while an ARM_RECEIVER is on its way: that Dial is disarmed too
+	var g2 := _gm_game()
+	var c2 := _gm_playing(g2)
+	c2.mock_hub.latency_s = 1.0
+	var l2: GameModeController.Lane = c2.lanes["left"]
+	c2.mock_hub.command(GM_L, "DISARM_RECEIVER")
+	l2.state = "ARMING"
+	c2._arm(l2)
+	var armed_now: bool = c2.mock_hub.dials[GM_L].state == "ARMED"
+	c2.time_left = 0.01
+	_gm_step(c2, 0.05)
+	var closing: bool = c2.phase == "SETTLING" and l2.state == "CLOSING" and c2.mock_hub.dials[GM_L].state == "READY"
+	_gm_step(c2, 2.5)
+	_ok(armed_now and closing and c2.phase == "RESULT" and l2.state == "CLOSED" and not c2.mock_hub.mock_ball(GM_L),
+		"game mode: at 0 s a Dial whose arming was still on its way is disarmed too", "%s %s %s" % [armed_now, closing, l2.state])
+	_gm_free(g2, rs)
 	# a capsule that landed as the time ran out: back out, no score
 	hub._emit(GM_R, "BALL_RECEIVED", {"cycle": 2})
 	hub.dials[GM_R].state = "BALL_DETECTED"
