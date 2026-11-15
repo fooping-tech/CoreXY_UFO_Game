@@ -2169,6 +2169,16 @@ func _test_focus_stream() -> void:
 	var txt: String = load("res://scripts/ui/debug_ui.gd").stabilize_text(fs)
 	_ok(not before and live and shown and back and txt.contains("映像なし"),
 		"focus stream: CameraHub shows the stabilized frames while they arrive, its own feed after")
+	# review on #119: a Focus camera picked by hand wins over the stream
+	fs.apply_frame(p.header, img)
+	hub.assign("focus", -1)
+	var picked := not fs.active and not hub.external_live("focus") and not hub.has_feed("focus")
+	fs._process(0.0)
+	var picked_txt: String = load("res://scripts/ui/debug_ui.gd").stabilize_text(fs)
+	hub._manual["focus"] = false  # the pick undone (its camera unplugged): the stream again
+	hub._apply_feeds()
+	_ok(picked and fs.state == "off" and picked_txt.contains("休止中") and fs.active and hub.external_live("focus"),
+		"focus stream: a Focus camera picked by hand pauses the stream")
 	hub.queue_free()
 
 func _test_study_sheet_photo(rs: Node) -> void:

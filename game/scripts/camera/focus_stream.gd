@@ -17,6 +17,9 @@ const INBOUND_BUFFER := 4 * 1024 * 1024
 
 var url := ""
 var stabilize := true
+## False: disconnected and not shown (a Focus camera picked by hand, review on #119); the
+## backend releases the camera when nobody watches.
+var active := true
 ## off / connecting / opening / streaming / error (the backend's state once connected)
 var state := "off"
 var message := ""
@@ -56,7 +59,7 @@ static func url_for(backend_url: String, port: int) -> String:
 	return "ws://%s:%d" % [host if host != "" else "127.0.0.1", port]
 
 func live() -> bool:
-	return texture != null and Time.get_ticks_msec() - _last_frame_ms < STALE_MS
+	return active and texture != null and Time.get_ticks_msec() - _last_frame_ms < STALE_MS
 
 func set_stabilize(on: bool) -> void:
 	stabilize = on
@@ -86,6 +89,14 @@ func _exit_tree() -> void:
 
 func _process(dt: float) -> void:
 	if url == "":
+		return
+	if not active:
+		if _peer != null:
+			_peer.close()
+			_peer = null
+		_pending = {}
+		state = "off"
+		message = ""
 		return
 	if _peer == null:
 		_retry -= dt

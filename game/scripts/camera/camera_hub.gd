@@ -142,7 +142,8 @@ func feed_name(role: String) -> String:
 func has_feed(role: String) -> bool:
 	return external_live(role) or _feed(feed_id(role)) != null
 
-## True while `role` shows the backend's stabilized frames (#118).
+## True while `role` shows the backend's stabilized frames (#118). A Focus camera picked by
+## hand in the debug panel wins (review on #119): the stream stops until that pick is undone.
 func external_live(role: String) -> bool:
 	return role == "focus" and stream != null and stream.live()
 
@@ -205,6 +206,8 @@ static func fill_roles(feeds: Array, current: Dictionary, patterns: Dictionary, 
 	return out
 
 func _apply_feeds() -> void:
+	if stream != null:
+		stream.active = not bool(_manual.get("focus", false))
 	var used := {}
 	for role in ROLES:
 		var id := feed_id(role)

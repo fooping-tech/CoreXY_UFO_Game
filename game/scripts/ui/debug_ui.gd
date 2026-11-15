@@ -880,6 +880,8 @@ static func stabilize_text(fs: FocusStream) -> String:
 			"追跡中" if bool(h.get("tracking", false)) else "見失い（補正を戻し中）",
 			float(h.get("dx", 0.0)), float(h.get("dy", 0.0)), float(h.get("rot_deg", 0.0)),
 			int(h.get("points", 0)), float(h.get("fps", 0.0))]
+	if not fs.active:
+		return "揺れ補正: 休止中（Focus のカメラを手で選んだため。そのカメラが外れると戻る）"
 	match fs.state:
 		"error":
 			return "揺れ補正: カメラを開けない（%s）。補正なしの映像を表示中" % fs.message

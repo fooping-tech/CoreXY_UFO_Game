@@ -179,19 +179,75 @@ async def test_the_stream_opens_the_camera_while_watched():
         await fs.stop()
 
 
-async def test_a_camera_that_does_not_open_is_reported():
-    def broken(p):
-        raise OSError("camera 'Innomaker' could not be opened")
-    fs = FocusStream(FocusStreamParams(enabled=True, port=0), opener=broken)
+async def test_a_camera_that_does_not_open_is_reported_and_tried_again():
+    """Review on #119: plugged in later (or back), the same connection gets frames."""
+    tries = []
+
+    def flaky(p):
+        tries.append(1)
+        if len(tries) < 3:
+            raise OSError("camera 'Innomaker' could not be opened")
+        return FakeCamera(p)
+    fs = FocusStream(FocusStreamParams(enabled=True, port=0), opener=flaky)
+    fs.retry_s = 0.05
     await fs.start()
     try:
-        async with websockets.connect(f"ws://127.0.0.1:{fs.port}") as ws:
-            for _ in range(5):
-                m = json.loads(await asyncio.wait_for(ws.recv(), 5))
-                if m["data"]["state"] == "error":
-                    assert "could not be opened" in m["data"]["message"]
+        async with websockets.connect(f"ws://127.0.0.1:{fs.port}", max_size=None) as ws:
+            states = []
+            for _ in range(50):
+                m = await asyncio.wait_for(ws.recv(), 5)
+                if isinstance(m, bytes):
                     break
+                states.append(json.loads(m)["data"])
             else:
-                pytest.fail("no error status")
+                pytest.fail("no frames after the camera came back")
+            errors = [s for s in states if s["state"] == "error"]
+            assert errors and "could not be opened" in errors[0]["message"] and len(tries) == 3
+    finally:
+        await fs.stop()
+
+
+class StallingCamera(FakeCamera):
+    """The first one sends 5 frames and then nothing; the next ones work."""
+    made = 0
+
+    def __init__(self, p):
+        super().__init__(p)
+        StallingCamera.made += 1
+        self.first = StallingCamera.made == 1
+        self.reads = 0
+
+    def read(self):
+        self.reads += 1
+        if self.first and self.reads > 5:
+            import time
+            time.sleep(1 / 60)
+            return False, None
+        return super().read()
+
+
+async def test_a_camera_that_stops_is_opened_again():
+    StallingCamera.made = 0
+    opened = []
+
+    def opener(p):
+        opened.append(1)
+        return StallingCamera(p)
+    fs = FocusStream(FocusStreamParams(enabled=True, port=0), opener=opener)
+    fs.retry_s = 0.05
+    await fs.start()
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{fs.port}", max_size=None) as ws:
+            seen_error = False
+            frames_after = 0
+            for _ in range(400):
+                m = await asyncio.wait_for(ws.recv(), 10)
+                if isinstance(m, str):
+                    seen_error = seen_error or json.loads(m)["data"]["state"] == "error"
+                elif seen_error:
+                    frames_after += 1
+                    if frames_after >= 3:
+                        break
+            assert seen_error and frames_after >= 3 and len(opened) == 2
     finally:
         await fs.stop()

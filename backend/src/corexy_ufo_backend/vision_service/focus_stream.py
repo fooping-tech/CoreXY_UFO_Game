@@ -121,6 +121,7 @@ class FocusStream:
         self._thread: threading.Thread | None = None
         self._halt = threading.Event()
         self._linger: asyncio.TimerHandle | None = None
+        self.retry_s = 2.0
 
     @property
     def port(self) -> int:
@@ -235,55 +236,67 @@ class FocusStream:
         self.state = "idle"
 
     def _run(self) -> None:
-        self._set_state("opening")
-        try:
-            cap = self.opener(self.p)
-        except (OSError, ValueError) as e:
-            log.error("arm camera stream: %s", e)
-            self._set_state("error", str(e))
-            return
+        """Open the camera and stream; a camera that cannot be opened or stops sending is tried
+        again every retry_s while anyone watches (review on #119: plugged back in, it recovers)."""
+        seq = 0
+        while not self._halt.is_set():
+            self._set_state("opening")
+            try:
+                cap = self.opener(self.p)
+            except (OSError, ValueError) as e:
+                log.error("arm camera stream: %s (trying again in %.0f s)", e, self.retry_s)
+                self._set_state("error", str(e))
+                self._halt.wait(self.retry_s)
+                continue
+            try:
+                seq = self._stream(cap, seq)
+            finally:
+                cap.release()
+            if seq < 0:
+                return
+            self._halt.wait(self.retry_s)
+
+    def _stream(self, cap: Any, seq: int) -> int:
+        """Frames until halted (returns the last seq) or the camera stops (error state, seq);
+        -1 when the event loop is gone."""
         stab = Stabilizer(self.p.stabilizer)
         quality = [int(cv2.IMWRITE_JPEG_QUALITY), self.p.jpeg_quality]
-        seq = 0
         fps = 0.0
         last = None
         fails_since = None
-        try:
-            self._set_state("streaming")
-            while not self._halt.is_set():
-                ok, frame = cap.read()
-                now = time.monotonic()
-                if not ok or frame is None:
-                    fails_since = fails_since or now
-                    if now - fails_since > 2.0:
-                        self._set_state("error", "the camera stopped sending frames")
-                        return
-                    time.sleep(0.02)
-                    continue
-                if fails_since is not None:
-                    fails_since = None
-                    self._set_state("streaming")
-                if last is not None:
-                    fps = fps * 0.9 + 0.1 / max(now - last, 1e-3)
-                last = now
-                if self.stabilize:
-                    out, info = stab.update(frame, now)
-                else:
-                    stab.reset()
-                    out, info = frame, {"dx": 0.0, "dy": 0.0, "rot_deg": 0.0, "points": 0, "tracking": False}
-                ok, jpg = cv2.imencode(".jpg", out, quality)
-                if not ok:
-                    continue
-                seq += 1
-                self.frames = seq
-                h, w = out.shape[:2]
-                header = {"seq": seq, "t_ms": int(time.time() * 1000), "w": w, "h": h,
-                          "stabilized": self.stabilize, "fps": round(fps, 1), **info}
-                data = pack(header, jpg.tobytes())
-                if self._loop is not None:
-                    try:
-                        self._loop.call_soon_threadsafe(self._publish, data)
-                    except RuntimeError:  # pragma: no cover - loop closed
-                        return
-        finally:
-            cap.release()
+        self._set_state("streaming")
+        while not self._halt.is_set():
+            ok, frame = cap.read()
+            now = time.monotonic()
+            if not ok or frame is None:
+                fails_since = fails_since or now
+                if now - fails_since > 2.0:
+                    log.error("arm camera stream: no frames for 2 s (opening it again)")
+                    self._set_state("error", "the camera stopped sending frames")
+                    return seq
+                time.sleep(0.02)
+                continue
+            fails_since = None
+            if last is not None:
+                fps = fps * 0.9 + 0.1 / max(now - last, 1e-3)
+            last = now
+            if self.stabilize:
+                out, info = stab.update(frame, now)
+            else:
+                stab.reset()
+                out, info = frame, {"dx": 0.0, "dy": 0.0, "rot_deg": 0.0, "points": 0, "tracking": False}
+            ok, jpg = cv2.imencode(".jpg", out, quality)
+            if not ok:
+                continue
+            seq += 1
+            self.frames = seq
+            h, w = out.shape[:2]
+            header = {"seq": seq, "t_ms": int(time.time() * 1000), "w": w, "h": h,
+                      "stabilized": self.stabilize, "fps": round(fps, 1), **info}
+            data = pack(header, jpg.tobytes())
+            if self._loop is not None:
+                try:
+                    self._loop.call_soon_threadsafe(self._publish, data)
+                except RuntimeError:  # pragma: no cover - loop closed
+                    return -1
+        return seq
