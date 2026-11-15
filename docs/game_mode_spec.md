@@ -2,7 +2,7 @@
 
 150 秒のスコアゲームの**ゲーム仕様の正本**（Issue #138）。ルール、画面の配置、時間の流れ、得点、状態遷移、例外、機器とのやり取りをここで決める。
 
-- 機器（M5Dial ×2・イルミ・ハブ）との**通信と LED の契約の正本**は UFO-DeviceHub の `docs/game-mode-interface.md`（[UFO-DeviceHub #8](https://github.com/fooping-tech/UFO-DeviceHub/issues/8) で作成予定。**この版の時点ではまだ無い**）。それまでは同リポジトリの `docs/protocol.md`（プロトコル版 1）が契約。
+- 機器（M5Dial ×2・イルミ・ハブ）との**通信と LED の契約の正本**は UFO-DeviceHub の [`docs/game-mode-interface.md`](https://github.com/fooping-tech/UFO-DeviceHub/blob/main/docs/game-mode-interface.md)（[UFO-DeviceHub #8](https://github.com/fooping-tech/UFO-DeviceHub/issues/8)。プロトコル版 1、ファームウェア 0.3）。この文書はそれに合わせてある（§7・§8・§13）。
 - 仕様を変える PR は、この文書を直し、Issue #138 と DeviceHub #8 の両方にコメントする。
 - ここに書いた数値は**すべて調整値**（未確定）。プレイテストと実機の計測で決める。値は `config/game_config.json` の `game_mode` 節にある。
 
@@ -20,10 +20,10 @@
 
 | 画面の側 | 機器 | デバイス ID | 画面のポート | 画面の色（初期提案） |
 |---|---|---|---|---|
-| 左 | 1 号機 = Dial 1 | `0x20` | 左下 | シアン `0,229,255` |
-| 右 | 2 号機 = Dial 2 | `0x21` | 右下 | マゼンタ `255,64,208` |
+| 左 | 1 号機 = Dial 1 | `0x20` | 左下 | シアン `0,255,255` |
+| 右 | 2 号機 = Dial 2 | `0x21` | 右下 | マゼンタ `255,0,255` |
 
-色は `game_mode.dials.<side>.color`（RGB）で変えられる。Dial 本体の LED を同じ色にする命令は DeviceHub #8 の契約待ち（§8）。
+色は Dial の**号機色**と同じにする（初期値は UFO-DeviceHub の既定色）。`game_mode.dials.<side>.color`（RGB）で変えると、ゲームがセッションごとに `SET_DIAL_COLOR` で Dial にも同じ色を送るので、画面のポートと Dial の LED がそろう（§8）。
 
 ## 3. 時間の流れ
 
@@ -89,7 +89,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 | `DROPPING` | 投下点に現れる（0.25 秒） | — | 時間 → `SIMULATING` |
 | `SIMULATING` | 盤面を転がって得点 | — | ゴール / 15 秒 → `RETURNING` |
 | `RETURNING` | 出口から自分の側のポートへ吸い込まれ、光が Dial の方向へ流れる | 0.6 秒後（同期点、`release_sync_s`）に `RELEASE_BALL` | 送信 → `RELEASING` |
-| `RELEASING` | `RELEASE_STARTED` で排出の演出 | `RELEASE_DONE` を待つ（8 秒まで） | `RELEASE_DONE` → `VERIFYING` |
+| `RELEASING` | `RELEASE_STARTED` で排出の演出 | `RELEASE_DONE` を待つ（8 秒まで） | `RELEASE_DONE` → `VERIFYING`。8 秒来なければ、送り直さずに `VERIFYING` で Dial の状態を確かめる |
 | `VERIFYING` | — | `GET_STATUS`。`dial_state` が `COMPLETE` / `READY` で、スイッチが OFF であること（0.5 秒おきに 4 回まで） | 確認 → `ARM_RECEIVER` → `READY`（0 秒後なら `CLOSED`） |
 | `CLOSING` / `CLOSED` | — | 0 秒: `DISARM_RECEIVER`。`RESULT` で `SET_MODE STANDBY` | — |
 | `FAULT` | 係の人を呼んでね＋理由 | **何も送らない** | 次のラウンドまでそのまま |
@@ -114,7 +114,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 - **重複の抑制**: カプセルのゴール得点は 1 回だけ。出口の通知が重なっても、後から古いイベントが来ても二重に得点しない。
 - UFO の位置で落とす場所が変わるので、どのタイミングで Dial に入れるかがねらいどころ（スイッチの真上、中央ゴールの真上）。
 
-## 7. 機器とのやり取り（プロトコル版 1。既存のコマンドとイベントだけを使う）
+## 7. 機器とのやり取り（プロトコル版 1）
 
 | 場面 | 送る | 待つ |
 |---|---|---|
@@ -125,6 +125,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 | 0 秒 | 空いている Dial に `DISARM_RECEIVER` | ACK |
 | 終了 | `SET_MODE {mode: STANDBY}`（`FAULT` の Dial には送らない） | — |
 | 停止（Space、Esc） | 全機器に `STOP_ALL` | — |
+| Dial の LED（§8） | `SET_DIAL_COLOR`、`SET_DIAL_EFFECT`（ファームウェア 0.3 から） | 待たない |
 
 言葉の意味（混同しない）:
 
@@ -154,11 +155,26 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 | 残り 30 秒 | `SET_LIGHT_MODE GAME_PLAY`（明るく・速く） |
 | 結果 | `SET_LIGHT_MODE RESULT`、`TRIGGER_EFFECT GAME_CLEAR` |
 
-**Dial 本体と、画面と Dial をつなぐ外部 LED はまだ制御していない。** 色・方向（画面へ `TO_SCREEN` / Dial へ `TO_DIAL`）・時間を指定する命令が今のプロトコルに無く、外部 LED の配線と制御元も未確定（DeviceHub #8）。それまで:
+### Dial の LED（転送の光）
 
-- 画面側は、ポートと画面の端（Dial の方向）の間をその側の色の光が流れる（取り込みは Dial → 画面、排出は画面 → Dial）。左右は独立で、同時・逆方向も出る。
-- Dial は自分の状態の LED（受取待ち・検出・排出）を出す。
-- ゲームは、送りたかった LED 命令をトレースの `led_command` に書くだけ（例 `TO_DIAL rgb=0,229,255 (not sent: DeviceHub #8)`）。契約が決まったら、ここを実際の命令に置き換える（`game_mode_controller.gd` の `_led`）。
+Dial 1 台に LED が 2 系統ある（前面 G1 と、G15。どちらもその Dial が駆動し、命令の `target: BOTH` で両方に出す）。ゲームは UFO-DeviceHub の契約（`docs/game-mode-interface.md` §5）の名前付きアニメーションを、その Dial の号機色で送る（`game_mode.dial_leds`）。
+
+| いつ（ゲーム） | アニメーション | `SET_DIAL_EFFECT` |
+|---|---|---|
+| `SET_MODE GAME` が通ったとき（セッションごと） | — | `SET_DIAL_COLOR`（その側の色） |
+| `BALL_RECEIVED` を受けて取り込みを始めるとき | `INTAKE` | CHASE / `TO_SCREEN` / 1500 ms / NORMAL |
+| `RETURNING` を始めるとき（`RELEASE_BALL` の 0.6 秒前） | `RETURN_FLOW` | COMET / `TO_DIAL` / 0（続く）/ NORMAL |
+| `RELEASE_STARTED` を受けたとき | `RELEASING` | CHASE / `TO_DIAL` / 0 / NORMAL |
+| `FAULT` になったとき | `FAULT` | FLASH 赤 / 1500 ms / HIGH |
+| `RESULT`（正常に閉じた Dial） | — | NONE / HIGH（Dial 自身の表示に戻す） |
+
+- 画面側は同じ色・同じ向きで、ポートと画面の端（Dial の方向）の間を光が流れる（取り込みは Dial → 画面、排出は画面 → Dial）。左右は独立で、同時・逆方向も出る。
+- Dial は検出した瞬間に自分で「白 → 号機色で画面方向」を光らせる。ゲームの `INTAKE` は同じ色・同じ向きなので、後から届いても見た目がつながる。
+- 演出の終わりは Dial が自分で決める（カプセルの検出、排出シーケンスの終了、`STOP_ALL`、セッションの変更、通信断）。ゲームは後始末の命令に頼らない。
+- **結果を待たない**: `IGNORED_PRIORITY`・`NOT_CONFIGURED`（G15 の LED がない機体）・タイムアウトは無視する。`RELEASE_BALL` を LED の応答で遅らせない。
+- **古いファームウェア**（Dial 0.2 は `UNSUPPORTED`、Hub 0.2 は `BAD_REQUEST`）: その Dial にはそのラウンドの間 LED 命令を送らない。Dial は自分の状態の LED を出し、ゲームは同じに進む。
+- `ATTRACT`（受取待ちの呼び込み）は送っていない（Dial 自身の受取待ち表示が出る）。
+- 画面と Dial の間にさらに別の LED テープを足す場合の配線・制御は未定（DeviceHub 側の文書 §3）。
 
 ## 9. 例外
 
@@ -166,7 +182,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 |---|---|
 | `RELEASE_BALL` が拒否された・応答がない | その側を `FAULT`。**送り直さない** |
 | `RELEASE_FAILED` | `FAULT` |
-| `RELEASE_DONE` が 8 秒来ない | `FAULT`（排出できたか分からない） |
+| `RELEASE_DONE` が 8 秒来ない | 送り直さず、`GET_STATUS` で確かめる。Dial が `COMPLETE` でスイッチが OFF なら（通知だけが失われた）次へ進む。そうでなければ `FAULT`（排出できたか分からない） |
 | 排出後も Dial がカプセルありのまま | `FAULT`（次の受け取りを始めない） |
 | ハブとの通信が切れて、つながり直した（新しいセッション） | プレイ中のカプセルは得点を続けるが、**自動では排出しない**（Dial はもうそのカプセルを覚えていない）→ `FAULT`。排出の途中だった側も `FAULT`。空いていた側は受け取りをやり直す |
 | Dial が一時的にオフライン | 空いていた側は `OFFLINE` で待ち、戻ったら受け取りをやり直す |
@@ -189,7 +205,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 
 `event` の種類: `game_start` `hurry` `time_up` `result` `stopped` `session` `lane_state` `command` `ack` `event` `event_ignored` `ball_ignored` `capsule_created` `score` `stay_timeout` `release` `led` `fault`。
 
-DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`command_id` で突き合わせる。スイッチが入った時刻と受信時刻の差は、バックエンドがイベントに付ける `received_at`（単調時計）とこの `t_ms` から測る（機器側の時刻との対応付けは未実装）。
+DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehub-trace <file>` か config の `devicehub.trace` で、ハブに送った命令・ACK・イベントを 1 行ずつ書く）とは `session_id`・`source_dial`・`cycle`・`command_id` で突き合わせる。受取は `(session_id, source_dial, cycle)`、排出は `RELEASE_BALL` の `command_id`。スイッチが入った時刻と受信時刻の差は、バックエンドがイベントに付ける `received_at`（単調時計）とこの `t_ms` から測る（機器側の時刻との対応付けは未実装）。
 
 ## 11. 実装
 
@@ -205,7 +221,7 @@ DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`com
 | HUD | `game_mode_hud.gd` |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |
-| バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ） |
+| バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ）、`devicehub/` の UFO-DeviceHub `pc/` のコピー（`trace.py`・`game_mode.py` を含む） |
 | 設定 | `config/game_config.json` の `game_mode` |
 | テスト | `game/tests/run_tests.gd` の `_test_game_mode_*`、`backend/tests/test_devicehub.py` |
 
@@ -256,7 +272,8 @@ DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`com
 | 150 秒を通したプレイ | ゲーム内の模擬で確認（`--game-mode-demo`） | 未検証 |
 | 左右の配線、受取スイッチ、サーボ、Dial の LED | — | **未検証** |
 | スイッチ → 画面の遅れ、`RELEASE_BALL` の同期点、演出の長さ | 初期値のまま | **未計測** |
-| Dial・外部 LED の色と方向の同期 | 未実装（DeviceHub #8 の契約待ち） | **未検証** |
+| Dial の LED の色と方向の同期（`SET_DIAL_COLOR` / `SET_DIAL_EFFECT`）、優先度での拒否、古いファームウェア | 確認済み（ゲーム内の模擬と UFO-DeviceHub の模擬ハブ） | **未検証**（LED の上下の向き、G15 の LED の個数、2 系統同時点灯の電流は DeviceHub 側でも未確認） |
+| `RELEASE_DONE` が来ないときの状態確認 | 確認済み | 未検証 |
 | 得点表・難易度 | 初期値のまま | プレイテスト未実施 |
 
 実機で最初に確かめる手順:
@@ -265,10 +282,12 @@ DeviceHub 側のトレースとは `session_id`・`source_dial`・`cycle`・`com
 2. `--game-mode-seconds 30` でスコアゲームを始め、左にカプセルを入れる。左下のポートから取り込まれ、落ちたあと**左の Dial から**排出されることを見る。右も同じ。
 3. 両方に続けて入れ、互いに邪魔しないことを見る。
 4. プレイ中に Space を押し、Dial が止まり、そのあと何も動かないことを見る。
-5. トレースから、スイッチ → 取り込み開始、`RELEASE_BALL` → `RELEASE_STARTED` → `RELEASE_DONE` の時間を読み、`game_mode.timing` を合わせる。
+5. Dial の LED が画面のポートと同じ色で、取り込みは画面の方向へ、排出は Dial の方向へ流れることを見る（逆なら DeviceHub 側の `DIAL_LED_REVERSED`）。Hub と Dial はどちらもファームウェア 0.3 にする（片方だけ新しいと STATUS が読めない）。
+6. トレースから、スイッチ → 取り込み開始、`RELEASE_BALL` → `RELEASE_STARTED` → `RELEASE_DONE` の時間を読み、`game_mode.timing` を合わせる。
 
 ## 13. 相手リポジトリとの記録
 
 | 日付（JST） | この文書の版 | UFO-DeviceHub のコミット | プロトコル版 | 内容 |
 |---|---|---|---|---|
 | 2026-11-16 | v0.3（初版） | `f98999f`（`pc/` のコピー元。`__init__.py` に記録） | 1 | 既存のコマンド・イベントだけで実装。`pc/protocol.py` を `1302bac` → `f98999f` に更新（`DialState.SETTINGS` の追加だけ）。LED の契約（`docs/game-mode-interface.md`）は未作成 |
+| 2026-11-16 | v0.3（LED 契約の取り込み） | `e965cdf`（UFO-DeviceHub PR #9。`pc/` 一式をコピーし直し: `protocol.py` `device_gateway.py` `mock_hub.py`、新規 `trace.py` `game_mode.py`） | 1（追加のみ。ファームウェア 0.3） | `SET_DIAL_COLOR` / `SET_DIAL_EFFECT` を §8 の表のとおり送る。号機色の初期値を DeviceHub の既定色に合わせた。`RELEASE_DONE` が来ないときは契約 §7 のとおり `GET_STATUS` で確かめる。既存コマンド・イベントの意味は変わっていない。Mock のみ・実機未検証 |

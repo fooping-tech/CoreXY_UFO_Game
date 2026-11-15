@@ -178,6 +178,7 @@ CoreXY_UFO_Game/
 | `--detector none` / `yolo` / `cloudflare`、`--yolo-model <path>` | 物の検出器 |
 | `--auto-catch-dry-run [FAULT]`、`--fault-at <状態>` | 自動キャッチを仮想クレーンで 1 回だけ流して終わる（実機には何も送らない）。FAULT で故障を注入 |
 | `--devicehub PORT` | この起動だけ周辺機器のハブを使う（config の `devicehub.enabled` に関係なく）。`mock` は模擬ハブ（スコアゲームを実機なしで通すとき）、`auto`、ポート名 |
+| `--devicehub-trace FILE` | ハブに送った命令・ACK・イベントを 1 行 1 JSON で FILE に書く（UFO-DeviceHub のトレース。スコアゲームのトレースと突き合わせる。config の `devicehub.trace` でも） |
 | `--stop-on-stdin-close` | 標準入力が閉じたら、Ctrl-C と同じ順番で止まる（サーバー → ロボット）。Windows には送れる SIGTERM がないので、`start.ps1` が付けて使う |
 | `-v` / `--verbose` | 詳しいログ |
 
@@ -239,7 +240,8 @@ cd CoreXY_UFO_Game/game
 - **実機なしで試す**: `./start.sh --game-only` でタイトルの 3（Dial はゲーム内の模擬。**Z = 左に入れる、M = 右に入れる**）。すぐ始めるなら `./start.sh --game-only -- --game-mode --game-mode-demo`（模擬の Dial に自動でカプセルが入る）。バックエンドの模擬ハブを通すなら `./start.sh --mock --no-gesture -- --devicehub mock`。
 - 実機の Dial を使うには、設定画面の「周辺機器のハブを使う」をオンにして `./start.sh`（テストタブと同じハブ）。
 - 得点表・時間・色は `config/game_config.json` の `game_mode`（どれも調整値）。ラウンドごとのイベントの記録（トレース）は `user://game_mode/trace_<日時>.jsonl`。
-- **実機の Dial・イルミでは未検証**。Dial 本体と外部 LED の色・方向の同期は UFO-DeviceHub 側の契約待ちで、まだ送っていない（画面側の光だけ）。
+- Dial の LED は画面のポートと同じ色で、取り込みは画面の方向へ、排出は Dial の方向へ流れる（UFO-DeviceHub の `SET_DIAL_EFFECT` / `SET_DIAL_COLOR`。Hub と Dial のファームウェア 0.3 から。古いファームウェアでは Dial 自身の表示のままで、ゲームは同じに進む）。光は飾りで、失敗してもゲームと排出は止まらない。
+- **実機の Dial・イルミでは未検証**。
 
 ### 設定画面（タイトルの歯車）
 
