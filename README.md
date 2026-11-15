@@ -154,7 +154,7 @@ CoreXY_UFO_Game/
 | `--hide-debug` | デバッグパネルを隠して起動する |
 | `--title` / `--no-title` | タイトル画面を出す / 出さない（既定は出す。下の「タイトル画面」） |
 | `--study-mode` / `--study-demo simulated\|camera` | UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
-| `--game-mode` | スコアゲーム（150 秒）をすぐ始める。`--game-mode-devices mock\|backend\|auto`（Dial をゲーム内の模擬にするかバックエンドのハブにするか）、`--game-mode-seconds <秒>`（ラウンドの長さ）、`--game-mode-demo`（模擬の Dial に自動でカプセルを入れる）。[docs/game_mode_spec.md](docs/game_mode_spec.md) |
+| `--game-mode` | スコアゲーム（150 秒）をすぐ始める。`--game-mode-devices mock\|backend\|auto`（Dial をゲーム内の模擬にするかバックエンドのハブにするか）、`--game-mode-seconds <秒>`（ラウンドの長さ）、`--game-mode-demo`（模擬の Dial に自動でカプセルを入れる）、`--game-mode-title`（開始待ちのタイトル画面で止める）。[docs/game_mode_spec.md](docs/game_mode_spec.md) |
 | `--capture <dir>` | 0.5 秒ごとに画面を PNG で保存し（8 秒間）、FPS を表示して終わる |
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
@@ -239,7 +239,7 @@ cd CoreXY_UFO_Game/game
 - Dial の側が「係の人を呼んでね」になったら、その Dial は自動では動かさない（排出の失敗・通信の切断など。理由が出る）。排出の完了通知はサーボの動作が終わった合図で、カプセルが実際に出た証明ではない。
 - **実機なしで試す**: `./start.sh --game-only` でタイトルの 3（Dial はゲーム内の模擬。**Z = 左に入れる、M = 右に入れる**）。すぐ始めるなら `./start.sh --game-only -- --game-mode --game-mode-demo`（模擬の Dial に自動でカプセルが入る）。バックエンドの模擬ハブを通すなら `./start.sh --mock --no-gesture -- --devicehub mock`。
 - 実機の Dial を使うには、設定画面の「周辺機器のハブを使う」をオンにして `./start.sh`（テストタブと同じハブ）。ハブにつながらないときは、画面に**理由**が出る（別のシステムのハブ → 設定のシステム番号を合わせる／ポートが見つからない／ポートを開けない／ハブとして応答しない）。テストタブのハブの行にも同じ理由が出る。
-- 得点表・時間・色は `config/game_config.json` の `game_mode`（どれも調整値）。ラウンドごとのイベントの記録（トレース）は `user://game_mode/trace_<日時>.jsonl`。
+- 得点表・時間・色は `config/game_config.json` の `game_mode`（どれも調整値）。動きの遅い機械では `game_mode.visual_quality` を `low` にすると背景が簡素になる。ラウンドごとのイベントの記録（トレース）は `user://game_mode/trace_<日時>.jsonl`。
 - Dial の LED は画面のポートと同じ色で、取り込みは画面の方向へ、排出は Dial の方向へ流れる（UFO-DeviceHub の `SET_DIAL_EFFECT` / `SET_DIAL_COLOR`。Hub と Dial のファームウェア 0.3 から。古いファームウェアでは Dial 自身の表示のままで、ゲームは同じに進む）。光は飾りで、失敗してもゲームと排出は止まらない。
 - **実機の Dial・イルミでは未検証**。
 

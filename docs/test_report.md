@@ -104,3 +104,12 @@ Godot テスト 46/46、Python 32/32 PASS。追加したテストはいずれも
 - LED 契約の取り込み（UFO-DeviceHub `e965cdf`、`docs/game-mode-interface.md`）: Godot は号機色・`INTAKE` / `RETURN_FLOW` / `RELEASING` / `FAULT`・左右逆方向同時・`IGNORED_PRIORITY`・古いファームウェア（`UNSUPPORTED`）・`dial_leds` オフ・`RELEASE_DONE` が来ないときの状態確認。Python は UFO-DeviceHub の模擬ハブで `SET_DIAL_COLOR` / `SET_DIAL_EFFECT`（左右逆方向、優先度の拒否、方向なしの拒否、排出の終了で演出が終わる）とハブのトレース。エンドツーエンドでは模擬ハブが LED 命令 13 件をすべて受理。
 - ハブにつながらない理由の表示: 別のシステムのハブ（UFO-DeviceHub の模擬ハブをシステム 2 にして、設定 1 でつなぐ）、ポートなし、ポートを開けない、ハブとして応答しない。スコアゲームの画面とテストタブに出る。
 - 未検証: 実機の左右の配線・受取スイッチ・サーボ・LED（向き・個数・電流を含む）、スイッチから画面までの遅れと `RELEASE_BALL` の同期点、得点表のプレイテスト。150 秒を人が通して遊ぶ確認は模擬の Dial でのみ。
+
+## スコアゲームの見た目 Phase 1（2026-11-16、Issue #141）
+
+環境: macOS (Darwin 25.1), Godot 4.7.2。**見た目だけの変更。実機は関係しない**（機器とのやり取り・得点・物理・判定は変えていない）。
+
+- Godot 4 件追加（全体 305 件）: ドット文字が使う語をすべて描けること、開始待ちだけタイトルを出しプレイ中は出さないこと、壁と導管が Dial の色になること、品質 `low` で星が減ること、当たったピンの光と背景の光が自分で消えること。既存のスコアゲームのテスト（得点・物理・Dial の状態機械）は変更なしで成功。
+- 画面: 窓ありで `--game-mode-title` と `--game-mode --game-mode-demo --game-mode-seconds 20` を `--capture` して確認。Before / After は `docs/images/game_mode/phase1_*.png`。
+- 性能（キャプチャ中、M4）: プレイ中 平均 93 FPS（変更前 98）、タイトル画面 70 FPS。物理は 1 ステップ約 0.12 ms で変わらず。
+- 未確認: 遅い機械での速さ（`visual_quality: low` を用意）、1280×720 以外の縦横比での見え方（画面全体を伸縮する設定のまま）。
