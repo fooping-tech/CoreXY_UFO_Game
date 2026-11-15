@@ -1,5 +1,5 @@
 {
-  "_note": "VFX the game uses. Each entry is baked from a pixelfx effect (source + opts) into <id>.png / <id>.json by tools/build_vfx.py (Node at build time only). scale = on-screen pixels per pixelfx pixel; layer = back (behind the UFO) / front; alpha = opacity; loop overrides the sheet's loop flag. pixelfx is MIT: see LICENSE-pixelfx.txt. Moving has no entry on purpose: the UFO's own motion particles (ufo_fx.gd) already give the light while it moves.",
+  "_note": "VFX the game uses. Each entry is baked from a pixelfx effect (source + opts) into <id>.png / <id>.json by tools/build_vfx.py (Node at build time only). scale = on-screen pixels per pixelfx pixel; layer = back (behind the UFO) / front; alpha = opacity; loop overrides the sheet's loop flag. pixelfx is MIT: see LICENSE-pixelfx.txt. Moving has no entry on purpose: the UFO's own motion particles (ufo_fx.gd) already give the light while it moves. The capsule_* entries (the score game's transfer, #138) are baked in a grey ramp on purpose: the game multiplies in each Dial's colour (GameModeVFX), so left and right use the same sheets.",
   "pixelfx": {
     "repo": "https://github.com/patch-gg/pixelfx",
     "version": "0.3.0",
@@ -142,6 +142,117 @@
       "scale": 1.5,
       "layer": "back",
       "alpha": 0.8
+    },
+    "capsule_portal_open": {
+      "source": "arcane/portal",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.0,
+      "layer": "front",
+      "alpha": 1.0,
+      "loop": true
+    },
+    "capsule_absorb": {
+      "source": "shadow/black-hole",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 0.8,
+      "layer": "back",
+      "alpha": 0.75,
+      "loop": true
+    },
+    "capsule_transfer_trail": {
+      "source": "pickups/xp-orb",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.5,
+      "layer": "front",
+      "alpha": 1.0,
+      "loop": true
+    },
+    "capsule_materialize": {
+      "source": "arcane/mana-burst",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.0,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "capsule_release_burst": {
+      "source": "explosions/firework-burst",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 1.0,
+      "layer": "front",
+      "alpha": 1.0
+    },
+    "capsule_portal_close": {
+      "source": "explosions/implosion",
+      "opts": {
+        "palette": [
+          "#101014",
+          "#2c2c34",
+          "#55555f",
+          "#85858f",
+          "#b4b4bc",
+          "#dcdce2",
+          "#f4f4f8",
+          "#ffffff"
+        ]
+      },
+      "scale": 0.6,
+      "layer": "front",
+      "alpha": 1.0
     }
   }
 }

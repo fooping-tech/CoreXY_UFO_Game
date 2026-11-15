@@ -73,6 +73,8 @@ class CommandCode(IntEnum):
     ARM_RECEIVER = 0x20
     DISARM_RECEIVER = 0x21
     RELEASE_BALL = 0x22
+    SET_DIAL_EFFECT = 0x23
+    SET_DIAL_COLOR = 0x24
 
 
 class EventCode(IntEnum):
@@ -172,6 +174,47 @@ class DialState(IntEnum):
     RETURNING = 0x05
     COMPLETE = 0x06
     ERROR = 0x07
+    SETTINGS = 0x08  # settings / hardware test mode on the device (commands rejected)
+
+
+class DialEffect(IntEnum):
+    NONE = 0x00  # stop the PC effect: the dial shows its own state again
+    SOLID = 0x01
+    BREATHE = 0x02
+    CHASE = 0x03  # directional
+    COMET = 0x04  # directional
+    WIPE = 0x05  # directional
+    FLASH = 0x06
+    SPARKLE = 0x07
+
+
+class DialDirection(IntEnum):
+    NONE = 0x00
+    TO_SCREEN = 0x01  # dial -> screen (capsule taken in)
+    TO_DIAL = 0x02  # screen -> dial (capsule returned)
+
+
+class EffectPriority(IntEnum):
+    BACKGROUND = 0x00
+    NORMAL = 0x01
+    HIGH = 0x02
+
+
+class DialLedTarget(IntEnum):
+    FRONT = 0x01  # M5Dial front LED (G1)
+    TRANSFER = 0x02  # second LED on G15 (NeoGacha topLed)
+    BOTH = 0x03
+
+
+class DialLedFlag(IntFlag):
+    TRANSFER_FITTED = 0x01
+
+
+DIRECTIONAL_DIAL_EFFECTS = frozenset({DialEffect.CHASE, DialEffect.COMET, DialEffect.WIPE})
+
+# Game mode: dial 1 is at the left of the screen, dial 2 at the right.
+DIAL_LEFT = DeviceId.M5DIAL_1
+DIAL_RIGHT = DeviceId.M5DIAL_2
 
 
 class IlluminationState(IntEnum):
@@ -252,6 +295,8 @@ COMMAND_PARAM_LENGTH = {
     CommandCode.ARM_RECEIVER: 0,
     CommandCode.DISARM_RECEIVER: 0,
     CommandCode.RELEASE_BALL: 0,
+    CommandCode.SET_DIAL_EFFECT: 9,
+    CommandCode.SET_DIAL_COLOR: 3,
 }
 
 
@@ -344,6 +389,23 @@ def normalize_command(name: str, params: dict | None = None) -> dict:
             "pattern": MistPattern(_enum_value(MistPattern, p.get("pattern"), what="pattern")).name,
             "duration_s": _uint(p, "duration_s", 65535, 0),
         }
+    if code == CommandCode.SET_DIAL_EFFECT:
+        effect = DialEffect(_enum_value(DialEffect, p.get("effect"), what="effect"))
+        direction = DialDirection(_enum_value(DialDirection, p.get("direction", "NONE"), what="direction"))
+        if effect in DIRECTIONAL_DIAL_EFFECTS and direction == DialDirection.NONE:
+            raise ProtocolError(f"{effect.name} needs direction TO_SCREEN or TO_DIAL")
+        out = {
+            "effect": effect.name,
+            "direction": direction.name,
+            "duration_ms": _uint(p, "duration_ms", 65535, 0),
+            "priority": EffectPriority(_enum_value(EffectPriority, p.get("priority", "NORMAL"), what="priority")).name,
+            "target": DialLedTarget(_enum_value(DialLedTarget, p.get("target", "BOTH"), what="target")).name,
+        }
+        if p.get("color") is not None:  # omitted = the dial's unit colour
+            out["color"] = list(_color(p["color"]))
+        return out
+    if code == CommandCode.SET_DIAL_COLOR:
+        return {"color": list(_color(p.get("color")))}  # [0, 0, 0] / omitted = configured default
     raise ProtocolError(f"unhandled command {name}")  # pragma: no cover
 
 
@@ -481,6 +543,15 @@ def encode_command_payload(name: str, params: dict | None = None) -> bytes:
         return struct.pack("<BB", code, p["relay_id"])
     if code == CommandCode.SET_MIST:
         return struct.pack("<BBH", code, MistPattern[p["pattern"]], p["duration_s"])
+    if code == CommandCode.SET_DIAL_EFFECT:
+        r, g, b = p.get("color", (0, 0, 0))
+        return struct.pack(
+            "<BBBBBBHBB", code, DialEffect[p["effect"]], DialDirection[p["direction"]], r, g, b, p["duration_ms"],
+            EffectPriority[p["priority"]], DialLedTarget[p["target"]],
+        )
+    if code == CommandCode.SET_DIAL_COLOR:
+        r, g, b = p["color"]
+        return struct.pack("<BBBB", code, r, g, b)
     return bytes([code])
 
 

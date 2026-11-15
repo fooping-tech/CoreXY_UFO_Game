@@ -31,6 +31,8 @@ var homework: Node
 ## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
 var study_mode: StudyModeController
 var study_hud: StudyHud
+## SUMMON THE UFO, the 150 s score game (#138): its own screen over the crane's, its own state
+var game_mode: GameModeController
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
@@ -245,10 +247,15 @@ func _ready() -> void:
 	debug_ui.setup(self)
 	if bool(GameConfig.get_value("study_mode", "enabled", false)):
 		_setup_study_mode()
+	if bool(GameConfig.value("game_mode.enabled", true)):
+		game_mode = GameModeController.new()
+		game_mode.name = "GameMode"
+		add_child(game_mode)
+		game_mode.setup(self)
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)
-	title.setup()
+	title.setup(game_mode != null)
 	title.chosen.connect(_on_title_chosen)
 	title.settings_requested.connect(open_settings)
 	settings = SettingsScreen.new()
@@ -294,7 +301,7 @@ static func title_on_start(args: PackedStringArray, enabled: bool, headless: boo
 		return true
 	if not enabled or headless or study_autostart:
 		return false
-	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo"]:
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode"]:
 		if args.has(a):
 			return false
 	return true
@@ -316,6 +323,8 @@ func open_startup_screen() -> void:
 func show_title() -> void:
 	if study_mode != null and study_mode.active():
 		study_mode.stop()
+	if game_mode != null and game_mode.active():
+		game_mode.close()  # a running round is stopped (STOP_ALL to the peripherals)
 	if gesture.is_active():
 		gesture.stop("title")
 	if not title.active():
@@ -395,6 +404,12 @@ func _on_title_chosen(mode: String) -> void:
 			study_mode.start()
 	elif study_mode != null and study_mode.active():
 		study_mode.stop()
+	if game_mode != null:
+		if mode == "score":
+			debug_ui.layer = maxi(debug_ui.layer, GameModeController.LAYER + 1)  # F1 opens it above the field
+			game_mode.open()
+		elif game_mode.active():
+			game_mode.close()
 
 func _title_status() -> String:
 	if RobotState.source != "websocket":
@@ -455,6 +470,23 @@ func _apply_cmdline() -> void:
 				if args[i] == "--study-demo" and i + 1 < args.size():
 					study_mode.services.set_mode(args[i + 1])
 				study_mode.call_deferred("start")
+			"--game-mode":
+				# the 150 s score game right away (#138); --game-mode-devices mock / backend picks
+				# the peripherals, --game-mode-seconds <n> a shorter round (demos, captures),
+				# --game-mode-demo lets the mock Dials take capsules by themselves
+				if game_mode != null:
+					_on_title_chosen("score")
+					game_mode.call_deferred("start")
+			"--game-mode-devices":
+				if game_mode != null and i + 1 < args.size():
+					game_mode.devices_wanted = args[i + 1]
+					game_mode.use_devices(args[i + 1])
+			"--game-mode-demo":
+				if game_mode != null:
+					game_mode.demo = true
+			"--game-mode-seconds":
+				if game_mode != null and i + 1 < args.size():
+					game_mode.duration_s = maxf(float(args[i + 1]), 1.0)
 			"--quit-after":
 				if i + 1 < args.size():
 					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
@@ -1388,6 +1420,8 @@ func _update_gesture_presentation(dt: float) -> void:
 func stop_key() -> void:
 	if study_mode != null:
 		study_mode.on_stop_key()
+	if game_mode != null:
+		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
 	_jog_latched = _jog_input() != Vector3.ZERO
 	gesture.stop("stop_key")
 	if homework != null:
@@ -1429,6 +1463,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
 		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
 				and study_mode.handle_key(ev.keycode):
+			return
+		# the score game's keys (Enter, the mock's Z / M); Space stays the stop
+		if game_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
+				and game_mode.handle_key(ev.keycode):
 			return
 		match ev.keycode:
 			KEY_SPACE:

@@ -38,6 +38,11 @@ class MockConfig:
     servo_settle_ms: int = 600
     effect_default_ms: int = 1000
     mist_max_s: int = 600
+    # Game mode LEDs (docs/game-mode-interface.md)
+    dial_transfer_led: bool = True  # second LED on G15 (False = DIAL_TRANSFER_LED_PIN -1)
+    dial_colors: dict = field(default_factory=lambda: {0x20: (0, 255, 255), 0x21: (255, 0, 255)})
+    dial_rx_flash_ms: int = 150
+    dial_rx_chase_ms: int = 1500
     system_id: int = 1
     channel: int = 1
     tick: float = 0.005
@@ -275,6 +280,12 @@ class MockDial(MockDevice):
         self.releases = 0
         self.servo_moves = 0
         self.aborted = False
+        # Game mode LEDs: one PC effect slot per output, like the firmware
+        self.slots: dict[str, dict | None] = {"FRONT": None, "TRANSFER": None}
+        self.color = tuple(hub.cfg.dial_colors.get(int(dev_id), (0, 255, 255)))
+        self.detected_at = 0
+        self.release_at = 0
+        self.effect_log: list[dict] = []  # every accepted SET_DIAL_EFFECT (tests / traces)
 
     @property
     def busy(self) -> bool:
@@ -283,9 +294,73 @@ class MockDial(MockDevice):
     def _idle(self) -> None:
         self.dial_state = "READY" if self.op_mode == "GAME" else "DISABLED"
 
+    # ---- LEDs (same rules as firmware/m5dial/dial_controller.cpp) -------------
+    def clear_effects(self) -> None:
+        self.slots = {"FRONT": None, "TRANSFER": None}
+
+    def _slot(self, target: str, now: int) -> dict | None:
+        s = self.slots[target]
+        if s and s["duration_ms"] and now - s["started_at"] >= s["duration_ms"]:
+            self.slots[target] = s = None
+        return s
+
+    def _set_effect(self, p: dict, cid: int, now: int) -> str:
+        targets = ["FRONT", "TRANSFER"] if p["target"] == "BOTH" else [p["target"]]
+        if not self.hub.cfg.dial_transfer_led:
+            targets = [t for t in targets if t != "TRANSFER"]
+        if not targets:
+            return "NOT_CONFIGURED"
+        prio = int(P.EffectPriority[p["priority"]])
+        for t in targets:
+            s = self._slot(t, now)
+            if s and prio < s["priority"]:
+                return "IGNORED_PRIORITY"
+        for t in targets:
+            self.slots[t] = None if p["effect"] == "NONE" else {
+                "effect": p["effect"], "direction": p["direction"], "color": tuple(p.get("color", (0, 0, 0))),
+                "duration_ms": p["duration_ms"], "priority": prio, "started_at": now, "command_id": cid,
+            }
+        self.effect_log.append({"command_id": cid, "targets": targets, **p})
+        return "ACCEPTED"
+
+    def led(self, target: str = "FRONT", now: int | None = None) -> dict:
+        """What the output shows now: {scene, source ('local' / 'pc'), effect, direction, color}."""
+        now = _ms() if now is None else now
+        off = {"scene": "OFF", "source": "local", "effect": "NONE", "direction": "NONE", "color": (0, 0, 0)}
+        ring = target == "FRONT"
+        if not ring and not self.hub.cfg.dial_transfer_led:
+            return off
+        if not self.online:
+            return {**off, "scene": "LINK_LOST"} if ring else off
+        cfg = self.hub.cfg
+        since_rx = now - self.detected_at
+        fx = {"scene": "EFFECT", "source": "local", "direction": "NONE", "color": self.color}
+        if self.dial_state == "BALL_DETECTED" and since_rx < cfg.dial_rx_flash_ms:
+            return {**fx, "effect": "SOLID", "color": (255, 255, 255)}
+        s = self._slot(target, now)
+        if s:
+            return {"scene": "EFFECT", "source": "pc", "effect": s["effect"], "direction": s["direction"],
+                    "color": s["color"] if any(s["color"]) else self.color}
+        if self.dial_state == "BALL_DETECTED":
+            if since_rx < cfg.dial_rx_flash_ms + cfg.dial_rx_chase_ms:
+                return {**fx, "effect": "CHASE", "direction": "TO_SCREEN"}
+            return {**fx, "effect": "BREATHE"}
+        if self.busy:
+            return {**fx, "effect": "CHASE", "direction": "TO_DIAL"}
+        scene = {"DISABLED": "IDLE", "READY": "READY", "ARMED": "ARMED", "COMPLETE": "COMPLETE"}.get(
+            self.dial_state, "OFF")
+        return {**off, "scene": scene, "color": self.color} if ring else off
+
     def execute(self, name: str, p: dict, cid: int) -> tuple[str, bool]:
+        if name == "SET_DIAL_EFFECT":
+            return self._set_effect(p, cid, _ms()), False
+        if name == "SET_DIAL_COLOR":
+            c = tuple(p["color"])
+            self.color = c if any(c) else tuple(self.hub.cfg.dial_colors.get(int(self.id), (0, 255, 255)))
+            return "ACCEPTED", False
         if name == "STOP_ALL":
             self.op_mode = "STANDBY"
+            self.clear_effects()
             if self.busy:
                 self.aborted = True
                 self.dial_state = "RETURNING"
@@ -329,6 +404,7 @@ class MockDial(MockDevice):
             if self.op_mode != "GAME" or self.dial_state != "BALL_DETECTED":
                 return "REJECTED_STATE", False
             now = _ms()
+            self.release_at = now
             self.dial_state, self.phase_until = "RELEASING", now + self.hub.cfg.servo_hold_ms
             self.release_cmd, self.release_started, self.aborted = cid, now, False
             self.releases += 1
@@ -341,15 +417,20 @@ class MockDial(MockDevice):
         if self.dial_state != "ARMED" or not self.online:
             return False
         self.dial_state = "BALL_DETECTED"
+        self.detected_at = _ms()
+        self.clear_effects()  # the local receive animation starts at once
         self.emit("BALL_RECEIVED", cycle=self.cycle)
         return True
 
     def on_session_changed(self, s: int) -> None:
         super().on_session_changed(s)
+        self.clear_effects()
+        self.color = tuple(self.hub.cfg.dial_colors.get(int(self.id), (0, 255, 255)))
         if not self.busy:
             self._idle()
 
     def on_link_lost(self) -> None:
+        self.clear_effects()
         if self.dial_state == "ARMED":
             self.dial_state = "READY"
 
@@ -357,6 +438,7 @@ class MockDial(MockDevice):
         if self.dial_state == "RELEASING" and now >= self.phase_until:
             self.dial_state, self.phase_until = "RETURNING", now + self.hub.cfg.servo_settle_ms
         elif self.dial_state == "RETURNING" and now >= self.phase_until:
+            self.clear_effects()  # the release animation ends with the sequence
             if self.aborted:
                 self.emit("RELEASE_FAILED", command_id=self.release_cmd, reason=int(P.ReleaseFailReason.ABORTED))
                 self._idle()
@@ -372,7 +454,13 @@ class MockDial(MockDevice):
 
     def status(self) -> dict:
         s = super().status()
-        s.update(dial_state=self.dial_state, cycle=self.cycle, releases=self.releases, last_release_command=self.release_cmd)
+        now = _ms()
+        ring, strip = self._slot("FRONT", now), self._slot("TRANSFER", now)
+        s.update(dial_state=self.dial_state, cycle=self.cycle, releases=self.releases,
+                 last_release_command=self.release_cmd,
+                 front_effect=ring["effect"] if ring else "NONE",
+                 transfer_effect=strip["effect"] if strip else "NONE",
+                 transfer_led=self.hub.cfg.dial_transfer_led, unit_color=list(self.color))
         return s
 
 

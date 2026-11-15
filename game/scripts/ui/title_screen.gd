@@ -5,10 +5,13 @@ extends CanvasLayer
 ## command. While it shows, main.gd holds the manual controls (jog keys, gestures, the
 ## auto catch); Space still stops. Esc in the game / the study mode comes back here.
 
-signal chosen(mode: String)  # "study" or "game"
+signal chosen(mode: String)  # "study", "game" or "score" (the 150 s score game, #138)
 signal settings_requested  # the gear (#93) or S
 
-const CHOICES: Array[String] = ["study", "game"]
+const ALL_CHOICES: Array[String] = ["study", "game", "score"]
+## what this title offers ("score" only when the game mode is on: game_mode.enabled)
+var choices: Array[String] = ["study", "game"]
+const CARD_COLORS := [Color("e07a00"), Color("3b7dd8"), Color("b0379c")]
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const UFO_FRAMES := 4
 const UFO_FPS := 3.0
@@ -27,7 +30,9 @@ var gear: GearButton
 var _notice: Label
 var _t := 0.0
 
-func setup() -> void:
+func setup(score_game := false) -> void:
+	if score_game:
+		choices = ALL_CHOICES.duplicate()
 	layer = 20  # above the study HUD (5) and the debug panel
 	root = Control.new()
 	root.name = "TitleRoot"
@@ -78,13 +83,15 @@ func setup() -> void:
 
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 36)
+	row.add_theme_constant_override("separation", 24 if score_game else 36)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(row)
 	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nわからない問題は Y で HELP")
 	_add_card(row, 1, "2", "ゲームモード", "UFO キャッチャーで遊ぼう\n（いつものゲーム画面）")
+	if score_game:
+		_add_card(row, 2, "3", "スコアゲーム", "150 秒！ カプセルを Dial に入れて\nピンボールで高得点をねらおう")
 
-	var keys := StudyHud.label("← → か 1 / 2 で選んで Enter（クリックでも選べる）    S / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",
+	var keys := StudyHud.label(("← → か 1 / 2 / 3 で選んで Enter" if score_game else "← → か 1 / 2 で選んで Enter") + "（クリックでも選べる）    S / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",
 		18, Color("c8d6f0"), 4)
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(keys)
@@ -121,21 +128,21 @@ func _add_card(parent: Control, index: int, number: String, heading: String, tex
 	sb.shadow_color = Color(0, 0, 0, 0.4)
 	sb.shadow_size = 8
 	card.add_theme_stylebox_override("panel", sb)
-	card.custom_minimum_size = Vector2(330, 0)
+	card.custom_minimum_size = Vector2(330 if choices.size() < 3 else 300, 0)
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	card.mouse_entered.connect(func(): select(index))
 	card.gui_input.connect(func(ev: InputEvent):
 		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-			choose(CHOICES[index]))
+			choose(choices[index]))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 6)
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(v)
-	var head := StudyHud.label("%s  %s" % [number, heading], 40, Color.WHITE, 8)
+	var head := StudyHud.label("%s  %s" % [number, heading], 40 if choices.size() < 3 else 34, Color.WHITE, 8)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
-	var body := StudyHud.label(text, 20, Color("e8f0ff"), 4)
+	var body := StudyHud.label(text, 20 if choices.size() < 3 else 17, Color("e8f0ff"), 4)
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(body)
 	parent.add_child(card)
@@ -155,16 +162,16 @@ func close() -> void:
 	visible = false
 
 func select(index: int) -> void:
-	selected = clampi(index, 0, CHOICES.size() - 1)
+	selected = clampi(index, 0, choices.size() - 1)
 	_refresh()
 
 func selected_mode() -> String:
-	return CHOICES[selected]
+	return choices[selected]
 
 func choose(mode: String) -> void:
-	if not visible or not mode in CHOICES:
+	if not visible or not mode in choices:
 		return
-	selected = CHOICES.find(mode)
+	selected = choices.find(mode)
 	close()
 	chosen.emit(mode)
 
@@ -185,13 +192,15 @@ func set_status(text: String) -> void:
 func handle_key(keycode: int) -> bool:
 	match keycode:
 		KEY_LEFT, KEY_UP:
-			select(0)
+			select(selected - 1)
 		KEY_RIGHT, KEY_DOWN:
-			select(1)
+			select(selected + 1)
 		KEY_1, KEY_KP_1, KEY_F5:
 			choose("study")
 		KEY_2, KEY_KP_2:
 			choose("game")
+		KEY_3, KEY_KP_3:
+			choose("score")
 		KEY_ENTER, KEY_KP_ENTER:
 			choose(selected_mode())
 		KEY_S:
@@ -202,7 +211,7 @@ func _refresh() -> void:
 	for i in range(_card_styles.size()):
 		var on := i == selected
 		var sb := _card_styles[i]
-		sb.bg_color = (Color("e07a00") if i == 0 else Color("3b7dd8")) if on else Color("26324a")
+		sb.bg_color = CARD_COLORS[i] if on else Color("26324a")
 		sb.border_color = YELLOW if on else Color("4a5a78")
 
 func _process(dt: float) -> void:
