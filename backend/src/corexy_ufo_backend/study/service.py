@@ -89,11 +89,15 @@ def make_adapter(config: StudyConfig, provider: str | None = None) -> StudyAdapt
         from .tutor_adapter import TutorStudyAdapter
         if not config.tutor_url:
             raise StudyAdapterError("学習支援 AI の URL がありません（study.tutor_url）")
-        token_file = _under_root(config, config.tutor_token_file)
-        try:
-            token = token_file.read_text(encoding="utf-8").strip()
-        except OSError as e:
-            raise StudyAdapterError(f"学習支援 AI のトークンを読めません（{token_file}）") from e
+        # #128: the token is optional (a server started without one): no file = no token
+        token = ""
+        if config.tutor_token_file:
+            token_file = _under_root(config, config.tutor_token_file)
+            if token_file.exists():
+                try:
+                    token = token_file.read_text(encoding="utf-8").strip()
+                except OSError as e:
+                    raise StudyAdapterError(f"学習支援 AI のトークンを読めません（{token_file}）") from e
         cafile = _under_root(config, config.tutor_cafile) if config.tutor_cafile else None
         return TutorStudyAdapter(config.tutor_url, token, grade=config.tutor_grade,
                                  cafile=str(cafile) if cafile is not None and cafile.exists() else None,

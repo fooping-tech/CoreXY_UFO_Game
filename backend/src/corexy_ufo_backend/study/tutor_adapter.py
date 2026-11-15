@@ -60,8 +60,7 @@ class TutorStudyAdapter:
     def __init__(self, base_url: str, token: str, *, model: str = "tutor-ufo", grade: int = 3, image_role: str = "10cm",
                  cafile: str | None = None, timeout_s: float = 20.0, focus_calibration: str | None = None,
                  fail_limit: int = 2, cooldown_s: float = 120.0) -> None:
-        if not token:
-            raise StudyAdapterError("学習支援 AI のトークンがありません（study.tutor_token_file）")
+        # token "" = none (#128: a server started without one); then no Authorization header
         self.url = base_url.rstrip("/") + "/v1/chat/completions"
         self.token, self.model, self.grade, self.image_role, self.timeout_s = token, model, grade, image_role, timeout_s
         if base_url.startswith("https://"):
@@ -94,8 +93,8 @@ class TutorStudyAdapter:
     def _post(self, body: dict) -> dict:
         if time.monotonic() < self.breaker["open_until"]:
             raise StudyAdapterError(f"学習支援 AI は休止中（続けて失敗したため、あと {self.breaker['open_until'] - time.monotonic():.0f} 秒）")
-        req = urllib.request.Request(self.url, json.dumps(body).encode(), {"Content-Type": "application/json",
-                                                                              "Authorization": "Bearer " + self.token})
+        req = urllib.request.Request(self.url, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", **self._auth()})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s, context=self.ctx) as r:
                 out = json.load(r)
@@ -106,6 +105,8 @@ class TutorStudyAdapter:
                 detail = json.load(e).get("error", {}).get("message", "")
             except Exception:  # noqa: BLE001
                 pass
+            if e.code == 401:
+                raise StudyAdapterError(self.auth_problem() + (f": {detail}" if detail else "")) from e
             raise StudyAdapterError(f"学習支援 AI がエラーを返しました（HTTP {e.code}）: {detail}") from e
         except Exception as e:  # noqa: BLE001  つながらない・時間切れ・証明書など
             self._failed()
@@ -116,6 +117,15 @@ class TutorStudyAdapter:
         self.breaker["fails"] = 0
         return out
 
+    def _auth(self) -> dict[str, str]:
+        return {"Authorization": "Bearer " + self.token} if self.token else {}
+
+    def auth_problem(self) -> str:
+        """What a 401 means: no token here but the server wants one, or the token is wrong."""
+        if not self.token:
+            return "学習支援 AI のサーバがトークンを求めている（config/secrets/tutor_token.txt に置くか、サーバをトークンなしで起動する）"
+        return "学習支援 AI のトークンが違う（config/secrets/tutor_token.txt とサーバのトークン）"
+
     def _failed(self) -> None:
         self.breaker["fails"] += 1
         if self.breaker["fails"] >= self.fail_limit:
@@ -123,11 +133,12 @@ class TutorStudyAdapter:
             self.breaker["fails"] = 0
 
     def health(self) -> dict:
-        """接続の確認（起動時や設定画面で使う）。/api/health（認証なし）と /v1/models（トークンの確認）。"""
+        """接続の確認（起動時や設定画面で使う）。/api/health（認証なし）と /v1/models（トークンの確認。
+        トークンがないときは、サーバがトークンなしで受け付けるかの確認）。"""
         base = self.url.rsplit("/v1/", 1)[0]
         res = {}
         for name, path, auth in (("health", "/api/health", False), ("auth", "/v1/models", True)):
-            req = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + self.token} if auth else {})
+            req = urllib.request.Request(base + path, headers=self._auth() if auth else {})
             try:
                 with urllib.request.urlopen(req, timeout=5, context=self.ctx) as r:
                     res[name] = {"ok": True, "status": r.status}
