@@ -88,7 +88,7 @@ func _draw() -> void:
 	if compact:
 		return
 	# status line (with a backing so it reads on any image)
-	var f := ThemeDB.fallback_font
+	var f := UiFonts.body()
 	var line := "%s%s  hands %d  pinch %s  ratio %.2f" % [g.state_name(), (" (%s)" % g.reason) if g.reason != "" else "",
 		int(ev.get("hand_count", 0)), "YES" if g.pinch else "no", g.pinch_ratio]
 	if simulated:

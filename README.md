@@ -335,6 +335,12 @@ cd CoreXY_UFO_Game/game
 - 回るのは閉じ〜開きの間だけで、ストッパーのある側へは回らない。少し外れた位置からは近いほうの端を通って戻る
 - 片方だけ記録し直したときは、前の開く向きを保つ。初めての記録は、同じ起動のうちに両方を記録する（そうでないと短いほうの回り方を開く向きと見なす）
 
+### フォント
+
+- 本文（説明・設定・パネル・小さな表示）: [M PLUS Rounded 1c](https://fonts.google.com/specimen/M+PLUS+Rounded+1c) Bold。プロジェクトの既定フォント（`game/project.godot` の `gui/theme/custom_font`）。
+- タイトル・バナー・大きなセリフ（28 px 以上の `StudyHud.label`、「ゲームで遊ぶ」ボタン）: [DotGothic16](https://fonts.google.com/specimen/DotGothic16)。ピクセルアートに合わせたドット文字。
+- どちらも SIL Open Font License 1.1。ファイルとライセンス文は `game/assets/fonts/`（`OFL-*.txt`）。切り替えは `game/scripts/ui/ui_fonts.gd`（`UiFonts`）。
+
 ### ピクセル VFX（pixelfx）
 
 ゲームの場面に合わせて、[pixelfx](https://github.com/patch-gg/pixelfx)（MIT）で作ったピクセルアートの演出を出す。

@@ -67,10 +67,15 @@ func setup(controller: StudyModeController) -> void:
 	ctl.speech.line_started.connect(func(_t, _f): _typed = 0.0)
 	visible = false
 
+## Big symbols that stay in the body font (the dot font draws them small or not at all).
+const SYMBOLS := ["☐", "☑", "✓", "✔"]
+
 static func label(text: String, size: int, color := INK, outline := 0) -> Label:
 	var l := Label.new()
 	l.text = text
 	l.add_theme_font_size_override("font_size", size)
+	if size >= UiFonts.TITLE_MIN_SIZE and not text in SYMBOLS:
+		UiFonts.use_title(l)  # titles, banners and the big lines in the dot font (#134)
 	l.add_theme_color_override("font_color", color)
 	if outline > 0:
 		l.add_theme_constant_override("outline_size", outline)
@@ -236,6 +241,7 @@ func _build_centre() -> void:
 	_play = Button.new()
 	_play.text = "  ゲームで遊ぶ ▶  "
 	_play.add_theme_font_size_override("font_size", 38)
+	UiFonts.use_title(_play)
 	_play.focus_mode = Control.FOCUS_NONE
 	for st in ["normal", "hover", "pressed"]:
 		var sb := StyleBoxFlat.new()

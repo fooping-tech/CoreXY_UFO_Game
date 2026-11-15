@@ -215,7 +215,7 @@ func _draw() -> void:
 	draw_rect(Rect2(dot - Vector2(5, 5) * pulse, Vector2(10, 10) * pulse), Color(dot_col, a))
 
 	# texts
-	var f := ThemeDB.fallback_font
+	var f := UiFonts.body()
 	var tx := c0.x + RING_R + 14.0
 	var t := texts()
 	_text(f, Vector2(tx, 34), t[0], 18, Color(PINK if live else Color.WHITE, a))
