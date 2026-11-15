@@ -68,6 +68,7 @@ func _ready() -> void:
 	_test_calibration_tab(rs)
 	_test_calibration_summary()
 	_test_device_test_tab(rs)
+	_test_study_hand_help(rs)
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
 
@@ -2831,6 +2832,60 @@ func _test_title_screen(rs: Node) -> void:
 		and not GameMain.title_on_start(PackedStringArray(["--no-title"]), true, false, false)
 		and GameMain.title_on_start(PackedStringArray(["--capture", "d", "--title"]), true, true, true),
 		"title: at start unless headless, disabled, autostarted or decided by arguments; --title forces it")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #136: 1 / 2 / 3 fingers offer help with that problem, a thumbs-up starts it; the arm
+## camera's photo shows while it is explained.
+func _test_study_hand_help(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	var studying := ctl.state == "STUDYING"
+	var t := 100000.0
+	ctl.hand_tick("thumb", t)  # a thumbs-up without an offer does nothing
+	ctl.hand_tick("thumb", t + 1000.0)
+	var thumb_alone := ctl.state == "STUDYING" and ctl.offer_problem == 0
+	ctl.hand_tick("", t + 1100.0)
+	ctl.hand_tick("peace", t + 1200.0)
+	ctl.hand_tick("peace", t + 1500.0)  # not held long enough yet
+	var too_short := ctl.offer_problem == 0
+	ctl.hand_tick("peace", t + 1900.0)
+	var offered := ctl.offer_problem == 2 and ctl.state == "STUDYING"
+	ctl.hand_tick("thumb", t + 2000.0)
+	ctl.hand_tick("thumb", t + 2700.0)
+	var started := ctl.state == "HELP_LOCATING" and ctl.help_problem == 2 and ctl.offer_problem == 0
+	_ok(studying and thumb_alone and too_short and offered and started,
+		"study hand help: 2 fingers held offer problem 2, a thumbs-up then starts its HELP (not a thumb alone)",
+		str([studying, thumb_alone, too_short, offered, started, ctl.state, ctl.offer_problem]))
+	# an offer not answered goes away; 3 fingers offer problem 3; Y stays the configured problem
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.hand_tick("three", t)
+	ctl.hand_tick("three", t + 700.0)
+	var three := ctl.offer_problem == 3
+	ctl.hand_tick("", t + 700.0 + ctl.hand_offer_s * 1000.0 + 10.0)
+	var expired := ctl.offer_problem == 0
+	ctl.request_help()
+	var y_ok := ctl.help_problem == ctl.default_help_problem
+	# the arm camera: shown through the explanation, then its photo
+	ctl.state = "AI_EXPLAINING"
+	var img := Image.create(32, 24, false, Image.FORMAT_RGB8)
+	ctl.services.captures["10cm"] = img
+	var photo := ctl.explain_photo()
+	var scope_ok := ctl.wants_scope() and photo != null and photo.get_width() == 32
+	ctl.state = "STUDYING"
+	var no_photo := ctl.explain_photo() == null
+	var gate_ok: bool = game.gesture_gate().begins_with("勉強モード")
+	_ok(three and expired and y_ok and scope_ok and no_photo and gate_ok,
+		"study hand help: 3 fingers = problem 3, an unanswered offer ends, Y keeps its problem, the arm camera's photo while explaining, no hand jog",
+		str([three, expired, y_ok, scope_ok, no_photo, gate_ok]))
+	ctl.stop()
 	remove_child(game)
 	game.free()
 	rs.clear_samples()

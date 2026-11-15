@@ -352,7 +352,9 @@ func refresh() -> void:
 	_credit.text = credit if credit != "" else ("（声なし）" if not ctl.speech.voice_on else "")
 	# the explanation card
 	var ex := ctl.explanation
-	_explain.visible = not ex.is_empty() and st in ["AI_EXPLAINING", "RESUME_STUDY", "STUDYING"] and not ctl.tracker.is_filled(ctl.help_problem)
+	# #136: asked by hand, a filled problem is explained too: shown while it is explained
+	_explain.visible = not ex.is_empty() and (st == "AI_EXPLAINING"
+		or (st in ["RESUME_STUDY", "STUDYING"] and not ctl.tracker.is_filled(ctl.help_problem)))
 	if _explain.visible:
 		_explain_text.text = "ヒント: %s\n\n考え方:\n%s\n%s" % [ex.get("hint", ""), ex.get("explanation", ""), ctl.explain_note]
 	# the worksheet
@@ -408,7 +410,7 @@ static func study_time_text(secs: float) -> String:
 	return "%d分%02d秒" % [s / 60, s % 60]
 
 static func key_help(state: String, mode: String) -> String:
-	var parts := ["Enter 次へ/確認", "Y HELP", "Space 止める"]
+	var parts := ["Enter 次へ/確認", "指 1・2・3 → いいね 解説（Y も）", "Space 止める"]
 	if state in ["INTRO", "WAITING_FOR_WORKSHEET"]:
 		parts.append(", . 学年")
 	if mode == "simulated":

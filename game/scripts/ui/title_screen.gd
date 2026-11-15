@@ -81,7 +81,7 @@ func setup() -> void:
 	row.add_theme_constant_override("separation", 36)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(row)
-	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nわからない問題は Y で HELP")
+	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nわからない問題は 指で番号 → いいね")
 	_add_card(row, 1, "2", "ゲームモード", "UFO キャッチャーで遊ぼう\n（いつものゲーム画面）")
 
 	var keys := StudyHud.label("← → か 1 / 2 で選んで Enter（クリックでも選べる）    S / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",

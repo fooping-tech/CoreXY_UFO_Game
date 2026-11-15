@@ -467,6 +467,8 @@ def test_point_pose_and_where_the_index_finger_points():
         assert (ev["point_dx"], ev["point_dy"]) == pytest.approx(want, abs=1e-3), deg
     # other shapes keep their names; a lost camera carries no direction
     assert frames(ctrl, [shaped_hand(folded=("ring", "pinky"))])[-1]["pose"] == "peace"
+    # #136: three fingers (the study mode's problem 3); the pinky alone folded
+    assert frames(ctrl, [shaped_hand(folded=("pinky",))])[-1]["pose"] == "three"
     assert ctrl.camera_lost()["point_len"] == 0.0
 
 

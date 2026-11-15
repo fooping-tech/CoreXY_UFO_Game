@@ -28,6 +28,9 @@ var readout := ""
 var z_level := -1.0
 ## Arm moving down / game lowering: the status line says LOCK instead of SCANNING.
 var locking := false
+## A still picture in place of the live camera (#136: the arm camera's photo while the study
+## mode explains it); null = the live camera.
+var still: Texture2D
 
 var _cam: TextureRect
 var _hud: Control
@@ -85,7 +88,7 @@ func step(dt: float) -> void:
 		var role := source_role()
 		if role == "":
 			role = "focus"  # its static
-		_cam.texture = hub.texture(role)
+		_cam.texture = still if still != null else hub.texture(role)
 		_mat.set_shader_parameter("feed_aspect", hub.feed_aspect(role))
 		_mat.set_shader_parameter("open", e)
 		_mat.set_shader_parameter("zoom", zoom)
