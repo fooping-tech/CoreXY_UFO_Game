@@ -2225,6 +2225,49 @@ func _test_study_sheet_photo(rs: Node) -> void:
 	sv._sheet_tick(0.1)
 	_ok(log_ok and sv._sheet_rid == "" and sv.sheet_marks().is_empty(),
 		"sheet photo: frames are not logged, no worksheet search outside the study mode")
+	# #130: the frame fits the robot link (its send buffer, the backend's 1 MiB per message);
+	# a busy 1280x960 camera frame is squeezed under the limit
+	var noisy := Image.create(1280, 960, false, Image.FORMAT_RGB8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 130
+	for y in range(0, 960, 4):
+		for x in range(0, 1280, 4):
+			noisy.fill_rect(Rect2i(x, y, 4, 4), Color(rng.randf(), rng.randf(), rng.randf()))
+	var jpeg := StudyClient.encode_jpeg(noisy, StudyServices.SHEET_IMAGE_EDGE, StudyServices.SHEET_IMAGE_BYTES)
+	var worst := JSON.stringify({"type": "command", "request_id": "g0000000000-000000", "timestamp": 0,
+		"data": {"name": "worksheet_find", "params": {"image_jpeg_base64": "A".repeat(int(ceil(StudyServices.SHEET_IMAGE_BYTES / 3.0)) * 4)}}})
+	_ok(not jpeg.is_empty() and jpeg.size() <= StudyServices.SHEET_IMAGE_BYTES and worst.length() < 1048576
+		and game.ws.outbound_buffer_size >= worst.length(),
+		"sheet photo: the camera frame fits the robot link (send buffer, the backend's 1 MiB)", "%d bytes" % jpeg.size())
+	# #130: one odd answer does not throw the picture, two that agree move it, a near one is blended
+	var base := {"tl": Vector2(0.3, 0.2), "tr": Vector2(0.7, 0.2), "bl": Vector2(0.3, 0.8), "br": Vector2(0.7, 0.8)}
+	var far := {"tl": Vector2(0.4, 0.2), "tr": Vector2(0.8, 0.2), "bl": Vector2(0.3, 0.8), "br": Vector2(0.7, 0.8)}
+	sv.sheet_corners = {}
+	sv.sheet_seen_ms = -1
+	sv._sheet_take(base.duplicate(), 1000)
+	sv._sheet_take(far.duplicate(), 2000)
+	var held: bool = sv.sheet_marks(2000).tl.is_equal_approx(Vector2(0.3, 0.2))
+	sv._sheet_take(far.duplicate(), 3000)
+	var moved: bool = sv.sheet_marks(3000).tl.is_equal_approx(Vector2(0.4, 0.2))
+	var near := far.duplicate()
+	near.tl = Vector2(0.41, 0.2)
+	sv._sheet_take(near, 4000)
+	var blended: bool = sv.sheet_marks(4000).tl.is_equal_approx(Vector2(0.405, 0.2))
+	var kept := not sv.sheet_marks(4000 + StudyServices.SHEET_FRESH_MS - 100).is_empty()
+	_ok(held and moved and blended and kept,
+		"sheet photo: an odd answer is held back, two that agree move it, a near one is blended, kept while unseen",
+		str([held, moved, blended, kept]))
+	# the study mode's debug log: the sheet search's outcome once per change, why locating failed
+	var lines: Array = []
+	var grab := func(t): lines.append(t)
+	game.debug_log.connect(grab)
+	sv._on_sheet_found(false, {"reason": "timeout"})
+	sv._on_sheet_found(false, {"reason": "timeout"})
+	sv.locate_failed.emit("テスト")
+	game.debug_log.disconnect(grab)
+	var refused := lines.filter(func(l): return str(l).begins_with("study: sheet search: refused: timeout"))
+	_ok(refused.size() == 1 and lines.has("study: locate failed: テスト"),
+		"study log: the sheet search's outcome (once per change) and why locating failed", str(lines))
 	ctl.stop()
 	remove_child(game)
 	game.free()

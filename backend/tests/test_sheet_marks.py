@@ -96,3 +96,55 @@ async def test_the_server_finds_the_marks():
             assert bad["type"] == "nack"
     finally:
         await srv.stop()
+
+
+def test_a_big_mark_like_thing_is_not_a_mark():
+    # #130: the real top-right mark is hidden (a cable), and a much bigger dark square with a hole
+    # (a tape dispenser) sits near it: a rectangle of marks would fit, the size does not
+    dst = [(470, 60), (800, 70), (840, 650), (430, 640)]
+
+    def frame_with(half: int, hole: int) -> tuple[np.ndarray, int, int]:
+        frame, m = photo(page(), dst)
+        tr = expected(m)["tr"]
+        x, y = int(tr[0] * 1280), int(tr[1] * 720)
+        cv2.rectangle(frame, (x - 16, y - 16), (x + 16, y + 16), 250, -1)  # the real mark covered
+        bx, by = x - 35, y + 35
+        cv2.rectangle(frame, (bx - half, by - half), (bx + half, by + half), 0, -1)
+        cv2.rectangle(frame, (bx - hole, by - hole), (bx + hole, by + hole), 255, -1)
+        return frame, bx, by
+
+    big, bx, by = frame_with(25, 8)
+    got = find_marks(big)  # the big one is not taken: the hidden mark is computed from the other three
+    real = expected(photo(page(), dst)[1])["tr"]
+    assert got is not None and got.get("inferred") == "tr"
+    assert np.allclose(got["corners"]["tr"], real, atol=0.02), (got["corners"]["tr"], real)
+    assert not np.allclose(got["corners"]["tr"], (bx / 1280, by / 720), atol=0.02)
+    # the same at a mark's size is taken (the check is the size, not the place)
+    small, bx, by = frame_with(10, 3)
+    got = find_marks(small)
+    assert got is not None and "inferred" not in got and np.allclose(got["corners"]["tr"], (bx / 1280, by / 720), atol=0.01)
+
+
+@pytest.mark.parametrize("hidden", ["tl", "tr", "bl", "br"])
+def test_three_marks_put_the_fourth_where_it_belongs(hidden):
+    # #130: a cable over one mark; the other three still straighten the sheet
+    for dst in ([(470, 60), (800, 70), (840, 650), (430, 640)], [(300, 120), (620, 40), (760, 520), (420, 640)]):
+        frame, m = photo(page(), dst)
+        want = expected(m)
+        u, v = want[hidden]
+        x, y = int(u * 1280), int(v * 720)
+        cv2.rectangle(frame, (x - 16, y - 16), (x + 16, y + 16), 30, -1)  # a dark cable over it
+        got = find_marks(frame)
+        assert got is not None and got.get("inferred") == hidden, (hidden, got)
+        for name in ("tl", "tr", "bl", "br"):
+            tol = 0.015 if name == hidden else 0.006  # the computed one: from the three marks' corners
+            assert np.allclose(got["corners"][name], want[name], atol=tol), (name, got["corners"][name], want[name])
+
+
+def test_two_marks_are_not_a_sheet():
+    frame, m = photo(page(), [(470, 60), (800, 70), (840, 650), (430, 640)])
+    for name in ("tr", "br"):
+        u, v = expected(m)[name]
+        x, y = int(u * 1280), int(v * 720)
+        cv2.rectangle(frame, (x - 16, y - 16), (x + 16, y + 16), 30, -1)
+    assert find_marks(frame) is None

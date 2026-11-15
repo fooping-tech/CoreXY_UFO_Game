@@ -199,6 +199,7 @@ func _ready() -> void:
 	add_child(mock)
 	ws = UfoWebSocketClient.new()
 	ws.name = "WebSocket"
+	ws.outbound_buffer_size = StudyServices.SHEET_SEND_BUFFER  # the study sheet's camera frame
 	add_child(ws)
 	vision_ws = UfoWebSocketClient.new()
 	vision_ws.name = "VisionLink"

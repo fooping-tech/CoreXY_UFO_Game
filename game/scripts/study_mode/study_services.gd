@@ -68,11 +68,25 @@ var _help_rid := ""
 var _nav_rid := ""
 ## #116: the worksheet's corner marks in the overview frame (as shown): {tl, tr, bl, br: Vector2 0..1}
 const SHEET_FIND_S := 1.5  # how often the frame is sent to find them
-const SHEET_FRESH_MS := 5000  # older than this: the drawn sheet again
+const SHEET_FRESH_MS := 8000  # older than this: the drawn sheet again
+const SHEET_JUMP := 0.04  # an answer further than this (0..1 of the image) waits for the next
+const SHEET_AGREE := 0.02  # ... which must be this close to it
+const SHEET_BLEND := 0.5  # a near answer moves the shown corners this much of the way
+## The frame sent to find them: the robot link's backend takes at most 1 MiB per message
+## (websockets' max_size) and base64 adds a third, so 1024 px / 600 kB stays well inside.
+## The corners come back as 0..1 of the image, so the size does not move them.
+const SHEET_IMAGE_EDGE := 1024
+const SHEET_IMAGE_BYTES := 600000
+## The robot link's send buffer for that frame (Godot's default, 64 KiB, refused it: #130).
+const SHEET_SEND_BUFFER := 1048576
 var sheet_corners: Dictionary = {}
 var sheet_seen_ms := -1
+var _sheet_pending: Dictionary = {}
 var _sheet_left := 0.0
 var _sheet_rid := ""
+var _sheet_jpeg_bytes := 0
+var _sheet_last_note := ""
+var _motion_last_note := ""
 ## The last staged capture's target ({u, v} or {xy}): where "d_mm further" starts from (#104)
 var last_help_target: Dictionary = {}
 var _cleanup_rid := ""
@@ -107,6 +121,8 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 		main.ws.message_received.connect(_on_robot_message)
 		main.ws.ack.connect(_on_robot_ack)
 	load_demo_config()
+	_log_signals()
+	trace("mode %s (%s)" % [mode, mode_label()])
 
 ## study_mode.demo (again after the settings screen's 保存, #93).
 func load_demo_config() -> void:
@@ -208,10 +224,16 @@ func _sheet_tick(dt: float) -> void:
 	var img := _overview_image()
 	if img == null or img.is_empty():
 		return
-	var jpeg := StudyClient.encode_jpeg(img, 1280, 900000)
+	var jpeg := StudyClient.encode_jpeg(img, SHEET_IMAGE_EDGE, SHEET_IMAGE_BYTES)
 	if jpeg.is_empty():
 		return
-	_sheet_rid = main.ws.send_command("worksheet_find", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
+	var rid: String = main.ws.send_command("worksheet_find", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
+	if main.ws.last_send_error != OK:
+		main.ws.forget(rid)  # not sent: no answer will come, try again next time
+		_sheet_note("not sent (error %d, %d bytes)" % [main.ws.last_send_error, jpeg.size()])
+		return
+	_sheet_rid = rid
+	_sheet_jpeg_bytes = jpeg.size()
 
 ## The corner marks while fresh, else {} (the drawn sheet).
 func sheet_marks(now_ms: int = -1) -> Dictionary:
@@ -219,7 +241,11 @@ func sheet_marks(now_ms: int = -1) -> Dictionary:
 	return sheet_corners if sheet_seen_ms >= 0 and now - sheet_seen_ms <= SHEET_FRESH_MS else {}
 
 func _on_sheet_found(ok: bool, payload: Dictionary) -> void:
-	if not ok or not bool(payload.get("found", false)) or not payload.get("corners") is Dictionary:
+	if not ok:
+		_sheet_note("refused: %s (%d bytes)" % [str(payload.get("reason", payload.get("message", "?"))), _sheet_jpeg_bytes])
+		return
+	if not bool(payload.get("found", false)) or not payload.get("corners") is Dictionary:
+		_sheet_note("marks not found in the overview frame")
 		return  # the last ones age out (SHEET_FRESH_MS)
 	var c: Dictionary = payload.corners
 	var out := {}
@@ -227,8 +253,69 @@ func _on_sheet_found(ok: bool, payload: Dictionary) -> void:
 		if not c.get(k) is Array or (c[k] as Array).size() != 2:
 			return
 		out[k] = Vector2(float(c[k][0]), float(c[k][1]))
-	sheet_corners = out
-	sheet_seen_ms = Time.get_ticks_msec()
+	var inferred := str(payload.get("inferred", ""))
+	_sheet_note("marks found" + ((" (%s computed from the other three)" % inferred) if inferred != "" else ""))
+	_sheet_take(out, Time.get_ticks_msec())
+
+## #130: a new answer far from the shown one is taken only when the next one agrees (one odd
+## frame does not throw the picture), a near one is blended in (no shaking), and the last ones
+## stay while nothing is found for SHEET_FRESH_MS (a hand or a cable over the sheet).
+func _sheet_take(out: Dictionary, now: int) -> void:
+	var shown := sheet_marks(now)
+	if shown.is_empty() or corners_apart(shown, out) <= SHEET_JUMP:
+		_sheet_pending = {}
+		if not shown.is_empty():
+			for k in out.keys():
+				out[k] = shown[k].lerp(out[k], SHEET_BLEND)
+		sheet_corners = out
+		sheet_seen_ms = now
+		return
+	if not _sheet_pending.is_empty() and corners_apart(_sheet_pending, out) <= SHEET_AGREE:
+		trace("sheet search: moved (%.3f of the image)" % corners_apart(shown, out))
+		_sheet_pending = {}
+		sheet_corners = out
+		sheet_seen_ms = now
+		return
+	trace("sheet search: an answer %.3f away held back until the next one agrees" % corners_apart(shown, out))
+	_sheet_pending = out
+
+## The largest distance between two sets of corners (0..1 of the image).
+static func corners_apart(a: Dictionary, b: Dictionary) -> float:
+	var d := 0.0
+	for k in ["tl", "tr", "bl", "br"]:
+		d = maxf(d, (a[k] as Vector2).distance_to(b[k]))
+	return d
+
+## The sheet search's outcome, logged when it changes (it runs every SHEET_FIND_S).
+func _sheet_note(what: String) -> void:
+	if what == _sheet_last_note:
+		return
+	_sheet_last_note = what
+	trace("sheet search: " + what)
+
+## One line in the debug log (F1 panel) and Godot's log file.
+func trace(text: String) -> void:
+	var t := "study: " + text
+	if main != null and main.has_signal("debug_log"):
+		main.debug_log.emit(t)
+	else:
+		print("[log] " + t)
+
+func _log_signals() -> void:
+	located.connect(func(t): trace("located %s" % JSON.stringify(t)))
+	locate_failed.connect(func(r): trace("locate failed: " + r))
+	navigated.connect(func(t): trace("navigated %s" % JSON.stringify(t)))
+	navigate_failed.connect(func(r): trace("navigate failed: " + r))
+	explained.connect(func(r): trace("explained (%s)" % str(r.get("source", r.get("provider", "?")))))
+	explain_failed.connect(func(r, _fb): trace("explain failed: " + r))
+	motion_update.connect(func(k, ph, st, _h, _d):
+		var m := "motion %s %s %s" % [k, ph, st]
+		if m != _motion_last_note:
+			_motion_last_note = m
+			trace(m))
+	motion_done.connect(func(k): trace("motion done " + k))
+	motion_fault.connect(func(k, r): trace("motion fault %s: %s" % [k, r]))
+	worksheet_seen.connect(func(): trace("worksheet seen"))
 
 # ------------------------------------------------------------------ the watch
 func watch_start() -> void:
@@ -251,6 +338,7 @@ func watch_stop() -> void:
 	watching = false
 	sheet_corners = {}
 	sheet_seen_ms = -1
+	_sheet_pending = {}
 	if mode != "simulated" and homework != null and was:
 		if homework.running():
 			homework.stop("勉強モードの見守りを終えました")
