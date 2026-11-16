@@ -105,7 +105,8 @@ func mode() -> String:
 		return ""
 	if ctl.phase == "SETTLING":
 		return "time_up"
-	return "result" if ctl.phase == "RESULT" and seq.active() else ""
+	# (the ranking, once it is up, takes the screen: #155)
+	return "result" if ctl.phase == "RESULT" and seq.active() and ctl.ranking_view == "" else ""
 
 ## The number in the middle, as text.
 func number_text() -> String:
@@ -153,7 +154,9 @@ func faults_text() -> String:
 func keys_text() -> String:
 	if mode() != "result":
 		return ""
-	return "Enter：もう一回        T：練習から        Esc：タイトル" if seq.settled() else "Enter：スキップ"
+	if not seq.settled():
+		return "Enter：スキップ"
+	return "Enter：ランキングへ" if ctl.ranking_enabled else "Enter：もう一回        T：練習から        Esc：タイトル"
 
 ## A pixelfx sheet over the result (success_confetti, success_sparkle...), in the canvas.
 func sheet(id: String, at: Vector2, sheet_scale := 2.0, color := Color.WHITE) -> void:

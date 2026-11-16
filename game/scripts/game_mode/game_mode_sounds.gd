@@ -45,11 +45,11 @@ const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETU
 ## the pitch of "combo" by the step the combo reached
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
 ## sounds that are only synthesised here (#149: no file was added for the practice)
-const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit"]
+const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit", "new_record"]
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
 ## two of a key (the counting blips come many a second and must never fill the players)
 const SYNTH_META := {"timeup_hit": {"priority": 2}, "result_count": {"priority": 0, "min_gap_ms": 40}, "score_lock": {"priority": 2},
-	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}}
+	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}, "new_record": {"priority": 2}}
 
 var enabled := true
 var volume_db := -8.0
@@ -127,6 +127,8 @@ func _ready() -> void:
 		"bonus_show": StudySounds._tones([[523.3, 0.09], [0.0, 0.04], [523.3, 0.07], [784.0, 0.28]], 0.4),
 		"bonus_hit": StudySounds._tones([[1046.5, 0.045], [1318.5, 0.045], [1568.0, 0.045], [2093.0, 0.045], [2637.0, 0.2]], 0.35),
 		"final_hit": StudySounds._sweep(520.0, 45.0, 0.7, 0.55),
+		# a round made the top ten (#155): a quick climb to a long high note
+		"new_record": StudySounds._tones([[784.0, 0.07], [987.8, 0.07], [1174.7, 0.07], [1568.0, 0.07], [1975.5, 0.07], [2349.3, 0.45]], 0.4),
 		"alien": StudySounds._tones([[659.3, 0.06], [880.0, 0.06], [1318.5, 0.06], [1760.0, 0.2]], 0.35),
 		"warp": StudySounds._sweep(330.0, 1760.0, 0.3, 0.3),
 		"combo": StudySounds._tones([[1046.5, 0.05], [1568.0, 0.12]], 0.3),

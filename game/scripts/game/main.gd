@@ -504,6 +504,14 @@ func _apply_cmdline() -> void:
 			"--game-mode-demo":
 				if game_mode != null:
 					game_mode.demo = true
+			"--game-mode-ranking-file":
+				# the high scores (#155) in a file of its own, and a rehearsal's rounds
+				# (--game-mode-demo, --game-mode-seconds) are recorded in it: for captures and
+				# checks, never the exhibit's ranking
+				if game_mode != null and i + 1 < args.size():
+					game_mode.ranking.path = args[i + 1]
+					game_mode.ranking_force = true
+					game_mode.ranking.load_file()
 			"--game-mode-seconds":
 				if game_mode != null and i + 1 < args.size():
 					game_mode.duration_s = maxf(float(args[i + 1]), 1.0)

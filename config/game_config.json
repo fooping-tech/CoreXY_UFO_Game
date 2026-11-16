@@ -363,6 +363,12 @@
       "strong_at": 3000,
       "_note": "The result's show (#153), one timeline (seconds): YOUR SCORE comes up (intro_s), the number counts up (count_s) and stops (hold_s); then for each bonus: BONUS! and its points (announce_s), they fly into the number (absorb_s), the number runs on (bonus_count_s), a breath (bonus_hold_s); then the number shrinks (wind_up_s) and FINAL SCORE! hits and celebrates (final_s). tick_s: one counting blip per this long. strong_at: a bonus of this many points or more gets the strongest effects (less = weaker, never below 30 %). Every sound, shake, flash and spark of a moment starts in the same tick of this timeline. Enter skips to the end. With game_mode.effects false the final score is shown at once; render.screen_shake off keeps the picture still. Presentation only: no device is told anything."
     },
+    "ranking": {
+      "enabled": true,
+      "hold_s": 1.2,
+      "record_s": 3.2,
+      "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
+    },
     "tutorial": {
       "enabled": true,
       "mode": "hard",

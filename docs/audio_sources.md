@@ -74,7 +74,7 @@ BGM を実音源にするときは、人が配布元からダウンロードし�
 
 - 通常ゲームの移動音（`game/assets/audio/*.mp3`、効果音ラボ）は別の規約で、今回は変更していない。`game/assets/audio/SOURCES.md` を参照。**効果音ラボの mp3 は素材として持ち出せない**が、`sfx/` の Kenney の音は CC0 なので制限はない。
 - スコアゲームの合成音は消していない。ファイルがない・読めないときと、`game_mode.sounds.files: false` のときに使う。
-- **合成音だけの音**（音源ファイルを足していない。`GameModeSounds.SYNTH_ONLY`）: 開始前の練習の `tutorial_ok` `summon`（#149）と、終了のリザルト演出の 6 音（#153）: `timeup_hit`（TIME UP の低い衝撃音）、`result_count`（数字を数えるブリップ音。再生のたびに高さを変える）、`score_lock`（数字が止まる）、`bonus_show`（ボーナスの発表）、`bonus_hit`（ボーナスの着弾）、`final_hit`（最終スコアの衝撃音）。優先度と連打の間隔は `GameModeSounds.SYNTH_META`（`result_count` は優先度 0・40 ms に 1 回まで、ほかは優先度 2）。ファンファーレは既存の `result`（Kenney `jingles_NES13.ogg`）を FINAL SCORE の瞬間に鳴らす。聴いての確認はしていない。
+- **合成音だけの音**（音源ファイルを足していない。`GameModeSounds.SYNTH_ONLY`）: 開始前の練習の `tutorial_ok` `summon`（#149）と、終了のリザルト演出の 6 音（#153）: `timeup_hit`（TIME UP の低い衝撃音）、`result_count`（数字を数えるブリップ音。再生のたびに高さを変える）、`score_lock`（数字が止まる）、`bonus_show`（ボーナスの発表）、`bonus_hit`（ボーナスの着弾）、`final_hit`（最終スコアの衝撃音）。ランキング入賞の `new_record`（#155。ファンファーレは既存の `jackpot`、ランキングの画面が出る音は既存の `goal`）。優先度と連打の間隔は `GameModeSounds.SYNTH_META`（`result_count` は優先度 0・40 ms に 1 回まで、ほかは優先度 2）。ファンファーレは既存の `result`（Kenney `jingles_NES13.ogg`）を FINAL SCORE の瞬間に鳴らす。聴いての確認はしていない。
 - 勉強モードの合成音と VOICEVOX の声は変更していない。声は `Voice` バスに流すようにした（声が出ている間、スコアゲームの音楽を 10 dB 下げる）。
 
 ## 再生の仕組み（`GameModeSounds` / `AudioBuses`）

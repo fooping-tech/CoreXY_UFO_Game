@@ -80,6 +80,8 @@ func _ready() -> void:
 	_test_game_mode_juice(rs)
 	_test_game_mode_result_logic()
 	_test_game_mode_result_show(rs)
+	_test_ranking_logic()
+	_test_game_mode_ranking(rs)
 	_test_game_mode_scope(rs)
 	_test_game_mode_audio(rs)
 	_test_game_mode_reactions(rs)
@@ -2873,6 +2875,8 @@ func _gm_game() -> Node:
 	ctl.sounds.enabled = false
 	ctl.devices_wanted = "mock"
 	ctl.tutorial_auto = false  # these tests are about the round; the practice (#149) has its own
+	ctl.ranking.path = ""  # never the real file of high scores
+	ctl.ranking_enabled = false  # the ranking (#155) has its own tests
 	return game
 
 func _gm_step(ctl: GameModeController, secs: float) -> void:
@@ -4441,6 +4445,339 @@ func _test_game_mode_result_show(rs: Node) -> void:
 
 func _process_frame(n: Node) -> void:
 	n._process(1.0 / 60.0)
+
+## A ranking whose file is cut short as it is written (a full disk).
+class CutShortRanking extends RankingManager:
+	func _write(tmp: String, text: String) -> String:
+		var f := FileAccess.open(tmp, FileAccess.WRITE)
+		f.store_string(text.substr(0, text.length() / 2))
+		f.close()
+		return ""
+
+func _rank_file(name: String) -> String:
+	var path := "user://test_ranking/" + name
+	for p in [path, path + ".bad", path + ".tmp"]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(p)
+	return path
+
+## The high scores (#155), with no game: the order, ties, the ten places, the file.
+func _test_ranking_logic() -> void:
+	var path := _rank_file("logic.tsv")
+	var rk := RankingManager.new()
+	rk.path = path
+	rk.load_file()
+	_ok(rk.entries.is_empty() and rk.load_error == "" and rk.rows().size() == 10 and int(rk.rows()[0].score) == 0
+		and rk.rank_for(100) == 1 and rk.rank_for(0) == 0 and not FileAccess.file_exists(path),
+		"ranking: with no file it starts empty (ten empty places), and nothing is written until there is a record")
+	var given := [500, 900, 100, 900, 300, 700, 200, 800, 600, 400, 1000, 50]
+	var ranks: Array = []
+	for i in given.size():
+		ranks.append(rk.submit(given[i], "id%d" % i, "2026-11-17T10:00:%02d" % i))
+	var scores: Array = rk.entries.map(func(e): return int(e.score))
+	var ids: Array = rk.entries.map(func(e): return str(e.id))
+	_ok(scores == [1000, 900, 900, 800, 700, 600, 500, 400, 300, 200] and ranks == [1, 1, 3, 2, 4, 3, 6, 3, 5, 7, 1, 0],
+		"ranking: the ten best, highest first; each record is told its place as it is made", "%s %s" % [str(scores), str(ranks)])
+	_ok(ids[1] == "id1" and ids[2] == "id3" and rk.rank_of("id1") == 2 and rk.rank_of("id3") == 3,
+		"ranking: with the same score the record made first stays above")
+	_ok(rk.entries.size() == 10 and rk.rank_of("id2") == 0 and rk.rank_of("id11") == 0 and rk.rank_for(200) == 0 and rk.rank_for(201) == 10,
+		"ranking: an 11th is not kept (the 100 that was pushed out, the 50 that never got in); a tie with the 10th does not get in")
+	var before := rk.to_text()
+	_ok(rk.submit(0, "zero") == 0 and rk.submit(-30, "neg") == 0 and rk.submit(5000, "") == 0 and rk.to_text() == before,
+		"ranking: 0 points (or less, or no id) is not a record")
+	_ok(rk.submit(5000, "id1") == 0 and rk.submit(5000, "id11") == 0 and rk.to_text() == before and rk.entries.size() == 10,
+		"ranking: one round is recorded once: an id already on the board, or already turned away, changes nothing")
+	# the file, and a restart
+	var text := FileAccess.get_file_as_string(path)
+	var lines := text.strip_edges().split("\n")
+	var again := RankingManager.new()
+	again.path = path
+	again.load_file()
+	_ok(lines.size() == 11 and lines[0] == "rank\tscore\ttimestamp\tid" and lines[1] == "1\t1000\t2026-11-17T10:00:10\tid10"
+		and lines[10].begins_with("10\t200\t") and not FileAccess.file_exists(path + ".tmp"),
+		"ranking: the file is tab separated text: rank, score, timestamp, id (no name)", lines[1])
+	_ok(again.to_text() == before and again.load_error == "" and again.rank_of("id3") == 3 and again.submit(900, "late") == 4
+		and again.submit(900, "id3") == 0,
+		"ranking: after a restart the same ten are there, ties in the same order, and a record of before is not made again")
+	# a damaged file: what can be read is kept, the rest skipped, nothing stops
+	var bad := _rank_file("bad.tsv")
+	DirAccess.make_dir_recursive_absolute(bad.get_base_dir())
+	var f := FileAccess.open(bad, FileAccess.WRITE)
+	f.store_string("rank\tscore\ttimestamp\tid\n1\tabc\tt\tx1\n\u0001\u0002garbage without tabs\n9\t700\tt\tgood\n2\t700\tt\tgood\n3\t-5\tt\tneg\n4\t600\tt\n5\t900\tt\tbest\n6\t99999999999999999\tt\thuge\n")
+	f.close()
+	var hurt := RankingManager.new()
+	hurt.path = bad
+	hurt.load_file()
+	var kept: Array = hurt.entries.map(func(e): return "%s %d" % [e.id, int(e.score)])
+	var junk := _rank_file("junk.tsv")
+	f = FileAccess.open(junk, FileAccess.WRITE)
+	f.store_buffer(PackedByteArray([0, 255, 254, 9, 9, 10, 13, 0, 200, 9]))
+	f.close()
+	var none := RankingManager.new()
+	none.path = junk
+	none.load_file()
+	_ok(kept == ["best 900", "good 700"] and hurt.load_error != "" and FileAccess.file_exists(bad + ".bad") and hurt.submit(800, "new") == 2
+		and none.entries.is_empty() and none.submit(10, "first") == 1,
+		"ranking: a damaged file never stops the game: the lines that can be read are used (the rank column is not trusted), the old file is kept as .bad",
+		"%s / %s" % [str(kept), hurt.load_error])
+	# a file that cannot be written: the ranking goes on in memory and says why
+	var stuck := RankingManager.new()
+	stuck.path = "/dev/null/no_such_dir/rankings.tsv"
+	var r := stuck.submit(100, "a")
+	var mem := RankingManager.new()
+	mem.path = ""
+	_ok(r == 1 and stuck.save_error != "" and stuck.entries.size() == 1 and stuck.submit(200, "b") == 1 and stuck.entries.size() == 2
+		and mem.submit(5, "m") == 1 and mem.save_error == "",
+		"ranking: when the file cannot be written the record still stands until the game closes, and save_error says so", stuck.save_error)
+	# review on #156: records the file does not have yet survive a reload (the title, R), and are written when the file can be
+	stuck.load_file()
+	var held: bool = stuck.entries.size() == 2 and stuck.save_error != ""
+	stuck.path = _rank_file("later.tsv")
+	stuck.load_file()
+	var late := RankingManager.new()
+	late.path = stuck.path
+	late.load_file()
+	_ok(held and stuck.entries.size() == 2 and stuck.save_error == "" and late.to_text() == stuck.to_text() and late.entries.size() == 2,
+		"ranking: a reload never throws away records that could not be saved; they are written as soon as the file can be", stuck.save_error)
+	# review on #156: a write cut short does not replace the file that was there
+	var cut := CutShortRanking.new()
+	cut.path = path
+	cut.load_file()
+	var on_disk := FileAccess.get_file_as_string(path)
+	var got := cut.submit(99999, "cut")
+	_ok(got == 1 and cut.save_error != "" and FileAccess.get_file_as_string(path) == on_disk and not FileAccess.file_exists(path + ".tmp")
+		and on_disk.count("\n") == 11 and cut.entries.size() == 10,
+		"ranking: a file cut short as it is written (a full disk) is not put in place of the saved one; the failure is reported", cut.save_error)
+	_ok(GameModeRankingHud.rank_color(1) == GameModeRankingHud.GOLD and GameModeRankingHud.rank_color(2) == GameModeRankingHud.SILVER
+		and GameModeRankingHud.rank_color(3) == GameModeRankingHud.BRONZE and GameModeRankingHud.rank_color(7) == GameModeRankingHud.REST
+		and GameModeRankingHud.row_y(10) + PixelText.height(GameModeRankingHud.row_scale(10)) < 602.0
+		and GameModeRankingHud.row_y(4) - GameModeRankingHud.row_y(3) >= PixelText.height(GameModeRankingHud.TOP_SCALE) + 8.0
+		and RankingManager.new_id() != RankingManager.new_id(),
+		"ranking board: gold, silver, bronze, then the rest; ten rows fit the plate without touching; every round has its own id")
+
+## A round to its result and through the result's show (the ranking is asked in the tick the show ends).
+func _gm_finish_round(ctl: GameModeController, with_capsule := true) -> void:
+	if with_capsule:
+		_gm_play_capsule(ctl, "left", "center")
+		_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	var secs := 0.0
+	while not ctl.result_show.settled() and secs < 60.0:
+		_gm_step(ctl, 0.1)
+		secs += 0.1
+
+## The high scores in the game (#155): made by itself after the result's show, NEW RECORD!,
+## the board, what makes no record, the keys, a restart.
+func _test_game_mode_ranking(rs: Node) -> void:
+	var path := _rank_file("game.tsv")
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	ctl.ranking.path = path
+	ctl.ranking_enabled = true
+	var rk := ctl.ranking
+	var board := ctl.ranking_hud
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	# R on the score game's title: the board (empty), and back
+	game._unhandled_input(_key(KEY_R))
+	_process_frame(board)
+	_process_frame(ctl.hud)
+	var lines := board.board_lines()
+	var seen: bool = ctl.phase == "IDLE" and ctl.ranking_view == "board" and board.mode() == "board" and board.art.visible \
+		and not ctl.hud.title_showing() and lines.size() == 10 and lines[0] == "1  ---" and lines[9] == "10  ---" \
+		and board.keys_text().contains("スタート")
+	game._unhandled_input(_key(KEY_R))
+	var back: bool = ctl.ranking_view == "" and ctl.hud.title_showing()
+	game._unhandled_input(_key(KEY_R))
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(seen and back and ctl.phase == "COUNTDOWN" and ctl.ranking_view == "" and ctl.round_id != "",
+		"game mode ranking: R on the title shows the high scores (empty places as ---), R goes back, Enter starts from the board",
+		"%s %s %s %s" % [seen, back, ctl.phase, str(lines)])
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	# a round: nothing is recorded before the result's show is over, then it is, by itself
+	var first_id := ctl.round_id
+	_gm_play_capsule(ctl, "left", "center")
+	_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	var waiting: bool = ctl.phase == "RESULT" and not ctl.result_show.settled() and rk.entries.is_empty() and ctl.ranking_view == "" \
+		and ctl.result_screen.keys_text().contains("スキップ")
+	_gm_finish_round(ctl, false)
+	var final := ctl.final_score()
+	var row: Dictionary = ctl.trace.named("ranking")[-1]
+	_ok(waiting and final == 1100 and rk.entries.size() == 1 and int(rk.entries[0].score) == 1100 and str(rk.entries[0].id) == first_id
+		and ctl.ranking_rank == 1 and ctl.ranking_view == "" and FileAccess.file_exists(path) and str(row.result) == "rank 1"
+		and int(row.score_delta) == 1100 and ctl.score.score == 1000,
+		"game mode ranking: when the result's show ends the final score (with its bonuses) is recorded by itself, once; no one types anything",
+		"%s %d %s" % [waiting, final, str(rk.entries)])
+	game.shake.trauma = 0.0
+	_gm_step(ctl, ctl.rank_hold_s + 0.1)
+	_process_frame(board)
+	_process_frame(ctl.result_screen)
+	_ok(ctl.ranking_view == "record" and board.place_text() == "第 1 位！" and ctl.sounds.log.has("new_record") and game.shake.trauma > 0.0
+		and board.particles.sparks() > 0 and board.particles.rings() > 0 and board.sheets() > 0 and ctl.result_screen.mode() == ""
+		and ctl.phase == "RESULT" and board.keys_text().contains("ランキング"),
+		"game mode ranking: a new place in the top ten: NEW RECORD! and the place, with the sound, the shake, the sparks and the confetti at once",
+		"%s %s" % [ctl.ranking_view, board.place_text()])
+	_gm_step(ctl, ctl.rank_record_s + 0.1)
+	_process_frame(board)
+	lines = board.board_lines()
+	var only_numbers := lines.all(func(l): return l.replace("-", "").replace(" ", "").is_valid_int() or l.ends_with("---"))
+	_ok(ctl.ranking_view == "board" and lines[0] == "1  1100" and lines[1] == "2  ---" and only_numbers and board.note_text() == ""
+		and board.keys_text().contains("もう一回") and board.keys_text().contains("練習") and board.keys_text().contains("タイトル"),
+		"game mode ranking: then the board, HIGH SCORES: places and scores only, this round's place marked", str(lines))
+	_gm_step(ctl, 20.0)
+	ctl._register_score()
+	_ok(rk.entries.size() == 1 and ctl.ranking_view == "board" and ctl.phase == "RESULT",
+		"game mode ranking: staying on the board, or asking again, never records the round a second time")
+	# Enter on the board plays again; the new round is a new record of its own
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(ctl.phase == "COUNTDOWN" and ctl.ranking_view == "" and ctl.ranking_rank == 0 and ctl.round_id != first_id and board.mode() == ""
+		and board.particles.sparks() == 0 and board.sheets() == 0, "game mode ranking: Enter on the board plays again, with nothing of the board left")
+	# 0 points: no record. Enter skips the show, Enter again goes to the board, Enter again plays
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	game._unhandled_input(_key(KEY_ENTER))
+	var skipped: bool = ctl.result_show.settled() and ctl.ranking_view == ""
+	game._unhandled_input(_key(KEY_ENTER))
+	var zero: bool = ctl.ranking_view == "board" and ctl.ranking_note == "zero" and ctl.ranking_rank == 0 and rk.entries.size() == 1
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(skipped and zero and ctl.phase == "COUNTDOWN", "game mode ranking: 0 points is not recorded (the board is still shown); Enter: skip, board, play",
+		"%s %s %s" % [skipped, zero, ctl.phase])
+	# a stopped round, the demo and a shortened round make no record
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_play_capsule(ctl, "left", "center")
+	var asked := ctl.trace.named("ranking").size()
+	game._unhandled_input(_key(KEY_SPACE))
+	_gm_step(ctl, 20.0)
+	var stopped: bool = ctl.phase == "STOPPED" and rk.entries.size() == 1 and ctl.ranking_view == "" and ctl.trace.named("ranking").size() == asked
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_play_capsule(ctl, "left", "center")
+	_gm_step(ctl, 5.0)
+	ctl.demo = true
+	_gm_finish_round(ctl, false)
+	_gm_step(ctl, ctl.rank_hold_s + 0.1)
+	_process_frame(board)
+	var demo: bool = ctl.ranking_note == "demo" and ctl.ranking_view == "board" and rk.entries.size() == 1 and ctl.final_score() > 0 \
+		and board.note_text().contains("デモ")
+	ctl.demo = false
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.duration_s = 20.0
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_finish_round(ctl)
+	var short: bool = ctl.ranking_note == "short" and rk.entries.size() == 1
+	ctl.duration_s = 150.0
+	# T from the result: the practice (it has no result, so no record)
+	game._unhandled_input(_key(KEY_T))
+	_ok(stopped and demo and short and ctl.phase == "TUTORIAL" and ctl.ranking_view == "" and rk.entries.size() == 1,
+		"game mode ranking: a stopped round, the demo, a shortened round and the practice make no record",
+		"%s %s %s %s" % [stopped, demo, short, ctl.phase])
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_gm_free(game, rs)
+	# a restart: the record is still there; a round that does not reach the ten is not kept
+	var fill := RankingManager.new()
+	fill.path = path
+	fill.load_file()
+	var kept: bool = fill.entries.size() == 1 and int(fill.entries[0].score) == 1100
+	for i in 9:
+		fill.submit(5000 + 100 * i, "fill%d" % i)
+	game = _gm_game()
+	ctl = game.game_mode
+	ctl.ranking.path = path
+	ctl.ranking_enabled = true
+	board = ctl.ranking_hud
+	ctl = _gm_playing(game)
+	var loaded: bool = ctl.ranking.entries.size() == 10 and int(ctl.ranking.rows()[9].score) == 1100
+	_gm_finish_round(ctl)
+	_gm_step(ctl, ctl.rank_hold_s + 0.1)
+	_process_frame(board)
+	_ok(kept and loaded and ctl.final_score() == 1100 and ctl.ranking_rank == 0 and ctl.ranking_note == "out" and ctl.ranking_view == "board"
+		and not ctl.sounds.log.has("new_record") and board.note_text().contains("1100") and ctl.ranking.entries.size() == 10
+		and ctl.ranking.rank_of(ctl.round_id) == 0 and FileAccess.get_file_as_string(path).count("\t1100\t") == 1,
+		"game mode ranking: the records survive a restart; a round below the ten goes straight to the board and is not kept (a tie with the 10th stays out)",
+		"%s %s %d %s" % [kept, loaded, ctl.final_score(), ctl.ranking_note])
+	# a higher score lands in the middle of the board, with its place
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	var l: GameModeController.Lane = ctl.lanes["left"]
+	ctl.mock_hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	for i in 3:
+		ctl.field.target_hit.emit(str(l.capsule.capsule_id), "switch", "switch_%d" % i, Vector2(600, 300))
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "center", Vector2(640, 660))
+	_gm_step(ctl, 5.0)
+	_gm_finish_round(ctl, false)
+	_gm_step(ctl, ctl.rank_hold_s + 0.1)
+	var want := ctl.ranking.rank_of(ctl.round_id)
+	_ok(ctl.final_score() > 5000 and ctl.ranking_rank == want and want >= 1 and want <= 9 and ctl.ranking_view == "record"
+		and board.place_text() == "第 %d 位！" % want and ctl.ranking.entries.size() == 10 and ctl.ranking.rank_of("id-none") == 0
+		and int(ctl.ranking.rows()[want - 1].score) == ctl.final_score(),
+		"game mode ranking: a score among the ten takes its place there (the old 10th drops off)", "%d -> %d" % [ctl.final_score(), want])
+	# Enter on NEW RECORD!: the board at once
+	game._unhandled_input(_key(KEY_ENTER))
+	var to_board: bool = ctl.ranking_view == "board" and ctl.phase == "RESULT"
+	# the file cannot be written: the round still ends, the board says so
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.ranking.path = "/dev/null/no_such_dir/rankings.tsv"
+	ctl.ranking.clear()
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_finish_round(ctl)
+	_gm_step(ctl, ctl.rank_hold_s + ctl.rank_record_s + 0.2)
+	_process_frame(board)
+	_ok(to_board and ctl.phase == "RESULT" and ctl.ranking_rank == 1 and ctl.ranking_view == "board" and ctl.ranking.save_error != ""
+		and board.note_text().contains("保存できなかった"),
+		"game mode ranking: Enter on NEW RECORD! goes to the board; a file that cannot be written does not stop the round (the board says so)",
+		"%s %s" % [to_board, ctl.ranking.save_error])
+	# effects off: no NEW RECORD! show, the board with the place marked; ranking off: the result ends as before
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.ranking.path = ""
+	ctl.ranking.clear()
+	ctl.effects = false
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_finish_round(ctl)
+	_gm_step(ctl, ctl.rank_hold_s + 0.1)
+	var plain: bool = ctl.ranking_rank == 1 and ctl.ranking_view == "board" and ctl.sounds.last_played == "goal" and board.particles.sparks() == 0 \
+		and board.sheets() == 0
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.effects = true
+	ctl.ranking_enabled = false
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_finish_round(ctl)
+	_gm_step(ctl, 10.0)
+	var off: bool = ctl.ranking_note == "off" and ctl.ranking_view == "" and ctl.ranking.entries.size() == 1 and ctl.result_screen.mode() == "result"
+	game._unhandled_input(_key(KEY_R))
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(plain and off and ctl.phase == "COUNTDOWN", "game mode ranking: with effects off the board comes without the show; with the ranking off the result ends as before",
+		"%s %s %s" % [plain, off, ctl.phase])
+	# leaving the result before its show is over (T, Esc): the round was played, so it is still recorded
+	ctl.ranking_enabled = true
+	ctl.ranking.clear()
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_play_capsule(ctl, "left", "center")
+	_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	var early: bool = ctl.phase == "RESULT" and not ctl.result_show.settled() and ctl.ranking.entries.is_empty()
+	game._unhandled_input(_key(KEY_T))
+	var by_t: bool = ctl.phase == "TUTORIAL" and ctl.ranking.entries.size() == 1 and int(ctl.ranking.entries[0].score) == 1100
+	game._unhandled_input(_key(KEY_ESCAPE))
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_play_capsule(ctl, "left", "left")
+	_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(early and by_t and not ctl.active() and ctl.ranking.entries.size() == 2 and int(ctl.ranking.entries[1].score) == 200,
+		"game mode ranking: T or Esc in the middle of the result's show still records the round that was played (once)",
+		"%s %s %s" % [early, by_t, str(ctl.ranking.entries)])
+	_gm_free(game, rs)
+	for name in ["game.tsv", "logic.tsv", "bad.tsv", "junk.tsv", "later.tsv"]:
+		_rank_file(name)  # (the tests' own files are not left behind)
 
 func _test_game_mode_physics() -> void:
 	var holder := CanvasLayer.new()
