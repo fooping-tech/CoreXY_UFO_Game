@@ -4923,6 +4923,7 @@ func _test_portrait_layout(rs: Node) -> void:
 		"portrait staff screens: the debug panel keeps its 360 px (a wide row scrolls, it no longer runs off the screen), the settings panel fits the 720 px screen, the title's mode cards stand one under another",
 		"%.0f %.0f %s" % [dbg, set_w, stacked])
 	# full screen: the config decides, the command line and F11 win
+	var at_start: int = game.window_mode_applied  # (decided once while the game came up)
 	var full_cfg: bool = game.fullscreen_wanted()
 	game.fullscreen_override = "on"
 	var on: bool = game.fullscreen_wanted()
@@ -4930,8 +4931,9 @@ func _test_portrait_layout(rs: Node) -> void:
 	var off: bool = not game.fullscreen_wanted()
 	game.fullscreen_override = ""
 	game.apply_window_mode()  # (headless: nothing to do, and nothing breaks)
-	_ok(full_cfg == bool(GameConfig.value("render.fullscreen", false)) and on and off,
-		"portrait display: full screen follows render.fullscreen; --fullscreen / --windowed and F11 override it")
+	_ok(full_cfg == bool(GameConfig.value("render.fullscreen", false)) and on and off and at_start >= 1 and game.window_mode_applied == at_start + 1,
+		"portrait display: full screen follows render.fullscreen, already at start (no argument needed); --fullscreen / --windowed and F11 override it",
+		"%d" % at_start)
 	# the screen's shape is the picture's only: the robot's own coordinates mean what they did
 	var ax0: Vector3 = RobotState.anchor_for_xy(10.0, 10.0)
 	var ax1: Vector3 = RobotState.anchor_for_xy(60.0, 10.0)

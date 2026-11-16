@@ -303,7 +303,11 @@ func fullscreen_wanted() -> bool:
 		return fullscreen_override == "on"
 	return bool(GameConfig.value("render.fullscreen", false))
 
+## how many times the window mode was decided (at start, on a saved setting, on F11): tests
+var window_mode_applied := 0
+
 func apply_window_mode() -> void:
+	window_mode_applied += 1
 	if DisplayServer.get_name() == "headless" or not is_inside_tree():
 		return
 	var want := Window.MODE_FULLSCREEN if fullscreen_wanted() else Window.MODE_WINDOWED
@@ -446,6 +450,9 @@ func _title_status() -> String:
 ## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
 func _apply_cmdline() -> void:
 	var args := OS.get_cmdline_user_args()
+	# the configured window mode at start (review on #158: render.fullscreen saved in the
+	# settings must hold after a restart with no argument); --fullscreen / --windowed below win
+	apply_window_mode()
 	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
 			DisplayServer.get_name() == "headless",
 			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
