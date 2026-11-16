@@ -22,15 +22,25 @@ const DEFAULT_PAN := 0.6
 ## the voice bus counts as speaking above this peak
 const VOICE_PEAK_DB := -45.0
 
-## Makes the buses that are missing (safe to call again).
-static func ensure(pan := DEFAULT_PAN) -> void:
+## Makes the buses that are missing (safe to call again). `pan` 0..1 sets how far the side
+## buses are panned; left out (negative), a pan already set stays as it is.
+static func ensure(pan := -1.0) -> void:
 	for name in [SFX, BGM, VOICE]:
 		_bus(name, "Master")
 	for side in [[SFX_LEFT, -1.0], [SFX_RIGHT, 1.0]]:
 		var idx := _bus(side[0], SFX)
-		if AudioServer.get_bus_effect_count(idx) == 0:
+		var fresh := AudioServer.get_bus_effect_count(idx) == 0
+		if fresh:
 			AudioServer.add_bus_effect(idx, AudioEffectPanner.new())
-		(AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan = clampf(float(side[1]) * pan, -1.0, 1.0)
+		if fresh or pan >= 0.0:
+			(AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan = clampf(float(side[1]) * (pan if pan >= 0.0 else DEFAULT_PAN), -1.0, 1.0)
+
+## How far the side buses are panned now (0..1).
+static func pan() -> float:
+	var idx := AudioServer.get_bus_index(SFX_RIGHT)
+	if idx < 0 or AudioServer.get_bus_effect_count(idx) == 0:
+		return 0.0
+	return (AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan
 
 static func _bus(name: String, send: String) -> int:
 	var idx := AudioServer.get_bus_index(name)

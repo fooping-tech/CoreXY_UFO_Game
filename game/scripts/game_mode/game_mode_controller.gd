@@ -913,7 +913,7 @@ func _on_device_event(ev: Dictionary, hub: GameModeDevices) -> void:
 				l.release_started = true
 				_led(l, "RELEASING")
 				fx.play("capsule_release_burst", l.side)
-				sounds.play("release")
+				sounds.play("release", l.side)
 				_light("TRIGGER_EFFECT", {"effect": "BALL_RELEASED", "duration_ms": 800, "intensity": 200})
 		"RELEASE_DONE":
 			if l.state == "RELEASING" and _same_release(l, data):

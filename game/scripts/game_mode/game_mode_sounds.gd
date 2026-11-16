@@ -176,7 +176,9 @@ func min_gap_ms(name: String) -> int:
 	return int(PIN_GAP_S * 1000.0) if name == "pin" else 0
 
 ## The controller's lane_changed: remembers which side entered a state last, so the
-## sound of that step comes from that Dial's side.
+## sound played right after that step comes from that Dial's side. (A sound that follows a
+## later event of a Dial, like the release, is given its side by the caller instead: both
+## lanes can be in the same state by then.)
 func on_lane(side: String, state: String) -> void:
 	_side_of[state] = side
 
@@ -184,7 +186,10 @@ func on_lane(side: String, state: String) -> void:
 func side_of(name: String) -> String:
 	return str(_side_of.get(SIDE_SOUNDS.get(name, ""), ""))
 
-func play(name: String) -> void:
+## Plays the sound `name`. `side` ("left" / "right"): the Dial it belongs to, when the
+## caller knows it (an event of that Dial); left out, a Dial's sound takes the side that
+## entered its lane state last (side_of).
+func play(name: String, side := "") -> void:
 	var now := Time.get_ticks_msec()
 	var gap := min_gap_ms(name)
 	if gap > 0 and now - int(_last_ms.get(name, -100000)) < gap:
@@ -205,7 +210,8 @@ func play(name: String) -> void:
 		dropped += 1
 		return
 	var m: Dictionary = _meta.get(name, {}) if src == "file" else {}
-	var side := side_of(name)
+	if side == "":
+		side = side_of(name)
 	var p := _players[slot]
 	p.stream = _files[name] if src == "file" else _streams[name]
 	p.bus = AudioBuses.sfx_bus(side)

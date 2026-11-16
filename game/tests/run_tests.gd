@@ -3688,13 +3688,16 @@ func _test_game_mode_audio(rs: Node) -> void:
 	var pan_r: float = (AudioServer.get_bus_effect(AudioServer.get_bus_index(AudioBuses.SFX_RIGHT), 0) as AudioEffectPanner).pan
 	snd.on_lane("right", "ABSORBING")
 	snd.on_lane("left", "RETURNING")
+	snd.on_lane("left", "RELEASING")
+	snd.on_lane("right", "RELEASING")  # both lanes releasing: the event's own side decides
 	snd.play("absorb")
 	snd.play("return")
 	snd.play("go")
+	snd.play("release", "left")
 	var sides: Array = snd.voices.filter(func(v): return not v.is_empty()).map(func(v): return "%s:%s" % [v.key, v.side])
 	var bus_r: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_RIGHT)
 	var bus_l: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_LEFT)
-	_ok(buses and pan_l < 0.0 and pan_r > 0.0 and sides.has("absorb:right") and sides.has("return:left") and sides.has("go:") and bus_r and bus_l,
+	_ok(buses and pan_l < 0.0 and pan_r > 0.0 and sides.has("absorb:right") and sides.has("return:left") and sides.has("go:") and sides.has("release:left") and bus_r and bus_l,
 		"audio: effects, music and voice have their own buses; a Dial's sounds go to its side (left Dial left, right Dial right), the others stay in the middle",
 		str(sides))
 	snd.silence()
@@ -3722,6 +3725,10 @@ func _test_game_mode_audio(rs: Node) -> void:
 	AudioBuses.apply({"enabled": false})
 	var all_off: bool = AudioBuses.muted(AudioBuses.BGM) and AudioBuses.muted(AudioBuses.SFX)
 	AudioBuses.apply({})
+	AudioBuses.ensure(0.0)  # the configured pan survives the settings being applied again
+	AudioBuses.apply({})
+	var pan_kept: bool = AudioBuses.pan() == 0.0
+	AudioBuses.ensure(AudioBuses.DEFAULT_PAN)
 	snd.set_bgm(true)
 	snd._process(GameModeSounds.FADE_S)
 	var normal: bool = snd._bgm.playing and snd._bgm_gain == 1.0 and snd._fast_gain == 0.0 and not snd._bgm_fast.playing
@@ -3734,7 +3741,7 @@ func _test_game_mode_audio(rs: Node) -> void:
 	snd._process(GameModeSounds.FADE_S * 2.0)
 	var faded: bool = not snd._bgm.playing and not snd._bgm_fast.playing and not snd.bgm_on
 	var takes: bool = (snd._bgm_fast.stream as AudioStreamWAV).data.size() < (snd._bgm.stream as AudioStreamWAV).data.size()
-	_ok(muted and all_off and not AudioBuses.muted(AudioBuses.BGM) and normal and crossing and fast and faded and takes and snd.duck_db() == 0.0,
+	_ok(muted and all_off and pan_kept and is_equal_approx(AudioBuses.pan(), AudioBuses.DEFAULT_PAN) and not AudioBuses.muted(AudioBuses.BGM) and normal and crossing and fast and faded and takes and snd.duck_db() == 0.0,
 		"audio: effects and music are turned down and muted separately; the music fades in, crosses to its own faster take for the last 30 s (not the same take pitched up) and fades out",
 		"%s %s %s %s %s %s %s" % [muted, all_off, normal, crossing, fast, faded, takes])
 	remove_child(snd)
