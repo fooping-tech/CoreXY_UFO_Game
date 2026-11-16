@@ -38,10 +38,15 @@ func clear() -> void:
 	_asked = {}
 
 ## Reads the file. Always leaves a valid ranking (empty when there is nothing to read).
+## Records the file does not have yet (the last save failed) are never thrown away by a
+## reload: the save is tried again, and while it still fails what is in memory stays.
 func load_file() -> void:
 	if path == "":
 		return  # kept in memory only: there is nothing to read, and what is here stays
-	clear()
+	if save_error != "" and not save_file():
+		return
+	entries = []
+	load_error = ""
 	if not FileAccess.file_exists(path):
 		return
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -97,17 +102,33 @@ func save_file() -> bool:
 		return true
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var tmp := path + ".tmp"
-	var f := FileAccess.open(tmp, FileAccess.WRITE)
-	if f == null:
-		save_error = "書けない（%s）" % error_string(FileAccess.get_open_error())
+	var text := to_text()
+	var why := _write(tmp, text)
+	# the old file is replaced only by a temporary file that reads back whole (a full disk,
+	# a write cut short: the records already saved stay as they are)
+	if why == "" and FileAccess.get_file_as_string(tmp) != text:
+		why = "書いた内容を確かめられない"
+	if why != "":
+		save_error = "書けない（%s）" % why
+		if FileAccess.file_exists(tmp):
+			DirAccess.remove_absolute(tmp)
 		return false
-	f.store_string(to_text())
-	f.close()
 	var err := DirAccess.rename_absolute(tmp, path)
 	if err != OK:
 		save_error = "書けない（%s）" % error_string(err)
 		return false
 	return true
+
+## Writes `text` to `tmp`. Returns why it could not ("" = written, as far as the file says).
+func _write(tmp: String, text: String) -> String:
+	var f := FileAccess.open(tmp, FileAccess.WRITE)
+	if f == null:
+		return error_string(FileAccess.get_open_error())
+	var ok := f.store_string(text)
+	f.flush()
+	var err := f.get_error()
+	f.close()
+	return "" if ok and err == OK else error_string(err if err != OK else ERR_FILE_CANT_WRITE)
 
 ## Where a score would stand now (1 .. 10), 0 = not in the ranking. A tie goes below the
 ## records already there.

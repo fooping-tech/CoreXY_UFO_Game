@@ -4446,6 +4446,14 @@ func _test_game_mode_result_show(rs: Node) -> void:
 func _process_frame(n: Node) -> void:
 	n._process(1.0 / 60.0)
 
+## A ranking whose file is cut short as it is written (a full disk).
+class CutShortRanking extends RankingManager:
+	func _write(tmp: String, text: String) -> String:
+		var f := FileAccess.open(tmp, FileAccess.WRITE)
+		f.store_string(text.substr(0, text.length() / 2))
+		f.close()
+		return ""
+
 func _rank_file(name: String) -> String:
 	var path := "user://test_ranking/" + name
 	for p in [path, path + ".bad", path + ".tmp"]:
@@ -4521,6 +4529,25 @@ func _test_ranking_logic() -> void:
 	_ok(r == 1 and stuck.save_error != "" and stuck.entries.size() == 1 and stuck.submit(200, "b") == 1 and stuck.entries.size() == 2
 		and mem.submit(5, "m") == 1 and mem.save_error == "",
 		"ranking: when the file cannot be written the record still stands until the game closes, and save_error says so", stuck.save_error)
+	# review on #156: records the file does not have yet survive a reload (the title, R), and are written when the file can be
+	stuck.load_file()
+	var held: bool = stuck.entries.size() == 2 and stuck.save_error != ""
+	stuck.path = _rank_file("later.tsv")
+	stuck.load_file()
+	var late := RankingManager.new()
+	late.path = stuck.path
+	late.load_file()
+	_ok(held and stuck.entries.size() == 2 and stuck.save_error == "" and late.to_text() == stuck.to_text() and late.entries.size() == 2,
+		"ranking: a reload never throws away records that could not be saved; they are written as soon as the file can be", stuck.save_error)
+	# review on #156: a write cut short does not replace the file that was there
+	var cut := CutShortRanking.new()
+	cut.path = path
+	cut.load_file()
+	var on_disk := FileAccess.get_file_as_string(path)
+	var got := cut.submit(99999, "cut")
+	_ok(got == 1 and cut.save_error != "" and FileAccess.get_file_as_string(path) == on_disk and not FileAccess.file_exists(path + ".tmp")
+		and on_disk.count("\n") == 11 and cut.entries.size() == 10,
+		"ranking: a file cut short as it is written (a full disk) is not put in place of the saved one; the failure is reported", cut.save_error)
 	_ok(GameModeRankingHud.rank_color(1) == GameModeRankingHud.GOLD and GameModeRankingHud.rank_color(2) == GameModeRankingHud.SILVER
 		and GameModeRankingHud.rank_color(3) == GameModeRankingHud.BRONZE and GameModeRankingHud.rank_color(7) == GameModeRankingHud.REST
 		and GameModeRankingHud.row_y(10) + PixelText.height(GameModeRankingHud.row_scale(10)) < 602.0
@@ -4749,7 +4776,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 		"game mode ranking: T or Esc in the middle of the result's show still records the round that was played (once)",
 		"%s %s %s" % [early, by_t, str(ctl.ranking.entries)])
 	_gm_free(game, rs)
-	for name in ["game.tsv", "logic.tsv", "bad.tsv", "junk.tsv"]:
+	for name in ["game.tsv", "logic.tsv", "bad.tsv", "junk.tsv", "later.tsv"]:
 		_rank_file(name)  # (the tests' own files are not left behind)
 
 func _test_game_mode_physics() -> void:
