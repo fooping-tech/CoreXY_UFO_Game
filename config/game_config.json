@@ -181,6 +181,9 @@
       ]},
       {"title": "ハンドジェスチャー", "items": [
         {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum", "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"], ["pose_direction", "手の形で方向を決める"]]},
+        {"key": "game_mode.tutorial.enabled", "apply": "now", "label": "スコアゲームの前に練習（UFO 召喚と手の練習）", "type": "bool",
+         "note": "オフにすると、スコアゲームのタイトルで Enter を押すとすぐ始まる（T で練習から始められる）"},
+        {"key": "game_mode.tutorial.mode", "apply": "now", "label": "練習で見せる操作", "type": "enum", "options": [["hard", "むずかしいモード（今の手の操作）"], ["easy", "かんたんモード（説明だけ。自動でつかむ・運ぶ機能は未実装）"]]},
         {"key": "gesture.camera", "apply": "backend", "label": "手のカメラ（名前の一部か番号）", "type": "text", "max_length": 80},
         {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool", "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
       ]},
@@ -340,6 +343,13 @@
       "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. optical_flow: arrows showing how the picture moves (measured in the game on a 48 x 48 grey copy about 10 times a second; display only, never used to move anything). zoom 1..4 crops the middle."
     },
     "trace": true,
+    "tutorial": {
+      "enabled": true,
+      "mode": "hard",
+      "ok_s": 1.4,
+      "retry_s": 8.0,
+      "_note": "The practice before the score game (#149): Enter on the score game's title goes through it once per visit (the spell, the hand shapes one by one, one real capsule through a Dial), then the round starts from a full reset. enabled: false = Enter starts the round at once (T still starts the practice). mode: hard = the manual hand control as it is; easy = the same with the easy mode's shapes shown (its automatic catch and carry are NOT built: nothing moves by itself). steps: {id: {title, sub, say, hold_s...}} overrides a step, modes: {mode: {hand scheme: [step ids]}} the order (game/scripts/tutorial/gesture_tutorial_steps.gd). Staff keys in the practice: F6 = the step again, F7 = the next step, F8 = leave the practice out."
+    },
     "ufo": {
       "min": 0.1,
       "max": 0.9,
