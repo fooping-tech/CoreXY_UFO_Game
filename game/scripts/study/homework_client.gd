@@ -136,6 +136,8 @@ func setup(hub: CameraHub, robot_link: UfoWebSocketClient = null) -> void:
 	configure_helper(h if h is Dictionary else {})
 	player = AudioStreamPlayer.new()
 	player.name = "HelperVoice"
+	AudioBuses.ensure()
+	player.bus = AudioBuses.VOICE  # the music steps back while it speaks (#143)
 	add_child(player)
 
 func configure_helper(c: Dictionary) -> void:

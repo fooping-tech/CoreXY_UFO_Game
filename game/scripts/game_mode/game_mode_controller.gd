@@ -82,7 +82,8 @@ const HIT_FX := {"pin": [3, 0.0], "sling": [6, 0.0], "spinner": [8, 0.0], "switc
 	"target": [8, 36.0], "gem": [12, 36.0], "warp": [14, 60.0], "alien": [18, 60.0], "star": [18, 64.0],
 	"goal_left": [12, 50.0], "goal_right": [12, 50.0], "goal_center": [20, 70.0], "jackpot": [48, 110.0]}
 ## the new kinds of target borrow a sound
-const SOUND_OF := {"pop": "bumper", "target": "switch", "sling": "pin", "gem": "switch", "alien": "star", "warp": "absorb"}
+## a kind of target that has no sound of its own borrows one (every kind has its own since #143)
+const SOUND_OF := {}
 
 var main: Node
 var devices: GameModeDevices
@@ -218,6 +219,7 @@ func setup(m: Node) -> void:
 	sounds = GameModeSounds.new()
 	sounds.name = "GameModeSounds"
 	add_child(sounds)
+	lane_changed.connect(sounds.on_lane)  # a Dial's sounds come from its side
 	hud = GameModeHud.new()
 	hud.name = "GameModeHud"
 	layer.add_child(hud)
@@ -462,6 +464,8 @@ func _present_state() -> void:
 	if lvl > _combo_seen:  # the combo climbed a step
 		backdrop.pulse(backdrop.light_color(), 0.3 + 0.2 * lvl)
 		fx.banner("COMBO x%s" % str(score.multiplier(clock)), lvl)
+		sounds.combo_step = lvl
+		sounds.play("combo")
 	_combo_seen = lvl
 
 ## One step of the game mode's time (60 Hz from the physics tick; the tests call it).
@@ -984,7 +988,7 @@ func _on_device_event(ev: Dictionary, hub: GameModeDevices) -> void:
 				l.release_started = true
 				_led(l, "RELEASING")
 				fx.play("capsule_release_burst", l.side)
-				sounds.play("release")
+				sounds.play("release", l.side)
 				_light("TRIGGER_EFFECT", {"effect": "BALL_RELEASED", "duration_ms": 800, "intensity": 200})
 		"RELEASE_DONE":
 			if l.state == "RELEASING" and _same_release(l, data):

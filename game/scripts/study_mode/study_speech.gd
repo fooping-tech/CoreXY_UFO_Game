@@ -30,6 +30,8 @@ var _player: AudioStreamPlayer
 func _ready() -> void:
 	_player = AudioStreamPlayer.new()
 	_player.name = "UfoVoice"
+	AudioBuses.ensure()
+	_player.bus = AudioBuses.VOICE  # the music steps back while it speaks (#143)
 	add_child(_player)
 	_player.finished.connect(_on_voice_finished)
 

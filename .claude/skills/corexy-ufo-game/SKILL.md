@@ -170,6 +170,6 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 | HUD・メニュー | `game-ui-ux`, `godot-ui-control` | デバッグパネルはコードで構築（`debug_ui.gd`）。プレイ画面にクレーンアームを描かない |
 | 性能 | `performance-optimization` | `physics_usec`、`--capture` の FPS で計測してから直す |
 | ピクセル VFX（pixelfx） | `pixelfx-vfx`（このリポジトリ専用） | カタログ → `tools/build_vfx.py` → `VFXManager.spawn_fx`。場面は `vfx_director.gd` |
-| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける |
+| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける。スコアゲームの音は `game_mode/game_mode_sounds.gd`（Kenney の CC0 のファイル + 合成音のフォールバック、`assets/audio/manifest.json`）とバス `ui/audio_buses.gd`。出典は `docs/audio_sources.md`。音源を足すときは配布元でライセンスを確かめ、マニフェストと文書に記録する（確認できないものは入れない） |
 | カメラ | `camera-systems` | 基本は不要。固定カメラの投影（`origin_px`）を壊す追従カメラを入れない |
 | どれか分からない | `router` | このスキルを読んだ後に使う |
