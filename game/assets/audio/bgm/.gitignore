@@ -1,0 +1,5 @@
+# BGM files live here on each machine and are never committed (#151):
+# everything in this folder is ignored except this file and the README.
+*
+!.gitignore
+!README.md
