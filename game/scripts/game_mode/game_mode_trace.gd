@@ -8,7 +8,7 @@ extends RefCounted
 
 const ROWS_MAX := 4000
 const FIELDS := ["t_ms", "game_t", "session_id", "source_dial", "cycle", "capsule_id", "event", "command_id", "result",
-	"game_state", "lane_state", "physics_position", "score_delta", "effect_id", "led_command", "release_status"]
+	"game_state", "lane_state", "physics_position", "score_delta", "effect_id", "led_command", "release_status", "breakdown"]
 
 var rows: Array[Dictionary] = []
 var path := ""

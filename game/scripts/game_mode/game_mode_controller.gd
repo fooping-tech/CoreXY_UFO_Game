@@ -108,6 +108,14 @@ var scope_enabled := true
 var fx: GameModeVFX
 var sounds: GameModeSounds
 var hud: GameModeHud
+## The round's end (#153): the breakdown (the truth: fixed once when RESULT is reached, {}
+## before), the show's timeline (what is on the screen now) and its screen. The show is
+## presentation: the score, the lanes and the devices never read it.
+var result: Dictionary = {}
+var result_show := ResultShow.new()
+var result_screen: GameModeResultScreen
+var _result_bonus_cfg: Dictionary = {}
+var _rng := RandomNumberGenerator.new()
 var layer: CanvasLayer
 var lanes: Dictionary = {}  # side -> Lane
 
@@ -250,6 +258,12 @@ func setup(m: Node) -> void:
 	tutorial_hud.name = "GestureTutorialHud"
 	layer.add_child(tutorial_hud)
 	tutorial_hud.setup(self)
+	result_screen = GameModeResultScreen.new()
+	result_screen.name = "GameModeResultScreen"
+	layer.add_child(result_screen)
+	result_screen.setup(self)
+	result_show.cue.connect(_on_result_cue)
+	_rng.seed = 153
 	tutorial_speech = StudySpeech.new()
 	tutorial_speech.name = "TutorialSpeech"
 	add_child(tutorial_speech)
@@ -318,6 +332,9 @@ func _configure(cfg: Dictionary) -> void:
 	verify_tries = int(t.get("verify_tries", verify_tries))
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
+	_result_bonus_cfg = cfg.get("result_bonus", {}) if cfg.get("result_bonus") is Dictionary else {}
+	if cfg.get("result_show") is Dictionary:
+		result_show.configure(cfg.result_show)
 	_tutorial_cfg = cfg.get("tutorial", {}) if cfg.get("tutorial") is Dictionary else {}
 	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
 	tutorial_mode = str(_tutorial_cfg.get("mode", tutorial_mode))
@@ -373,6 +390,7 @@ func close() -> void:
 	sounds.set_bgm(false)
 	field.clear()
 	fx.reset()
+	_clear_result()
 	trace.close()
 	layer.visible = false
 	layer.offset = Vector2.ZERO
@@ -577,7 +595,9 @@ func _reset_round() -> void:
 	field.set_frozen(false)
 	fx.reset()
 	particles.clear()
+	_clear_result()
 	_hitstop_left = 0.0
+	_bounce = 0.0
 	sounds.set_bgm(false)
 	practice = ""
 	practice_released = 0
@@ -674,7 +694,7 @@ func _present_state() -> void:
 	elif phase == "SETTLING":
 		fx.ufo_mood = "over"
 	elif phase == "RESULT":
-		fx.ufo_mood = "happy" if score.score > 0 else "sad"
+		fx.ufo_mood = "happy" if final_score() > 0 else "sad"
 	else:
 		fx.ufo_mood = "stopped" if phase == "STOPPED" else "normal"
 	backdrop.energy = lvl / 3.0
@@ -698,6 +718,8 @@ func tick(dt: float) -> void:
 	_expire_commands(dt)
 	fx.advance(dt)
 	particles.advance(dt)
+	result_screen.advance(dt)
+	result_show.advance(dt)  # the result's timeline: its cues come out of this, in this tick
 	backdrop.advance(dt)
 	if phase != "STOPPED":
 		ufo.advance(dt)
@@ -790,6 +812,7 @@ func _time_up() -> void:
 	settle_left = settle_max_s
 	sounds.set_bgm(false)
 	sounds.play("timeup")
+	result_show.time_up()  # the picture and the thud; SETTLING goes on by itself
 	_trace("time_up", null, {})
 	_close_idle_lanes()
 
@@ -816,15 +839,11 @@ func _all_settled() -> bool:
 
 func _result() -> void:
 	_set_phase("RESULT")
-	if score.score > 0:  # confetti over the field
-		for i in 5:
-			particles.burst(Vector2(240.0 + 200.0 * i, 200.0), [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")][i % 3], 24, 320.0)
-		fx.react("big")
-	else:
-		fx.react("miss")
+	# the breakdown is fixed here, once: everything that scored (SETTLING included) is in
+	# score.score by now, and nothing can score after this (the field is cleared)
+	result = ResultBonus.of_round(score, capsules, _result_bonus_cfg)
 	field.clear()
 	sounds.set_bgm(false)
-	sounds.play("result")
 	for side in SIDES:
 		var l: Lane = lanes[side]
 		if l.state == "CLOSED":  # a faulted Dial is left as it is for a person to look at
@@ -833,8 +852,112 @@ func _result() -> void:
 	_light("SET_LIGHT_MODE", {"mode": "RESULT", "brightness": 180, "speed": 128, "transition_ms": 500})
 	_light("TRIGGER_EFFECT", {"effect": "GAME_CLEAR", "duration_ms": 2000, "intensity": 220})
 	message = "Enter: すぐ はじめる    T: もういちど れんしゅう    Esc: タイトル"
-	_trace("result", null, {"score_delta": score.score})
+	# the same numbers as the screen: the score while playing and the whole breakdown
+	var numbers := result.duplicate()
+	numbers.erase("items")
+	_trace("result", null, {"score_delta": score.score, "breakdown": numbers})
 	trace.close()
+	result_show.begin(result, effects)  # the show starts; it changes nothing of the above
+
+## The round's final score (the score while playing plus the end bonuses); before the
+## result is reached, the score so far.
+func final_score() -> int:
+	return int(result.get("final_score", score.score))
+
+## The number the HUD's score panel shows: the round's score, and in the result the number
+## the show has reached (so the small panel and the big number never disagree).
+func display_score() -> float:
+	return result_show.shown if phase == "RESULT" and result_show.active() else float(score.score)
+
+func _clear_result() -> void:
+	result = {}
+	result_show.reset()
+	if result_screen != null:
+		result_screen.clear()
+
+func _shake(amount: float) -> void:
+	if effects and amount > 0.0 and main != null and main.get("shake") != null:
+		main.shake.add_trauma(amount)  # render.screen_shake off: nothing moves
+
+## A cue of the result's timeline: every part of it (the sound, the shake, the bounce, the
+## hit-stop, the light, the sparks) is started here, in this one tick, so they stay in
+## step. Presentation only: no device, no score, and nothing waits for any of it.
+func _on_result_cue(name: String, d: Dictionary) -> void:
+	var c := GameModeResultScreen.CENTRE
+	var rp := result_screen.particles
+	var k := float(d.get("strength", 1.0))
+	match name:
+		"time_up":
+			sounds.play("timeup_hit")
+			_shake(0.7)
+			hitstop(0.06)
+			backdrop.pulse(Color.WHITE, 1.0)
+		"reveal":
+			backdrop.pulse(Color("3ff0ff"), 0.5)
+		"count":  # the blips climb with the number
+			sounds.play("result_count", "", 0.8 + 1.1 * float(d.get("k", 0.0)))
+			rp.burst(c + Vector2(_rng.randf_range(-260.0, 260.0), 40.0), Color("ffe03c"), 2, 260.0, -PI * 0.5, PI * 0.8)
+		"score_lock":
+			sounds.play("score_lock")
+			_shake(0.45)
+			bounce(1.0)
+			hitstop(0.05)
+			rp.ring(c, Color("ffe03c"), 330.0, 0.5, 60.0)
+			rp.burst(c, Color("ffe03c"), 40, 440.0)
+		"bonus_show":
+			sounds.play("bonus_show")
+			_shake(0.15 + 0.2 * k)
+			bounce(0.4 + 0.4 * k)
+			rp.burst(Vector2(c.x, GameModeResultScreen.TITLE_Y), Color("ff4fd8"), int(14 + 20 * k), 320.0)
+			rp.ring(GameModeResultScreen.BONUS_AT, Color("ff4fd8"), 120.0 + 80.0 * k, 0.4, 20.0)
+		"bonus_hit":
+			sounds.play("bonus_hit")
+			_shake(0.3 + 0.45 * k)
+			bounce(0.7 + 0.9 * k)
+			hitstop(0.04 + 0.05 * k)
+			rp.ring(c, Color("3ff0ff"), 260.0 + 220.0 * k, 0.5, 60.0)
+			rp.ring(c, Color.WHITE, 180.0 + 120.0 * k, 0.35, 40.0)
+			rp.burst(c, Color("ffe03c"), int(24 + 50 * k), 380.0 + 180.0 * k)
+			_confetti(2 + int(round(3.0 * k)))
+			backdrop.pulse(Color("ffe03c"), 0.5 + 0.5 * k)
+			if k >= 0.6:
+				result_screen.sheet("success_sparkle", c, 4.0)
+		"bonus_lock":
+			sounds.play("score_lock", "", 1.26)
+		"final":
+			if int(d.get("points", 0)) > 0:
+				sounds.play("final_hit")
+				sounds.play("result")  # the fanfare
+				_shake(1.0)
+				bounce(2.0)
+				hitstop(HITSTOP_MAX_S)
+				rp.ring(c, Color("3ff0ff"), 640.0, 0.8, 80.0)
+				rp.ring(c, Color("ff4fd8"), 480.0, 0.65, 60.0)
+				rp.ring(c, Color("ffb020"), 340.0, 0.5, 40.0)
+				rp.burst(c, Color("ffe03c"), 70, 620.0)
+				_confetti(5)
+				result_screen.sheet("success_sparkle", c, 5.0)
+				for x in [340.0, 940.0]:  # party poppers from under the number, falling back to its foot
+					result_screen.sheet("success_confetti", Vector2(x, GameModeResultScreen.CONFETTI_Y), 3.0)
+				fx.react("big")
+				backdrop.pulse(Color("ffb020"), 1.0)
+			else:  # nothing scored: the score stands, quietly
+				sounds.play("result")
+				fx.react("miss")
+		"confetti":
+			_confetti(3)
+			result_screen.sheet("success_sparkle", c + Vector2(_rng.randf_range(-420.0, 420.0), _rng.randf_range(-180.0, 160.0)), 2.0)
+		"settled":
+			# skipped, or shown without the show: the fanfare still marks the result, once
+			if str(d.get("how", "")) in ["skipped", "plain"] and not result_show.log.has("final"):
+				sounds.play("result")
+
+## Paper falls from the top of the screen in the three neon colours.
+func _confetti(bursts: int) -> void:
+	var cols := [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")]
+	for i in bursts:
+		result_screen.particles.burst(Vector2(_rng.randf_range(120.0, 1160.0), _rng.randf_range(-10.0, 120.0)),
+			cols[(i + _rng.randi()) % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
 
 # ------------------------------------------------------------------ lanes
 func _prepare(l: Lane) -> void:
@@ -1281,6 +1404,7 @@ func on_stop_key() -> void:
 		_halt("Space で止めた")
 	else:
 		devices.stop_all()
+		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
 	devices.stop_all()
@@ -1311,8 +1435,11 @@ func handle_key(keycode: int) -> bool:
 		KEY_ENTER, KEY_KP_ENTER:
 			# the title: the practice first. After a round: straight into the next one
 			# (T = the practice once more). In the practice Enter does nothing, so no one
-			# skips it by accident.
-			if not running():
+			# skips it by accident. While the result's show runs, the first Enter only
+			# takes it to its last picture; the next one starts the round.
+			if phase == "RESULT" and result_show.active() and not result_show.settled():
+				result_show.skip()
+			elif not running():
 				begin()
 			return true
 		KEY_T:

@@ -26,8 +26,6 @@ var _combo: Label
 var _centre: Label
 var _message: Label
 var _lane: Dictionary = {}  # side -> Label
-var _result: PanelContainer
-var _result_text: Label
 var _hint: Label
 var _problem: Label
 var _start: Label
@@ -79,15 +77,6 @@ func setup(c: GameModeController) -> void:
 		var h := _label(HOW_TO[i], 18, Color("e8f0ff"), Vector2(title_card(i).position.x + 76.0, title_card(i).position.y + 12.0), Vector2(170, 60))
 		h.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_how.append(h)
-	_result = StudyHud.panel(Color(0.04, 0.06, 0.2, 0.95), YELLOW, 14, 4)
-	_result.position = Vector2(340, 150)
-	_result.custom_minimum_size = Vector2(600, 330)
-	_result.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_result_text = StudyHud.label("", 26, Color.WHITE, 4)
-	_result_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_result.add_child(_result_text)
-	add_child(_result)
-	_result.visible = false
 
 func _label(text: String, size: int, color: Color, pos: Vector2, box: Vector2) -> Label:
 	var l := StudyHud.label(text, size, color, maxi(size / 6, 3))
@@ -100,6 +89,10 @@ func _label(text: String, size: int, color: Color, pos: Vector2, box: Vector2) -
 static func clock_text(seconds: float) -> String:
 	var s := int(ceil(maxf(seconds, 0.0)))
 	return "%d:%02d" % [s / 60, s % 60]
+
+## The number in the score panel now (it eases after the score while playing).
+func shown_score() -> float:
+	return _shown_score
 
 ## The title screen shows: the round has not started (and is not a result or a stop).
 func title_showing() -> bool:
@@ -116,11 +109,17 @@ func problem_text() -> String:
 	var why := ctl.devices.problem()
 	return "周辺機器のハブにつながっていない\n" + (why if why != "" else "（理由を問い合わせ中）")
 
-## The result screen's lines (also read by the tests).
+## The result as plain lines (the tests and a log read it; the screen is GameModeResultScreen):
+## the score while playing, each end bonus, the final score, the Dials that failed.
 func result_lines() -> String:
 	var s := ctl.score
-	var lines := ["RESULT", "", "スコア  %d" % s.score, "カプセル  %d こ    最大コンボ  %d    ジャックポット  %d" % [
-		ctl.capsules.finished.size(), s.best_chain, s.jackpots]]
+	var r := ctl.result
+	var lines := ["RESULT", "", "スコア  %d" % s.score]
+	for it in r.get("items", []):
+		lines.append("%s  +%d" % [it.label, int(it.points)])
+	lines.append("FINAL SCORE  %d" % ctl.final_score())
+	lines.append("カプセル  %d こ    最大コンボ  %d    ジャックポット  %d" % [
+		int(r.get("capsules", ResultBonus.valid_capsules(ctl.capsules.finished))), s.best_chain, s.jackpots])
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		if l.state == "FAULT":
@@ -140,7 +139,13 @@ func _process(dt: float) -> void:
 		return
 	_t += dt
 	art.queue_redraw()
-	_shown_score = move_toward(_shown_score, float(ctl.score.score), maxf(absf(ctl.score.score - _shown_score) * 8.0, 200.0) * dt)
+	var target := ctl.display_score()
+	if ctl.phase == "RESULT" and ctl.result_show.active():
+		# the result's show does its own counting: the panel shows that very number (no
+		# easing of its own, or it would run backwards to 0 and then lag behind the big one)
+		_shown_score = target
+	else:
+		_shown_score = move_toward(_shown_score, target, maxf(absf(target - _shown_score) * 8.0, 200.0) * dt)
 	_combo.text = "JACKPOT チャンス！" if ctl.score.jackpot_armed(ctl.clock) else ""
 	_combo.modulate.a = 0.6 + 0.4 * sin(_t * 8.0)
 	var title := title_showing()
@@ -153,8 +158,6 @@ func _process(dt: float) -> void:
 				centre = "GO!"
 			elif ctl.time_left <= ctl.hurry_s and ctl.time_left > ctl.hurry_s - 1.5:
 				centre = "あと %d 秒！" % int(ctl.hurry_s)
-		"SETTLING":
-			centre = "TIME UP"
 		"STOPPED":
 			centre = "STOP"
 	_centre.text = centre
@@ -168,9 +171,6 @@ func _process(dt: float) -> void:
 	_start.pivot_offset = _start.size * 0.5
 	for h in _how:
 		h.visible = title
-	_result.visible = ctl.phase == "RESULT"
-	if _result.visible:
-		_result_text.text = result_lines() + "\n\n" + ctl.message
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		_lane[side].visible = not title and (ctl.phase != "TUTORIAL" or ctl.practice != "")
@@ -194,7 +194,7 @@ func _draw_art() -> void:
 	if title_showing():
 		_draw_title()
 	# the score (top left) and the clock (top right): narrow, so the UFO's rail between them is clear
-	var rising := float(ctl.score.score) - _shown_score > 0.5
+	var rising := ctl.display_score() - _shown_score > 0.5
 	_panel(SCORE_RECT, YELLOW.lerp(Color.WHITE, 0.6) if rising else YELLOW)
 	# in the practice the numbers are not the round's: the panel says so
 	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else "SCORE", SCORE_RECT.position + Vector2(10, 8), 2.0, YELLOW)

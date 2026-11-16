@@ -78,6 +78,8 @@ func _ready() -> void:
 	_test_game_mode_backend_hub(rs)
 	_test_game_mode_visuals(rs)
 	_test_game_mode_juice(rs)
+	_test_game_mode_result_logic()
+	_test_game_mode_result_show(rs)
 	_test_game_mode_scope(rs)
 	_test_game_mode_audio(rs)
 	_test_game_mode_reactions(rs)
@@ -3333,7 +3335,8 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 		"game mode: after 0 s the capsules in play are scored and released, a late one goes straight back (no score), then RESULT",
 		"%s %d %s %s" % [ctl.phase, ctl.score.score, l.state, r.state])
 	game._unhandled_input(_key(KEY_Z))  # RESULT: nothing is taken
-	game._unhandled_input(_key(KEY_ENTER))
+	game._unhandled_input(_key(KEY_ENTER))  # the result's show ends (#153)...
+	game._unhandled_input(_key(KEY_ENTER))  # ...and the next Enter plays
 	_ok(ctl.phase == "COUNTDOWN" and ctl.score.score == 0 and ctl.capsules.finished.is_empty(), "game mode: Enter on the result starts a new round")
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	# a capsule that never leaves the field: taken out at 15 s, no goal score, released
@@ -3357,6 +3360,7 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 		and ctl.hud.result_lines().contains("左") and hub.dials[GM_L].state == "BALL_DETECTED",
 		"game mode: settling is bounded (30 s): what is still in play ends as a FAULT and the result is shown", "%s %s" % [ctl.phase, l.state])
 	# the next round with that capsule still in the Dial: the lane cannot arm and says why
+	game._unhandled_input(_key(KEY_ENTER))  # (the result's show ends, then the round starts)
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	var stuck: bool = l.state in ["OFFLINE", "ARMING"] and ctl.lane_text("left").contains("残っている") and r.state == "READY"
@@ -4158,6 +4162,286 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's
 ## physics, run faster than real time), touching scoring targets on the way.
+## The round's end bonuses and the result's timeline (#153), with no game: the sums, no
+## double count, the order of the cues, the number shown against the truth.
+func _test_game_mode_result_logic() -> void:
+	var b := ResultBonus.compute(12340, 7, 5, 2)
+	var ids: Array = b.items.map(func(it): return it.id)
+	_ok(b.base_score == 12340 and b.capsule_bonus == 700 and b.combo_bonus == 250 and b.jackpot_bonus == 1000
+		and b.total_bonus == 1950 and b.final_score == 14290 and ids == ["capsule", "combo", "jackpot"],
+		"result bonus: capsules x100 + the longest chain x50 + jackpots x500, added to the score in that order", str(b))
+	var tuned := ResultBonus.compute(500, 3, 4, 1, {"capsule_each": 10, "combo_each": 0, "jackpot_each": 7})
+	var zero := ResultBonus.compute(0, 0, 0, 0)
+	_ok(tuned.capsule_bonus == 30 and tuned.combo_bonus == 0 and tuned.jackpot_bonus == 7 and tuned.final_score == 537
+		and tuned.items.size() == 2 and zero.final_score == 0 and zero.total_bonus == 0 and zero.items.is_empty()
+		and ResultBonus.valid_capsules([{"late": false}, {"late": true}, {}]) == 2,
+		"result bonus: the rates are config values, a bonus of 0 is left out, a late capsule does not count, nothing scored is a result too")
+	# what ScoreManager already paid (the switch bonus, the jackpot's own points) is in the base score only
+	var s := ScoreManager.new()
+	for i in 3:
+		s.hit("c1", "switch", "switch_%d" % i, 1.0 + 0.1 * i)
+	s.goal("c1", "center", 2.0)
+	var played := s.score
+	var b2 := ResultBonus.compute(s.score, 1, s.best_chain, s.jackpots)
+	_ok(s.jackpots == 1 and int(s.counts.get("switch_bonus", 0)) == 1 and played >= 1500 + 3000 and s.score == played
+		and b2.base_score == played and b2.total_bonus == 100 + 50 * s.best_chain + 500 and b2.final_score == played + b2.total_bonus,
+		"result bonus: the switch bonus and the jackpot scored while playing are not added again; ScoreManager.score is not changed",
+		"%d %s" % [played, str(b2)])
+	# the timeline
+	var show := ResultShow.new()
+	var ks: Array = []
+	var at_lock := {}
+	show.cue.connect(func(name, d):
+		if name == "count":
+			ks.append(float(d.k))
+		if name in ["score_lock", "bonus_lock"]:
+			at_lock[show.log.size()] = [show.shown, show.banked])
+	show.time_up()
+	var flashed: bool = show.flash == 1.0 and show.log == ["time_up"] and not show.active()
+	show.begin(b)
+	var mono := true
+	var over := false
+	var last := 0.0
+	var secs := 0.0
+	var titles: Array = []
+	while not show.settled() and secs < 60.0:
+		show.advance(1.0 / 60.0)
+		secs += 1.0 / 60.0
+		mono = mono and show.shown >= last - 0.001
+		over = over or show.shown > float(b.final_score) + 0.001
+		last = show.shown
+		if titles.is_empty() or titles[-1] != show.title():
+			titles.append(show.title())
+	var order: Array = show.log.filter(func(n): return n != "count" and n != "confetti")
+	var locks_ok := at_lock.values().all(func(v): return int(round(v[0])) == int(v[1]))
+	_ok(flashed and order == ["reveal", "score_lock", "bonus_show", "bonus_hit", "bonus_lock", "bonus_show", "bonus_hit", "bonus_lock",
+		"bonus_show", "bonus_hit", "bonus_lock", "wind_up", "final", "settled"] and titles == ["YOUR SCORE", "BONUS!", "FINAL SCORE!"]
+		and secs > 8.0 and secs < 20.0, "result show: TIME UP, the score, each bonus announced then added, FINAL SCORE, in one timeline",
+		"%s %.1f s %s" % [str(order), secs, str(titles)])
+	_ok(mono and not over and locks_ok and at_lock.size() == 4 and int(round(show.shown)) == 14290 and show.banked == 14290
+		and b.final_score == 14290 and b.base_score == 12340,
+		"result show: the number shown only climbs, stops on the truth at every lock and never passes the final score; the breakdown is not touched",
+		"%s %s %s %s" % [mono, over, locks_ok, str(at_lock)])
+	var rising := ks.size() > 20
+	for i in range(1, ks.size()):
+		if ks[i] < ks[i - 1] - 0.001 and ks[i] > 0.3:
+			rising = false  # (a drop is only ever a new count starting low again)
+	_ok(rising and ks.max() > 0.9 and ks.min() < 0.3, "result show: the counting blips climb with the number (their pitch follows)", str(ks.size()))
+	# after the end nothing more happens: no bonus is ever added a second time
+	var cues := show.log.size()
+	for i in 600:
+		show.advance(1.0 / 60.0)
+	_ok(show.log.size() == cues and show.banked == 14290 and int(round(show.shown)) == 14290 and show.log.count("bonus_hit") == 3,
+		"result show: each bonus lands once; after the final score nothing is added, however long it stays")
+	# Enter in the middle: the last picture at once
+	show.begin(b)
+	for i in 150:
+		show.advance(1.0 / 60.0)
+	var mid: bool = not show.settled() and show.shown < 14290.0
+	show.skip()
+	var skipped: bool = show.settled() and int(round(show.shown)) == 14290 and show.log[-1] == "settled" and show.title() == "FINAL SCORE!"
+	cues = show.log.size()
+	show.skip()
+	show.advance(1.0)
+	_ok(mid and skipped and show.log.size() == cues, "result show: a skip goes straight to the final score, once")
+	# no animation (effects off), and a round with nothing scored
+	show.begin(b, false)
+	var plain: bool = show.settled() and int(round(show.shown)) == 14290 and show.log == ["settled"]
+	show.begin(zero)
+	secs = 0.0
+	while not show.settled() and secs < 60.0:
+		show.advance(1.0 / 60.0)
+		secs += 1.0 / 60.0
+	_ok(plain and show.settled() and show.shown == 0.0 and not show.log.has("bonus_show") and show.log.has("final") and secs < 7.0,
+		"result show: with effects off the final score stands at once; 0 points and no capsule still ends in FINAL SCORE", "%.1f" % secs)
+	for c in show.cue.get_connections():
+		show.cue.disconnect(c.callable)  # (the test's own listener holds the show: let go of it)
+	show.reset()
+	_ok(not show.active() and show.data.is_empty() and show.shown == 0.0 and show.log.is_empty() and show.title() == "",
+		"result show: reset() leaves nothing behind (no timer, no tween to carry into the next round)")
+	# the number always fits the screen, on the dot grid
+	var fits := true
+	for digits in range(1, 15):
+		for k in [1.0, 1.15, 1.37, 1.72]:
+			var sc := GameModeResultScreen.number_scale(digits, k)
+			fits = fits and GameModeResultScreen.number_width(digits, k) <= GameModeResultScreen.SCREEN.x and sc >= 2.0 and fmod(sc, 2.0) == 0.0
+	_ok(fits and GameModeResultScreen.number_scale(4) == GameModeResultScreen.NUMBER_SCALE
+		and GameModeResultScreen.number_scale(12) < GameModeResultScreen.number_scale(6)
+		and PixelText.height(GameModeResultScreen.number_scale(1, 1.72)) <= 300.0,
+		"result screen: the number is huge and never wider than the screen, however many digits (its dots are whole canvas dots)")
+
+## The round's end in the game (#153): 0 s -> SETTLING -> RESULT, the breakdown fixed once,
+## the show and its keys, a new round clean, no command to a device because of the show.
+func _test_game_mode_result_show(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hub := ctl.mock_hub
+	var show := ctl.result_show
+	var screen := ctl.result_screen
+	var l: GameModeController.Lane = ctl.lanes["left"]
+	var r: GameModeController.Lane = ctl.lanes["right"]
+	# one capsule played and given back in the round
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(l.capsule.capsule_id)
+	ctl.field.target_hit.emit(id, "bumper", "bumper_1", Vector2(500, 400))
+	ctl.field.target_hit.emit(id, "bumper", "bumper_2", Vector2(700, 400))
+	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
+	_gm_step(ctl, 5.0)
+	var mid := ctl.score.score
+	# 0 s with a capsule in play (it still scores), then one that lands too late (no score, no bonus)
+	ctl.time_left = 0.5
+	hub.mock_ball(GM_R)
+	_gm_step(ctl, 0.6)
+	_process_frame(screen)
+	_ok(ctl.phase == "SETTLING" and show.log == ["time_up"] and screen.mode() == "time_up" and ctl.result.is_empty()
+		and ctl.sounds.log.has("timeup") and ctl.sounds.log.has("timeup_hit") and game.shake.trauma > 0.0 and screen.art.visible
+		and not show.active() and r.state == "ABSORBING",
+		"game mode result: at 0 s TIME UP! (the thud, the flash and the shake at once) while the round settles as before",
+		"%s %s %s" % [ctl.phase, str(show.log), screen.mode()])
+	_gm_step(ctl, 1.0)
+	hub._emit(GM_L, "BALL_RECEIVED", {"cycle": 2})
+	hub.dials[GM_L].state = "BALL_DETECTED"
+	var id2 := str(r.capsule.capsule_id)
+	ctl.field.target_hit.emit(id2, "star", "star", Vector2(640, 505))
+	ctl.field.capsule_exited.emit(id2, "left", Vector2(300, 660))
+	var sent := {}
+	_gm_step(ctl, 5.0)
+	var base := ctl.score.score
+	var res: Dictionary = ctl.result
+	var row: Dictionary = ctl.trace.named("result")[-1]
+	_ok(ctl.phase == "RESULT" and base > mid and res.base_score == base and res.capsules == 2 and ctl.capsules.finished.size() == 3
+		and res.capsule_bonus == 200 and res.combo_bonus == 50 * ctl.score.best_chain and res.jackpot_bonus == 0
+		and res.final_score == base + res.total_bonus and ctl.final_score() == res.final_score,
+		"game mode result: what scored while settling is in the result; the late capsule earns no bonus", "%d %s" % [base, str(res)])
+	_ok(int(row.score_delta) == base and row.breakdown is Dictionary and int(row.breakdown.final_score) == res.final_score
+		and int(row.breakdown.base_score) == base and int(row.breakdown.total_bonus) == res.total_bonus
+		and ctl.hud.result_lines().contains(str(res.final_score)) and ctl.hud.result_lines().contains(str(base)),
+		"game mode result: the trace's result row carries the same breakdown as the screen", str(row.get("breakdown")))
+	# the show runs; the truth does not move, and no device hears of it
+	for dev in [GM_L, GM_R]:
+		for cmd in ["SET_MODE", "ARM_RECEIVER", "DISARM_RECEIVER", "RELEASE_BALL", "STOP_ALL", "SET_DIAL_EFFECT"]:
+			sent["%d %s" % [dev, cmd]] = hub.count(dev, cmd)
+	var started: bool = show.active() and not show.settled() and screen.mode() == "result" and show.log[0] == "reveal" \
+		and ctl.display_score() == show.shown and show.shown < float(res.final_score)
+	# the small score panel shows the very number of the big one, from the first frame of the show
+	ctl.hud._shown_score = float(base)  # (where the panel stood when the round ended)
+	ctl.hud._process(1.0 / 60.0)
+	var panel_same: bool = ctl.hud.shown_score() == show.shown
+	_gm_step(ctl, 0.3)
+	ctl.hud._process(1.0 / 60.0)
+	panel_same = panel_same and ctl.hud.shown_score() == show.shown
+	var counted := false
+	var secs := 0.0
+	var top := 0.0
+	while not show.settled() and secs < 60.0:
+		_gm_step(ctl, 0.1)
+		secs += 0.1
+		top = maxf(top, show.shown)
+		counted = counted or ctl.sounds.log.has("result_count")
+	_process_frame(screen)
+	var same_commands := true
+	for dev in [GM_L, GM_R]:
+		for cmd in ["SET_MODE", "ARM_RECEIVER", "DISARM_RECEIVER", "RELEASE_BALL", "STOP_ALL", "SET_DIAL_EFFECT"]:
+			same_commands = same_commands and sent["%d %s" % [dev, cmd]] == hub.count(dev, cmd)
+	_ok(panel_same, "game mode result: the HUD's score panel shows the same number as the big one all through the show (no easing of its own)",
+		"%s %s" % [ctl.hud.shown_score(), show.shown])
+	_ok(started and counted and show.log.count("bonus_hit") == 2 and show.log.has("final") and ctl.sounds.log.has("final_hit")
+		and ctl.sounds.log.has("result") and ctl.sounds.log.has("bonus_hit") and int(round(show.shown)) == res.final_score
+		and top <= float(res.final_score) + 0.001 and ctl.score.score == base and ctl.result == res
+		and screen.number_text() == str(res.final_score) and ctl.fx.reactions.has("big"),
+		"game mode result: the score counts up, each bonus lands with its sound, FINAL SCORE; the score and the breakdown stay as they were",
+		"%s %s %s %d" % [started, counted, str(show.log.filter(func(n): return n != "count" and n != "confetti")), int(round(show.shown))])
+	_ok(same_commands and ctl.phase == "RESULT" and l.state == "CLOSED" and r.state == "CLOSED" and hub.dials[GM_L].op_mode == "STANDBY",
+		"game mode result: the show sends nothing to the Dials (STANDBY after the round as before)")
+	_ok(screen.keys_text().contains("もう一回") and screen.keys_text().contains("練習") and screen.keys_text().contains("タイトル")
+		and screen.stats_text().contains("カプセル  2") and screen.faults_text() == "" and ctl.display_score() == float(res.final_score),
+		"game mode result: after the show the final score stays, with the capsules, the best combo, the jackpots and the keys",
+		screen.keys_text())
+	# Enter after the show: a new round with nothing of the show left
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(ctl.phase == "COUNTDOWN" and ctl.score.score == 0 and ctl.result.is_empty() and not show.active() and show.shown == 0.0
+		and show.log.is_empty() and screen.particles.sparks() == 0 and screen.particles.rings() == 0 and screen.sheets() == 0
+		and screen.mode() == "" and ctl.final_score() == 0,
+		"game mode result: the next round starts from nothing (score, breakdown, timeline, sparks and sheets all cleared)")
+	# a round with nothing: Enter in the middle of the show only ends the show; the next Enter plays
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	var empty: bool = ctl.phase == "RESULT" and ctl.result.final_score == 0 and ctl.result.items.is_empty() and not show.settled()
+	game._unhandled_input(_key(KEY_ENTER))
+	var skipped: bool = ctl.phase == "RESULT" and show.settled() and show.shown == 0.0 and screen.keys_text().contains("もう一回")
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(empty and skipped and ctl.phase == "COUNTDOWN", "game mode result: no capsule and 0 points is a result too; Enter skips the show, Enter again plays",
+		"%s %s %s" % [empty, skipped, ctl.phase])
+	# Space in the middle of the show: STOP_ALL goes out whatever the show does, the score stands
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "center", Vector2(640, 660))
+	_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	_gm_step(ctl, 1.5)
+	var stops := hub.count(GM_L, "STOP_ALL")
+	var final := ctl.final_score()
+	var running_show: bool = ctl.phase == "RESULT" and not show.settled() and final == 1000 + 100 + 0
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(running_show and hub.count(GM_L, "STOP_ALL") == stops + 1 and ctl.phase == "RESULT" and show.settled()
+		and int(round(show.shown)) == final and ctl.final_score() == final and show.log[-1] == "settled",
+		"game mode result: Space during the show sends STOP_ALL at once; the show ends and the final score stands", "%s %d" % [running_show, final])
+	# T: the practice from the result; Esc in the middle of a show: the title, nothing left
+	game._unhandled_input(_key(KEY_T))
+	var practice: bool = ctl.phase == "TUTORIAL" and not show.active() and ctl.result.is_empty()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_gm_free(game, rs)
+	game = _gm_game()
+	ctl = _gm_playing(game)
+	show = ctl.result_show
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.5)
+	var mid_show: bool = ctl.phase == "RESULT" and show.active() and not show.settled()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_gm_step(ctl, 0.2)
+	_ok(practice and mid_show and not ctl.active() and not show.active() and ctl.result.is_empty() and ctl.result_screen.mode() == "",
+		"game mode result: T goes to the practice, Esc in the middle of the show goes to the title; neither leaves the show running",
+		"%s %s %s" % [practice, mid_show, ctl.active()])
+	_gm_free(game, rs)
+	# effects off, no shake, no sound: the result is there at once and the keys work
+	game = _gm_game()
+	ctl = _gm_playing(game)
+	show = ctl.result_show
+	ctl.effects = false
+	VFXManager.enabled = false
+	game.shake.trauma = 0.0
+	hub = ctl.mock_hub
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	ctl.field.capsule_exited.emit(str(ctl.lanes["left"].capsule.capsule_id), "left", Vector2(300, 660))
+	_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	_process_frame(ctl.result_screen)
+	var plain: bool = ctl.phase == "RESULT" and show.settled() and int(round(show.shown)) == ctl.final_score() \
+		and ctl.final_score() == 100 + 100 and game.shake.trauma == 0.0 and ctl.hitstop_left() == 0.0 \
+		and ctl.result_screen.particles.sparks() == 0 and ctl.result_screen.sheets() == 0 and ctl.result_screen.mode() == "result"
+	game._unhandled_input(_key(KEY_ENTER))
+	VFXManager.enabled = true
+	_ok(plain and ctl.phase == "COUNTDOWN", "game mode result: with effects off the final score is shown at once, with no shake, no spark, no sheet; Enter plays again",
+		"%s %s %d" % [plain, ctl.phase, ctl.final_score()])
+	# the screen shake can be switched off by its own setting; the show goes on without it
+	ctl.effects = true
+	game.shake.enabled = false
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	_ok(ctl.phase == "RESULT" and show.active() and game.shake.trauma == 0.0 and show.log.has("reveal"),
+		"game mode result: render.screen_shake off keeps the picture still through TIME UP and the result")
+	_gm_free(game, rs)
+
+func _process_frame(n: Node) -> void:
+	n._process(1.0 / 60.0)
+
 func _test_game_mode_physics() -> void:
 	var holder := CanvasLayer.new()
 	add_child(holder)
