@@ -34,7 +34,7 @@
 | `COUNTDOWN` | 3 秒（`countdown_s`）。両 Dial を `SET_MODE GAME` にする。**まだ受け取らない** |
 | `PLAYING` | 150 秒（`duration_s`）。開始と同時に両 Dial へ `ARM_RECEIVER`。右上に残り時間、左上に得点 |
 | `SETTLING` | 0 秒になった。**新しいカプセルは受け付けない**。プレイ中のカプセルは最後まで得点し、排出する。最大 30 秒（`settle_max_s`） |
-| `RESULT` | リザルト演出（§3.2）: 中央の巨大なスコア → ボーナス加算 → FINAL SCORE。カプセル数、最大コンボ、ジャックポット数、異常のあった Dial。Enter は演出中なら最後まで飛ばし、終わっていればもう一回。T で練習から、Esc でタイトル |
+| `RESULT` | リザルト演出（§3.2）: 中央の巨大なスコア → ボーナス加算 → FINAL SCORE。カプセル数、最大コンボ、ジャックポット数、異常のあった Dial。そのあとハイスコアランキング（§3.3）。Enter は演出中なら最後まで飛ばし、ランキングの画面ではもう一回。T で練習から、Esc でタイトル |
 | `STOPPED` | Space（停止）で止めた。Enter でやり直し、T で練習から |
 
 - 残り 30 秒（`hurry_s`）: 音楽を速いテイクへ切り替え（クロスフェード）、イルミを速くする。残り 10 秒（`warning_s`）: 毎秒の警告音、時計が赤く点滅。
@@ -293,7 +293,7 @@ Dial 1 台に LED が 2 系統ある（前面 G1 と、G15。どちらもその 
 
 項目: `t_ms`（単調時計）、`game_t`（開始からの秒）、`session_id`、`source_dial`、`cycle`、`capsule_id`、`event`、`command_id`、`result`（ACK の結果・無視した理由）、`game_state`（phase）、`lane_state`、`physics_position`、`score_delta`、`effect_id`（命令名・イベント名・得点の対象）、`led_command`、`release_status`、`breakdown`（`result` の行だけ: リザルトの内訳。§3.2）。
 
-`event` の種類: `game_start` `hurry` `time_up` `result` `stopped` `session` `lane_state` `command` `ack` `event` `event_ignored` `ball_ignored` `capsule_created` `score` `stay_timeout` `release` `led` `fault`。
+`event` の種類: `game_start` `hurry` `time_up` `result` `ranking`（ランキングへの登録の結果。`result` に `rank 3` か登録しなかった理由、`score_delta` に最終スコア） `stopped` `session` `lane_state` `command` `ack` `event` `event_ignored` `ball_ignored` `capsule_created` `score` `stay_timeout` `release` `led` `fault`。
 
 DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehub-trace <file>` か config の `devicehub.trace` で、ハブに送った命令・ACK・イベントを 1 行ずつ書く）とは `session_id`・`source_dial`・`cycle`・`command_id` で突き合わせる。受取は `(session_id, source_dial, cycle)`、排出は `RELEASE_BALL` の `command_id`。スイッチが入った時刻と受信時刻の差は、バックエンドがイベントに付ける `received_at`（単調時計）とこの `t_ms` から測る（機器側の時刻との対応付けは未実装）。
 
@@ -414,6 +414,73 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 - 子どもが見てどう感じるか、演出の長さが合っているかは見てもらっていない。
 - 展示の PC での処理の重さ（開発機では約 68 FPS）。
 
+## 3.3 ハイスコアランキング（#155）
+
+リザルト演出が終わると、最終スコアを自動でランキングに登録し、TOP10 を出す。**名前・ニックネームの入力はなく、保存も表示もしない**。見せるのは順位とスコアだけ。画面とファイルだけの機能で、機器への命令は送らない。`ScoreManager` の得点計算は変えていない。
+
+![NEW RECORD](images/game_mode/ranking_0_new_record.png)
+![HIGH SCORES](images/game_mode/ranking_1_board.png)
+
+### 順位の決め方
+
+- 上位 10 件。スコアの高い順。**同点は先に登録した記録が上**。
+- 使うスコアはボーナス込みの最終スコア（§3.2 の `final_score`）。
+- 0 点は登録しない。11 位以下になるスコアは保存しない（10 位と同点のスコアも入らない）。
+- 1 ラウンドは 1 回だけ登録する。ラウンドごとの ID（開始時に作る）を覚えていて、同じ ID をもう一度渡しても何も変わらない。
+
+### 登録するラウンド・しないラウンド
+
+| ラウンド | 登録 |
+|---|---|
+| 150 秒を遊んで `RESULT` まで進んだ（`SETTLING` が上限で終わり Dial が `FAULT` のときも含む） | する |
+| リザルト演出の途中で T や Esc を押した（ラウンドは最後まで遊んだ） | する（画面を離れるときに、演出なしで登録する） |
+| プレイの途中で Space で止めた（`STOPPED`）、Esc でタイトルへ戻った | しない（`RESULT` に進まない） |
+| 開始前の練習（`TUTORIAL`） | しない（結果がない） |
+| 自動デモ（`--game-mode-demo`） | しない |
+| 短くしたラウンド（`--game-mode-seconds`） | しない |
+| 0 点 | しない |
+
+登録しなかったときも、ランキングの画面は出す（下に今回のスコアと理由を出す）。
+
+### 流れ
+
+`PLAYING` → `SETTLING` → `RESULT`（リザルト演出）→ 登録 → ランキング表示。phase は `RESULT` のままで、ランキングの画面は `GameModeController.ranking_view`（`""` / `record` / `board`）で表す。
+
+1. リザルト演出が終わった tick で登録する（`_register_score`）。ファイルもこのとき書く。
+2. 最終スコアをそのまま `hold_s`（1.2 秒）見せる。
+3. TOP10 に入ったとき: 「NEW RECORD!」と「第 ○ 位！」を `record_s`（3.2 秒）。同じ tick で、合成音 `new_record` とファンファーレ（`jackpot`）、シェイク、バウンド、ヒットストップ、衝撃波 3 重、火花、紙吹雪（pixelfx `success_confetti` `success_sparkle`）。順位が高いほど強い。
+4. ランキングの画面（HIGH SCORES）。今回の順位はネオンの枠で光り、点滅し、`NEW` の印が付く。圏外・登録なしのときは 3 を飛ばしてここに来る。
+
+### 画面
+
+- 上に `HIGH SCORES`、その下に 1〜10 位。1 位はゴールド、2 位はシルバー、3 位はブロンズ、4〜10 位は薄いシアン。1〜3 位は大きい。記録のない順位は `---`。
+- **Enter** = もう一回、**T** = 練習から、**Esc** = タイトル。演出の途中の Enter は順に「リザルト演出を飛ばす → ランキングの画面へ → もう一回」。
+- スコアゲームのタイトルで **R** を押すとランキングを見られる（もう一度 R で戻る。Enter でそのまま開始）。
+- `game_mode.effects: false`: 「NEW RECORD!」の演出は出さず、今回の順位に印を付けたランキングをすぐ出す。
+- `game_mode.ranking.enabled: false`: 登録もランキングの表示もしない（リザルトは #153 のとおりに終わる）。
+
+### ファイル
+
+`user://game_mode/rankings.tsv`（mac では `~/Library/Application Support/Godot/app_userdata/CoreXY UFO/game_mode/`）。UTF-8、タブ区切り、1 行目は見出し。
+
+```
+rank	score	timestamp	id
+1	18250	2026-11-17T10:21:05	1794844062-896669-28221875
+```
+
+- `rank` は人が読むための列で、読み込むときは信じずに `score` から並べ直す。`timestamp` は記録した日時、`id` は二重登録を防ぐための ID。個人情報は入らない。
+- ファイルがなければ空のランキングで始まる。記録が 1 件できるまでファイルは作らない。
+- 読めない行は飛ばし、読める行だけを使う（得点が数字でない、0 以下、列の数が違う、ID が重複）。飛ばした行があったときは、元のファイルを `rankings.tsv.bad` に残す。
+- 書き込みは一時ファイルに書いてから置き換える。書けなかったときはゲームを止めず、その起動の間だけメモリに持ち、ランキングの画面に「保存できなかった」と出す。
+- ランキングを消すには、ゲームを閉じてこのファイルを消す。
+- 確認用: `--game-mode-ranking-file <path>` で別のファイルを使う（このときはデモ・短いラウンドも登録する）。
+
+### 未検証
+
+- 音（`new_record` の音色・音量、ファンファーレとの重なり）は聴いて確かめていない。
+- 子どもが「第 ○ 位！」を読めるか、演出の長さが合っているかは見てもらっていない。
+- Windows での一時ファイルからの置き換え（開発機は macOS）。
+
 ## 11. 実装
 
 | もの | 場所 |
@@ -427,6 +494,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 | 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは pixelfx（`VFXManager` 経由。下の表）。ポートの枠と光はコードで描く |
 | 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は合成。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
 | HUD | `game_mode_hud.gd` |
+| ハイスコアランキング（#155） | 順位・保存・読み込み・重複の防止 `ranking_manager.gd`（`RankingManager`。画面なしでテストできる）、画面 `game_mode_ranking_hud.gd`（`GameModeRankingHud`）、登録と画面の切り替え `GameModeController._tick_ranking` ほか |
 | 終了のリザルト演出（#153） | 計算 `result_bonus.gd`（`ResultBonus`）、時刻表 `result_show.gd`（`ResultShow`。画面なしでテストできる）、画面 `game_mode_result_screen.gd`（`GameModeResultScreen`）。合図への応答は `GameModeController._on_result_cue` |
 | 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
@@ -491,7 +559,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 | 得点表・難易度 | 初期値のまま | プレイテスト未実施 |
 | 開始前の練習（#149）: 各ステップの判定、見失い・途切れ・重複、練習カプセル、本番への混入なし、停止 | 確認済み（自動テスト、作った手と模擬の Dial） | **未検証**（実際のカメラと手、子どもが読めるか・できるか、声、実機の Dial、指 1 本の認識） |
 
-リザルト演出（#153）は Mock で確認済み（自動テストと、画面つきの `--game-mode-demo`）。音・子どもの反応・展示の PC での重さは未検証（§3.2）。Dial への命令は変えていないので、実機で新しく確かめる手順はない。
+ハイスコアランキング（#155）は自動テストと画面つきの確認済み（機器は関係しない。未検証は §3.3）。リザルト演出（#153）は Mock で確認済み（自動テストと、画面つきの `--game-mode-demo`）。音・子どもの反応・展示の PC での重さは未検証（§3.2）。Dial への命令は変えていないので、実機で新しく確かめる手順はない。
 
 実機で最初に確かめる手順:
 

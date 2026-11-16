@@ -29,6 +29,7 @@ var _lane: Dictionary = {}  # side -> Label
 var _hint: Label
 var _problem: Label
 var _start: Label
+var _rank_hint: Label
 var _how: Array[Label] = []
 var _shown_score := 0.0
 var _ufo_tex: Texture2D
@@ -71,6 +72,8 @@ func setup(c: GameModeController) -> void:
 	_problem.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_problem.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	# the title screen's words (Japanese: the game's normal font)
+	_rank_hint = _label("R：ランキング", 18, Color("b8f4ff"), Vector2(340, 528), Vector2(600, 26))
+	_rank_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_start = _label("Enter でスタート", 30, Color.WHITE, Vector2(340, 474), Vector2(600, 44))
 	_start.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	for i in HOW_TO.size():
@@ -96,7 +99,7 @@ func shown_score() -> float:
 
 ## The title screen shows: the round has not started (and is not a result or a stop).
 func title_showing() -> bool:
-	return ctl != null and ctl.active() and ctl.phase == "IDLE"
+	return ctl != null and ctl.active() and ctl.phase == "IDLE" and ctl.ranking_view == ""  # (R: the high scores instead)
 
 ## Where the three "how to play" cards sit on the title screen.
 static func title_card(i: int) -> Rect2:
@@ -166,6 +169,7 @@ func _process(dt: float) -> void:
 	if ctl.phase == "COUNTDOWN" and ctl.tutorial_speech.current != "":
 		_message.text = "UFOくん「%s」" % ctl.tutorial_speech.current  # "よし！ はじめよう！" after the practice
 	_start.visible = title
+	_rank_hint.visible = title and ctl.ranking_enabled
 	_start.modulate.a = 0.8 + 0.2 * sin(_t * 5.0)  # START breathes
 	_start.scale = Vector2.ONE * (1.0 + 0.04 * sin(_t * 5.0))
 	_start.pivot_offset = _start.size * 0.5
