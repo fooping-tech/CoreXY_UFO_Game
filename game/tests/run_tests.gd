@@ -80,6 +80,7 @@ func _ready() -> void:
 	_test_game_mode_juice(rs)
 	_test_game_mode_scope(rs)
 	_test_game_mode_audio(rs)
+	_test_game_mode_reactions(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -3761,6 +3762,103 @@ func _test_game_mode_audio(rs: Node) -> void:
 		and game.study_mode.speech._player.bus == AudioBuses.VOICE,
 		"audio: in a round the combo's step has its sound, the right Dial's transfer sounds are on the right, and UFOくん's voice is on the Voice bus",
 		"%s %d %s" % [ctl.sounds.log, ctl.sounds.combo_step, ctl.sounds.side_of("absorb")])
+	_gm_free(game, rs)
+
+## #144: sparks and rings from a bounded pool, the hit flash, the picture-only hit-stop,
+## and UFOくん's reactions.
+func _test_game_mode_reactions(rs: Node) -> void:
+	var ps := GameModeParticles.new()
+	add_child(ps)
+	ps.burst(Vector2(100, 100), Color.RED, 20)
+	var some := ps.sparks()
+	for i in 30:
+		ps.burst(Vector2(100, 100), Color.RED, 50)
+		ps.ring(Vector2(100, 100), Color.RED)
+	var full := ps.sparks()
+	var rings := ps.rings()
+	ps.advance(2.0)
+	var gone: bool = ps.sparks() == 0 and ps.rings() == 0
+	ps.quality = "low"
+	var low := ps.granted(20)
+	ps.effects = false
+	ps.burst(Vector2.ZERO, Color.RED, 20)
+	ps.ring(Vector2.ZERO, Color.RED)
+	_ok(some == 20 and full == GameModeParticles.MAX_SPARKS and rings == GameModeParticles.MAX_RINGS and gone and low == 10
+		and ps.sparks() == 0 and ps.rings() == 0 and ps.get_child_count() == 0,
+		"game mode particles: sparks and rings come from a fixed pool (never more than its size, no nodes made), die by themselves, are halved at low quality and off with effects",
+		"%d %d %d %s %d" % [some, full, rings, gone, low])
+	remove_child(ps)
+	ps.free()
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.1)
+	var fx := ctl.fx
+	var started: bool = fx.reactions.has("start") and fx.ufo_face() == "excited" and fx.ufo_offset().y <= 0.0 and ctl.particles.sparks() > 0
+	_gm_step(ctl, 1.2)
+	var idle: bool = fx.reaction() == "" and fx.ufo_face() == "" and fx.ufo_offset() == Vector2.ZERO
+	ctl.mock_hub.mock_ball(GM_L)
+	ctl.tick(1.0 / 60.0)
+	var called: bool = fx.reaction() == "call" and fx.ufo_face() == "surprised"
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var dropped: bool = fx.reactions.has("drop")
+	var id := str(ctl.lanes["left"].capsule.capsule_id)
+	var f := ctl.field
+	var body := func(target: String) -> Node:
+		return f.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == target)[0]
+	_gm_step(ctl, 0.6)
+	ctl.particles.clear()
+	f._on_capsule_body(body.call("bumper_0"), id)
+	var pleased: bool = (fx.reaction() == "score" and fx.ufo_face() == "happy" and f.capsule_flash(id) > 0.0
+		and ctl.particles.sparks() >= 10 and ctl.particles.rings() == 1 and ctl.hitstop_left() == 0.0)
+	_ok(started and idle and called and dropped and pleased,
+		"game mode UFO: excited and jumping at GO, idle again after, surprised when a capsule is on its way, winks as it drops it, happy at a score (the capsule flashes, sparks and a ring fly)",
+		"%s %s %s %s %s" % [started, idle, called, dropped, pleased])
+	# a big score: the picture alone holds still; the clock and the physics state go on
+	var star: Area2D = f.get_children().filter(func(n): return n is Area2D and n.get_meta("target") == "star")[0]
+	var cap: RigidBody2D = f._capsules[id].body
+	f._on_area(cap, star)
+	var stopped := ctl.hitstop_left()
+	var t0 := ctl.time_left
+	ctl._process(0.016)
+	var held: bool = ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_DISABLED
+	ctl.tick(1.0 / 60.0)
+	var clock_ran: bool = ctl.time_left < t0
+	ctl._process(0.2)
+	var released: bool = ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_ALWAYS and ctl.hitstop_left() == 0.0
+	var big_face := fx.ufo_face()
+	fx.react("score")  # a weaker reaction does not cut the big one short
+	var kept: bool = fx.reaction() == "big"
+	fx.react("stop")
+	var cut: bool = fx.reaction() == "stop"
+	ctl.effects = false
+	ctl.hitstop(0.08)
+	var no_stop: bool = ctl.hitstop_left() == 0.0 and fx.ufo_offset() == Vector2.ZERO
+	ctl.effects = true
+	_ok(stopped > 0.0 and stopped <= GameModeController.HITSTOP_MAX_S and held and clock_ran and released and big_face == "excited" and kept and cut and no_stop,
+		"game mode juice: a big score holds the picture still for a moment (bounded) while the clock runs on; a stronger reaction is not cut short by a weaker one; effects off = no hit-stop",
+		"%s %s %s %s %s %s %s" % [stopped, held, clock_ran, released, big_face, kept, cut])
+	# the moods: worried for the last 30 s, sad at a miss, sleepy when the time is up, happy at the result
+	_gm_step(ctl, 1.2)
+	ctl.time_left = ctl.hurry_s + 0.01
+	ctl.tick(1.0 / 60.0)
+	ctl.tick(1.0 / 60.0)
+	var hurried: bool = fx.reactions.has("hurry") and fx.ufo_mood == "hurry"
+	_gm_step(ctl, 1.0)
+	var worried := fx.ufo_face()
+	f._exit(id, "timeout", Vector2(600, 400))
+	var missed: bool = fx.reaction() == "miss" and fx.ufo_face() == "sad"
+	ctl.time_left = 0.01
+	_gm_step(ctl, 0.1)
+	var over := fx.ufo_mood
+	_gm_step(ctl, 12.0)
+	_ok(hurried and worried == "worried" and missed and over == "over" and ctl.phase == "RESULT" and fx.ufo_mood == "happy"
+		and fx.reactions.has("big") and GameModeVFX.REACTIONS.values().all(func(r): return GameModeVFX.UFO_FACES.has(r[0]))
+		and GameModeVFX.MOODS.values().all(func(m): return m == "" or GameModeVFX.UFO_FACES.has(m)),
+		"game mode UFO: worried for the last 30 seconds, sad when a capsule runs out of time, sleepy at time up, happy at the result; every face is on the expression sheet",
+		"%s %s %s %s %s %s" % [hurried, worried, missed, over, ctl.phase, fx.ufo_mood])
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's

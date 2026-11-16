@@ -31,6 +31,23 @@ const MOMENTS := ["capsule_portal_open", "capsule_absorb", "capsule_transfer_tra
 const PORTS := {"left": Vector2(75, 640), "right": Vector2(1205, 640)}
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const UFO_SCALE := 2.0
+const UFO_FACES_SHEET := "res://assets/ufo/ufo_expressions.png"
+## the expression sheet's frames in order (5 columns; assets/ufo/ufo_metadata.json)
+const UFO_FACES := ["normal", "blink", "happy", "surprised", "straining", "worried", "sad", "wink", "sleepy", "excited"]
+## UFOくん's reactions (#144): what happened -> [face, seconds, how it moves, rank]. A
+## reaction of a lower rank does not cut a running one of a higher rank short.
+const REACTIONS := {
+	"start": ["excited", 1.0, "jump", 3],  # GO!
+	"call": ["surprised", 0.45, "hop", 1],  # a capsule is on its way up
+	"drop": ["wink", 0.45, "dip", 1],  # it lets the capsule go
+	"score": ["happy", 0.5, "hop", 1],
+	"big": ["excited", 1.0, "jump", 3],  # the star, the alien, the centre goal, a bonus
+	"miss": ["sad", 1.0, "shake", 3],  # a capsule ran out of time, a Dial failed
+	"hurry": ["surprised", 0.7, "shake", 2],  # the last 30 seconds begin
+	"stop": ["surprised", 1.0, "shake", 4],
+}
+## the face it wears between reactions, by mood ("" = the idle animation)
+const MOODS := {"normal": "", "hurry": "worried", "over": "sleepy", "happy": "happy", "sad": "sad", "stopped": "surprised"}
 ## the sheets are baked in cyan: this is what a full-bright pixel of them looks like
 const SHEET_REF := Color(0.31, 0.82, 0.93)
 const LOG_MAX := 64
@@ -44,6 +61,13 @@ const RELEASE_STREAM_MAX_S := 12.0
 var colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
 var ufo_pos := Vector2(640, 92)
 var ufo_visible := true
+## normal / hurry / over / happy / sad / stopped (the controller sets it from the round)
+var ufo_mood := "normal"
+## reactions asked for, newest last (tests)
+var reactions: Array[String] = []
+var _react := ""
+var _react_t := 0.0
+var _faces_tex: Texture2D
 ## "moment:side", newest last (tests, the debug view)
 var played: Array[String] = []
 ## side -> the port's looping sheet while it is open (freed ones are checked for)
@@ -70,6 +94,8 @@ func _ready() -> void:
 	add_child(_top)
 	if ResourceLoader.exists(UFO_SHEET):
 		_ufo_tex = load(UFO_SHEET)
+	if ResourceLoader.exists(UFO_FACES_SHEET):
+		_faces_tex = load(UFO_FACES_SHEET)
 
 func reset() -> void:
 	_port_open = {"left": 0.0, "right": 0.0}
@@ -78,6 +104,9 @@ func reset() -> void:
 	_streams.clear()
 	_popups.clear()
 	_banner.t = 9.0
+	_react = ""
+	reactions.clear()
+	ufo_mood = "normal"
 	_marks.clear()
 	played.clear()
 	_port_fx = {"left": null, "right": null}
@@ -130,6 +159,44 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 		"capsule_fault":
 			_close_port(side)
 			_sheet(moment, side, p)
+
+## UFOくん reacts (see REACTIONS). A weaker reaction waits while a stronger one runs.
+func react(kind: String) -> void:
+	if not REACTIONS.has(kind):
+		return
+	reactions.append(kind)
+	if reactions.size() > LOG_MAX:
+		reactions.remove_at(0)
+	if _react != "" and int(REACTIONS[kind][3]) < int(REACTIONS[_react][3]):
+		return
+	_react = kind
+	_react_t = 0.0
+
+## The reaction running now ("" = none).
+func reaction() -> String:
+	return _react
+
+## The face shown now: the reaction's, else the mood's, else "" (the idle animation).
+func ufo_face() -> String:
+	if _react != "":
+		return str(REACTIONS[_react][0])
+	return str(MOODS.get(ufo_mood, ""))
+
+## How the reaction moves the UFO now (px; nothing when effects are off).
+func ufo_offset() -> Vector2:
+	if _react == "" or not effects:
+		return Vector2.ZERO
+	var k := clampf(_react_t / float(REACTIONS[_react][1]), 0.0, 1.0)
+	match str(REACTIONS[_react][2]):
+		"hop":
+			return Vector2(0, -10.0 * sin(PI * k))
+		"jump":  # twice, the second lower
+			return Vector2(0, -22.0 * absf(sin(TAU * k)) * (1.0 - 0.4 * k))
+		"dip":
+			return Vector2(0, 8.0 * sin(PI * k))
+		"shake":
+			return Vector2(6.0 * sin(k * TAU * 4.0) * (1.0 - k), 0)
+	return Vector2.ZERO
 
 func hit(kind: String, at: Vector2, color: Color) -> void:
 	match kind:
@@ -251,6 +318,10 @@ func advance(dt: float) -> void:
 		if p.t >= POPUP_S:
 			_popups.erase(p)
 	_banner.t += dt
+	if _react != "":
+		_react_t += dt
+		if _react_t >= float(REACTIONS[_react][1]):
+			_react = ""
 
 func _process(_dt: float) -> void:
 	queue_redraw()
@@ -309,11 +380,18 @@ func _draw_top() -> void:
 				top.draw_rect(Rect2((q - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz)), Color(col.r, col.g, col.b, 0.7 - 0.1 * j))
 	# UFOくん
 	if ufo_visible and _ufo_tex != null:
-		var frame := int(_t * 3.0) % 4
 		var size := Vector2(64, 64) * UFO_SCALE
-		var bob := Vector2(0, sin(_t * 2.4) * 4.0)
+		var bob := Vector2(0, sin(_t * (4.8 if ufo_mood == "hurry" else 2.4)) * 4.0)
 		# on the dot grid, so the sprite's 64 x 64 dots are the canvas's dots one to one
-		top.draw_texture_rect_region(_ufo_tex, Rect2((ufo_pos - size * 0.5 + bob).snapped(Vector2(2, 2)), size), Rect2(64 * frame, 0, 64, 64))
+		var at := (ufo_pos - size * 0.5 + bob + ufo_offset()).snapped(Vector2(2, 2))
+		var face := ufo_face()
+		var fi := UFO_FACES.find(face)
+		if face == "" and int(_t * 0.7) % 4 == 3 and fmod(_t * 0.7, 1.0) < 0.12:
+			fi = UFO_FACES.find("blink")  # it blinks now and then while idle
+		if fi >= 0 and _faces_tex != null:
+			top.draw_texture_rect_region(_faces_tex, Rect2(at, size), Rect2(64 * (fi % 5), 64 * (fi / 5), 64, 64))
+		else:
+			top.draw_texture_rect_region(_ufo_tex, Rect2(at, size), Rect2(64 * (int(_t * 3.0) % 4), 0, 64, 64))
 	# score pop-ups: pixel numbers that jump in, rise and blink out
 	for p in _popups:
 		var k: float = p.t / POPUP_S

@@ -76,6 +76,11 @@ const PIXEL_SIZE := Vector2i(640, 360)
 const DOT_PX := 2.0
 const BOUNCE_PX := 8.0
 const BOUNCE_MAX_PX := 16.0
+const HITSTOP_MAX_S := 0.1
+## what flies off a scoring hit: kind -> [sparks, ring radius (0 = no ring)]
+const HIT_FX := {"pin": [3, 0.0], "sling": [6, 0.0], "spinner": [8, 0.0], "switch": [8, 40.0], "bumper": [10, 56.0], "pop": [8, 40.0],
+	"target": [8, 36.0], "gem": [12, 36.0], "warp": [14, 60.0], "alien": [18, 60.0], "star": [18, 64.0],
+	"goal_left": [12, 50.0], "goal_right": [12, 50.0], "goal_center": [20, 70.0], "jackpot": [48, 110.0]}
 ## the new kinds of target borrow a sound
 ## a kind of target that has no sound of its own borrows one (every kind has its own since #143)
 const SOUND_OF := {}
@@ -97,6 +102,8 @@ var screen: TextureRect
 var field_art: PinballFieldArt
 ## the arm camera as a round aiming scope in the right column (hidden without a camera)
 var scope: ArmScope
+## sparks and rings (a fixed pool, in the pixel canvas)
+var particles: GameModeParticles
 var scope_enabled := true
 var fx: GameModeVFX
 var sounds: GameModeSounds
@@ -153,6 +160,8 @@ var _counted := 99
 var _combo_seen := 0
 var _bounce := 0.0
 var _bounce_t := 0.0
+var _hitstop_left := 0.0
+var _sweat_left := 0.0
 
 func setup(m: Node) -> void:
 	main = m
@@ -199,6 +208,11 @@ func setup(m: Node) -> void:
 	field_art.points = score.table
 	field_art.effects = effects
 	pixel_view.add_child(field_art)
+	particles = GameModeParticles.new()
+	particles.name = "Particles"
+	particles.effects = effects
+	particles.quality = visual_quality
+	pixel_view.add_child(particles)
 	fx = GameModeVFX.new()
 	fx.name = "GameModeVFX"
 	pixel_view.add_child(fx)
@@ -341,6 +355,8 @@ func _reset_round() -> void:
 	field.clear()
 	field.set_frozen(false)
 	fx.reset()
+	particles.clear()
+	_hitstop_left = 0.0
 	sounds.set_bgm(false)
 	_cmds.clear()
 	_seen.clear()
@@ -383,9 +399,21 @@ func _process(dt: float) -> void:
 	backdrop.planet_visible = not scope.visible
 	if main != null and main.get("gesture_hud") != null:
 		backdrop.moon_visible = not (main.gesture_hud as Control).visible
+	# the hit-stop: only the picture holds still for a moment (the canvas is not redrawn);
+	# the physics, the clock and the devices go on in tick() as ever
+	_hitstop_left = maxf(_hitstop_left - dt, 0.0)
+	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED if _hitstop_left > 0.0 else SubViewport.UPDATE_ALWAYS
 	# the bounce: the picture drops a few dots and springs back (whole dots, so it stays crisp)
 	_bounce_t += dt
 	screen.position = Vector2(0, snappedf(bounce_offset(), DOT_PX))
+
+## The picture holds still for `secs` (a big score). Only the picture.
+func hitstop(secs: float) -> void:
+	if effects and visual_quality != "low":
+		_hitstop_left = clampf(maxf(_hitstop_left, secs), 0.0, HITSTOP_MAX_S)
+
+func hitstop_left() -> float:
+	return _hitstop_left
 
 ## The picture bounces (a score). Only the picture: the physics, the clock and the devices
 ## never wait for it. Stronger calls add up to a limit.
@@ -416,9 +444,23 @@ func _present_state() -> void:
 	field_art.combo_level = lvl
 	field_art.effects = effects
 	fx.effects = effects
+	particles.effects = effects
+	if phase == "PLAYING":
+		fx.ufo_mood = "hurry" if time_left <= hurry_s else "normal"
+	elif phase == "SETTLING":
+		fx.ufo_mood = "over"
+	elif phase == "RESULT":
+		fx.ufo_mood = "happy" if score.score > 0 else "sad"
+	else:
+		fx.ufo_mood = "stopped" if phase == "STOPPED" else "normal"
 	backdrop.energy = lvl / 3.0
 	backdrop.urgency = (2 if time_left <= warning_s else (1 if time_left <= hurry_s else 0)) if playing else 0
 	backdrop.time_k = time_left / maxf(duration_s, 1.0) if playing else 1.0
+	if playing and time_left <= hurry_s:  # the UFO sweats while the time is short
+		_sweat_left -= 1.0 / 60.0
+		if _sweat_left <= 0.0:
+			_sweat_left = 0.5 if time_left > warning_s else 0.25
+			particles.burst(ufo.position() + Vector2(34, -30), Color("9fe8ff"), 2, 90.0, -PI * 0.25, 0.8, 0.0)
 	if lvl > _combo_seen:  # the combo climbed a step
 		backdrop.pulse(backdrop.light_color(), 0.3 + 0.2 * lvl)
 		fx.banner("COMBO x%s" % str(score.multiplier(clock)), lvl)
@@ -431,6 +473,7 @@ func tick(dt: float) -> void:
 	devices.tick(dt)
 	_expire_commands(dt)
 	fx.advance(dt)
+	particles.advance(dt)
 	backdrop.advance(dt)
 	if phase != "STOPPED":
 		ufo.advance(dt)
@@ -473,6 +516,9 @@ func tick(dt: float) -> void:
 
 func _go() -> void:
 	_set_phase("PLAYING")
+	fx.react("start")
+	particles.burst(ufo.position(), Color("ffe03c"), 24, 260.0)
+	particles.ring(ufo.position(), Color("3ff0ff"), 110.0, 0.5)
 	sounds.play("go")
 	sounds.set_bgm(true)
 	_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 180, "speed": 128, "transition_ms": 300})
@@ -494,6 +540,7 @@ func _demo_tick(dt: float) -> void:
 func _clock_cues() -> void:
 	if not _hurry_done and time_left <= hurry_s:
 		_hurry_done = true
+		fx.react("hurry")
 		sounds.play("hurry")
 		sounds.set_bgm(true, true)
 		backdrop.pulse(Color("ff4fd8"), 0.8)
@@ -532,6 +579,12 @@ func _all_settled() -> bool:
 
 func _result() -> void:
 	_set_phase("RESULT")
+	if score.score > 0:  # confetti over the field
+		for i in 5:
+			particles.burst(Vector2(240.0 + 200.0 * i, 200.0), [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")][i % 3], 24, 320.0)
+		fx.react("big")
+	else:
+		fx.react("miss")
 	field.clear()
 	sounds.set_bgm(false)
 	sounds.play("result")
@@ -573,6 +626,8 @@ func _tick_lane(l: Lane, dt: float) -> void:
 				l.t = drop_s
 				_set_lane(l, "DROPPING")
 				fx.play("capsule_materialize", l.side, Vector2(l.capsule.drop_x, PinballField.SPAWN_Y), drop_s)
+				fx.react("drop")
+				particles.burst(Vector2(l.capsule.drop_x, PinballField.SPAWN_Y), l.color, 10, 180.0, PI * 0.5, 1.4)
 				sounds.play("drop")
 		"DROPPING":
 			l.t -= dt
@@ -624,6 +679,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
 	backdrop.side_pulse(l.side)
+	fx.react("call")
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
@@ -639,6 +695,7 @@ func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vecto
 	if int(r.points) <= 0:
 		return
 	c.score += int(r.points)
+	field.flash_capsule(capsule_id)
 	var l: Lane = _lane_of(c.source_dial)
 	_present_score(r, pos, l)
 	_trace("score", l, {"score_delta": r.points, "effect_id": kind, "physics_position": [pos.x, pos.y]})
@@ -659,6 +716,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 			_trace("score", l, {"score_delta": r.points, "effect_id": r.kind, "physics_position": [pos.x, pos.y]})
 	else:
 		_trace("stay_timeout", l, {"physics_position": [pos.x, pos.y]})
+		fx.react("miss")  # it ran out of time on the field: no goal
 	field.remove_capsule(capsule_id)
 	score.forget(capsule_id)
 	l.t = release_sync_s
@@ -686,6 +744,22 @@ func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 	elif kind != "pin":
 		jolt = 0.3
 	bounce(jolt * (1.0 + 0.25 * lvl))
+	# sparks and a ring from the hit, more as the combo climbs; the UFO is pleased
+	var hf: Array = HIT_FX.get(kind, [6, 0.0])
+	var tint: Color = l.color if l != null else Color.WHITE
+	var up := kind.begins_with("goal") or kind == "jackpot"  # out of a goal they fountain upward
+	particles.burst(pos, Color("ffe03c") if big else tint, int(hf[0] * (1.0 + 0.3 * lvl)), 300.0 if big else 220.0,
+		-PI * 0.5, PI * 0.7 if up else TAU)
+	if float(hf[1]) > 0.0:
+		particles.ring(pos, Color("ffe03c") if big else tint, float(hf[1]) * (1.0 + 0.15 * lvl))
+	if str(r.bonus) != "":
+		particles.burst(pos, Color("ff4fd8"), 30, 340.0)
+		particles.ring(pos, Color.WHITE, 140.0, 0.5)
+		hitstop(0.08)
+	elif big:
+		hitstop(0.05)
+	if kind != "pin":
+		fx.react("big" if big else "score")
 	var snd: String = "goal" if kind.begins_with("goal") else SOUND_OF.get(kind, kind)
 	if str(r.bonus) == "switch_bonus":
 		snd = "bonus"
@@ -744,6 +818,7 @@ func _fault(l: Lane, why: String) -> void:
 	_set_lane(l, "FAULT")
 	_led(l, "FAULT")
 	fx.play("capsule_fault", l.side)
+	fx.react("miss")
 	sounds.play("fault")
 	_trace("fault", l, {"result": why, "release_status": "failed"})
 
@@ -971,6 +1046,7 @@ func _halt(why: String) -> void:
 	devices.stop_all()
 	_cmds.clear()
 	field.set_frozen(true)
+	fx.react("stop")
 	sounds.set_bgm(false)
 	sounds.play("stop")
 	for side in SIDES:
