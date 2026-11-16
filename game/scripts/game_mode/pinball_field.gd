@@ -277,7 +277,7 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 	_circle(b, CAPSULE_R)
 	b.body_entered.connect(_on_capsule_body.bind(id))
 	add_child(b)
-	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "trail": PackedVector2Array(), "trail_t": 0.0}
+	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "flash": 0.0, "trail": PackedVector2Array(), "trail_t": 0.0}
 
 func remove_capsule(id: String) -> void:
 	if not _capsules.has(id):
@@ -321,6 +321,14 @@ func alien_position() -> Vector2:
 ## +1 / -1: which way the alien is going (it looks that way).
 func alien_heading() -> float:
 	return 1.0 if sin(TAU * _alien_t / ALIEN_PERIOD_S) >= 0.0 else -1.0
+
+## The capsule shows white for a moment (it just scored).
+func flash_capsule(id: String, secs := 0.09) -> void:
+	if _capsules.has(id):
+		_capsules[id].flash = secs
+
+func capsule_flash(id: String) -> float:
+	return _capsules[id].flash if _capsules.has(id) else 0.0
 
 func capsule_held(id: String) -> bool:
 	return _capsules.has(id) and _capsules[id].held > 0.0
@@ -469,6 +477,7 @@ func advance(dt: float) -> void:
 			continue
 		var b: RigidBody2D = c.body
 		c.age += dt
+		c.flash = maxf(c.flash - dt, 0.0)
 		if c.held > 0.0:  # in a warp hole: drawn into its centre, then out
 			c.held -= dt
 			b.position = b.position.lerp(WARPS[c.warp], 0.3)
