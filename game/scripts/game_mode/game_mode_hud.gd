@@ -90,6 +90,10 @@ static func clock_text(seconds: float) -> String:
 	var s := int(ceil(maxf(seconds, 0.0)))
 	return "%d:%02d" % [s / 60, s % 60]
 
+## The number in the score panel now (it eases after the score while playing).
+func shown_score() -> float:
+	return _shown_score
+
 ## The title screen shows: the round has not started (and is not a result or a stop).
 func title_showing() -> bool:
 	return ctl != null and ctl.active() and ctl.phase == "IDLE"
@@ -135,8 +139,13 @@ func _process(dt: float) -> void:
 		return
 	_t += dt
 	art.queue_redraw()
-	var target := ctl.display_score()  # in the result: the number the show has reached
-	_shown_score = move_toward(_shown_score, target, maxf(absf(target - _shown_score) * 8.0, 200.0) * dt)
+	var target := ctl.display_score()
+	if ctl.phase == "RESULT" and ctl.result_show.active():
+		# the result's show does its own counting: the panel shows that very number (no
+		# easing of its own, or it would run backwards to 0 and then lag behind the big one)
+		_shown_score = target
+	else:
+		_shown_score = move_toward(_shown_score, target, maxf(absf(target - _shown_score) * 8.0, 200.0) * dt)
 	_combo.text = "JACKPOT チャンス！" if ctl.score.jackpot_armed(ctl.clock) else ""
 	_combo.modulate.a = 0.6 + 0.4 * sin(_t * 8.0)
 	var title := title_showing()

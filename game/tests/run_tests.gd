@@ -4324,6 +4324,13 @@ func _test_game_mode_result_show(rs: Node) -> void:
 			sent["%d %s" % [dev, cmd]] = hub.count(dev, cmd)
 	var started: bool = show.active() and not show.settled() and screen.mode() == "result" and show.log[0] == "reveal" \
 		and ctl.display_score() == show.shown and show.shown < float(res.final_score)
+	# the small score panel shows the very number of the big one, from the first frame of the show
+	ctl.hud._shown_score = float(base)  # (where the panel stood when the round ended)
+	ctl.hud._process(1.0 / 60.0)
+	var panel_same: bool = ctl.hud.shown_score() == show.shown
+	_gm_step(ctl, 0.3)
+	ctl.hud._process(1.0 / 60.0)
+	panel_same = panel_same and ctl.hud.shown_score() == show.shown
 	var counted := false
 	var secs := 0.0
 	var top := 0.0
@@ -4337,6 +4344,8 @@ func _test_game_mode_result_show(rs: Node) -> void:
 	for dev in [GM_L, GM_R]:
 		for cmd in ["SET_MODE", "ARM_RECEIVER", "DISARM_RECEIVER", "RELEASE_BALL", "STOP_ALL", "SET_DIAL_EFFECT"]:
 			same_commands = same_commands and sent["%d %s" % [dev, cmd]] == hub.count(dev, cmd)
+	_ok(panel_same, "game mode result: the HUD's score panel shows the same number as the big one all through the show (no easing of its own)",
+		"%s %s" % [ctl.hud.shown_score(), show.shown])
 	_ok(started and counted and show.log.count("bonus_hit") == 2 and show.log.has("final") and ctl.sounds.log.has("final_hit")
 		and ctl.sounds.log.has("result") and ctl.sounds.log.has("bonus_hit") and int(round(show.shown)) == res.final_score
 		and top <= float(res.final_score) + 0.001 and ctl.score.score == base and ctl.result == res
