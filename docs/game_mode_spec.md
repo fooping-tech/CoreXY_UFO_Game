@@ -34,7 +34,7 @@
 | `COUNTDOWN` | 3 秒（`countdown_s`）。両 Dial を `SET_MODE GAME` にする。**まだ受け取らない** |
 | `PLAYING` | 150 秒（`duration_s`）。開始と同時に両 Dial へ `ARM_RECEIVER`。右上に残り時間、左上に得点 |
 | `SETTLING` | 0 秒になった。**新しいカプセルは受け付けない**。プレイ中のカプセルは最後まで得点し、排出する。最大 30 秒（`settle_max_s`） |
-| `RESULT` | 得点、カプセル数、最大コンボ、ジャックポット数、異常のあった Dial。Enter ですぐもう一回、T で練習から、Esc でタイトル |
+| `RESULT` | リザルト演出（§3.2）: 中央の巨大なスコア → ボーナス加算 → FINAL SCORE。カプセル数、最大コンボ、ジャックポット数、異常のあった Dial。Enter は演出中なら最後まで飛ばし、終わっていればもう一回。T で練習から、Esc でタイトル |
 | `STOPPED` | Space（停止）で止めた。Enter でやり直し、T で練習から |
 
 - 残り 30 秒（`hurry_s`）: 音楽を速いテイクへ切り替え（クロスフェード）、イルミを速くする。残り 10 秒（`warning_s`）: 毎秒の警告音、時計が赤く点滅。
@@ -291,7 +291,7 @@ Dial 1 台に LED が 2 系統ある（前面 G1 と、G15。どちらもその 
 
 1 行 1 イベントの JSON Lines。`game_mode.trace` がオンのとき、ラウンドごとに `user://game_mode/trace_<日時>.jsonl`（mac では `~/Library/Application Support/Godot/app_userdata/CoreXY UFO/game_mode/`）。個人情報・鍵は入らない（ID・状態・数値だけ）。
 
-項目: `t_ms`（単調時計）、`game_t`（開始からの秒）、`session_id`、`source_dial`、`cycle`、`capsule_id`、`event`、`command_id`、`result`（ACK の結果・無視した理由）、`game_state`（phase）、`lane_state`、`physics_position`、`score_delta`、`effect_id`（命令名・イベント名・得点の対象）、`led_command`、`release_status`。
+項目: `t_ms`（単調時計）、`game_t`（開始からの秒）、`session_id`、`source_dial`、`cycle`、`capsule_id`、`event`、`command_id`、`result`（ACK の結果・無視した理由）、`game_state`（phase）、`lane_state`、`physics_position`、`score_delta`、`effect_id`（命令名・イベント名・得点の対象）、`led_command`、`release_status`、`breakdown`（`result` の行だけ: リザルトの内訳。§3.2）。
 
 `event` の種類: `game_start` `hurry` `time_up` `result` `stopped` `session` `lane_state` `command` `ack` `event` `event_ignored` `ball_ignored` `capsule_created` `score` `stay_timeout` `release` `led` `fault`。
 
@@ -350,6 +350,70 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 - **スタッフ用**（ファンクションキー。間違って押しにくい）: `F6` = このステップをやり直す、`F7` = 次のステップへ（OK は出ない）、`F8` = 練習を飛ばして本番へ。**カプセルが練習の途中にある間は F7 / F8 を受け付けない**（「カプセルが もどるまで まってね」）。実践で Dial が受取待ちのときに飛ばすと、先に両 Dial を `DISARM_RECEIVER` で閉じてから本番へ進む（カウントダウン中は受け取らないため。閉じる間に入ったカプセルはそのまま返す）。
 - 設定（設定画面「ハンドジェスチャー」）: `game_mode.tutorial.enabled`（オフなら Enter ですぐ本番。T で練習）、`game_mode.tutorial.mode`。ステップの文言・保持時間・順番は `game_mode.tutorial.steps` / `modes` で上書きできる（定義は `gesture_tutorial_steps.gd`）。
 
+## 3.2 終了のリザルト演出（#153）
+
+150 秒が終わってから、得点が増えていく過程を見せる。**画面と音だけ**で、クレーンにも Dial にもイルミにも新しい命令は送らない。`SETTLING`（清算・排出・異常の判定）、`STOP_ALL`、`STANDBY`、`FAULT` の処理は変えていない。
+
+![TIME UP](images/game_mode/result_0_time_up.png)
+![ボーナス](images/game_mode/result_1_bonus.png)
+![FINAL SCORE](images/game_mode/result_2_final.png)
+
+### 流れ
+
+| 段 | 画面 | 同じ瞬間に出るもの |
+|---|---|---|
+| TIME UP!（`SETTLING` の間） | 盤面を暗くして巨大な「TIME UP!」、下に「スコア集計中…」 | 白フラッシュ、低い衝撃音（`timeup_hit`）と既存のジングル、シェイク、ヒットストップ |
+| YOUR SCORE（`RESULT` に入った直後） | 中央に巨大な数字が 0 から走る。後ろで光の放射線が回る | 数えるたびにブリップ音（`result_count`。進むほど高くなる）と光の粒。止まった瞬間に `score_lock`、シェイク、バウンド、衝撃波 |
+| BONUS!（ボーナス 1 つごと） | 「BONUS!」が飛び出し、ボーナス名と「+点」が出る → 点が数字に吸い込まれる → 数字が走る | 発表: `bonus_show`、シェイク、火花。着弾: `bonus_hit`、フラッシュ、シェイク、バウンド、ヒットストップ、衝撃波、火花、紙吹雪。確定: `score_lock`（高め） |
+| FINAL SCORE! | 数字が一度縮み、大きく跳ねて止まる。3 色の文字が波打つ | `final_hit` とファンファーレ（`result`）、最大のシェイク・バウンド・ヒットストップ、衝撃波 3 重、火花、紙吹雪（pixelfx `success_confetti` `success_sparkle`）、UFOくんが喜ぶ |
+| 落ち着いたあと | 最終スコアは中央に大きく残る。下にカプセル数・最大コンボ・ジャックポット数、「Enter：もう一回　T：練習から　Esc：タイトル」 | — |
+
+- 0 点のボーナスは発表しない。得点 0・カプセル 0 個でも FINAL SCORE（0）まで進む（そのときは静かに出し、UFOくんはしょんぼりする）。
+- 高額のボーナスほど強い: 強さ = ボーナスの点 ÷ `strong_at`（0.3〜1.0）。シェイク・火花の数・紙吹雪・ヒットストップに掛かる。
+- 数字は桁数に合わせて大きさを決める（5 桁で 1 ドット 26 px、FINAL で 30 px。10 桁でも画面に収まる）。ドットは必ず偶数 px（盤面のドットと同じ大きさ）。
+- 異常のあった Dial は、演出の間も画面の下に赤字で出したままにする。
+
+### ボーナスの計算（調整値: `game_mode.result_bonus`）
+
+| ボーナス | 計算 | 初期値 |
+|---|---|---|
+| カプセルボーナス | 時間内に Dial が受け取ったカプセルの数 × `capsule_each` | 100 |
+| コンボボーナス | 最大コンボ（連鎖の最長）× `combo_each` | 50 |
+| ジャックポットボーナス | ジャックポットの回数 × `jackpot_each` | 500 |
+
+`final_score = base_score + total_bonus`、`total_bonus = capsule_bonus + combo_bonus + jackpot_bonus`。
+
+- `base_score` はプレイ中の得点（`ScoreManager.score`。意味は変えていない）。**3 連スイッチの +1500 とジャックポットの 3000 はプレイ中に入っていて、ここでは足さない**（ここで足すのは終了ボーナスだけ）。
+- カプセルに数えるのは、0 秒より前に `BALL_RECEIVED` が届いたもの。0 秒の後に届いてそのまま排出した「遅れカプセル」と、練習カプセルは数えない。プレイしたカプセルは、排出に失敗したものも数える（投入は有効だったため）。
+- 内訳は `RESULT` に入るとき **一度だけ** 確定する（`ResultBonus.of_round`）。`SETTLING` の間の得点も含む。確定した内訳はトレースの `result` の行の `breakdown` にそのまま書く。
+
+### 真の値と表示の値
+
+- 真の値: `GameModeController.result`（内訳）。確定後は誰も書き換えない。
+- 表示の値: `ResultShow.shown`（いま画面に出ている数字）。真の値に向かって増えるだけで、真の値を越えない。各段の終わりで真の値に一致する。
+- 左上の SCORE のパネルも、リザルトの間は同じ表示の値を出す（大きな数字と食い違わない）。
+
+### 同期の仕組み
+
+演出は Tween やタイマーを個別に持たず、**1 本の時刻表**（`ResultShow`、進めるのは `GameModeController.tick`）で動く。ある瞬間に出るもの（音・シェイク・フラッシュ・火花・シート）は 1 つの合図（cue）にまとめ、同じ tick の中で全部を始める。音が鳴り終わるのを待つ段はない。`reset()` で全部が消えるので、次のラウンドに何も持ち越さない。
+
+時間（秒、`game_mode.result_show`）: `intro_s` 0.5 → `count_s` 1.6 → `hold_s` 0.8 →（ボーナスごとに `announce_s` 0.9 → `absorb_s` 0.45 → `bonus_count_s` 0.7 → `bonus_hold_s` 0.5）→ `wind_up_s` 0.35 → `final_s` 3.2。ボーナス 3 つで約 14 秒。
+
+### 操作と設定
+
+- **Enter**: 演出の途中なら最後の絵まで飛ばす（もう 1 回押すと次のラウンド）。終わっていればすぐ次のラウンド。
+- **T**: 練習から。**Esc**: タイトル。どちらも演出の途中で押せ、演出は残らない。
+- **Space**: 演出に関係なく `STOP_ALL` を送る。演出はその場で終わり、最終スコアは残る。
+- `game_mode.effects: false`: 演出なしで最終スコアをすぐ出す（シェイク・火花・シートなし、ジングルだけ）。得点と操作は同じ。
+- 画面シェイクは既存の `render.screen_shake` で切れる。
+- 音は `GameModeSounds` の優先度と同時発音数（8）の中で鳴らす。数えるブリップ音は優先度 0・40 ms に 1 回までで、ほかの音を押し出さない。新しい 6 音は合成音（音源ファイルは足していない）。
+
+### 未検証
+
+- 音は聴いて確かめていない（合成音の音色・音量、ブリップ音の高さの上がり方、ファンファーレとの重なり）。
+- 子どもが見てどう感じるか、演出の長さが合っているかは見てもらっていない。
+- 展示の PC での処理の重さ（開発機では約 68 FPS）。
+
 ## 11. 実装
 
 | もの | 場所 |
@@ -363,6 +427,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 | 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは pixelfx（`VFXManager` 経由。下の表）。ポートの枠と光はコードで描く |
 | 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は合成。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
 | HUD | `game_mode_hud.gd` |
+| 終了のリザルト演出（#153） | 計算 `result_bonus.gd`（`ResultBonus`）、時刻表 `result_show.gd`（`ResultShow`。画面なしでテストできる）、画面 `game_mode_result_screen.gd`（`GameModeResultScreen`）。合図への応答は `GameModeController._on_result_cue` |
 | 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |
@@ -425,6 +490,8 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 | `RELEASE_DONE` が来ないときの状態確認 | 確認済み | 未検証 |
 | 得点表・難易度 | 初期値のまま | プレイテスト未実施 |
 | 開始前の練習（#149）: 各ステップの判定、見失い・途切れ・重複、練習カプセル、本番への混入なし、停止 | 確認済み（自動テスト、作った手と模擬の Dial） | **未検証**（実際のカメラと手、子どもが読めるか・できるか、声、実機の Dial、指 1 本の認識） |
+
+リザルト演出（#153）は Mock で確認済み（自動テストと、画面つきの `--game-mode-demo`）。音・子どもの反応・展示の PC での重さは未検証（§3.2）。Dial への命令は変えていないので、実機で新しく確かめる手順はない。
 
 実機で最初に確かめる手順:
 

@@ -45,13 +45,19 @@ const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETU
 ## the pitch of "combo" by the step the combo reached
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
 ## sounds that are only synthesised here (#149: no file was added for the practice)
-const SYNTH_ONLY := ["tutorial_ok", "summon"]
+const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit"]
+## the synthesised sounds of the result's show (#153): priority, and the least gap between
+## two of a key (the counting blips come many a second and must never fill the players)
+const SYNTH_META := {"timeup_hit": {"priority": 2}, "result_count": {"priority": 0, "min_gap_ms": 40}, "score_lock": {"priority": 2},
+	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}}
 
 var enabled := true
 var volume_db := -8.0
 ## false: only the synthesised sounds (config game_mode.sounds.files)
 var use_files := true
 var last_played := ""
+## the pitch the last sound was really played at (tests)
+var last_pitch := 1.0
 ## every sound asked for, newest last (tests)
 var log: Array[String] = []
 var bgm_on := false
@@ -113,6 +119,14 @@ func _ready() -> void:
 		# the practice before the round (#149): "ping-pong" for a step done, the spell's rise
 		"tutorial_ok": StudySounds._tones([[1318.5, 0.16], [1046.5, 0.42]], 0.4),
 		"summon": StudySounds._sweep(196.0, 1568.0, 0.9, 0.3),
+		# the result's show (#153): the thud of TIME UP, the counting blip (its pitch is set
+		# as it is played), the number stopping, a bonus called and landing, the last hit
+		"timeup_hit": StudySounds._sweep(150.0, 38.0, 0.6, 0.55),
+		"result_count": StudySounds._tones([[987.8, 0.04]], 0.2),
+		"score_lock": StudySounds._tones([[392.0, 0.05], [784.0, 0.05], [1568.0, 0.3]], 0.4),
+		"bonus_show": StudySounds._tones([[523.3, 0.09], [0.0, 0.04], [523.3, 0.07], [784.0, 0.28]], 0.4),
+		"bonus_hit": StudySounds._tones([[1046.5, 0.045], [1318.5, 0.045], [1568.0, 0.045], [2093.0, 0.045], [2637.0, 0.2]], 0.35),
+		"final_hit": StudySounds._sweep(520.0, 45.0, 0.7, 0.55),
 		"alien": StudySounds._tones([[659.3, 0.06], [880.0, 0.06], [1318.5, 0.06], [1760.0, 0.2]], 0.35),
 		"warp": StudySounds._sweep(330.0, 1760.0, 0.3, 0.3),
 		"combo": StudySounds._tones([[1046.5, 0.05], [1568.0, 0.12]], 0.3),
@@ -173,11 +187,15 @@ func source_of(name: String) -> String:
 func priority_of(name: String) -> int:
 	if _meta.has(name):
 		return int(_meta[name].get("priority", 1))
+	if SYNTH_META.has(name):
+		return int(SYNTH_META[name].get("priority", 1))
 	return 0 if name in ["pin", "sling"] else 1
 
 func min_gap_ms(name: String) -> int:
 	if _meta.has(name):
 		return int(_meta[name].get("min_gap_ms", 0))
+	if SYNTH_META.has(name):
+		return int(SYNTH_META[name].get("min_gap_ms", 0))
 	return int(PIN_GAP_S * 1000.0) if name == "pin" else 0
 
 ## The controller's lane_changed: remembers which side entered a state last, so the
@@ -193,14 +211,16 @@ func side_of(name: String) -> String:
 
 ## Plays the sound `name`. `side` ("left" / "right"): the Dial it belongs to, when the
 ## caller knows it (an event of that Dial); left out, a Dial's sound takes the side that
-## entered its lane state last (side_of).
-func play(name: String, side := "") -> void:
+## entered its lane state last (side_of). `pitch` > 0: played at that pitch (the result's
+## counting blips climb as the number does).
+func play(name: String, side := "", pitch := 0.0) -> void:
 	var now := Time.get_ticks_msec()
 	var gap := min_gap_ms(name)
 	if gap > 0 and now - int(_last_ms.get(name, -100000)) < gap:
 		return
 	_last_ms[name] = now
 	last_played = name
+	last_pitch = pitch if pitch > 0.0 else 1.0
 	log.append(name)
 	if log.size() > 64:
 		log.remove_at(0)
@@ -225,6 +245,9 @@ func play(name: String, side := "") -> void:
 	p.pitch_scale = 1.0 + _rng.randf_range(-jitter, jitter)
 	if name == "combo":
 		p.pitch_scale = COMBO_PITCH[clampi(combo_step, 0, COMBO_PITCH.size() - 1)]
+	if pitch > 0.0:
+		p.pitch_scale = clampf(pitch, 0.25, 4.0)
+	last_pitch = p.pitch_scale
 	p.play()
 	voices[slot] = {"key": name, "priority": prio, "side": side, "at_ms": now}
 

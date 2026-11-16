@@ -343,6 +343,26 @@
       "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. optical_flow: arrows showing how the picture moves (measured in the game on a 48 x 48 grey copy about 10 times a second; display only, never used to move anything). zoom 1..4 crops the middle."
     },
     "trace": true,
+    "result_bonus": {
+      "capsule_each": 100,
+      "combo_each": 50,
+      "jackpot_each": 500,
+      "_note": "The round's end bonuses (#153; docs/game_mode_spec.md §3.2), added to the score on the result screen: capsule_each x the capsules a Dial took before the time ran out (a late one and the practice capsule do not count), combo_each x the longest chain, jackpot_each x the jackpots won. final score = the score while playing + these. They are end bonuses only: the switch bonus (score.table.switch_bonus) and the jackpot's own points (score.table.jackpot) are paid while playing and are not added again. 0 = that bonus is left out. Tuning values, not final."
+    },
+    "result_show": {
+      "intro_s": 0.5,
+      "count_s": 1.6,
+      "hold_s": 0.8,
+      "announce_s": 0.9,
+      "absorb_s": 0.45,
+      "bonus_count_s": 0.7,
+      "bonus_hold_s": 0.5,
+      "wind_up_s": 0.35,
+      "final_s": 3.2,
+      "tick_s": 0.055,
+      "strong_at": 3000,
+      "_note": "The result's show (#153), one timeline (seconds): YOUR SCORE comes up (intro_s), the number counts up (count_s) and stops (hold_s); then for each bonus: BONUS! and its points (announce_s), they fly into the number (absorb_s), the number runs on (bonus_count_s), a breath (bonus_hold_s); then the number shrinks (wind_up_s) and FINAL SCORE! hits and celebrates (final_s). tick_s: one counting blip per this long. strong_at: a bonus of this many points or more gets the strongest effects (less = weaker, never below 30 %). Every sound, shake, flash and spark of a moment starts in the same tick of this timeline. Enter skips to the end. With game_mode.effects false the final score is shown at once; render.screen_shake off keeps the picture still. Presentation only: no device is told anything."
+    },
     "tutorial": {
       "enabled": true,
       "mode": "hard",
