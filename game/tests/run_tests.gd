@@ -81,6 +81,8 @@ func _ready() -> void:
 	_test_game_mode_scope(rs)
 	_test_game_mode_audio(rs)
 	_test_game_mode_reactions(rs)
+	_test_gesture_tutorial_logic()
+	_test_gesture_tutorial_game(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -2868,6 +2870,7 @@ func _gm_game() -> Node:
 	ctl.trace_to_file = false
 	ctl.sounds.enabled = false
 	ctl.devices_wanted = "mock"
+	ctl.tutorial_auto = false  # these tests are about the round; the practice (#149) has its own
 	return game
 
 func _gm_step(ctl: GameModeController, secs: float) -> void:
@@ -3669,7 +3672,8 @@ func _test_game_mode_audio(rs: Node) -> void:
 		var k: String = "goal" if str(kind).begins_with("goal") else ("bonus" if kind == "switch_bonus" else str(kind))
 		if not asked.has(k):
 			asked.append(k)
-	var with_files: bool = asked.all(func(k): return snd.source_of(k) == "file")
+	# the practice's two sounds (#149) are synthesised only: no file was added for them
+	var with_files: bool = asked.all(func(k): return snd.source_of(k) == ("synth" if k in GameModeSounds.SYNTH_ONLY else "file"))
 	snd.use_files = false
 	var synth: bool = asked.all(func(k): return snd.source_of(k) == "synth")
 	snd.use_files = true
@@ -3859,6 +3863,297 @@ func _test_game_mode_reactions(rs: Node) -> void:
 		and GameModeVFX.MOODS.values().all(func(m): return m == "" or GameModeVFX.UFO_FACES.has(m)),
 		"game mode UFO: worried for the last 30 seconds, sad when a capsule runs out of time, sleepy at time up, happy at the result; every face is on the expression sheet",
 		"%s %s %s %s %s %s" % [hurried, worried, missed, over, ctl.phase, fx.ufo_mood])
+	_gm_free(game, rs)
+
+## A hand for the practice's logic: seen, fresh, doing nothing; `more` on top.
+func _tut_hand(more: Dictionary = {}) -> Dictionary:
+	var h := {"enabled": true, "fresh": true, "camera_ok": true, "detected": true, "pose": "other", "pinch": false,
+		"pinch_finger": "", "pos": Vector2(0.5, 0.5), "active": false, "speed": 0.0, "gate": "", "claw_progress": 0.0}
+	h.merge(more, true)
+	return h
+
+func _tut_run(t: GestureTutorialController, secs: float, hand: Dictionary, world: Dictionary = {}) -> void:
+	for i in int(round(secs * 60.0)):
+		t.tick(1.0 / 60.0, hand, world)
+
+## #149: the practice's steps as data, and each step ended only by what the hand really did.
+func _test_gesture_tutorial_logic() -> void:
+	var pinch_claw := PinchJoystickScheme.new().claw_poses()
+	var pose_claw := PoseDirectionScheme.new().claw_poses()
+	var hard := GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", pinch_claw)
+	var ids := hard.map(func(s): return s.id)
+	var pose_steps := GestureTutorialSteps.resolve({}, "hard", "pose_direction", pose_claw)
+	var pose_grab: Dictionary = pose_steps.filter(func(s): return s.kind == "grab")[0]
+	var easy := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", pinch_claw)
+	var changed := GestureTutorialSteps.resolve({"steps": {"open": {"title": "X", "hold_s": 2.0}}, "modes": {"hard": {"pinch_joystick": ["open", "practice"]}}},
+		"hard", "pinch_joystick", pinch_claw)
+	_ok(ids == ["summon", "open", "pinch", "move", "grab", "rules", "practice"] and GestureTutorialSteps.counted(hard) == 6
+		and GestureTutorialSteps.number_of(hard, 0) == 0 and GestureTutorialSteps.number_of(hard, 2) == 2
+		and str(hard[0].title).contains("ベントラベントラスペースピープル") and (hard[0].say as Array)[0] == "ベントラベントラスペースピープル！"
+		and hard[4].title == "グーで キャッチ！" and "fist" in hard[4].poses and not "peace" in hard[4].poses
+		and pose_steps.map(func(s): return s.id) == ["summon", "open", "point", "point_move", "grab", "rules", "practice"]
+		and pose_grab.title == "チョキで キャッチ！" and pose_grab.poses == ["peace"],
+		"tutorial steps: the spell, パー, the pinch, moving, the catch, the rule, one capsule; the catch asks for the shape that closes the claw in the hand scheme in use",
+		"%s %s %s" % [ids, hard[4].poses, pose_grab.poses])
+	var easy_future := easy.filter(func(s): return bool(s.get("future", false)))
+	_ok(easy_future.map(func(s): return s.id) == ["easy_grab", "easy_one"] and str(easy_future[0].sub).contains("じゅんびちゅう")
+		and str(easy_future[1].sub).contains("じゅんびちゅう") and hard.filter(func(s): return bool(s.get("future", false))).is_empty()
+		and changed.map(func(s): return s.id) == ["open", "practice"] and changed[0].title == "X" and is_equal_approx(float(changed[0].hold_s), 2.0),
+		"tutorial steps: the easy mode's catch and carry are shown as not built yet; config overrides a step and the order",
+		str(easy.map(func(s): return s.id)))
+	# --- the steps, one by one
+	var t := GestureTutorialController.new()
+	var oks := []
+	var ends := []
+	var said := []
+	t.step_succeeded.connect(func(_i, s): oks.append(s.id))
+	t.finished.connect(func(how): ends.append(how))
+	t.say.connect(func(lines): said.append(lines))
+	t.begin(hard, true)
+	var spell_telling := t.telling()
+	_tut_run(t, 6.0, _tut_hand({"pose": "open"}), {"speech_busy": true})
+	var spell_waits := t.kind() == "summon"
+	_tut_run(t, 0.1, _tut_hand(), {"speech_busy": false})
+	var never := GestureTutorialController.new()
+	never.begin(hard, true)
+	_tut_run(never, never.tell_max_s + 0.1, _tut_hand(), {"speech_busy": true})  # a voice that never ends
+	_ok(spell_telling and spell_waits and t.kind() == "pose" and oks.is_empty() and said.size() == 2 and never.kind() == "pose",
+		"tutorial: the spell is said to the end and goes on by itself, with no OK (nothing was done yet); a voice that never ends is not waited for for ever", "%s %s" % [t.kind(), oks])
+	# パー: lost, stale, flickering, then held
+	_tut_run(t, 1.3, _tut_hand({"detected": false}))
+	var lost_guide := t.guide
+	_tut_run(t, 1.8, _tut_hand({"fresh": false}))
+	var stale_guide := t.guide
+	for i in 6:  # the shape flickers: never long enough
+		_tut_run(t, 0.3, _tut_hand({"pose": "open"}))
+		_tut_run(t, 0.3, _tut_hand({"pose": "other"}))
+	var flicker_ok := oks.is_empty()
+	_tut_run(t, 0.3, _tut_hand({"pose": "open"}))
+	_tut_run(t, 0.1, _tut_hand({"pose": "other"}))  # a gap shorter than the grace
+	_tut_run(t, 0.4, _tut_hand({"pose": "open"}))
+	var open_ok := oks == ["open"] and t.state == "success"
+	_tut_run(t, 1.0, _tut_hand({"pose": "open"}))  # still held while the OK shows: no second OK
+	_ok(lost_guide == "てを カメラに みせてね" and stale_guide.contains("てのカメラが みつからない") and flicker_ok and open_ok and oks == ["open"],
+		"tutorial パー: a lost hand and a lost camera are said kindly, a flickering shape does not count, a held one gets one OK",
+		"%s | %s | %s" % [lost_guide, stale_guide, oks])
+	_tut_run(t, 0.6, _tut_hand())
+	# the pinch: the index finger's
+	_tut_run(t, 1.5, _tut_hand({"pinch": true, "pinch_finger": "middle"}))
+	var wrong_finger := oks.size() == 1 and t.guide.contains("ひとさしゆび")
+	_tut_run(t, 0.7, _tut_hand({"pinch": true, "pinch_finger": "index"}))
+	_ok(wrong_finger and oks == ["open", "pinch"], "tutorial pinch: the middle finger's pinch is not it, the index finger's held is", str(oks))
+	_tut_run(t, 1.5, _tut_hand({"pinch": true, "pinch_finger": "index"}))
+	# moving, the robot may be moved: only really steering counts
+	_tut_run(t, 2.0, _tut_hand({"pinch": true, "pinch_finger": "index", "pos": Vector2(0.9, 0.2)}))  # a pinch far away, not steering
+	var not_steering := oks.size() == 2 and not t.hand_only
+	_tut_run(t, 2.0, _tut_hand({"pinch": true, "active": true, "speed": 0.1}))  # steering, but hardly
+	var too_slow := oks.size() == 2
+	_tut_run(t, 0.6, _tut_hand({"pinch": true, "active": true, "speed": 0.6}))
+	_ok(not_steering and too_slow and oks == ["open", "pinch", "move"],
+		"tutorial move: with the robot ready only the hand stick really steering counts (not the hand's place, not a crawl)", str(oks))
+	_tut_run(t, 1.5, _tut_hand())
+	# the catch, the robot may be moved: the claw's own request
+	t.on_claw("open")
+	_tut_run(t, 2.0, _tut_hand({"pose": "fist", "claw_progress": 1.0}))
+	var held_only := oks.size() == 3 and t.guide.contains("パーに もどして")
+	t.on_claw("closed")
+	_tut_run(t, 0.1, _tut_hand({"pose": "fist"}))
+	_ok(held_only and oks == ["open", "pinch", "move", "grab"],
+		"tutorial catch: the shape alone is not it while the robot is ready; the hand control's request to close the claw is", str(oks))
+	_tut_run(t, 1.5, _tut_hand())
+	# the rule (told), then the capsule
+	var rules_told := t.kind() == "info" and t.telling()
+	_tut_run(t, 7.0, _tut_hand(), {"speech_busy": false})
+	var at_practice := t.kind() == "practice" and oks.size() == 4
+	_tut_run(t, 3.0, _tut_hand(), {"practice": "open", "devices_ok": false})
+	var hub_guide := t.guide
+	_tut_run(t, 1.0, _tut_hand(), {"practice": "fault", "devices_ok": true})
+	var blocked := t.state == "blocked" and ends.is_empty()
+	_tut_run(t, 30.0, _tut_hand(), {"practice": "fault", "devices_ok": true})
+	var stays_blocked := t.state == "blocked" and ends.is_empty() and oks.size() == 4
+	t.retry_step()
+	_tut_run(t, 0.5, _tut_hand(), {"practice": "open", "devices_ok": true})
+	var retried := t.state == "judging"
+	_tut_run(t, 0.1, _tut_hand(), {"practice": "done", "devices_ok": true})
+	var done_ok := oks.size() == 5 and ends.is_empty()
+	_tut_run(t, 1.6, _tut_hand(), {"practice": "done", "devices_ok": true})
+	_ok(rules_told and at_practice and hub_guide.contains("かかりの") and blocked and stays_blocked and retried and done_ok
+		and ends == ["done"] and not t.active() and t.oks == 5,
+		"tutorial capsule: a failed practice capsule never counts and never goes on by itself; a done one ends the practice",
+		"%s %s %s %s %s" % [at_practice, blocked, stays_blocked, done_ok, ends])
+	# --- the robot may not be moved: the hand alone, and the screen is told so
+	var t2 := GestureTutorialController.new()
+	var oks2 := []
+	t2.step_succeeded.connect(func(_i, s): oks2.append(s.id))
+	t2.begin(hard.filter(func(s): return s.id in ["move", "grab"]), true)
+	var gate := {"gate": "実機のジェスチャー操作は無効"}
+	_tut_run(t2, 1.0, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.5, 0.5)})))
+	for i in 60:  # a trembling hand: never far enough
+		_tut_run(t2, 1.0 / 60.0, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.5 + 0.03 * sin(i), 0.5)})))
+	var tremble := oks2.is_empty() and t2.hand_only
+	_tut_run(t2, 0.3, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.68, 0.5)})))
+	var moved := oks2 == ["move"]
+	_tut_run(t2, 1.5, _tut_hand(gate))
+	_tut_run(t2, 0.3, _tut_hand(gate.merged({"pose": "fist"})))
+	var too_short := oks2.size() == 1
+	_tut_run(t2, 0.6, _tut_hand(gate.merged({"pose": "fist"})))
+	_ok(tremble and moved and too_short and oks2 == ["move", "grab"] and t2.hand_only and t2.gate_note != "",
+		"tutorial without the robot: the pinch carried across the picture and the held shape count (a tremble does not), and the step knows the robot is not moved",
+		"%s %s" % [oks2, t2.gate_note])
+	# --- no hand camera: the hand steps are told, not called done
+	var t3 := GestureTutorialController.new()
+	var oks3 := []
+	t3.step_succeeded.connect(func(_i, s): oks3.append(s.id))
+	t3.begin(hard, false)
+	var told := true
+	for i in 40:
+		_tut_run(t3, 1.0, {"enabled": false}, {"speech_busy": false})
+		if t3.kind() == "practice":
+			break
+		told = told and t3.telling()
+	_ok(t3.kind() == "practice" and oks3.is_empty() and told and t3.no_hand,
+		"tutorial with no hand camera: every hand step is shown and said as an explanation, none gets an OK", "%s %s" % [t3.kind(), oks3])
+	# --- staff, and the scripted hand
+	var t4 := GestureTutorialController.new()
+	var ends4 := []
+	var oks4 := []
+	t4.finished.connect(func(how): ends4.append(how))
+	t4.step_succeeded.connect(func(_i, s): oks4.append(s.id))
+	t4.begin(hard, true)
+	t4.skip_step()
+	var skipped_to := t4.kind()
+	t4.skip_all()
+	var t5 := GestureTutorialController.new()
+	var oks5 := []
+	t5.step_succeeded.connect(func(_i, s): oks5.append(s.id))
+	t5.begin(hard, true)
+	var demo_hand_only := false
+	for i in 60 * 40:
+		if t5.kind() == "practice":
+			break
+		t5.tick(1.0 / 60.0, GestureTutorialController.demo_hand(t5.step(), t5.t), {"speech_busy": false})
+		demo_hand_only = demo_hand_only or t5.hand_only
+	_ok(skipped_to == "pose" and ends4 == ["skipped"] and oks4.is_empty() and not t4.active()
+		and oks5 == ["open", "pinch", "move", "grab"] and demo_hand_only,
+		"tutorial: staff can go on or leave it out (no OK for a step not done); the scripted hand goes through the hand steps without the robot",
+		"%s %s %s" % [skipped_to, ends4, oks5])
+
+## #149 in the game: Enter goes through the practice, the practice capsule is a real
+## transaction of the Dial, nothing of it reaches the round, the stops stay.
+func _test_gesture_tutorial_game(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	ctl.tutorial_auto = true
+	ctl.sounds.log.clear()
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	var mock_before: Vector3 = game.mock.target
+	game._unhandled_input(_key(KEY_ENTER))
+	var in_tutorial := ctl.phase == "TUTORIAL" and ctl.tutorial.kind() == "summon" and ctl.running()
+	ctl.demo = true  # the scripted hand (given to the practice only)
+	_gm_step(ctl, 2.0)
+	game._unhandled_input(_key(KEY_ENTER))  # Enter in the practice: nothing
+	var enter_nothing := ctl.phase == "TUTORIAL" and ctl.tutorial.kind() == "summon"
+	var hud_on := ctl.tutorial_hud.showing() and ctl.hud.title_showing() == false
+	for i in 60 * 60:
+		if ctl.tutorial.kind() == "practice":
+			break
+		ctl.tick(1.0 / 60.0)
+	ctl.demo = false
+	var oks_before := ctl.sounds.log.count("tutorial_ok")
+	_ok(in_tutorial and enter_nothing and hud_on and ctl.tutorial.kind() == "practice" and oks_before == 4
+		and ctl.sounds.log.has("summon") and is_equal_approx(ctl.time_left, ctl.duration_s) and ctl.score.score == 0
+		and game.mock.target == mock_before and ctl.tutorial_hud.progress_text() == "れんしゅう 6 / 6",
+		"tutorial in the game: Enter on the score game's title goes into the practice, not the countdown; the clock stands, Enter skips nothing, each hand step chimes once, the scripted hand moves no robot",
+		"%s %s %s %s %.1f" % [ctl.phase, ctl.tutorial.kind(), oks_before, ctl.tutorial_hud.progress_text(), ctl.time_left])
+	# the practice capsule: a real transaction of the Dial
+	_gm_step(ctl, 0.5)
+	var left: GameModeController.Lane = ctl.lanes["left"]
+	var right: GameModeController.Lane = ctl.lanes["right"]
+	var armed := ctl.practice == "open" and left.state == "READY" and right.state == "READY"
+	var n0 := ctl.mock_hub.executed.size()
+	game._unhandled_input(_key(KEY_F8))  # staff may leave it out now (no capsule on its way)...
+	var closing_first := ctl.phase == "TUTORIAL" and ctl.practice == "closing"  # ...the Dials are closed first
+	_gm_step(ctl, 2.0)
+	var skipped_idle := closing_first and ctl.phase == "COUNTDOWN" \
+		and ctl.mock_hub.executed.slice(n0).filter(func(e): return e[1] == "DISARM_RECEIVER").size() == 2
+	ctl._halt("test")
+	ctl.tutorial_seen = false
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.tutorial.skip_step()  # ...here: back to the practice capsule, by the steps
+	while ctl.tutorial.kind() != "practice" and ctl.tutorial.active():
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	var chimes_before := ctl.sounds.log.count("tutorial_ok")
+	var id := _gm_play_capsule(ctl, "left", "center")
+	var practice_score := ctl.score.score
+	game._unhandled_input(_key(KEY_F8))  # a capsule is on its way: it is not left behind
+	var skip_refused := ctl.phase == "TUTORIAL" and ctl.practice_busy()
+	ctl.mock_hub.chatter(left.device, 2)  # the switch bounces
+	for i in 60 * 12:  # the Dial's servo sequence, then its status
+		if ctl.practice == "done":
+			break
+		ctl.tick(1.0 / 60.0)
+	ctl.tick(1.0 / 60.0)
+	var cycle := left.last_cycle
+	var came_back := ctl.practice == "done" and left.state == "CLOSED" and right.state == "CLOSED" and ctl.practice_released == 1 \
+		and ctl.mock_hub.executed.filter(func(e): return e[1] == "RELEASE_BALL").size() == 1
+	var ok_shown := ctl.tutorial.state == "success" and ctl.sounds.log.count("tutorial_ok") == chimes_before + 1
+	_gm_step(ctl, ctl.tutorial.ok_s + 0.1)
+	_ok(armed and skipped_idle and id != "" and practice_score > 0 and skip_refused and came_back
+		and ctl.phase == "COUNTDOWN" and ctl.score.score == 0 and ctl.capsules.finished.is_empty() and is_equal_approx(ctl.time_left, ctl.duration_s)
+		and ctl.practice == "" and not ctl.tutorial.active() and ctl.tutorial_seen and left.last_cycle == cycle and cycle >= 1,
+		"practice capsule: both Dials armed, one capsule taken, played, released once and checked (a bouncing switch is not a second one); then the round starts from zero - no score, no capsule, the full clock",
+		"%s %s %s score %d->%d %s %s" % [armed, skip_refused, came_back, practice_score, ctl.score.score, ctl.phase, ctl.practice])
+	_ok(ok_shown, "practice capsule: its one OK chimes once", str(ctl.sounds.log.count("tutorial_ok")))
+	_gm_step(ctl, ctl.countdown_s + 0.3)
+	ctl._on_ball(left, cycle)  # the practice capsule reported once more, in the round
+	var old_ignored := ctl.phase == "PLAYING" and left.state == "READY" and left.capsule.is_empty()
+	var id2 := _gm_play_capsule(ctl, "left", "center")
+	_ok(old_ignored and id2 != "" and id2 != id and ctl.score.score > 0,
+		"after the practice: a late report of the practice capsule is old in the round; a new capsule plays and scores", "%s %s" % [old_ignored, ctl.score.score])
+	# after a round: Enter starts at once, T is the practice once more
+	ctl._halt("test")
+	game._unhandled_input(_key(KEY_ENTER))
+	var straight := ctl.phase == "COUNTDOWN"
+	ctl._halt("test")
+	game._unhandled_input(_key(KEY_T))
+	var again := ctl.phase == "TUTORIAL" and ctl.tutorial.kind() == "summon"
+	# a failed practice capsule: no OK, no round
+	while ctl.tutorial.kind() != "practice":
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	ctl.mock_hub.fail_release[right.device] = true
+	_gm_play_capsule(ctl, "right", "center")
+	var chimes := ctl.sounds.log.count("tutorial_ok")
+	_gm_step(ctl, 12.0)
+	var failed := ctl.phase == "TUTORIAL" and ctl.practice == "fault" and ctl.tutorial.state == "blocked" and right.state == "FAULT" \
+		and ctl.sounds.log.count("tutorial_ok") == chimes and ctl.tutorial.guide.contains("かかりの")
+	_ok(straight and again and failed,
+		"after a round Enter starts at once and T is the practice once more; a practice capsule that fails to come back gets no OK and no round starts",
+		"%s %s %s %s %s" % [straight, again, ctl.phase, ctl.practice, ctl.tutorial.state])
+	# Space in the practice: STOP_ALL, nothing afterwards
+	ctl._halt("test")
+	game._unhandled_input(_key(KEY_T))
+	while ctl.tutorial.kind() != "practice":
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	ctl.mock_hub.fail_release.clear()
+	ctl.mock_hub.mock_ball(left.device)
+	_gm_step(ctl, 0.3)
+	var n := ctl.mock_hub.executed.size()
+	game._unhandled_input(_key(KEY_SPACE))
+	var stops := ctl.mock_hub.executed.slice(n).filter(func(e): return e[1] == "STOP_ALL").size()
+	_gm_step(ctl, 5.0)
+	var releases_after := ctl.mock_hub.executed.slice(n).filter(func(e): return e[1] == "RELEASE_BALL").size()
+	_ok(ctl.phase == "STOPPED" and stops >= 2 and releases_after == 0 and not ctl.tutorial.active() and ctl.practice == "" and left.state == "FAULT",
+		"Space in the practice: STOP_ALL to the Dials, the practice ends, nothing is released afterwards", "%s %d %d %s" % [ctl.phase, stops, releases_after, left.state])
+	# Esc from a hand step: the practice is gone, the title is back
+	game._unhandled_input(_key(KEY_T))
+	ctl.tutorial.skip_step()
+	game.show_title()
+	_ok(not ctl.active() and not ctl.tutorial.active() and not ctl.tutorial_hud.showing(),
+		"Esc in the practice: back to the title, the practice is over", str(ctl.phase))
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's

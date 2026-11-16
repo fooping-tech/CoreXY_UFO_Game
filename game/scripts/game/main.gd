@@ -301,7 +301,7 @@ static func title_on_start(args: PackedStringArray, enabled: bool, headless: boo
 		return true
 	if not enabled or headless or study_autostart:
 		return false
-	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode", "--game-mode-title"]:
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode", "--game-mode-title", "--game-mode-tutorial"]:
 		if args.has(a):
 			return false
 	return true
@@ -380,6 +380,8 @@ func apply_live_settings() -> void:
 	if game_mode != null:
 		game_mode.sounds.enabled = sfx.enabled
 		game_mode.sounds.volume_db = sfx.volume_db
+		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
+		game_mode.tutorial_mode = str(GameConfig.value("game_mode.tutorial.mode", game_mode.tutorial_mode))
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
 	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
@@ -438,6 +440,10 @@ func _apply_cmdline() -> void:
 			"--source":
 				if i + 1 < args.size():
 					use_source(args[i + 1])
+			"--capture-frames":
+				# how many frames --capture saves (2 per second; 16 = 8 s when left out). After --capture.
+				if i + 1 < args.size():
+					_capture_left = maxi(int(args[i + 1]), 1)
 			"--hide-debug":
 				debug_ui.visible = false
 				_layout()
@@ -481,6 +487,12 @@ func _apply_cmdline() -> void:
 				if game_mode != null:
 					_on_title_chosen("score")
 					game_mode.call_deferred("start")
+			"--game-mode-tutorial":
+				# the score game from its practice (#149: the spell, the hand shapes, one capsule);
+				# with --game-mode-demo a scripted hand and the mock Dial go through it by themselves
+				if game_mode != null:
+					_on_title_chosen("score")
+					game_mode.call_deferred("start_tutorial")
 			"--game-mode-title":
 				# the score game's own title screen (waiting for Enter): for captures
 				if game_mode != null:

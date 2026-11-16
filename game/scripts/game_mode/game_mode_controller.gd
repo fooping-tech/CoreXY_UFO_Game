@@ -27,7 +27,7 @@ signal scored(points: int, kind: String, at: Vector2)
 
 ## IDLE (not started) -> COUNTDOWN -> PLAYING -> SETTLING (time is up: capsules in play
 ## finish and go out) -> RESULT; STOPPED = the stop key
-const PHASES := ["IDLE", "COUNTDOWN", "PLAYING", "SETTLING", "RESULT", "STOPPED"]
+const PHASES := ["IDLE", "TUTORIAL", "COUNTDOWN", "PLAYING", "SETTLING", "RESULT", "STOPPED"]
 ## a lane: OFFLINE (the Dial does not answer) / ARMING (SET_MODE, ARM_RECEIVER on their
 ## way) / READY (armed, waiting for a capsule) / ABSORBING / DROPPING / SIMULATING /
 ## RETURNING / RELEASING / VERIFYING / CLOSING (time is up: disarming) / CLOSED / FAULT
@@ -151,6 +151,28 @@ var demo_gap_s := 2.5
 var _demo_left := 1.0
 var _demo_side := 0
 
+## The practice before the round (#149): the steps (its own state, not the round's and not
+## the robot's), its screen and UFOくん's voice. While it runs the phase is TUTORIAL: the
+## 150 s clock stands still and nothing counts towards a result.
+var tutorial := GestureTutorialController.new()
+var tutorial_hud: GestureTutorialHud
+var tutorial_speech: StudySpeech
+## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
+var tutorial_auto := true
+## "hard" (the manual hand control) / "easy" (shown, but its automatic catch is not built)
+var tutorial_mode := GestureTutorialSteps.DEFAULT_MODE
+var _tutorial_cfg: Dictionary = {}
+## the practice was gone through (or left out by staff) since the game mode opened
+var tutorial_seen := false
+## The practice capsule (the tutorial's last step): the lane machine of the round, run
+## without the clock. "" (none) / "open" (a Dial takes one) / "closing" (one came back;
+## the rest closes) / "done" / "fault". Its score and its capsule never reach a result:
+## the round starts from a full reset.
+var practice := ""
+var practice_released := 0
+## staff left the practice capsule out: the Dials are closed first, then the practice ends
+var _practice_skip := false
+var _voice_seq := 0
 var _active := false
 var _cmds: Dictionary = {}  # rid -> {lane: Lane or null, what, left}
 var _seen: Dictionary = {}  # "session|source|event_id" -> true
@@ -224,6 +246,20 @@ func setup(m: Node) -> void:
 	hud.name = "GameModeHud"
 	layer.add_child(hud)
 	hud.setup(self)
+	tutorial_hud = GestureTutorialHud.new()
+	tutorial_hud.name = "GestureTutorialHud"
+	layer.add_child(tutorial_hud)
+	tutorial_hud.setup(self)
+	tutorial_speech = StudySpeech.new()
+	tutorial_speech.name = "TutorialSpeech"
+	add_child(tutorial_speech)
+	tutorial_speech.voice_request = _tutorial_voice
+	tutorial.say.connect(_on_tutorial_say)
+	tutorial.step_started.connect(_on_tutorial_step)
+	tutorial.step_succeeded.connect(_on_tutorial_ok)
+	tutorial.finished.connect(_on_tutorial_finished)
+	if main != null and main.get("gesture") != null:
+		main.gesture.claw_requested.connect(tutorial.on_claw)  # the claw's real request, heard only
 	scope = ArmScope.new()
 	scope.name = "ArmScope"
 	layer.add_child(scope)
@@ -282,13 +318,25 @@ func _configure(cfg: Dictionary) -> void:
 	verify_tries = int(t.get("verify_tries", verify_tries))
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
+	_tutorial_cfg = cfg.get("tutorial", {}) if cfg.get("tutorial") is Dictionary else {}
+	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
+	tutorial_mode = str(_tutorial_cfg.get("mode", tutorial_mode))
+	tutorial.configure(_tutorial_cfg)
 
 # ------------------------------------------------------------------ on / off
 func active() -> bool:
 	return _active
 
 func running() -> bool:
-	return phase in ["COUNTDOWN", "PLAYING", "SETTLING"]
+	return phase in ["TUTORIAL", "COUNTDOWN", "PLAYING", "SETTLING"]
+
+## The Dials take a capsule now: the round, or the practice capsule.
+func _taking() -> bool:
+	return phase == "PLAYING" or (phase == "TUTORIAL" and practice == "open")
+
+## Nothing new is played: what is in a Dial goes straight back out.
+func _closing() -> bool:
+	return phase == "SETTLING" or (phase == "TUTORIAL" and practice == "closing")
 
 ## "mock" (inside the game) / "backend" / "auto" (the backend when the game uses it).
 func use_devices(which: String) -> void:
@@ -309,6 +357,7 @@ func open() -> void:
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	field.process_mode = Node.PROCESS_MODE_INHERIT
 	_reset_round()
+	tutorial_seen = false
 	_set_phase("IDLE")
 	message = "Enter でスタート"
 
@@ -317,8 +366,9 @@ func open() -> void:
 func close() -> void:
 	if not _active:
 		return
-	if running():
-		_halt("タイトルに戻った")
+	if running() and (phase != "TUTORIAL" or practice != ""):
+		_halt("タイトルに戻った")  # the practice capsule too: STOP_ALL, nothing released afterwards
+	_end_tutorial()
 	_active = false
 	sounds.set_bgm(false)
 	field.clear()
@@ -332,10 +382,181 @@ func close() -> void:
 	field.process_mode = Node.PROCESS_MODE_DISABLED
 	phase = "IDLE"
 
-func start() -> void:
+## Enter: the practice first (once per visit, config game_mode.tutorial.enabled), else the round.
+func begin() -> void:
+	if not _active or running():
+		return
+	if tutorial_auto and not tutorial_seen:
+		start_tutorial()
+	else:
+		start()
+
+## The practice (#149): the spell, the hand shapes one by one, one real capsule, then the
+## round. Nothing of it reaches the round: the round starts from a full reset.
+func start_tutorial() -> void:
 	if not _active or running():
 		return
 	_reset_round()
+	_set_phase("TUTORIAL")
+	message = ""
+	var scheme_id := PinchJoystickScheme.ID
+	var claw := {"fist": "closed", "peace": "open"}
+	var hand_on := false
+	if main != null and main.get("gesture") != null:
+		scheme_id = main.gesture.scheme.id()
+		claw = main.gesture.scheme.claw_poses()
+		hand_on = main.gesture.enabled
+	var hw := _voice_client()
+	if hw != null and hw.has_method("_ensure_link"):
+		hw._ensure_link()  # the voice comes over the helper's link (it may be off until now)
+	tutorial.begin(GestureTutorialSteps.resolve(_tutorial_cfg, tutorial_mode, scheme_id, claw), hand_on or demo)
+	_trace("tutorial_start", null, {"result": tutorial_mode})
+
+func _end_tutorial() -> void:
+	tutorial.cancel()
+	tutorial_speech.clear()
+	practice = ""
+
+## The practice capsule: both Dials are prepared and armed as in a round; the clock stays.
+func practice_begin() -> void:
+	if phase != "TUTORIAL":
+		return
+	_reset_round()
+	session = devices.session_id()
+	practice = "open"
+	if trace_to_file:  # the practice capsule has its own trace file: it is not part of a round's
+		trace.open("user://game_mode/practice_%s.jsonl" % Time.get_datetime_string_from_system().replace(":", "").replace("-", ""))
+	for side in SIDES:
+		_prepare(lanes[side])
+	_trace("practice_start", null, {})
+
+## A capsule is on its way through the practice (it is not left behind by a skip).
+func practice_busy() -> bool:
+	for side in SIDES:
+		if not lanes[side].capsule.is_empty():
+			return true
+	return false
+
+## One practice capsule came back (or a Dial failed): the Dials still waiting are closed,
+## a capsule still in play finishes.
+func _practice_close() -> void:
+	if practice != "open":
+		return
+	practice = "closing"
+	_close_idle_lanes()
+
+func _tick_practice() -> void:
+	if practice == "open":
+		for side in SIDES:
+			if lanes[side].state == "FAULT":
+				_practice_close()
+				break
+	if practice == "closing" and _all_settled():
+		var failed := false
+		for side in SIDES:
+			failed = failed or lanes[side].state == "FAULT"
+		if _practice_skip and not failed:
+			practice = "skipped"
+			_trace("practice_end", null, {"result": practice})
+			tutorial.skip_all()  # no OK: the capsule was not done. The round starts.
+			return
+		practice = "done" if practice_released > 0 and not failed else "fault"
+		_trace("practice_end", null, {"result": practice})
+
+func _hand_snapshot() -> Dictionary:
+	if demo and tutorial.active():
+		return GestureTutorialController.demo_hand(tutorial.step(), tutorial.t)
+	if main == null or main.get("gesture") == null:
+		return {"enabled": false}
+	var g: GestureControl = main.gesture
+	var now := float(Time.get_ticks_msec())
+	var age := g.age_ms(now)
+	return {"enabled": g.enabled, "fresh": age >= 0.0 and age <= g.stale_ms, "camera_ok": g.camera_ok, "detected": g.detected,
+		"pose": g.pose, "pinch": g.pinch, "pinch_finger": g.pinch_finger, "pos": g.hand_norm, "active": g.is_active(),
+		"speed": Vector2(g.velocity.length(), absf(g.velocity_z)).length() / maxf(g.scheme.max_speed(g), 1e-6) if g.is_active() else 0.0,
+		"gate": str(main.get("gesture_gate_reason")), "claw_progress": g.claw_progress(now)}
+
+func _on_tutorial_say(lines: Array) -> void:
+	tutorial_speech.clear()
+	tutorial_speech.say(lines)
+
+func _on_tutorial_step(_index: int, step: Dictionary) -> void:
+	match str(step.get("kind", "")):
+		"summon":
+			sounds.play("summon")
+			backdrop.pulse(Color("8a5cff"), 0.9)
+		"practice":
+			practice_begin()
+
+## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
+func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
+	sounds.play("tutorial_ok")
+	fx.react("big")
+	_trace("tutorial_ok", null, {"effect_id": str(step.get("id", ""))})
+
+func _on_tutorial_finished(how: String) -> void:
+	tutorial_seen = true
+	_trace("tutorial_end", null, {"result": how})
+	tutorial_speech.clear()
+	if how == "done":
+		tutorial_speech.say(["よし！ はじめよう！"])
+	if phase != "TUTORIAL":
+		return
+	# the practice is over: the round starts from a full reset (no score, no capsule, no
+	# clock of the practice is carried over; what the Dials already reported stays known)
+	phase = "IDLE"
+	start(true)
+
+## UFOくん's voice for a line: asked of the backend (VOICEVOX / say) over the helper's link.
+## "" = no voice now: the line is shown as words for its reading time.
+func _tutorial_voice(text: String) -> String:
+	var hw := _voice_client()
+	if hw == null or not bool(hw.get("speech_available")) or hw.get("link") == null or not hw.link.is_open():
+		return ""
+	_voice_seq += 1
+	var rid := "sm-gt-say-%d-%d" % [Time.get_ticks_msec(), _voice_seq]  # "sm-": the helper leaves it to its asker
+	if hw.link.send_aux({"type": "homework_say", "request_id": rid, "data": {"text": text}}) != OK:
+		return ""
+	return rid
+
+## The helper's link to the backend (the game's own, else the study mode's): where a voice
+## can be asked for. null = there is none (no helper configured): the lines are words only.
+func _voice_client() -> Node:
+	if main == null:
+		return null
+	var hw: Node = main.get("homework") if main.get("homework") is Node else null
+	if hw == null and main.get("study_mode") != null and main.study_mode != null and main.study_mode.services.homework is Node:
+		hw = main.study_mode.services.homework
+	if hw != null and hw.has_signal("aux_message") and not hw.aux_message.is_connected(_on_tutorial_aux):
+		hw.aux_message.connect(_on_tutorial_aux)
+	return hw
+
+func _on_tutorial_aux(msg: Dictionary) -> void:
+	var rid := str(msg.get("request_id", ""))
+	if not rid.begins_with("sm-gt-"):
+		return
+	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
+	match str(msg.get("type", "")):
+		"homework_speech":
+			tutorial_speech.on_voice(rid, HomeworkClient.wav_stream(Marshalls.base64_to_raw(str(data.get("wav_base64", "")))), str(data.get("credit", "")))
+		"homework_speech_error", "homework_error":
+			tutorial_speech.on_voice_error(rid, str(data.get("message", "")))
+
+## `after_practice`: what the Dials reported in the practice stays known (a repeated
+## BALL_RECEIVED of the practice capsule is still old), everything else starts new.
+func start(after_practice := false) -> void:
+	if not _active or running():
+		return
+	var known := {}
+	var seen := _seen.duplicate()
+	for side in SIDES:
+		known[side] = [lanes[side].last_cycle, lanes[side].cycle_session]
+	_reset_round()
+	if after_practice:
+		_seen = seen
+		for side in SIDES:
+			lanes[side].last_cycle = int(known[side][0])
+			lanes[side].cycle_session = int(known[side][1])
 	if trace_to_file:
 		trace.open("user://game_mode/trace_%s.jsonl" % Time.get_datetime_string_from_system().replace(":", "").replace("-", ""))
 	session = devices.session_id()
@@ -358,6 +579,9 @@ func _reset_round() -> void:
 	particles.clear()
 	_hitstop_left = 0.0
 	sounds.set_bgm(false)
+	practice = ""
+	practice_released = 0
+	_practice_skip = false
 	_cmds.clear()
 	_seen.clear()
 	_hurry_done = false
@@ -480,6 +704,15 @@ func tick(dt: float) -> void:
 	fx.ufo_pos = ufo.position()
 	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
 	match phase:
+		"TUTORIAL":
+			if practice != "":
+				clock += dt  # the practice capsule's own time (combos); the 150 s clock stands still
+				_tick_practice()
+				if demo and practice == "open" and devices.can_mock_ball() and tutorial.t > 2.0 and not practice_busy() \
+						and lanes["left"].state == "READY":
+					_mock_ball("left")  # the rehearsal puts the practice capsule in by itself
+			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy(), "practice": practice,
+				"devices_ok": devices.available(), "capsule": practice_busy()})
 		"COUNTDOWN":
 			clock += dt
 			countdown_left -= dt
@@ -558,6 +791,10 @@ func _time_up() -> void:
 	sounds.set_bgm(false)
 	sounds.play("timeup")
 	_trace("time_up", null, {})
+	_close_idle_lanes()
+
+## The Dials that hold nothing stop taking capsules (the round's end, the practice's end).
+func _close_idle_lanes() -> void:
 	for side in SIDES:
 		var l: Lane = lanes[side]
 		match l.state:
@@ -595,7 +832,7 @@ func _result() -> void:
 			_send(l, "standby", "SET_MODE", {"mode": "STANDBY"})
 	_light("SET_LIGHT_MODE", {"mode": "RESULT", "brightness": 180, "speed": 128, "transition_ms": 500})
 	_light("TRIGGER_EFFECT", {"effect": "GAME_CLEAR", "duration_ms": 2000, "intensity": 220})
-	message = "Enter: もう一回    Esc: タイトル"
+	message = "Enter: すぐ はじめる    T: もういちど れんしゅう    Esc: タイトル"
 	_trace("result", null, {"score_delta": score.score})
 	trace.close()
 
@@ -616,7 +853,7 @@ func _arm(l: Lane) -> void:
 func _tick_lane(l: Lane, dt: float) -> void:
 	match l.state:
 		"OFFLINE":
-			if phase in ["COUNTDOWN", "PLAYING"]:
+			if phase in ["COUNTDOWN", "PLAYING"] or _taking():
 				l.retry_left -= dt
 				if l.retry_left <= 0.0:
 					_prepare(l)
@@ -809,6 +1046,9 @@ func _released(l: Lane) -> void:
 		_arm(l)
 	else:
 		_set_lane(l, "CLOSED")
+	if phase == "TUTORIAL":
+		practice_released += 1
+		_practice_close()  # one capsule is the practice: the other Dial stops waiting
 
 func _fault(l: Lane, why: String) -> void:
 	l.fault = why
@@ -879,7 +1119,7 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 			if ok:
 				l.mode_ok = true
 				_dial_color(l)
-				if phase == "PLAYING":
+				if _taking():
 					_arm(l)
 			else:
 				l.note = "Dial が応えない（%s）" % result
@@ -891,7 +1131,7 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 			if ok:
 				l.note = ""
 				_set_lane(l, "READY")
-				if phase != "PLAYING":  # time ran out while it was arming
+				if not _taking():  # time ran out while it was arming
 					_send(l, "disarm", "DISARM_RECEIVER")
 					l.t = closing_wait_s
 					_set_lane(l, "CLOSING")
@@ -1008,9 +1248,9 @@ func _on_ball(l: Lane, cycle: int) -> void:
 	# ARMING / OFFLINE as well as READY (review on #139): a new cycle's BALL_RECEIVED in this
 	# session says the Dial was armed and holds a capsule, even if the ARM_RECEIVER's answer
 	# is still on its way or was lost. Ignoring it would leave the capsule in the Dial.
-	if phase == "PLAYING" and l.state in ["READY", "ARMING", "OFFLINE"]:
+	if _taking() and l.state in ["READY", "ARMING", "OFFLINE"]:
 		_take(l, cycle, false)
-	elif phase == "SETTLING" and l.state in ["READY", "CLOSING", "CLOSED"]:
+	elif _closing() and l.state in ["READY", "CLOSING", "CLOSED"]:
 		_take(l, cycle, true)  # it landed as the time ran out
 	else:
 		_trace("ball_ignored", l, {"cycle": cycle, "result": "not_accepting:%s/%s" % [phase, l.state]})
@@ -1021,7 +1261,7 @@ func _link_lost(l: Lane, why: String) -> void:
 		return
 	match l.state:
 		"READY", "ARMING", "OFFLINE", "CLOSING":
-			if phase == "SETTLING":
+			if _closing() or (phase == "TUTORIAL" and practice != "open"):
 				_set_lane(l, "CLOSED")
 			else:
 				l.retry_left = arm_retry_s
@@ -1045,6 +1285,7 @@ func on_stop_key() -> void:
 func _halt(why: String) -> void:
 	devices.stop_all()
 	_cmds.clear()
+	_end_tutorial()
 	field.set_frozen(true)
 	fx.react("stop")
 	sounds.set_bgm(false)
@@ -1058,7 +1299,7 @@ func _halt(why: String) -> void:
 		elif l.state != "FAULT":
 			_set_lane(l, "CLOSED")
 	_set_phase("STOPPED")
-	message = "止めました。カプセルが Dial に残っていたら係の人が取り出してね    Enter: やり直す    Esc: タイトル"
+	message = "止めました。カプセルが Dial に残っていたら係の人が取り出してね    Enter: やり直す    T: れんしゅうから    Esc: タイトル"
 	_trace("stopped", null, {"result": why})
 	trace.close()
 
@@ -1068,14 +1309,52 @@ func handle_key(keycode: int) -> bool:
 		return false
 	match keycode:
 		KEY_ENTER, KEY_KP_ENTER:
+			# the title: the practice first. After a round: straight into the next one
+			# (T = the practice once more). In the practice Enter does nothing, so no one
+			# skips it by accident.
 			if not running():
-				start()
+				begin()
 			return true
+		KEY_T:
+			if not running():
+				start_tutorial()
+				return true
+			return false
+		KEY_F6, KEY_F7, KEY_F8:
+			return _staff_key(keycode)
 		KEY_Z:
 			return _mock_ball("left")
 		KEY_M:
 			return _mock_ball("right")
 	return false
+
+## Staff keys of the practice (function keys: not hit by accident). F6 = this step again,
+## F7 = on to the next step, F8 = leave the practice out. A capsule on its way through the
+## practice is never left behind: F7 / F8 wait until it is back. Dials waiting for the
+## practice capsule are disarmed before the round's countdown (in which nothing is taken).
+func _staff_key(keycode: int) -> bool:
+	if phase != "TUTORIAL":
+		return false
+	if practice_busy():
+		tutorial.guide = "カプセルが もどるまで まってね"
+		return true
+	match keycode:
+		KEY_F6:
+			tutorial.retry_step()
+		KEY_F7, KEY_F8:
+			if practice == "open":
+				# the Dials are waiting for a capsule: they are closed first (a capsule that lands
+				# meanwhile goes straight back out), and only then does the round start
+				_practice_skip = true
+				_practice_close()
+				tutorial.guide = "ポータルを とじているよ…"
+			elif practice == "closing":
+				pass  # already on its way
+			elif keycode == KEY_F7 and tutorial.kind() != "practice":
+				tutorial.skip_step()
+			else:
+				tutorial.skip_all()
+	return true
 
 func _mock_ball(side: String) -> bool:
 	if not devices.can_mock_ball():

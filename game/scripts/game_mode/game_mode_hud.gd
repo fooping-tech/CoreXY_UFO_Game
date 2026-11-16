@@ -160,6 +160,8 @@ func _process(dt: float) -> void:
 	_centre.text = centre
 	_centre.add_theme_font_size_override("font_size", 72 if centre.length() > 4 else 120)
 	_message.text = ctl.message if ctl.phase == "STOPPED" else ""
+	if ctl.phase == "COUNTDOWN" and ctl.tutorial_speech.current != "":
+		_message.text = "UFOくん「%s」" % ctl.tutorial_speech.current  # "よし！ はじめよう！" after the practice
 	_start.visible = title
 	_start.modulate.a = 0.8 + 0.2 * sin(_t * 5.0)  # START breathes
 	_start.scale = Vector2.ONE * (1.0 + 0.04 * sin(_t * 5.0))
@@ -171,14 +173,18 @@ func _process(dt: float) -> void:
 		_result_text.text = result_lines() + "\n\n" + ctl.message
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
-		_lane[side].visible = not title
+		_lane[side].visible = not title and (ctl.phase != "TUTORIAL" or ctl.practice != "")
 		_lane[side].text = ctl.lane_text(side)
 		_lane[side].add_theme_color_override("font_color", RED if l.state == "FAULT" else l.color)
 	var hint := "Space: 止める   Esc: タイトル"
 	if ctl.devices != null and ctl.devices.can_mock_ball():
 		hint += "   Mock: Z = 左 / M = 右に入れる"
+	if ctl.phase == "TUTORIAL":
+		hint = "Space: 止める   Esc: タイトル   スタッフ: F6 やりなおし / F7 つぎへ / F8 れんしゅうを とばす"
+		if ctl.practice != "" and ctl.devices != null and ctl.devices.can_mock_ball():
+			hint += "   Mock: Z / M"
 	_hint.text = hint
-	_problem.text = problem_text()
+	_problem.text = problem_text() if ctl.phase != "TUTORIAL" or ctl.practice != "" else ""
 	_problem.position.y = 420.0 if title else 150.0
 
 # ------------------------------------------------------------------ drawing
@@ -190,7 +196,8 @@ func _draw_art() -> void:
 	# the score (top left) and the clock (top right): narrow, so the UFO's rail between them is clear
 	var rising := float(ctl.score.score) - _shown_score > 0.5
 	_panel(SCORE_RECT, YELLOW.lerp(Color.WHITE, 0.6) if rising else YELLOW)
-	PixelText.draw(art, "SCORE", SCORE_RECT.position + Vector2(10, 8), 2.0, YELLOW)
+	# in the practice the numbers are not the round's: the panel says so
+	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else "SCORE", SCORE_RECT.position + Vector2(10, 8), 2.0, YELLOW)
 	var st := "%d" % int(round(_shown_score))
 	PixelText.draw_right(art, st, Vector2(SCORE_RECT.end.x - 10.0, 32.0 - (2.0 if rising else 0.0)), 4.0 if st.length() <= 6 else 2.0,
 		YELLOW if rising else Color.WHITE, DARK)

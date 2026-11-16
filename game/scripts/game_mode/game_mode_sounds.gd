@@ -44,6 +44,8 @@ const FADE_S := 0.6
 const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETURNING", "release": "RELEASING", "fault": "FAULT"}
 ## the pitch of "combo" by the step the combo reached
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
+## sounds that are only synthesised here (#149: no file was added for the practice)
+const SYNTH_ONLY := ["tutorial_ok", "summon"]
 
 var enabled := true
 var volume_db := -8.0
@@ -108,6 +110,9 @@ func _ready() -> void:
 		"target": StudySounds._tones([[880.0, 0.04], [1318.5, 0.08]], 0.3),
 		"sling": StudySounds._tones([[1318.5, 0.03]], 0.2),
 		"gem": StudySounds._tones([[1568.0, 0.04], [2093.0, 0.1]], 0.3),
+		# the practice before the round (#149): "ping-pong" for a step done, the spell's rise
+		"tutorial_ok": StudySounds._tones([[1318.5, 0.16], [1046.5, 0.42]], 0.4),
+		"summon": StudySounds._sweep(196.0, 1568.0, 0.9, 0.3),
 		"alien": StudySounds._tones([[659.3, 0.06], [880.0, 0.06], [1318.5, 0.06], [1760.0, 0.2]], 0.35),
 		"warp": StudySounds._sweep(330.0, 1760.0, 0.3, 0.3),
 		"combo": StudySounds._tones([[1046.5, 0.05], [1568.0, 0.12]], 0.3),
