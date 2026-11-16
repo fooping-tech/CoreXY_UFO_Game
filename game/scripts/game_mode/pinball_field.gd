@@ -90,6 +90,15 @@ var bounce := 0.45
 var bumper_kick := 420.0
 var pop_kick := 300.0
 var sling_kick := 230.0
+## A capsule still on the field after settle_after_s calms down (#147): over settle_over_s
+## the kicks of the bumpers, pops and slings fade to settle_kick of their strength and its
+## gravity grows to settle_gravity times, so it gets to a goal instead of bouncing until
+## max_stay_s, and the warp holes let it pass. A fresh capsule bounces as before; the points
+## of a hit do not change.
+var settle_after_s := 5.0
+var settle_over_s := 3.0
+var settle_kick := 0.1
+var settle_gravity := 2.5
 var warp_speed := 610.0  # px/s up, out of a warp hole
 var spinner_speed := 2.6  # rad/s (the two turn opposite ways)
 var star_respawn_s := 8.0
@@ -132,6 +141,10 @@ func configure(cfg: Dictionary) -> void:
 	stall_s = float(cfg.get("stall_s", stall_s))
 	gravity_scale = float(cfg.get("gravity_scale", gravity_scale))
 	bounce = float(cfg.get("bounce", bounce))
+	settle_after_s = float(cfg.get("settle_after_s", settle_after_s))
+	settle_over_s = maxf(float(cfg.get("settle_over_s", settle_over_s)), 0.1)
+	settle_kick = clampf(float(cfg.get("settle_kick", settle_kick)), 0.0, 1.0)
+	settle_gravity = maxf(float(cfg.get("settle_gravity", settle_gravity)), 1.0)
 	star_respawn_s = float(cfg.get("star_respawn_s", star_respawn_s))
 
 # ------------------------------------------------------------------ building
@@ -354,6 +367,10 @@ static func slope_normal(i: int) -> Vector2:
 static func goal_at(x: float) -> String:
 	return "left" if x < POSTS_X[0] else ("center" if x <= POSTS_X[1] else "right")
 
+## How far a capsule of this age has calmed down: 0 = fresh, 1 = fully.
+func settle_k(age: float) -> float:
+	return clampf((age - settle_after_s) / settle_over_s, 0.0, 1.0)
+
 func _on_capsule_body(body: Node, id: String) -> void:
 	if not _capsules.has(id) or _capsules[id].done or not body.has_meta("kind"):
 		return
@@ -361,19 +378,20 @@ func _on_capsule_body(body: Node, id: String) -> void:
 	if not kind in ["pin", "bumper", "spinner", "pop", "target", "sling"]:
 		return
 	var cap: RigidBody2D = _capsules[id].body
+	var kick := lerpf(1.0, settle_kick, settle_k(float(_capsules[id].age)))
 	var n := int(str(body.get_meta("target")).get_slice("_", 1))
 	match kind:
 		"pop":
-			cap.apply_central_impulse((cap.position - (body as Node2D).position).normalized() * pop_kick * cap.mass)
+			cap.apply_central_impulse((cap.position - (body as Node2D).position).normalized() * pop_kick * kick * cap.mass)
 			_pop_flash[n] = 0.25
 		"target":
 			_target_lit[n] = TARGET_LIT_S
 		"sling":
-			cap.apply_central_impulse((body.get_meta("normal") as Vector2) * sling_kick * cap.mass)
+			cap.apply_central_impulse((body.get_meta("normal") as Vector2) * sling_kick * kick * cap.mass)
 			_sling_flash[n] = 0.25
 	if kind == "bumper":
 		var away := (cap.position - (body as Node2D).position).normalized()
-		cap.apply_central_impulse(away * bumper_kick * cap.mass)
+		cap.apply_central_impulse(away * bumper_kick * kick * cap.mass)
 		_bumper_flash[int(str(body.get_meta("target")).get_slice("_", 1))] = 0.25
 	elif kind == "pin":
 		_pin_flash[str(body.get_meta("target"))] = 0.3
@@ -416,7 +434,7 @@ func _on_area(body: Node, area: Area2D) -> void:
 ## WARP_HOLD_S. Only WARPS_PER_CAPSULE times per capsule, so it always gets down.
 func _enter_warp(id: String, w: int) -> void:
 	var c: Dictionary = _capsules[id]
-	if c.held > 0.0 or c.warps >= WARPS_PER_CAPSULE:
+	if c.held > 0.0 or c.warps >= WARPS_PER_CAPSULE or settle_k(float(c.age)) > 0.0:
 		return
 	c.warps += 1
 	c.held = WARP_HOLD_S
@@ -499,6 +517,7 @@ func advance(dt: float) -> void:
 		if c.age >= max_stay_s:
 			_exit(id, "timeout", b.position)
 			continue
+		b.gravity_scale = gravity_scale * lerpf(1.0, settle_gravity, settle_k(float(c.age)))
 		if b.linear_velocity.length() < stall_speed:
 			c.slow += dt
 			if c.slow >= stall_s:

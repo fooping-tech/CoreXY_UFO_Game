@@ -3750,7 +3750,10 @@ func _test_game_mode_physics() -> void:
 	Engine.physics_ticks_per_second = 60 * 8
 	Engine.time_scale = 8.0
 	Engine.max_physics_steps_per_frame = 32
-	var xs := [260.0, 395.0, 444.0, 640.0, 836.0, 1000.0]
+	# many X, not a lucky few (#147): the field is chaotic, a handful proves nothing
+	var xs := []
+	for k in 24:
+		xs.append(250.0 + 33.5 * k)
 	var worst := 0.0
 	for i in xs.size():
 		var id := "p%d" % i
@@ -3769,10 +3772,14 @@ func _test_game_mode_physics() -> void:
 	Engine.time_scale = 1.0
 	Engine.max_physics_steps_per_frame = max_steps
 	var goals: Array = exits.values()
-	_ok(exits.size() == xs.size() and goals.all(func(g): return g in ["left", "center", "right"]) and worst > 0.5 and worst < 15.0
+	_ok(exits.size() == xs.size() and goals.all(func(g): return g in ["left", "center", "right"]) and worst > 0.5 and worst < 13.0
 		and int(hits.get("pin", 0)) >= xs.size() and int(hits.get("switch", 0)) >= 2,
-		"game mode physics: capsules dropped across the field hit pins and switches and reach a goal well inside 15 s",
+		"game mode physics: 24 capsules dropped across the field hit pins and switches and all reach a goal well inside 15 s",
 		"%s hits=%s worst=%.1fs" % [exits, hits, worst])
+	_ok(is_zero_approx(f.settle_k(0.0)) and is_zero_approx(f.settle_k(f.settle_after_s)) and is_equal_approx(f.settle_k(f.settle_after_s + f.settle_over_s), 1.0)
+		and f.settle_k(f.settle_after_s + f.settle_over_s * 0.5) > 0.4 and f.settle_after_s + f.settle_over_s < f.max_stay_s,
+		"game mode physics: a fresh capsule bounces at full strength, one that stays calms down well before the time limit (#147)",
+		"%.1f %.1f %.1f" % [f.settle_after_s, f.settle_over_s, f.max_stay_s])
 	remove_child(holder)
 	holder.free()
 
