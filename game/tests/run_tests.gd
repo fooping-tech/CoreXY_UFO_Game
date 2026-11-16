@@ -82,6 +82,7 @@ func _ready() -> void:
 	_test_game_mode_result_show(rs)
 	_test_ranking_logic()
 	_test_game_mode_ranking(rs)
+	_test_portrait_layout(rs)
 	_test_game_mode_scope(rs)
 	_test_game_mode_audio(rs)
 	_test_game_mode_reactions(rs)
@@ -3492,8 +3493,11 @@ func _test_game_mode_visuals(rs: Node) -> void:
 		and flash == 1.0 and b.flash_level() == 0.0 and b.side_level("left") == 0.0 and not ctl.hud.title_showing(),
 		"game mode art: no title during play; a hit pin glows and fades; the background's glow and the Dial side's light fade by themselves",
 		"%s %s %s %s" % [playing_clean, lit, pin_glow, flash])
-	_ok(ctl.hud.clock_color() == Color.WHITE and GameModeHud.title_card(0).position.x < GameModeHud.title_card(2).position.x,
-		"game mode art: the clock is white until the last 30 seconds")
+	# (portrait, #157: the three "how to play" cards stand one under another, inside the screen)
+	_ok(ctl.hud.clock_color() == Color.WHITE and GameModeHud.title_card(0).end.y <= GameModeHud.title_card(1).position.y
+		and GameModeHud.title_card(1).end.y <= GameModeHud.title_card(2).position.y
+		and Rect2(Vector2.ZERO, GameModeLayout.SCREEN).encloses(GameModeHud.title_card(2)) and GameModeHud.START_RECT.end.y < GameModeHud.title_card(0).position.y,
+		"game mode art: the clock is white until the last 30 seconds; the title's cards go down the screen")
 	_gm_free(game, rs)
 
 ## #141 (the feedback round): the pixel canvas, the new things to hit, the bounce, the combo
@@ -3502,11 +3506,11 @@ func _test_game_mode_juice(rs: Node) -> void:
 	var game := _gm_game()
 	var ctl: GameModeController = _gm_playing(game)
 	# one dot = two screen pixels, like the UFO's 64 x 64 sprite at 2x; the picture is in the canvas
-	_ok(ctl.pixel_view.size == Vector2i(640, 360) and GameModeController.DOT_PX == GameModeVFX.UFO_SCALE
-		and ctl.screen.size == Vector2(1280, 720) and ctl.field_art.get_parent() == ctl.pixel_view
+	_ok(ctl.pixel_view.size == Vector2i(360, 640) and GameModeController.DOT_PX == GameModeVFX.UFO_SCALE
+		and ctl.screen.size == Vector2(720, 1280) and ctl.field_art.get_parent() == ctl.pixel_view
 		and ctl.fx.get_parent() == ctl.pixel_view and ctl.backdrop.get_parent() == ctl.pixel_view
 		and ctl.field.get_parent() == ctl.layer and ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_ALWAYS,
-		"game mode pixels: the background, the field's picture and the effects are drawn in a 640 x 360 canvas shown at 2x (the UFO's dot size); the physics stays in the game's world")
+		"game mode pixels: the background, the field's picture and the effects are drawn in a 360 x 640 portrait canvas shown at 2x (the UFO's dot size); the physics stays in the game's world")
 	# the new kinds score, light up and kick
 	ctl.mock_hub.mock_ball(GM_L)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
@@ -3583,7 +3587,7 @@ func _test_game_mode_juice(rs: Node) -> void:
 		and int(ctl.score.counts.get("warp", 0)) == 1,
 		"game mode field: a gem and the alien score once and come back later, the alien drifts across; a warp hole holds a capsule, shoots it up towards the middle, and takes each capsule only once",
 		"%s %d %s %s %s" % [taken, gained, held, out, once])
-	_ok(ctl.hud.size == Vector2(1280, 720) and ctl.hud.art.size == Vector2(1280, 720),
+	_ok(ctl.hud.size == Vector2(720, 1280) and ctl.hud.art.size == Vector2(720, 1280),
 		"game mode layout: the HUD's drawing has the screen's size (with none, the score and clock panels dropped out for a frame when the picture shook)")
 	# the sky follows the clock: calm, the last 30 s, the last 10 s
 	var calm: int = ctl.backdrop.urgency
@@ -3599,20 +3603,35 @@ func _test_game_mode_juice(rs: Node) -> void:
 		and ctl.backdrop.light_color().r > ctl.backdrop.light_color().b,
 		"game mode juice: the sky and its light change with the time left (calm, the last 30 s, the last 10 s)",
 		"%d %d %d" % [calm, hurry, last])
-	# the gesture panel stands in the left column, clear of the field, the score and the Dial's port
+	# portrait (#157): the hand panel sits on the left of the status row: clear of the score, the
+	# UFO's rail, the field and the Dial's port
+	var screen_rect := Rect2(Vector2.ZERO, GameModeLayout.SCREEN)
 	game.gesture_hud.column = true
-	game.gesture_hud.place(1280.0, 720.0)
+	game.gesture_hud.place(720.0, 1280.0)
 	var card := Rect2(game.gesture_hud.position, game.gesture_hud.size)
-	var field_rect := Rect2(PinballField.LEFT - 12.0, 0, PinballField.RIGHT - PinballField.LEFT + 24.0, 720)
-	var port := Rect2(GameModeVFX.PORTS["left"] - Vector2(40, 130), Vector2(80, 200))
-	var ufo_left := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 64.0, 128, 128)
+	var field_rect := Rect2(PinballField.LEFT - 12.0, PinballField.TOP - 30.0, PinballField.RIGHT - PinballField.LEFT + 24.0,
+		PinballField.FLOOR_Y - PinballField.TOP + 98.0)
+	var port := Rect2(GameModeVFX.PORTS["left"] - Vector2(40, 40), Vector2(80, 100))
+	var rail := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 52.0, ctl.ufo.x_max - ctl.ufo.x_min + 128.0, 116)  # (the sprite's own top rows are empty)
 	_ok(not card.intersects(field_rect) and not card.intersects(GameModeHud.SCORE_RECT) and not card.intersects(port)
-		and not GameModeHud.SCORE_RECT.intersects(ufo_left) and GameModeHud.TIME_RECT.position.x > ctl.ufo.x_max + 64.0
-		and game.gesture_hud.ring()[0].x < card.size.x,
-		"game mode layout: the hand panel (camera, state, speed) is a column beside the field: it covers neither the field, the goals, the score nor the Dial's port, and the UFO's rail is clear of the score and the clock",
+		and not card.intersects(rail) and not GameModeHud.SCORE_RECT.intersects(rail) and not GameModeHud.TIME_RECT.intersects(rail)
+		and not GameModeHud.SCORE_RECT.intersects(GameModeHud.TIME_RECT) and screen_rect.encloses(card) and screen_rect.encloses(rail)
+		and screen_rect.encloses(GameModeHud.SCORE_RECT) and screen_rect.encloses(GameModeHud.TIME_RECT)
+		and not card.intersects(GameModeLayout.COMBO_RECT) and not card.intersects(ArmScope.RECT)
+		and game.gesture_hud.ring()[0].x + game.gesture_hud.ring()[1] < card.size.x and GestureHud.CAM_RECT.end.y < card.size.y,
+		"game mode layout: the hand panel (camera, stick, state) is on the left of the status row: it covers neither the score, the UFO's rail, the field nor the Dial's port",
 		str(card))
+	# the field is tall, the Dials' ports are under it: Dial 1 left, Dial 2 right
+	var pl: Vector2 = GameModeVFX.PORTS["left"]
+	var pr: Vector2 = GameModeVFX.PORTS["right"]
+	_ok(PinballField.FLOOR_Y - PinballField.TOP > PinballField.RIGHT - PinballField.LEFT and screen_rect.encloses(field_rect)
+		and pl.x < GameModeLayout.CX and pr.x > GameModeLayout.CX and pl.y > PinballField.FLOOR_Y + 68.0 and is_equal_approx(pl.y, pr.y)
+		and is_equal_approx(pl.x, GameModeLayout.SCREEN.x - pr.x) and ctl.lanes["left"].device == GM_L and ctl.lanes["right"].device == GM_R
+		and GameModeLayout.dial_edge("left").x < 0.0 and GameModeLayout.dial_edge("right").x > GameModeLayout.SCREEN.x
+		and ctl.ufo.x_min >= PinballField.LEFT + 30.0 and ctl.ufo.x_max <= PinballField.RIGHT - 30.0,
+		"game mode layout: portrait: the field is taller than wide and inside the screen; Dial 1's port is bottom left, Dial 2's bottom right, their light runs off their own side")
 	game.gesture_hud.column = false
-	game.gesture_hud.place(1280.0, 720.0)
+	game.gesture_hud.place(720.0, 1280.0)
 	_ok(game.gesture_hud.size == GestureHud.SIZE, "game mode layout: outside the score game the hand panel is the wide one as before")
 	ctl.close()
 	_ok(ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_DISABLED and ctl.screen.position == Vector2.ZERO,
@@ -3632,17 +3651,21 @@ func _test_game_mode_scope(rs: Node) -> void:
 	var ctl: GameModeController = _gm_playing(game)
 	var sc := ctl.scope
 	ctl._process(0.016)
-	var hidden: bool = not sc.visible and sc.source_role() == "" and sc.state() == "NO SIGNAL" and ctl.backdrop.planet_visible
+	var hidden: bool = not sc.visible and sc.source_role() == "" and sc.state() == "NO SIGNAL"
 	ctl.demo = true  # the rehearsal's made-up picture stands in for the camera
 	ctl._process(0.016)
-	var shown: bool = sc.visible and sc.source_role() == "demo" and not ctl.backdrop.planet_visible and sc.state() == "DEMO"
+	var shown: bool = sc.visible and sc.source_role() == "demo" and sc.state() == "DEMO"
 	var card := ArmScope.RECT
-	var field_rect := Rect2(PinballField.LEFT - 12.0, 0, PinballField.RIGHT - PinballField.LEFT + 24.0, 720)
-	var port := Rect2(GameModeVFX.PORTS["right"] - Vector2(40, 130), Vector2(80, 200))
+	var field_rect := Rect2(PinballField.LEFT - 12.0, PinballField.TOP - 30.0, PinballField.RIGHT - PinballField.LEFT + 24.0,
+		PinballField.FLOOR_Y - PinballField.TOP + 98.0)
+	var port := Rect2(GameModeVFX.PORTS["right"] - Vector2(40, 40), Vector2(80, 100))
+	var rail := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 52.0, ctl.ufo.x_max - ctl.ufo.x_min + 128.0, 116)  # (the sprite's own top rows are empty)
 	_ok(hidden and shown and sc.stream_header().is_empty()
 		and not card.intersects(field_rect) and not card.intersects(GameModeHud.TIME_RECT) and not card.intersects(port)
-		and card.end.x <= 1280.0 and sc.centre().x + ArmScope.RADIUS <= card.size.x and sc.demo_pan() == sc.demo_pan(),
-		"game mode scope: the arm camera is a round scope in the right column (hidden with no camera, the planet shows instead; the demo has its own picture); it covers neither the field, the clock nor the Dial's port",
+		and not card.intersects(rail) and not card.intersects(GameModeLayout.COMBO_RECT)
+		and Rect2(Vector2.ZERO, GameModeLayout.SCREEN).encloses(card) and sc.centre().x + ArmScope.RADIUS <= card.size.x
+		and sc.centre().y + ArmScope.RADIUS <= card.size.y and sc.demo_pan() == sc.demo_pan(),
+		"game mode scope: the arm camera is a round scope on the right of the status row (hidden with no camera; the demo has its own picture); it covers neither the field, the UFO's rail, the clock nor the Dial's port",
 		"%s %s" % [hidden, shown])
 	ctl.close()
 	_ok(not sc.visible and sc._demo_view.render_target_update_mode == SubViewport.UPDATE_DISABLED,
@@ -4269,8 +4292,8 @@ func _test_game_mode_result_logic() -> void:
 		for k in [1.0, 1.15, 1.37, 1.72]:
 			var sc := GameModeResultScreen.number_scale(digits, k)
 			fits = fits and GameModeResultScreen.number_width(digits, k) <= GameModeResultScreen.SCREEN.x and sc >= 2.0 and fmod(sc, 2.0) == 0.0
-	_ok(fits and GameModeResultScreen.number_scale(4) == GameModeResultScreen.NUMBER_SCALE
-		and GameModeResultScreen.number_scale(12) < GameModeResultScreen.number_scale(6)
+	_ok(fits and GameModeResultScreen.number_scale(2) == GameModeResultScreen.NUMBER_SCALE
+		and GameModeResultScreen.number_scale(5) >= 16.0 and GameModeResultScreen.number_scale(12) < GameModeResultScreen.number_scale(6)
 		and PixelText.height(GameModeResultScreen.number_scale(1, 1.72)) <= 300.0,
 		"result screen: the number is huge and never wider than the screen, however many digits (its dots are whole canvas dots)")
 
@@ -4550,7 +4573,9 @@ func _test_ranking_logic() -> void:
 		"ranking: a file cut short as it is written (a full disk) is not put in place of the saved one; the failure is reported", cut.save_error)
 	_ok(GameModeRankingHud.rank_color(1) == GameModeRankingHud.GOLD and GameModeRankingHud.rank_color(2) == GameModeRankingHud.SILVER
 		and GameModeRankingHud.rank_color(3) == GameModeRankingHud.BRONZE and GameModeRankingHud.rank_color(7) == GameModeRankingHud.REST
-		and GameModeRankingHud.row_y(10) + PixelText.height(GameModeRankingHud.row_scale(10)) < 602.0
+		and GameModeRankingHud.row_y(10) + PixelText.height(GameModeRankingHud.row_scale(10)) < GameModeRankingHud.PLATE.end.y
+		and GameModeRankingHud.row_y(1) > GameModeRankingHud.PLATE.position.y and Rect2(Vector2.ZERO, GameModeLayout.SCREEN).encloses(GameModeRankingHud.PLATE)
+		and GameModeRankingHud.PLATE.size.y > GameModeRankingHud.PLATE.size.x
 		and GameModeRankingHud.row_y(4) - GameModeRankingHud.row_y(3) >= PixelText.height(GameModeRankingHud.TOP_SCALE) + 8.0
 		and RankingManager.new_id() != RankingManager.new_id(),
 		"ranking board: gold, silver, bronze, then the rest; ten rows fit the plate without touching; every round has its own id")
@@ -4779,6 +4804,148 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	for name in ["game.tsv", "logic.tsv", "bad.tsv", "junk.tsv", "later.tsv"]:
 		_rank_file(name)  # (the tests' own files are not left behind)
 
+## Portrait (#157): the 9:16 screen, its regions, the tall field, and what must not have
+## changed with it (the Dials' sides, the robot's coordinates).
+func _test_portrait_layout(rs: Node) -> void:
+	var L := GameModeLayout
+	var screen := Rect2(Vector2.ZERO, L.SCREEN)
+	_ok(int(ProjectSettings.get_setting("display/window/size/viewport_width")) == 720
+		and int(ProjectSettings.get_setting("display/window/size/viewport_height")) == 1280
+		and str(ProjectSettings.get_setting("display/window/stretch/mode")) == "canvas_items"
+		and str(ProjectSettings.get_setting("display/window/stretch/aspect")) == "keep"
+		and int(ProjectSettings.get_setting("rendering/textures/canvas_textures/default_texture_filter")) == 0
+		and L.SCREEN == Vector2(720, 1280) and Vector2(L.PIXEL_SIZE) * L.DOT_PX == L.SCREEN
+		and is_equal_approx(1080.0 / L.SCREEN.x * L.DOT_PX, 3.0) and is_equal_approx(2160.0 / L.SCREEN.x * L.DOT_PX, 6.0)
+		and is_equal_approx(L.SCREEN.x / L.SCREEN.y, 9.0 / 16.0),
+		"portrait: the design screen is 720 x 1280 (9:16), stretched whole with its aspect kept (bars, never a cut or a squeeze); one dot is 3 px at 1080 x 1920 and 6 px at 2160 x 3840, nearest neighbour")
+	# the regions, top to bottom, none over another, all inside the screen
+	var rail := Rect2(L.FIELD_LEFT, L.UFO_Y - 52.0, L.FIELD_RIGHT - L.FIELD_LEFT, 104.0)
+	var field := Rect2(L.FIELD_LEFT, L.FIELD_TOP, L.FIELD_RIGHT - L.FIELD_LEFT, L.FIELD_FLOOR - L.FIELD_TOP)
+	var regions := [L.SCORE_RECT, L.TIME_RECT, L.GESTURE_RECT, L.COMBO_RECT, L.SCOPE_RECT, rail]
+	var clear := true
+	for i in regions.size():
+		clear = clear and screen.encloses(regions[i])
+		for j in range(i + 1, regions.size()):
+			clear = clear and not (regions[i] as Rect2).intersects(regions[j])
+	_ok(clear and L.SCORE_RECT.end.y <= L.STATUS_Y and L.GESTURE_RECT.end.y <= rail.position.y and rail.end.y <= L.FIELD_TOP + 2.0
+		and L.FIELD_FLOOR < L.DIALS_Y and screen.encloses(field) and field.size.y > field.size.x * 1.05
+		and L.SCORE_RECT.size.x >= 320.0 and L.TIME_RECT.size.x >= 320.0 and L.SCORE_RECT.end.x < L.CX and L.TIME_RECT.position.x > L.CX,
+		"portrait layout: score and clock on top (half the width each), the hand, the combo and the arm camera under them, the UFO's rail, the tall field, the Dials at the foot; nothing over anything else")
+	_ok(L.fit_scale("12345", 316.0, 8.0) == 8.0 and L.fit_scale("123456789", 316.0, 8.0) == 4.0 and L.fit_scale("1", 10.0, 8.0) == 2.0
+		and PixelText.width("123456789", L.fit_scale("123456789", 316.0, 8.0)) <= 316.0
+		and PixelText.width("2:30", 8.0) <= L.TIME_RECT.size.x - 28.0,
+		"portrait layout: the score's digits are as big as its panel allows (8 dots for six digits) and shrink, in whole even dots, before they would leave it")
+	# the tall field: everything inside it, and room for a capsule everywhere
+	var F := PinballField
+	var cap := F.CAPSULE_R * 2.0
+	var inside := true
+	var pins: Array[Vector2] = []
+	for row in F.PIN_ROWS:
+		for i in int(row[2]):
+			pins.append(Vector2(float(row[1]) + F.PIN_STEP * i, float(row[0])))
+	var things: Array = pins.duplicate()
+	things.append_array(F.BUMPERS)
+	things.append_array(F.SPINNERS)
+	things.append_array(F.POPS)
+	things.append_array(F.WARPS)
+	things.append_array(F.GEMS)
+	things.append(F.STAR)
+	for p in things:
+		inside = inside and p.x > F.LEFT and p.x < F.RIGHT and p.y > F.SPAWN_Y and p.y < F.FLOOR_Y
+	var gaps := true
+	for i in pins.size():
+		gaps = gaps and pins[i].x - F.PIN_R - F.LEFT >= cap and F.RIGHT - pins[i].x - F.PIN_R >= cap  # past the walls
+		for j in range(i + 1, pins.size()):
+			gaps = gaps and pins[i].distance_to(pins[j]) - 2.0 * F.PIN_R >= cap + 4.0  # between any two pins
+	for b in F.BUMPERS:
+		for p in pins:
+			gaps = gaps and (b as Vector2).distance_to(p) - F.BUMPER_R - F.PIN_R >= cap
+	var centre_w: float = F.POSTS_X[1] - F.POSTS_X[0]
+	var side_w: float = F.POSTS_X[0] - F.LEFT - F.SLOPE_W
+	_ok(inside and gaps and F.PIN_ROWS.size() >= 4 and F.SWITCH_X.size() == 3 and F.BUMPERS.size() == 3 and F.SPINNERS.size() == 2
+		and F.POPS.size() == 2 and F.TARGETS.size() == 4 and F.WARPS.size() == 2 and F.GEMS.size() == 4
+		and centre_w >= cap * 2.0 and side_w >= cap * 3.0 and centre_w < side_w
+		and is_equal_approx(F.POSTS_X[0] + F.POSTS_X[1], F.LEFT + F.RIGHT) and is_equal_approx(F.SWITCH_X[1], F.CENTRE_X)
+		and F.goal_at(F.LEFT + 40.0) == "left" and F.goal_at(F.CENTRE_X) == "center" and F.goal_at(F.RIGHT - 40.0) == "right"
+		and F.ALIEN_X0 > F.LEFT and F.ALIEN_X1 < F.RIGHT and F.SLOPE_BOTTOM_Y < F.FLOOR_Y and F.SPAWN_Y < F.SWITCH_Y,
+		"portrait field: every kind of thing is there (pins, 3 switches, 3 bumpers, 2 spinners, the star, 4 gems, the alien, 2 warp holes, 2 slingshots, 3 goals), inside the walls, with room for a capsule between any two pins and into every goal",
+		"%s %s %.0f %.0f" % [inside, gaps, centre_w, side_w])
+	# in the game: the picture is the layout's, the HUD stays readable in a shake, Dial 1 is left
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hud_inside := true
+	for l in [ctl.hud._centre, ctl.hud._message, ctl.hud._hint, ctl.hud._problem, ctl.hud._lane["left"], ctl.hud._lane["right"], ctl.hud._start]:
+		hud_inside = hud_inside and screen.encloses(Rect2((l as Label).position, (l as Label).size))
+	for l in [ctl.result_screen._sub, ctl.result_screen._stats, ctl.result_screen._keys, ctl.result_screen._faults,
+			ctl.ranking_hud._place, ctl.ranking_hud._note, ctl.ranking_hud._keys, ctl.tutorial_hud._title, ctl.tutorial_hud._guide]:
+		hud_inside = hud_inside and screen.encloses(Rect2((l as Label).position, (l as Label).size))
+	for line in GestureTutorialHud.LINES.values():
+		for r in line:
+			hud_inside = hud_inside and screen.encloses(r)
+	game.shake.enabled = true
+	game.shake.trauma = 1.0
+	game.shake.step(1.0 / 60.0)
+	ctl._process(1.0 / 60.0)
+	var moved: Vector2 = ctl.layer.offset
+	var held: Vector2 = ctl.hud.position + moved  # where the HUD really is on the screen
+	_ok(hud_inside and moved.length() > 0.5 and held.length() <= moved.length() * 0.3 and held.length() <= 4.0
+		and screen.encloses(Rect2(L.SCORE_RECT.position + held, L.SCORE_RECT.size)) and screen.encloses(Rect2(L.TIME_RECT.position + held, L.TIME_RECT.size))
+		and screen.encloses(GestureTutorialHud.PANEL) and screen.encloses(GameModeHud.START_RECT)
+		and GameModeResultScreen.CENTRE.y > L.FIELD_TOP and GameModeResultScreen.CENTRE.y < L.FIELD_FLOOR
+		and GameModeResultScreen.CONFETTI_Y < L.SCREEN.y and GameModeRankingHud.TITLE_Y > L.GESTURE_RECT.end.y,
+		"portrait game: every line of the HUD, the practice, the result and the ranking is inside the screen; in the biggest shake the score and the clock move only a quarter as far and never leave it",
+		"%s %s %s" % [hud_inside, str(moved), str(held)])
+	game.shake.trauma = 0.0
+	_ok(ctl.lanes["left"].device == GameModeDevices.DIAL_1 and ctl.lanes["right"].device == GameModeDevices.DIAL_2
+		and ctl.fx.port("left").x < L.CX and ctl.fx.port("right").x > L.CX and ctl.fx.dial_edge("left").x < ctl.fx.port("left").x
+		and ctl.fx.dial_edge("right").x > ctl.fx.port("right").x and ctl.backdrop.ports["left"] == ctl.fx.port("left")
+		and ctl.ufo.x_min < ctl.ufo.x_max and is_equal_approx(ctl.ufo.y, L.UFO_Y) and ctl.ufo.y < F.TOP,
+		"portrait game: Dial 1 is still the left of the screen and Dial 2 the right (ports, lights and devices agree); the UFO runs above the field")
+	_gm_free(game, rs)
+	# the staff's screens fit the narrow screen
+	game = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var dbg: float = game.debug_ui._panel.get_combined_minimum_size().x
+	game.show_title()
+	game.open_settings()
+	var set_w := 0.0
+	for tab in 3:
+		game.settings.show_tab(tab)
+		for c in game.settings.find_children("*", "PanelContainer", true, false):
+			if c.get_parent() is CenterContainer:
+				set_w = maxf(set_w, (c as Control).get_combined_minimum_size().x)
+	var cards: Array = game.title._cards
+	var stacked := cards.size() >= 2
+	for c in cards:
+		stacked = stacked and (c as Control).get_parent() is VBoxContainer and (c as Control).get_combined_minimum_size().x <= L.SCREEN.x - 40.0
+	var panel_w: float = game.debug_ui.PANEL_W
+	_ok(dbg <= panel_w and set_w > 0.0 and set_w <= L.SCREEN.x and stacked and panel_w <= L.SCREEN.x * 0.5,
+		"portrait staff screens: the debug panel keeps its 360 px (a wide row scrolls, it no longer runs off the screen), the settings panel fits the 720 px screen, the title's mode cards stand one under another",
+		"%.0f %.0f %s" % [dbg, set_w, stacked])
+	# full screen: the config decides, the command line and F11 win
+	var at_start: int = game.window_mode_applied  # (decided once while the game came up)
+	var full_cfg: bool = game.fullscreen_wanted()
+	game.fullscreen_override = "on"
+	var on: bool = game.fullscreen_wanted()
+	game.fullscreen_override = "off"
+	var off: bool = not game.fullscreen_wanted()
+	game.fullscreen_override = ""
+	game.apply_window_mode()  # (headless: nothing to do, and nothing breaks)
+	_ok(full_cfg == bool(GameConfig.value("render.fullscreen", false)) and on and off and at_start >= 1 and game.window_mode_applied == at_start + 1,
+		"portrait display: full screen follows render.fullscreen, already at start (no argument needed); --fullscreen / --windowed and F11 override it",
+		"%d" % at_start)
+	# the screen's shape is the picture's only: the robot's own coordinates mean what they did
+	var ax0: Vector3 = RobotState.anchor_for_xy(10.0, 10.0)
+	var ax1: Vector3 = RobotState.anchor_for_xy(60.0, 10.0)
+	var ay1: Vector3 = RobotState.anchor_for_xy(10.0, 60.0)
+	_ok(RobotState.rope_length_for_z(100.0) > RobotState.rope_length_for_z(0.0) and ax1.x > ax0.x and is_equal_approx(ax1.z, ax0.z)
+		and ay1.z < ax0.z and is_equal_approx(ay1.x, ax0.x) and is_equal_approx(ax0.y, 0.0),
+		"portrait and the robot: the robot's coordinates are untouched: the arm going up still lengthens the rope (the inverse mapping: the UFO goes down), +X is still right and +Y still away on the picture",
+		"%s %s %s rope %.1f %.1f" % [str(ax0), str(ax1), str(ay1), RobotState.rope_length_for_z(0.0), RobotState.rope_length_for_z(100.0)])
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_game_mode_physics() -> void:
 	var holder := CanvasLayer.new()
 	add_child(holder)
@@ -4796,7 +4963,7 @@ func _test_game_mode_physics() -> void:
 	# many X, not a lucky few (#147): the field is chaotic, a handful proves nothing
 	var xs := []
 	for k in 24:
-		xs.append(250.0 + 33.5 * k)
+		xs.append(lerpf(PinballField.LEFT + 50.0, PinballField.RIGHT - 50.0, k / 23.0))
 	var worst := 0.0
 	for i in xs.size():
 		var id := "p%d" % i

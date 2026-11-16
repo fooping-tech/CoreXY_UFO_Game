@@ -9,19 +9,28 @@ extends Control
 ## game mode's pixel canvas (the field's dots, even sizes only) and the Japanese lines are
 ## labels on top. The sparks are a GameModeParticles pool, the sheets go through VFXManager.
 
-const SCREEN := Vector2(1280, 720)
-const CENTRE := Vector2(640, 330)
+## Portrait (#157): the board fills the middle of the tall screen, under the HUD and the
+## status row.
+const SCREEN := GameModeLayout.SCREEN
+const CENTRE := GameModeLayout.RESULT_CENTRE
 const TITLE := "HIGH SCORES"
-const NEW_RECORD := "NEW RECORD!"
-## the board's rows: the first three are bigger
-const ROWS_Y := 122.0
-const TOP_STEP := 58.0
-const STEP := 44.0
-const TOP_SCALE := 6.0
-const ROW_SCALE := 4.0
-## the right edges of the two columns (the place, the score)
-const RANK_X := 470.0
-const SCORE_X := 900.0
+const TITLE_Y := 276.0
+## "NEW RECORD!" on two lines: [the words, the top of the line]
+const NEW_RECORD := [["NEW", 330.0], ["RECORD!", 452.0]]
+const NEW_RECORD_SCALE := 14.0
+## the ground line of the new record's confetti sheet
+const CONFETTI_Y := 960.0
+## the board's plate and its rows: the first three are bigger
+const PLATE := Rect2(40, 356, 640, 752)
+const ROWS_Y := 384.0
+const TOP_STEP := 88.0
+const STEP := 64.0
+const TOP_SCALE := 10.0
+const ROW_SCALE := 6.0
+## the right edges of the two columns (the place, the score), and the widest a score may be
+const RANK_X := 176.0
+const SCORE_X := 618.0
+const SCORE_W := 410.0
 const EMPTY := "---"
 const GOLD := Color("ffd23c")
 const SILVER := Color("d8e0f0")
@@ -66,15 +75,15 @@ func setup(c: GameModeController) -> void:
 	_front.z_index = 2
 	_front.draw.connect(_draw_front)
 	art.add_child(_front)
-	_place = _label(96, YELLOW, 372.0, 130.0)
-	_note = _label(20, Color("c8d6ff"), 612.0, 30.0)
-	_keys = _label(22, Color.WHITE, 654.0, 34.0)
+	_place = _label(120, YELLOW, 600.0, 170.0)
+	_note = _label(20, Color("c8d6ff"), 1116.0, 30.0)
+	_keys = _label(24, Color.WHITE, 1154.0, 38.0)
 
 func _label(font_size: int, color: Color, y: float, h: float) -> Label:
 	var l := StudyHud.label("", font_size, color, maxi(font_size / 6, 3))
 	l.add_theme_color_override("font_outline_color", DARK)
-	l.position = Vector2(40, y)
-	l.size = Vector2(1200, h)
+	l.position = Vector2(20, y)
+	l.size = Vector2(SCREEN.x - 40.0, h)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(l)
@@ -137,8 +146,8 @@ func keys_text() -> String:
 		"record":
 			return "Enter：ランキングへ"
 		"board":
-			return "Enter：もう一回        T：練習から        Esc：タイトル" if ctl.phase != "IDLE" \
-				else "Enter：スタート        R：もどる        Esc：タイトル"
+			return "Enter：もう一回      T：練習から      Esc：タイトル" if ctl.phase != "IDLE" \
+				else "Enter：スタート      R：もどる      Esc：タイトル"
 	return ""
 
 ## A pixelfx sheet over the ranking (the new record's stars and confetti), in the canvas.
@@ -198,7 +207,7 @@ func _draw_back() -> void:
 				CENTRE + Vector2(cos(a + w), sin(a + w)) * 900.0]), Color(col.r, col.g, col.b, 0.22))
 	elif m == "board":
 		# the board's plate: dark glass with a neon rim, like the HUD's panels
-		var plate := Rect2(300, 104, 680, 498)
+		var plate := PLATE
 		PinballField.glow_rect(_back, plate, CYAN, 0.5)
 		_back.draw_rect(plate.grow(4.0), DARK)
 		_back.draw_rect(plate, Color(0.03, 0.05, 0.16, 0.94))
@@ -212,32 +221,34 @@ func _draw_front() -> void:
 		"board":
 			_draw_board()
 
-## "NEW RECORD!": the letters jump in one after another and keep flashing.
+## "NEW RECORD!", on two lines: the letters jump in one after another and keep flashing.
 func _draw_record() -> void:
-	var sc := 14.0
+	var sc := NEW_RECORD_SCALE
 	var step := (PixelText.W + PixelText.GAP) * sc
-	var x0 := 640.0 - PixelText.width(NEW_RECORD, sc) * 0.5
 	var age := ctl.ranking_view_t
-	for i in NEW_RECORD.length():
-		if NEW_RECORD[i] == " ":
-			continue
-		var lt := age - 0.04 * i
-		if ctl.effects and lt < 0.0:
-			continue
-		var dy := 0.0
-		if ctl.effects:
-			dy = -60.0 * exp(-8.0 * lt) * cos(lt * 15.0) + sin(_t * 7.0 + i * 0.6) * 5.0
-		var col: Color = [YELLOW, CYAN, MAGENTA][(i + int(_t * 8.0)) % 3] if ctl.effects else YELLOW
-		var p := Vector2(x0 + step * i, 200.0 + dy).snapped(Vector2(2, 2))
-		PixelText.draw_grown(_front, NEW_RECORD[i], p, sc, DARK, sc)
-		PixelText.draw(_front, NEW_RECORD[i], p + Vector2(sc * 0.5, sc * 0.5), sc, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
-		PixelText.draw(_front, NEW_RECORD[i], p, sc, Color.WHITE if ctl.effects and lt < 0.08 else col)
+	var n := 0
+	for line in NEW_RECORD:
+		var words: String = line[0]
+		var x0 := SCREEN.x * 0.5 - PixelText.width(words, sc) * 0.5
+		for i in words.length():
+			n += 1
+			var lt := age - 0.04 * n
+			if ctl.effects and lt < 0.0:
+				continue
+			var dy := 0.0
+			if ctl.effects:
+				dy = -60.0 * exp(-8.0 * lt) * cos(lt * 15.0) + sin(_t * 7.0 + n * 0.6) * 5.0
+			var col: Color = [YELLOW, CYAN, MAGENTA][(n + int(_t * 8.0)) % 3] if ctl.effects else YELLOW
+			var p := Vector2(x0 + step * i, float(line[1]) + dy).snapped(Vector2(2, 2))
+			PixelText.draw_grown(_front, words[i], p, sc, DARK, sc)
+			PixelText.draw(_front, words[i], p + Vector2(sc * 0.5, sc * 0.5), sc, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
+			PixelText.draw(_front, words[i], p, sc, Color.WHITE if ctl.effects and lt < 0.08 else col)
 
 ## HIGH SCORES and the ten places. This round's place glows and blinks.
 func _draw_board() -> void:
 	var ts := 8.0
 	var tw := PixelText.width(TITLE, ts)
-	var tp := Vector2(640.0 - tw * 0.5, 34.0)
+	var tp := Vector2(SCREEN.x * 0.5 - tw * 0.5, TITLE_Y)
 	PixelText.draw(_front, TITLE, tp + Vector2(4, 4), ts, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
 	PixelText.draw(_front, TITLE, tp, ts, YELLOW, DARK)
 	_front.draw_rect(Rect2(tp.x, tp.y + PixelText.height(ts) + 8.0, tw, 2), CYAN)
@@ -252,13 +263,14 @@ func _draw_board() -> void:
 		if rank == mine:
 			# the neon behind this round's row, and the letters blinking to white
 			var pulse := 0.5 + 0.5 * sin(_t * 9.0) if ctl.effects else 1.0
-			var row := Rect2(316, y - 6.0, 648, PixelText.height(sc) + 12.0)
+			var row := Rect2(PLATE.position.x + 8.0, y - 8.0, PLATE.size.x - 16.0, PixelText.height(sc) + 16.0)
 			PinballField.glow_rect(_front, row, MAGENTA, 0.5 + 0.5 * pulse)
 			_front.draw_rect(row, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.2 + 0.15 * pulse))
 			_front.draw_rect(row, YELLOW.lerp(Color.WHITE, pulse), false, 2.0)
 			if ctl.effects and int(_t * 6.0) % 2 == 0:
 				col = Color.WHITE
-			PixelText.draw(_front, ">", Vector2(328.0 + 4.0 * pulse, y).snapped(Vector2(2, 2)), sc, YELLOW, DARK)
-			PixelText.draw(_front, "NEW", Vector2(SCORE_X + 14.0, y + (PixelText.height(sc) - 14.0) * 0.5).snapped(Vector2(2, 2)), 2.0, YELLOW, DARK)
+			PixelText.draw(_front, ">", Vector2(PLATE.position.x + 14.0 + 4.0 * pulse, y + (PixelText.height(sc) - 28.0) * 0.5).snapped(Vector2(2, 2)), 4.0, YELLOW, DARK)
+			PixelText.draw(_front, "NEW", Vector2(SCORE_X + 12.0, y + (PixelText.height(sc) - 14.0) * 0.5).snapped(Vector2(2, 2)), 2.0, YELLOW, DARK)
 		PixelText.draw_right(_front, str(rank), Vector2(RANK_X, y), sc, col if has else Color(col.r, col.g, col.b, 0.45), DARK)
-		PixelText.draw_right(_front, text, Vector2(SCORE_X, y), sc, col if has else Color(REST.r, REST.g, REST.b, 0.35), DARK)
+		var ssc := minf(sc, GameModeLayout.fit_scale(text, SCORE_W, sc))  # a very long score is drawn smaller, never over the place
+		PixelText.draw_right(_front, text, Vector2(SCORE_X, y + (PixelText.height(sc) - PixelText.height(ssc)) * 0.5), ssc, col if has else Color(REST.r, REST.g, REST.b, 0.35), DARK)

@@ -71,9 +71,11 @@ class Lane:
 	## the wait for RELEASE_DONE ran out: the status decides (COMPLETE = the event was lost)
 	var release_timed_out := false
 
-const PIXEL_SIZE := Vector2i(640, 360)
+const PIXEL_SIZE := GameModeLayout.PIXEL_SIZE
 ## one dot of the pixel canvas on the 1280 x 720 screen
-const DOT_PX := 2.0
+const DOT_PX := GameModeLayout.DOT_PX
+## how much of a shake the HUD does not follow (1 = it stands still)
+const HUD_SHAKE_HELD := 0.75
 const BOUNCE_PX := 8.0
 const BOUNCE_MAX_PX := 16.0
 const HITSTOP_MAX_S := 0.1
@@ -232,7 +234,7 @@ func setup(m: Node) -> void:
 	pixel_view.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
 	add_child(pixel_view)
-	# everything inside keeps the 1280 x 720 design coordinates, drawn at half size
+	# everything inside keeps the 720 x 1280 design coordinates (GameModeLayout), drawn at half size
 	pixel_view.canvas_transform = Transform2D(0.0, Vector2.ONE / DOT_PX, 0.0, Vector2.ZERO)
 	screen = TextureRect.new()
 	screen.name = "Screen"
@@ -429,6 +431,7 @@ func close() -> void:
 	trace.close()
 	layer.visible = false
 	layer.offset = Vector2.ZERO
+	hud.position = Vector2.ZERO
 	screen.position = Vector2.ZERO
 	scope.step(0.0, false)
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
@@ -676,11 +679,11 @@ func _process(dt: float) -> void:
 		return
 	if main != null and main.get("shake") != null:
 		layer.offset = main.shake.offset  # the picture shakes; the physics does not
+		# the score and the clock move only a quarter as far (#157): on the tall screen they sit
+		# at its very top edge and must stay readable, and inside it, through the biggest shake
+		hud.position = -layer.offset * HUD_SHAKE_HELD
 	scope.demo = demo  # the rehearsal has its own made-up picture: no camera needed
 	scope.step(dt, scope_enabled and phase != "IDLE")
-	backdrop.planet_visible = not scope.visible
-	if main != null and main.get("gesture_hud") != null:
-		backdrop.moon_visible = not (main.gesture_hud as Control).visible
 	# the hit-stop: only the picture holds still for a moment (the canvas is not redrawn);
 	# the physics, the clock and the devices go on in tick() as ever
 	_hitstop_left = maxf(_hitstop_left - dt, 0.0)
@@ -936,7 +939,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 			backdrop.pulse(Color("3ff0ff"), 0.5)
 		"count":  # the blips climb with the number
 			sounds.play("result_count", "", 0.8 + 1.1 * float(d.get("k", 0.0)))
-			rp.burst(c + Vector2(_rng.randf_range(-260.0, 260.0), 40.0), Color("ffe03c"), 2, 260.0, -PI * 0.5, PI * 0.8)
+			rp.burst(c + Vector2(_rng.randf_range(-220.0, 220.0), 40.0), Color("ffe03c"), 2, 260.0, -PI * 0.5, PI * 0.8)
 		"score_lock":
 			sounds.play("score_lock")
 			_shake(0.45)
@@ -977,8 +980,8 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 				rp.burst(c, Color("ffe03c"), 70, 620.0)
 				_confetti(5)
 				result_screen.sheet("success_sparkle", c, 5.0)
-				for x in [340.0, 940.0]:  # party poppers from under the number, falling back to its foot
-					result_screen.sheet("success_confetti", Vector2(x, GameModeResultScreen.CONFETTI_Y), 3.0)
+				# party poppers from under the number, falling back to its foot
+				result_screen.sheet("success_confetti", Vector2(c.x, GameModeResultScreen.CONFETTI_Y), 3.0)
 				fx.react("big")
 				backdrop.pulse(Color("ffb020"), 1.0)
 			else:  # nothing scored: the score stands, quietly
@@ -986,7 +989,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 				fx.react("miss")
 		"confetti":
 			_confetti(3)
-			result_screen.sheet("success_sparkle", c + Vector2(_rng.randf_range(-420.0, 420.0), _rng.randf_range(-180.0, 160.0)), 2.0)
+			result_screen.sheet("success_sparkle", c + Vector2(_rng.randf_range(-280.0, 280.0), _rng.randf_range(-260.0, 260.0)), 2.0)
 		"settled":
 			# skipped, or shown without the show: the fanfare still marks the result, once
 			if str(d.get("how", "")) in ["skipped", "plain"] and not result_show.log.has("final"):
@@ -996,7 +999,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 func _confetti(bursts: int) -> void:
 	var cols := [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")]
 	for i in bursts:
-		result_screen.particles.burst(Vector2(_rng.randf_range(120.0, 1160.0), _rng.randf_range(-10.0, 120.0)),
+		result_screen.particles.burst(Vector2(_rng.randf_range(60.0, GameModeLayout.SCREEN.x - 60.0), _rng.randf_range(-10.0, 160.0)),
 			cols[(i + _rng.randi()) % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
 
 # ------------------------------------------------------------------ high scores (#155)
@@ -1072,11 +1075,10 @@ func _show_rank() -> void:
 	rp.burst(c, Color("ffe03c"), int(50 + 40 * k), 600.0)
 	var cols := [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")]
 	for i in 6:
-		rp.burst(Vector2(_rng.randf_range(120.0, 1160.0), _rng.randf_range(-10.0, 110.0)), cols[i % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
+		rp.burst(Vector2(_rng.randf_range(60.0, GameModeLayout.SCREEN.x - 60.0), _rng.randf_range(-10.0, 160.0)), cols[i % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
 	ranking_hud.art.visible = true  # (it is shown from this tick: the sheets go on it now)
 	ranking_hud.sheet("success_sparkle", c, 5.0)
-	for x in [340.0, 940.0]:
-		ranking_hud.sheet("success_confetti", Vector2(x, 600.0), 3.0)
+	ranking_hud.sheet("success_confetti", Vector2(c.x, GameModeRankingHud.CONFETTI_Y), 3.0)
 	fx.react("big")
 	backdrop.pulse(Color("ffd23c"), 1.0)
 

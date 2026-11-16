@@ -13,25 +13,29 @@ extends Control
 ## No new effect system: the sparks, rings and confetti are a GameModeParticles pool of its
 ## own (over the dimmed field), the sheets are pixelfx ones through VFXManager.spawn_fx.
 
-const SCREEN := Vector2(1280, 720)
+## Portrait (#157): everything of the result sits under the HUD and the status row, one
+## thing under another down the middle of the screen.
+const SCREEN := GameModeLayout.SCREEN
 ## the middle of the number
-const CENTRE := Vector2(640, 350)
-const TITLE_Y := 164.0
-const UFO_AT := Vector2(640, 78)
+const CENTRE := Vector2(360, 610)
+const TITLE_Y := 408.0
+const UFO_AT := Vector2(360, 298)
 ## where a bonus's points are shown before they fly into the number
-const BONUS_AT := Vector2(640, 570)
+const BONUS_AT := Vector2(360, 850)
 ## the number's digits are never wider than this, however many (its neon rim needs the rest)
-const NUMBER_MAX_W := 1100.0
+const NUMBER_MAX_W := 600.0
 ## where the lines under the number sit (the bonus being announced; the round's numbers)
-const SUB_Y := 494.0
+const SUB_Y := 756.0
 ## the dot size of the number at rest, when the digits allow it
 const NUMBER_SCALE := 26.0
-const NUMBER_SCALE_MAX := 40.0
+const NUMBER_SCALE_MAX := 30.0
 ## how far the number's dark body reaches round its strokes, in dots
 const BODY_DOTS := 1.5
 ## the ground line of the confetti sheets: just under the number
-const CONFETTI_Y := 566.0
-const TIME_UP := "TIME UP!"
+const CONFETTI_Y := 960.0
+## "TIME UP!" on two lines: [the words, the middle of the line]
+const TIME_UP := [["TIME", 500.0], ["UP!", 700.0]]
+const TIME_UP_SCALE := 24.0
 const RAYS := 14
 const YELLOW := Color("ffe03c")
 const GOLD := Color("ffb020")
@@ -39,7 +43,7 @@ const CYAN := Color("3ff0ff")
 const MAGENTA := Color("ff4fd8")
 const DARK := Color("050818")
 const UFO_FACES_SHEET := "res://assets/ufo/ufo_expressions.png"
-const TITLE_SCALES := {"YOUR SCORE": 6.0, "BONUS!": 10.0, "FINAL SCORE!": 8.0}
+const TITLE_SCALES := {"YOUR SCORE": 10.0, "BONUS!": 14.0, "FINAL SCORE!": 8.0}
 
 var ctl: GameModeController
 var seq: ResultShow
@@ -84,15 +88,16 @@ func setup(c: GameModeController) -> void:
 	_front.draw.connect(_draw_front)
 	art.add_child(_front)
 	_sub = _label(30, Color.WHITE, SUB_Y, 44.0)
-	_stats = _label(20, Color("c8d6ff"), 596.0, 30.0)
-	_keys = _label(22, Color.WHITE, 640.0, 34.0)
-	_faults = _label(18, Color("ff6b6b"), 682.0, 30.0)
+	_stats = _label(22, Color("c8d6ff"), 980.0, 34.0)
+	_keys = _label(24, Color.WHITE, 1030.0, 38.0)
+	_faults = _label(20, Color("ff6b6b"), 1080.0, 64.0)
+	_faults.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 
 func _label(font_size: int, color: Color, y: float, h: float) -> Label:
 	var l := StudyHud.label("", font_size, color, maxi(font_size / 6, 3))
 	l.add_theme_color_override("font_outline_color", DARK)
-	l.position = Vector2(40, y)
-	l.size = Vector2(1200, h)
+	l.position = Vector2(20, y)
+	l.size = Vector2(SCREEN.x - 40.0, h)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(l)
@@ -139,7 +144,7 @@ func item_text() -> String:
 
 func stats_text() -> String:
 	var d := seq.data
-	return "カプセル  %d こ        最大コンボ  %d        ジャックポット  %d" % [int(d.get("capsules", 0)), int(d.get("best_chain", 0)),
+	return "カプセル  %d こ      最大コンボ  %d      ジャックポット  %d" % [int(d.get("capsules", 0)), int(d.get("best_chain", 0)),
 		int(d.get("jackpots", 0))]
 
 ## The Dials a person has to look at (a fault is never hidden by the show).
@@ -149,14 +154,14 @@ func faults_text() -> String:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		if l.state == "FAULT":
 			lines.append("%s の Dial: %s" % ["左" if side == "left" else "右", l.fault])
-	return "    ".join(lines)
+	return "\n".join(lines)
 
 func keys_text() -> String:
 	if mode() != "result":
 		return ""
 	if not seq.settled():
 		return "Enter：スキップ"
-	return "Enter：ランキングへ" if ctl.ranking_enabled else "Enter：もう一回        T：練習から        Esc：タイトル"
+	return "Enter：ランキングへ" if ctl.ranking_enabled else "Enter：もう一回      T：練習から      Esc：タイトル"
 
 ## A pixelfx sheet over the result (success_confetti, success_sparkle...), in the canvas.
 func sheet(id: String, at: Vector2, sheet_scale := 2.0, color := Color.WHITE) -> void:
@@ -200,7 +205,7 @@ func _process(dt: float) -> void:
 	_sub.position.y = SUB_Y
 	if m == "time_up":
 		_sub.text = "スコア集計中…"
-		_sub.position.y = 410.0
+		_sub.position.y = 840.0
 		_sub.modulate.a = 0.7 + 0.3 * sin(_t * 6.0)
 	elif seq.item_showing():
 		_sub.text = item_text()
@@ -224,7 +229,7 @@ func _draw_back() -> void:
 	if m == "time_up":
 		# a band of light behind the words
 		for i in 4:
-			_back.draw_rect(Rect2(0, 300.0 - 70.0 - 18.0 * i, 1280, 140.0 + 36.0 * i), Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.05))
+			_back.draw_rect(Rect2(0, 600.0 - 210.0 - 18.0 * i, SCREEN.x, 420.0 + 36.0 * i), Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.05))
 		return
 	if not ctl.effects:
 		return
@@ -253,13 +258,15 @@ func _draw_front() -> void:
 		_draw_number()
 		_draw_bonus()
 
-## "TIME UP!" slams in: big, then its size, white for the first moment.
+## "TIME UP!" slams in, on two lines as big as the screen is wide: bigger for a moment,
+## white for the first moment.
 func _draw_time_up() -> void:
 	var tt := seq.title_t
-	var sc := 16.0 + (snappedf(8.0 * exp(-tt * 12.0), 2.0) if ctl.effects else 0.0)
-	var c := Vector2(640, 300)
-	PixelText.draw_centered(_front, TIME_UP, c + Vector2(8, 8), sc, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
-	PixelText.draw_centered(_front, TIME_UP, c, sc, Color.WHITE if ctl.effects and tt < 0.12 else YELLOW, DARK)
+	var sc := TIME_UP_SCALE + (snappedf(4.0 * exp(-tt * 12.0), 2.0) if ctl.effects else 0.0)
+	for line in TIME_UP:
+		var c := Vector2(SCREEN.x * 0.5, float(line[1]))
+		PixelText.draw_centered(_front, line[0], c + Vector2(10, 10), sc, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
+		PixelText.draw_centered(_front, line[0], c, sc, Color.WHITE if ctl.effects and tt < 0.12 else YELLOW, DARK)
 
 ## UFOくん over the title: it watches the count, jumps for a bonus and for the final score.
 func _draw_ufo() -> void:
@@ -290,7 +297,7 @@ func _draw_title() -> void:
 		return
 	var sc: float = TITLE_SCALES.get(text, 6.0)
 	var step := (PixelText.W + PixelText.GAP) * sc
-	var x0 := 640.0 - PixelText.width(text, sc) * 0.5
+	var x0 := SCREEN.x * 0.5 - PixelText.width(text, sc) * 0.5
 	var y0 := TITLE_Y - PixelText.height(sc) * 0.5
 	for i in text.length():
 		if text[i] == " ":

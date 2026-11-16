@@ -9,6 +9,12 @@ extends CanvasLayer
 ## Built in code (like the debug panel). Pure presentation: reads the controller only.
 
 const RIGHT_W := 380.0
+## Portrait (#157), top to bottom: the title; UFOくん's sky (the explanation, the scope and
+## the banners come up there); the worksheet (left) beside the checklist (right); UFOくん's words.
+## the worksheet and the checklist stand in the middle of the screen: UFOくん hangs above
+## them from the top (the crane's rope), its words are under them
+const HEADER_H := 560.0
+const EXPLAIN_Y := 112.0
 const BLUE := Color("3b7dd8")
 const ORANGE := Color("e07a00")
 const GREEN := Color("2fae5a")
@@ -124,7 +130,7 @@ func _build_header() -> void:
 	_grade_next.pressed.connect(func(): ctl.change_grade(1))
 	row.add_child(_grade_next)
 	sheet = StudyWorksheetView.new()
-	sheet.position = Vector2(20, 112)
+	sheet.position = Vector2(20, HEADER_H + 8.0)
 	sheet.size = Vector2(230, 325)
 	root.add_child(sheet)
 
@@ -134,7 +140,7 @@ func _build_checklist() -> void:
 	p.anchor_right = 1.0
 	p.offset_left = -RIGHT_W - 16
 	p.offset_right = -16
-	p.offset_top = 16
+	p.offset_top = HEADER_H  # portrait (#157): under the title, beside the worksheet
 	root.add_child(p)
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
@@ -189,10 +195,11 @@ func _build_bubble() -> void:
 	_bubble.anchor_top = 1.0
 	_bubble.anchor_bottom = 1.0
 	_bubble.anchor_right = 1.0
+	# portrait (#157): UFOくん's words across the whole foot of the screen
 	_bubble.offset_left = 20
-	_bubble.offset_right = -RIGHT_W - 36
-	_bubble.offset_top = -190
-	_bubble.offset_bottom = -34
+	_bubble.offset_right = -20
+	_bubble.offset_top = -250
+	_bubble.offset_bottom = -64
 	root.add_child(_bubble)
 	var v := VBoxContainer.new()
 	_bubble.add_child(v)
@@ -210,19 +217,23 @@ func _build_bubble() -> void:
 	_keys = label("", 14, Color("c8d6f0"), 4)
 	_keys.anchor_top = 1.0
 	_keys.anchor_bottom = 1.0
-	_keys.offset_left = 24
-	_keys.offset_top = -26
+	_keys.anchor_right = 1.0
+	_keys.offset_left = 20
+	_keys.offset_right = -20
+	_keys.offset_top = -58
 	_keys.offset_bottom = -4
+	_keys.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_keys.clip_text = true
 	root.add_child(_keys)
 
 func _build_centre() -> void:
 	_explain = panel(Color("fff7d6"), ORANGE, 18, 4)
-	_explain.position = Vector2(270, 112)
-	_explain.custom_minimum_size = Vector2(430, 0)
+	_explain.position = Vector2(20, EXPLAIN_Y)
+	_explain.custom_minimum_size = Vector2(680, 0)
 	root.add_child(_explain)
 	_explain_text = label("", 21, INK)
 	_explain_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_explain_text.custom_minimum_size = Vector2(400, 0)
+	_explain_text.custom_minimum_size = Vector2(640, 0)
 	_explain.add_child(_explain_text)
 	scope = StudyScopeView.new()
 	scope.size = Vector2(300, 300)
@@ -378,33 +389,33 @@ func refresh() -> void:
 	scope.visible = ctl.wants_scope() and (not has_focus or ctl.services.mode == "simulated")
 	scope.stage = stage if stage != "" else "10cm"
 	scope.problem = WorksheetCatalog.problem(ctl.worksheet, ctl.help_problem)
-	scope.position = Vector2(266.0, 128.0)  # beside the sheet, clear of the UFO (it rises as the arm goes down)
+	scope.position = Vector2(210.0, EXPLAIN_Y + 10.0)  # under the sheet and the checklist, in the middle
 	scope.queue_redraw()
 	# banners
 	var celebrate := st in ["CELEBRATION", "HOMEWORK_COMPLETE"]
 	var unlocked := st == "GAME_UNLOCKED"
 	_banner.visible = celebrate or unlocked
 	_banner.text = "宿題完了！！" if celebrate else "MISSION COMPLETE!"
-	_banner.size = Vector2(vs.x - RIGHT_W, 110)
-	_banner.position = Vector2(0, vs.y * 0.18)
+	_banner.size = Vector2(vs.x, 110)
+	_banner.position = Vector2(0, EXPLAIN_Y + 20.0)
 	_banner.pivot_offset = _banner.size * 0.5
 	_sub_banner.visible = unlocked
 	_sub_banner.text = "GAME MODE UNLOCKED!" + ("" if ctl.cleanup_ok or not StudyModeController.cleanup_enabled()
 		else "\n（お片付けは大人の人と確認してね）")
-	_sub_banner.size = Vector2(vs.x - RIGHT_W, 120)
-	_sub_banner.position = Vector2(0, vs.y * 0.18 + 110)
+	_sub_banner.size = Vector2(vs.x, 120)
+	_sub_banner.position = Vector2(0, EXPLAIN_Y + 130.0)
 	_play.visible = unlocked
-	_play.position = Vector2(48, vs.y * 0.18 + 230)
+	_play.position = Vector2(48, EXPLAIN_Y + 250.0)
 	_time_panel.visible = st in ["CLEANUP", "CLEANUP_FAILED"]
 	_time_label.text = study_time_text(ctl.elapsed_s())
-	_time_panel.position = Vector2((vs.x - RIGHT_W) * 0.5 - 200, vs.y * 0.12)
+	_time_panel.position = Vector2(vs.x * 0.5 - 200, EXPLAIN_Y)
 	_time_panel.custom_minimum_size = Vector2(400, 0)
 	_adult.visible = ctl.adult_prompt != ""
 	_adult_text.text = ctl.adult_prompt
-	_adult.position = Vector2(270, vs.y - 190 - 150)
+	_adult.position = Vector2(40, vs.y - 250 - 190)
 	_error.visible = st in ["ERROR"] and ctl.error_text != ""
 	_error_text.text = ctl.error_text + "\n（Enter で続ける）"
-	_error.position = Vector2(270, vs.y * 0.45)
+	_error.position = Vector2(40, vs.y * 0.5)
 	_keys.text = key_help(st, ctl.services.mode)
 
 static func study_time_text(secs: float) -> String:

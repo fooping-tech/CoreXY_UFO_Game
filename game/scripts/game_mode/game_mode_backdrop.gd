@@ -16,7 +16,7 @@ extends Node2D
 ## advance(dt): no nodes are made or freed while it runs. `quality` "low" keeps the bands
 ## and one layer of still stars.
 
-const SIZE := Vector2(1280, 720)
+const SIZE := GameModeLayout.SCREEN
 const BANDS := 12
 const TOP_COLOR := Color("02041a")
 const BOTTOM_COLOR := Color("0d0a33")
@@ -26,8 +26,9 @@ const MOOD_LIGHT := [Color("3ff0ff"), Color("ff4fd8"), Color("ff5a4a")]
 const GALAXY_DOTS := 160
 const BEAMS := 7
 const CONDUIT_TOP := 420.0
-const PLANET := Vector2(1212, 262)
-const MOON := Vector2(66, 250)
+## in the dark between the two ports, under the field
+const PLANET := Vector2(440, 1200)
+const MOON := Vector2(286, 1190)
 ## [count, pixel size, speed px/s, alpha]
 const STAR_LAYERS := [[70, 2.0, 3.0, 0.35], [40, 2.0, 7.0, 0.6], [16, 4.0, 14.0, 0.9]]
 const MOTES := 14
@@ -50,7 +51,7 @@ var _galaxy: Array = []  # [pos, size, colour index]
 ## the colour of each side's conduit (the Dial's colour)
 var side_colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
 ## where each conduit starts (the port) and the field's edges
-var ports := {"left": Vector2(75, 640), "right": Vector2(1205, 640)}
+var ports: Dictionary = GameModeLayout.PORTS.duplicate()
 var _stars: Array = []  # per layer: Array of [x, y, phase]
 var _motes: Array = []  # [x, y, phase, colour]
 var _nebulae: Array = []  # [centre, colour, Array of [offset, size]]
@@ -81,13 +82,13 @@ func _layout() -> void:
 	for i in GALAXY_DOTS:  # a band from the lower left to the upper right
 		var k := _rng.randf()
 		var spread := _rng.randfn(0.0, 1.0) * 46.0
-		_galaxy.append([Vector2(k * SIZE.x, lerpf(520.0, 60.0, k) + spread).snapped(Vector2(2, 2)), 2.0 if _rng.randf() < 0.8 else 4.0, i % 3])
+		_galaxy.append([Vector2(k * SIZE.x, lerpf(SIZE.y * 0.72, SIZE.y * 0.08, k) + spread).snapped(Vector2(2, 2)), 2.0 if _rng.randf() < 0.8 else 4.0, i % 3])
 	_nebulae.clear()
 	for i in NEBULAE:
 		var blobs: Array = []
 		for j in 14:
 			blobs.append([Vector2(_rng.randf_range(-150, 150), _rng.randf_range(-90, 90)), _rng.randf_range(28, 64)])
-		_nebulae.append([Vector2(_rng.randf() * SIZE.x, _rng.randf_range(60, 640)), [PURPLE, CYAN, MAGENTA][i % 3], blobs])
+		_nebulae.append([Vector2(_rng.randf() * SIZE.x, _rng.randf_range(60, SIZE.y - 80.0)), [PURPLE, CYAN, MAGENTA][i % 3], blobs])
 
 func star_count() -> int:
 	var n := 0
@@ -186,35 +187,31 @@ func _draw() -> void:
 	if _flash > 0.0:
 		draw_rect(Rect2(Vector2.ZERO, SIZE), Color(_flash_color.r, _flash_color.g, _flash_color.b, 0.16 * _flash))
 
-## Beside the field: a conduit up from each port, with a light running along it and a few
-## panel lamps (the machine the capsule travels through).
+## Under the field: each port's conduit runs out to its side of the screen, where the real
+## Dial stands (Dial 1 left, Dial 2 right), with a light running along it and a few panel
+## lamps (the machine the capsule travels through).
 func _draw_sides() -> void:
 	for side in ports.keys():
 		var p: Vector2 = ports[side]
 		var col: Color = side_colors[side]
 		var glow: float = _side_glow[side]
-		var x := p.x
-		var y0 := CONDUIT_TOP
-		var h := p.y - 92.0 - y0
-		# the conduit (short: the sky above it is the planet's and the moon's)
-		draw_rect(Rect2(x - 10.0, y0, 20.0, h), Color("050818"))
-		draw_rect(Rect2(x - 8.0, y0, 16.0, h), Color(0.07, 0.1, 0.28))
-		draw_rect(Rect2(x - 8.0, y0, 2.0, h), Color(col.r, col.g, col.b, 0.45 + 0.5 * glow))
-		draw_rect(Rect2(x + 6.0, y0, 2.0, h), Color(col.r, col.g, col.b, 0.45 + 0.5 * glow))
+		var out := -1.0 if side == "left" else 1.0
+		var x0 := p.x + out * 36.0  # from the port's rim...
+		var x1 := 0.0 if side == "left" else SIZE.x  # ...to the edge of the screen
+		var r := Rect2(minf(x0, x1), p.y - 10.0, absf(x1 - x0), 20.0)
+		draw_rect(r, Color("050818"))
+		draw_rect(r.grow_individual(0, -2, 0, -2), Color(0.07, 0.1, 0.28))
+		draw_rect(Rect2(r.position.x, p.y - 8.0, r.size.x, 2.0), Color(col.r, col.g, col.b, 0.45 + 0.5 * glow))
+		draw_rect(Rect2(r.position.x, p.y + 6.0, r.size.x, 2.0), Color(col.r, col.g, col.b, 0.45 + 0.5 * glow))
 		if glow > 0.0:
-			draw_rect(Rect2(x - 14.0, y0, 28.0, h), Color(col.r, col.g, col.b, 0.16 * glow))
-		for i in 3:  # joints
-			var y := y0 + 8.0 + 52.0 * i
-			draw_rect(Rect2(x - 14.0, y - 2.0, 28.0, 12.0), Color("050818"))
-			draw_rect(Rect2(x - 12.0, y, 24.0, 8.0), Color(0.14, 0.18, 0.4))
-			draw_rect(Rect2(x - 12.0, y, 24.0, 2.0), Color(col.r, col.g, col.b, 0.6))
-		if quality != "low":  # a light going along it
-			for i in 3:
-				var k := fmod(_t * 0.25 + i / 3.0, 1.0)
-				draw_rect(Rect2(x - 2.0, lerpf(y0 + 6.0, y0 + h - 12.0, k), 4.0, 10.0), Color(col.r, col.g, col.b, 0.5 + 0.5 * glow))
-		# a small panel of lamps above
-		var px := x - 30.0
-		var py := y0 - 44.0
+			draw_rect(r.grow(4.0), Color(col.r, col.g, col.b, 0.16 * glow))
+		if quality != "low":  # a light going along it, out to the Dial
+			for i in 2:
+				var k := fmod(_t * 0.5 + i / 2.0, 1.0)
+				draw_rect(Rect2(lerpf(x0, x1, k) - 5.0, p.y - 2.0, 10.0, 4.0), Color(col.r, col.g, col.b, 0.5 + 0.5 * glow))
+		# a small panel of lamps towards the middle
+		var px := p.x - out * 100.0 - 30.0
+		var py := p.y + 30.0
 		draw_rect(Rect2(px - 2.0, py - 2.0, 64.0, 38.0), Color("050818"))
 		draw_rect(Rect2(px, py, 60.0, 34.0), Color(0.06, 0.08, 0.24))
 		draw_rect(Rect2(px, py, 60.0, 2.0), Color(col.r, col.g, col.b, 0.8))

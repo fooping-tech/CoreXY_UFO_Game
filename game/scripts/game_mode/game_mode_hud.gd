@@ -15,10 +15,19 @@ const DARK := Color("050818")
 const PANEL := Color(0.03, 0.05, 0.16, 0.92)
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const LOGO := "SUMMON THE UFO"
-const SCREEN := Vector2(1280, 720)
-const SCORE_RECT := Rect2(8, 6, 164, 62)
-const TIME_RECT := Rect2(1108, 6, 164, 62)
-const HOW_TO := ["クレーンで\nカプセルをつかむ", "左か右の Dial に\n入れる", "ピンボールで\n高得点をねらおう！"]
+## the portrait layout (#157): every position of the HUD comes from GameModeLayout
+const SCREEN := GameModeLayout.SCREEN
+const SCORE_RECT := GameModeLayout.SCORE_RECT
+const TIME_RECT := GameModeLayout.TIME_RECT
+const HOW_TO := ["クレーンで カプセルをつかむ", "左か右の Dial に 入れる", "ピンボールで 高得点をねらおう！"]
+## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards
+const LOGO_LINES := ["SUMMON", "THE UFO"]
+const LOGO_Y := 158.0
+const TITLE_UFO_Y := 560.0
+const START_RECT := Rect2(120, 800, 480, 68)
+const CARDS_Y := 920.0
+const CARD_SIZE := Vector2(620, 104)
+const CARD_STEP := 116.0
 
 var ctl: GameModeController
 var art: Control
@@ -52,32 +61,37 @@ func setup(c: GameModeController) -> void:
 	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	art.draw.connect(_draw_art)
 	add_child(art)
-	_combo = _label("", 14, YELLOW, Vector2(1100, 70), Vector2(172, 24))  # under the clock
-	_combo.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_centre = _label("", 120, YELLOW, Vector2(240, 230), Vector2(800, 150))
+	_combo = _label("", 16, YELLOW, Vector2(GameModeLayout.COMBO_RECT.position.x, GameModeLayout.COMBO_RECT.end.y - 24.0), Vector2(GameModeLayout.COMBO_RECT.size.x, 24))
+	_combo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# the countdown, GO!, STOP: over the middle of the field
+	_centre = _label("", 160, YELLOW, Vector2(0, GameModeLayout.CENTRE.y - 120.0), Vector2(GameModeLayout.SCREEN.x, 240))
 	_centre.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_message = _label("", 22, Color("e8f0ff"), Vector2(140, 386), Vector2(1000, 70))
+	_centre.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_message = _label("", 24, Color("e8f0ff"), Vector2(40, GameModeLayout.CENTRE.y + 130.0), Vector2(GameModeLayout.SCREEN.x - 80.0, 170))
 	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_message.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	for side in GameModeController.SIDES:
-		var l := _label("", 15, Color.WHITE, Vector2(4 if side == "left" else 1138, 520), Vector2(138, 86))
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# what each Dial is doing: over its port (Dial 1 bottom left, Dial 2 bottom right)
+		var left: bool = side == "left"
+		var l := _label("", 20, Color.WHITE, Vector2(8.0 if left else GameModeLayout.SCREEN.x - 8.0 - 344.0, GameModeLayout.LANE_LABEL_Y - 56.0), Vector2(344, 100))
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if left else HORIZONTAL_ALIGNMENT_RIGHT
 		l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 		l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 		_lane[side] = l
-	_hint = _label("", 13, Color("8fa3c4"), Vector2(390, 2), Vector2(500, 20))  # above the UFO's rail
+	_hint = _label("", 12, Color("8fa3c4"), Vector2(0, GameModeLayout.HINT_Y - 2.0), Vector2(GameModeLayout.SCREEN.x, 16))  # under the score and the clock
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	# why the hub does not answer (another system's hub, no port...): over the top of the field
-	_problem = _label("", 18, Color("ffd24a"), Vector2(170, 150), Vector2(940, 60))
+	_problem = _label("", 20, Color("ffd24a"), Vector2(40, GameModeLayout.FIELD_TOP + 70.0), Vector2(GameModeLayout.SCREEN.x - 80.0, 90))
 	_problem.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_problem.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	# the title screen's words (Japanese: the game's normal font)
-	_rank_hint = _label("R：ランキング", 18, Color("b8f4ff"), Vector2(340, 528), Vector2(600, 26))
+	_rank_hint = _label("R：ランキング", 20, Color("b8f4ff"), Vector2(60, START_RECT.end.y + 12.0), Vector2(GameModeLayout.SCREEN.x - 120.0, 28))
 	_rank_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_start = _label("Enter でスタート", 30, Color.WHITE, Vector2(340, 474), Vector2(600, 44))
+	_start = _label("Enter でスタート", 34, Color.WHITE, Vector2(60, START_RECT.position.y + 8.0), Vector2(GameModeLayout.SCREEN.x - 120.0, START_RECT.size.y - 16.0))
 	_start.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_start.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	for i in HOW_TO.size():
-		var h := _label(HOW_TO[i], 18, Color("e8f0ff"), Vector2(title_card(i).position.x + 76.0, title_card(i).position.y + 12.0), Vector2(170, 60))
+		var h := _label(HOW_TO[i], 26, Color("e8f0ff"), title_card(i).position + Vector2(112, 10), Vector2(title_card(i).size.x - 124.0, title_card(i).size.y - 20.0))
 		h.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		_how.append(h)
 
@@ -103,7 +117,7 @@ func title_showing() -> bool:
 
 ## Where the three "how to play" cards sit on the title screen.
 static func title_card(i: int) -> Rect2:
-	return Rect2(160.0 + 330.0 * i, 560.0, 300.0, 84.0)
+	return Rect2(Vector2((GameModeLayout.SCREEN.x - CARD_SIZE.x) * 0.5, CARDS_Y + CARD_STEP * i), CARD_SIZE)
 
 ## What keeps the Dials away, said on the screen ("" when the hub answers).
 func problem_text() -> String:
@@ -164,7 +178,7 @@ func _process(dt: float) -> void:
 		"STOPPED":
 			centre = "STOP"
 	_centre.text = centre
-	_centre.add_theme_font_size_override("font_size", 72 if centre.length() > 4 else 120)
+	_centre.add_theme_font_size_override("font_size", 76 if centre.length() > 4 else 200)
 	_message.text = ctl.message if ctl.phase == "STOPPED" else ""
 	if ctl.phase == "COUNTDOWN" and ctl.tutorial_speech.current != "":
 		_message.text = "UFOくん「%s」" % ctl.tutorial_speech.current  # "よし！ はじめよう！" after the practice
@@ -177,7 +191,9 @@ func _process(dt: float) -> void:
 		h.visible = title
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
-		_lane[side].visible = not title and (ctl.phase != "TUTORIAL" or ctl.practice != "")
+		# (the result and the ranking have the screen: only a Dial a person must look at keeps its line)
+		_lane[side].visible = not title and (ctl.phase != "TUTORIAL" or ctl.practice != "") and ctl.ranking_view == "" \
+			and (ctl.phase != "RESULT" or l.state == "FAULT")
 		_lane[side].text = ctl.lane_text(side)
 		_lane[side].add_theme_color_override("font_color", RED if l.state == "FAULT" else l.color)
 	var hint := "Space: 止める   Esc: タイトル"
@@ -189,7 +205,7 @@ func _process(dt: float) -> void:
 			hint += "   Mock: Z / M"
 	_hint.text = hint
 	_problem.text = problem_text() if ctl.phase != "TUTORIAL" or ctl.practice != "" else ""
-	_problem.position.y = 420.0 if title else 150.0
+	_problem.position.y = (START_RECT.position.y - 110.0) if title else (GameModeLayout.FIELD_TOP + 70.0)
 
 # ------------------------------------------------------------------ drawing
 func _draw_art() -> void:
@@ -197,26 +213,28 @@ func _draw_art() -> void:
 		return
 	if title_showing():
 		_draw_title()
-	# the score (top left) and the clock (top right): narrow, so the UFO's rail between them is clear
+	# the score (top left) and the clock (top right): half the screen each, big enough to read
+	# from a few steps back
 	var rising := ctl.display_score() - _shown_score > 0.5
 	_panel(SCORE_RECT, YELLOW.lerp(Color.WHITE, 0.6) if rising else YELLOW)
 	# in the practice the numbers are not the round's: the panel says so
-	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else "SCORE", SCORE_RECT.position + Vector2(10, 8), 2.0, YELLOW)
+	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else "SCORE", SCORE_RECT.position + Vector2(14, 10), 4.0, YELLOW)
 	var st := "%d" % int(round(_shown_score))
-	PixelText.draw_right(art, st, Vector2(SCORE_RECT.end.x - 10.0, 32.0 - (2.0 if rising else 0.0)), 4.0 if st.length() <= 6 else 2.0,
-		YELLOW if rising else Color.WHITE, DARK)
+	PixelText.draw_right(art, st, Vector2(SCORE_RECT.end.x - 14.0, SCORE_RECT.position.y + 42.0 - (2.0 if rising else 0.0)),
+		GameModeLayout.fit_scale(st, SCORE_RECT.size.x - 28.0, 8.0), YELLOW if rising else Color.WHITE, DARK)
 	var cc := clock_color()
 	_panel(TIME_RECT, cc if cc != Color.WHITE else CYAN)
-	PixelText.draw(art, "TIME", TIME_RECT.position + Vector2(10, 8), 2.0, CYAN)
-	PixelText.draw_right(art, clock_text(ctl.time_left), Vector2(TIME_RECT.end.x - 10.0, 32), 4.0, cc, DARK)
-	# the combo, under the score: the chain, the multiplier and how long it still holds
+	PixelText.draw(art, "TIME", TIME_RECT.position + Vector2(14, 10), 4.0, CYAN)
+	PixelText.draw_right(art, clock_text(ctl.time_left), Vector2(TIME_RECT.end.x - 14.0, TIME_RECT.position.y + 42.0), 8.0, cc, DARK)
+	# the combo, between the hand and the arm camera: the chain, the multiplier and how long it still holds
 	var chain := ctl.score.chain_now(ctl.clock)
 	if chain >= 2 and ctl.phase == "PLAYING":
 		var col: Color = GameModeVFX.BANNER_COLORS[ctl.combo_level()]
-		PixelText.draw(art, "COMBO %d" % chain, Vector2(12, 74), 2.0, col, DARK)
-		PixelText.draw_right(art, "x%s" % str(ctl.score.multiplier(ctl.clock)), Vector2(168, 74), 2.0, Color.WHITE, DARK)
-		art.draw_rect(Rect2(10, 90, 160, 6), DARK)
-		art.draw_rect(Rect2(12, 92, snappedf(156.0 * ctl.score.chain_left_k(ctl.clock), 2.0), 2), col)
+		var c := GameModeLayout.COMBO_RECT
+		PixelText.draw_centered(art, "COMBO %d" % chain, Vector2(c.get_center().x, c.position.y + 18.0), 4.0, col, DARK)
+		PixelText.draw_centered(art, "x%s" % str(ctl.score.multiplier(ctl.clock)), Vector2(c.get_center().x, c.position.y + 56.0), 4.0, Color.WHITE, DARK)
+		art.draw_rect(Rect2(c.position.x + 8.0, c.position.y + 76.0, c.size.x - 16.0, 8), DARK)
+		art.draw_rect(Rect2(c.position.x + 10.0, c.position.y + 78.0, snappedf((c.size.x - 20.0) * ctl.score.chain_left_k(ctl.clock), 2.0), 4), col)
 
 ## An arcade panel: dark glass, a neon rim, a shine along the top.
 func _panel(r: Rect2, col: Color) -> void:
@@ -228,61 +246,71 @@ func _panel(r: Rect2, col: Color) -> void:
 	for c in [r.position, r.position + Vector2(r.size.x - 6.0, 0), r.position + Vector2(0, r.size.y - 6.0), r.end - Vector2(6, 6)]:
 		art.draw_rect(Rect2(c, Vector2(6, 6)), col)
 
-## The score game's title screen: the field dimmed, the logo, UFOくん, how to play.
+## The score game's title screen, top to bottom: the logo on two lines, UFOくん big in its
+## beam, START, then how to play as three cards one under another.
 func _draw_title() -> void:
-	art.draw_rect(Rect2(0, 96, 1280, 624), Color(0.01, 0.02, 0.1, 0.8))
+	art.draw_rect(Rect2(0, GameModeLayout.HINT_Y + 14.0, GameModeLayout.SCREEN.x, GameModeLayout.SCREEN.y - GameModeLayout.HINT_Y - 14.0), Color(0.01, 0.02, 0.1, 0.84))
 	# the logo: a magenta shadow, a cyan rim, yellow letters with a shine passing over
-	var scale := 8.0
-	var w := PixelText.width(LOGO, scale)
-	var pos := Vector2((1280.0 - w) * 0.5, 126.0 + sin(_t * 1.6) * 3.0).snapped(Vector2(1, 1))
-	PinballField.glow_rect(art, Rect2(pos - Vector2(20, 14), Vector2(w + 40.0, PixelText.height(scale) + 28.0)), PURPLE, 0.7)
-	PixelText.draw(art, LOGO, pos + Vector2(6, 6), scale, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
-	PixelText.draw(art, LOGO, pos, scale, YELLOW, DARK)
-	var shine := fposmod(_t * 420.0, w + 500.0) - 120.0
-	for i in LOGO.length():  # the letters under the passing shine turn white
-		var lx := i * (PixelText.W + PixelText.GAP) * scale
-		if absf(lx - shine) < 70.0 and LOGO[i] != " ":
-			PixelText.draw(art, LOGO[i], pos + Vector2(lx, 0), scale, Color(1, 1, 1, 0.85 - absf(lx - shine) / 90.0))
-	art.draw_rect(Rect2(pos.x, pos.y + PixelText.height(scale) + 12.0, w, 4), CYAN)
-	art.draw_rect(Rect2(pos.x + 40.0, pos.y + PixelText.height(scale) + 20.0, w - 80.0, 2), MAGENTA)
+	var bob := sin(_t * 1.6) * 3.0
+	var y := LOGO_Y
+	var widest := 0.0
+	for li in LOGO_LINES.size():
+		var line: String = LOGO_LINES[li]
+		var scale := GameModeLayout.fit_scale(line, GameModeLayout.SAFE_W - 60.0, 16.0)
+		var w := PixelText.width(line, scale)
+		widest = maxf(widest, w)
+		var pos := Vector2((GameModeLayout.SCREEN.x - w) * 0.5, y + bob).snapped(Vector2(2, 2))
+		PinballField.glow_rect(art, Rect2(pos - Vector2(20, 12), Vector2(w + 40.0, PixelText.height(scale) + 24.0)), PURPLE, 0.7)
+		PixelText.draw(art, line, pos + Vector2(6, 6), scale, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9))
+		PixelText.draw(art, line, pos, scale, YELLOW, DARK)
+		var shine := fposmod(_t * 420.0 - li * 260.0, w + 500.0) - 120.0
+		for i in line.length():  # the letters under the passing shine turn white
+			var lx := i * (PixelText.W + PixelText.GAP) * scale
+			if absf(lx - shine) < 70.0 and line[i] != " ":
+				PixelText.draw(art, line[i], pos + Vector2(lx, 0), scale, Color(1, 1, 1, 0.85 - absf(lx - shine) / 90.0))
+		y += PixelText.height(scale) + 22.0
+	art.draw_rect(Rect2((GameModeLayout.SCREEN.x - widest) * 0.5, y - 6.0 + bob, widest, 4), CYAN)
+	art.draw_rect(Rect2((GameModeLayout.SCREEN.x - widest) * 0.5 + 40.0, y + 2.0 + bob, widest - 80.0, 2), MAGENTA)
 	# UFOくん, big, bobbing, with a beam under it
-	var c := Vector2(640, 330 + sin(_t * 2.2) * 8.0)
-	var beam := PackedVector2Array([c + Vector2(-34, 60), c + Vector2(34, 60), Vector2(760, 470), Vector2(520, 470)])
+	var c := Vector2(GameModeLayout.CX, TITLE_UFO_Y + sin(_t * 2.2) * 8.0)
+	var beam := PackedVector2Array([c + Vector2(-50, 90), c + Vector2(50, 90), Vector2(GameModeLayout.CX + 190.0, START_RECT.position.y - 14.0),
+		Vector2(GameModeLayout.CX - 190.0, START_RECT.position.y - 14.0)])
 	art.draw_colored_polygon(beam, Color(CYAN.r, CYAN.g, CYAN.b, 0.1 + 0.05 * sin(_t * 4.0)))
 	if _ufo_tex != null:
-		var size := Vector2(64, 64) * 4.0
-		art.draw_texture_rect_region(_ufo_tex, Rect2((c - size * 0.5).snapped(Vector2(1, 1)), size), Rect2(64 * (int(_t * 3.0) % 4), 0, 64, 64))
+		var size := Vector2(64, 64) * 6.0
+		art.draw_texture_rect_region(_ufo_tex, Rect2((c - size * 0.5).snapped(Vector2(2, 2)), size), Rect2(64 * (int(_t * 3.0) % 4), 0, 64, 64))
 	for i in 6:  # sparkles round it
 		var a := _t * 0.8 + TAU * i / 6.0
-		var q := c + Vector2(cos(a) * 190.0, sin(a) * 70.0)
+		var q := c + Vector2(cos(a) * 270.0, sin(a) * 110.0)
 		var tw := 0.5 + 0.5 * sin(_t * 5.0 + i)
 		art.draw_rect(Rect2((q - Vector2(3, 3)).snapped(Vector2(2, 2)), Vector2(6, 6)), Color(1, 1, 0.7, tw))
 		art.draw_rect(Rect2((q - Vector2(9, 1)).snapped(Vector2(2, 2)), Vector2(18, 2)), Color(1, 1, 0.7, tw * 0.5))
 		art.draw_rect(Rect2((q - Vector2(1, 9)).snapped(Vector2(2, 2)), Vector2(2, 18)), Color(1, 1, 0.7, tw * 0.5))
 	# START
-	var sr := Rect2(440, 468, 400, 54)
+	var sr := START_RECT
 	var pulse := 0.5 + 0.5 * sin(_t * 5.0)
 	PinballField.glow_rect(art, sr, YELLOW, 0.4 + 0.6 * pulse)
 	art.draw_rect(sr.grow(3.0), DARK)
 	art.draw_rect(sr, Color(0.12, 0.1, 0.32, 0.95))
 	art.draw_rect(sr, YELLOW.lerp(Color.WHITE, pulse * 0.5), false, 3.0)
+	var sy := sr.get_center().y
 	for side in [-1, 1]:  # arrows pointing at it
 		for d in 3:
-			var ax: float = 640.0 + side * (232.0 + d * 14.0 + pulse * 6.0)
-			for st in 5:
-				art.draw_rect(Rect2(ax - side * st * 2.0, 495.0 - 8.0 + st * 2.0, 2, 2), Color(1, 1, 1, 0.9 - 0.25 * d))
-				art.draw_rect(Rect2(ax - side * st * 2.0, 495.0 + 8.0 - st * 2.0, 2, 2), Color(1, 1, 1, 0.9 - 0.25 * d))
-	# how to play: three cards, 1 -> 2 -> 3
+			var ax: float = GameModeLayout.CX + side * (sr.size.x * 0.5 + 12.0 + d * 14.0 + pulse * 6.0)
+			for stp in 5:
+				art.draw_rect(Rect2(ax - side * stp * 2.0, sy - 8.0 + stp * 2.0, 2, 2), Color(1, 1, 1, 0.9 - 0.25 * d))
+				art.draw_rect(Rect2(ax - side * stp * 2.0, sy + 8.0 - stp * 2.0, 2, 2), Color(1, 1, 1, 0.9 - 0.25 * d))
+	# how to play: three cards, 1 -> 2 -> 3, down the screen
 	var cols := [CYAN, MAGENTA, YELLOW]
 	for i in 3:
 		var r := title_card(i)
 		art.draw_rect(r.grow(3.0), DARK)
 		art.draw_rect(r, PANEL)
 		art.draw_rect(r, cols[i], false, 2.0)
-		var badge := Rect2(r.position + Vector2(10, 10), Vector2(26, 26))
+		var badge := Rect2(r.position + Vector2(10, 10), Vector2(30, 30))
 		art.draw_rect(badge, cols[i])
 		PixelText.draw_centered(art, str(i + 1), badge.get_center(), 2.0, DARK)
-		var ic := r.position + Vector2(52, 52)
+		var ic := r.position + Vector2(70, r.size.y * 0.5 + 6.0)
 		match i:
 			0:  # a claw over a capsule
 				art.draw_rect(Rect2(ic.x - 2.0, ic.y - 30.0, 4, 14), Color("c8d6ff"))
@@ -299,8 +327,8 @@ func _draw_title() -> void:
 					var a := -PI * 0.5 + TAU * j / 10.0 + _t
 					pts.append(ic + Vector2(0, 4) + Vector2(cos(a), sin(a)) * (16.0 if j % 2 == 0 else 7.0))
 				art.draw_colored_polygon(pts, YELLOW)
-		if i < 2:  # the arrow to the next card
-			var ax := r.end.x + 8.0
-			for st in 5:
-				art.draw_rect(Rect2(ax + st * 2.0, r.get_center().y - 8.0 + st * 2.0, 2, 2), Color.WHITE)
-				art.draw_rect(Rect2(ax + st * 2.0, r.get_center().y + 8.0 - st * 2.0, 2, 2), Color.WHITE)
+		if i < 2:  # the arrow down to the next card
+			var ay := r.end.y + 3.0
+			for stp in 4:
+				art.draw_rect(Rect2(GameModeLayout.CX - 8.0 + stp * 2.0, ay + stp * 2.0, 2, 2), Color.WHITE)
+				art.draw_rect(Rect2(GameModeLayout.CX + 8.0 - stp * 2.0, ay + stp * 2.0, 2, 2), Color.WHITE)

@@ -15,6 +15,12 @@ const CYAN := Color("7ae0ff")
 const MUTED := Color("8fa3c4")
 const APPLY_LABELS := {"now": "今すぐ", "restart": "次の起動から", "backend": "バックエンド再起動"}
 
+## Portrait (#157): the screen is 720 wide, so the panel is 690 and everything inside it
+## is measured from that (the 校正 and テスト tabs use the same inner width).
+const PANEL_W := 690.0
+const INNER_W := 630.0
+const CELL_W := 250.0
+
 var root: Control
 var _rows: Dictionary = {}  # key -> {"item", "control", "label"}
 var _status: Label
@@ -56,7 +62,7 @@ func setup() -> void:
 	sb.set_corner_radius_all(18)
 	sb.set_content_margin_all(22)
 	panel.add_theme_stylebox_override("panel", sb)
-	panel.custom_minimum_size = Vector2(940, 640)
+	panel.custom_minimum_size = Vector2(PANEL_W, 1000)  # portrait (#157): as wide as the screen allows, tall
 	centre.add_child(panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
@@ -78,12 +84,12 @@ func setup() -> void:
 		+ "［今すぐ］は保存で反映、［次の起動から］［バックエンド再起動］は ./start.sh で起動し直すと反映。"
 		+ "実機で測る値は「校正」タブで。", 16, MUTED, 3)
 	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.custom_minimum_size = Vector2(880, 0)
+	info.custom_minimum_size = Vector2(INNER_W, 0)
 	page.add_child(info)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO  # a row wider than the portrait panel scrolls; it never widens the panel (#157)
 	page.add_child(scroll)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -125,7 +131,7 @@ func setup() -> void:
 func setup_calibration(main: Node) -> void:
 	var scroll := ScrollContainer.new()
 	scroll.name = "校正"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO  # a row wider than the portrait panel scrolls; it never widens the panel (#157)
 	tabs.add_child(scroll)
 	calibration = CalibrationPanel.new()
 	calibration.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -136,7 +142,7 @@ func setup_calibration(main: Node) -> void:
 func setup_tests(main: Node) -> void:
 	var scroll := ScrollContainer.new()
 	scroll.name = "テスト"
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO  # a row wider than the portrait panel scrolls; it never widens the panel (#157)
 	tabs.add_child(scroll)
 	tests = DeviceTestPanel.new()
 	tests.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -195,7 +201,7 @@ func _add_row(it: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 12)
 	var label := StudyHud.label(str(it.get("label", key)), 20, Color.WHITE, 3)
-	label.custom_minimum_size = Vector2(320, 0)
+	label.custom_minimum_size = Vector2(210, 0)
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	row.add_child(label)
 	var c: Control
@@ -209,7 +215,7 @@ func _add_row(it: Dictionary) -> void:
 			var ob := OptionButton.new()
 			ob.focus_mode = Control.FOCUS_NONE
 			ob.fit_to_longest_item = false
-			ob.custom_minimum_size = Vector2(360, 0)
+			ob.custom_minimum_size = Vector2(CELL_W, 0)
 			ob.clip_text = true
 			for o in it.get("options", []):
 				if o is Array and o.size() > 0:
@@ -224,7 +230,7 @@ func _add_row(it: Dictionary) -> void:
 			sl.min_value = float(it.get("min", 0))
 			sl.max_value = float(it.get("max", 100))
 			sl.step = float(it.get("step", 1))
-			sl.custom_minimum_size = Vector2(300, 0)
+			sl.custom_minimum_size = Vector2(CELL_W - 70.0, 0)
 			sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			var val := StudyHud.label("", 18, Color.WHITE, 3)
 			val.custom_minimum_size = Vector2(70, 0)
@@ -237,13 +243,13 @@ func _add_row(it: Dictionary) -> void:
 		"text":
 			var le := LineEdit.new()
 			le.max_length = int(it.get("max_length", 200))
-			le.custom_minimum_size = Vector2(360, 0)
+			le.custom_minimum_size = Vector2(CELL_W, 0)
 			le.text_changed.connect(func(_t): _mark(key))
 			c = le
 		_:
 			return
 	var cell := HBoxContainer.new()  # one width for every control: the badges line up
-	cell.custom_minimum_size = Vector2(360, 0)
+	cell.custom_minimum_size = Vector2(CELL_W, 0)
 	cell.add_child(c)
 	row.add_child(cell)
 	var badge := StudyHud.label(APPLY_LABELS.get(str(it.get("apply", "restart")), "次の起動から"), 14,
@@ -255,7 +261,7 @@ func _add_row(it: Dictionary) -> void:
 	if it.has("note"):
 		var note := StudyHud.label("    " + str(it["note"]), 15, MUTED, 2)
 		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		note.custom_minimum_size = Vector2(800, 0)
+		note.custom_minimum_size = Vector2(INNER_W - 20.0, 0)
 		parent.add_child(note)
 	_rows[key] = {"item": it, "control": c, "label": label}
 

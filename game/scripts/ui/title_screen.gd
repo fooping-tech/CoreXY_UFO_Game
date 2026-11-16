@@ -81,9 +81,10 @@ func setup(score_game := false) -> void:
 	_ufo.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(_ufo)
 
-	var row := HBoxContainer.new()
+	# portrait (#157): the modes are cards one under another (↑ ↓ as well as ← → pick one)
+	var row := VBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
-	row.add_theme_constant_override("separation", 24 if score_game else 36)
+	row.add_theme_constant_override("separation", 18)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(row)
 	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nわからない問題は Y で HELP")
@@ -91,9 +92,11 @@ func setup(score_game := false) -> void:
 	if score_game:
 		_add_card(row, 2, "3", "スコアゲーム", "150 秒！ カプセルを Dial に入れて\nピンボールで高得点をねらおう")
 
-	var keys := StudyHud.label(("← → か 1 / 2 / 3 で選んで Enter" if score_game else "← → か 1 / 2 で選んで Enter") + "（クリックでも選べる）    S / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",
+	var keys := StudyHud.label(("↑ ↓ か 1 / 2 / 3 で選んで Enter" if score_game else "↑ ↓ か 1 / 2 で選んで Enter") + "（クリックでも選べる）\nS / 右上の歯車: 設定    Esc: いつでもタイトルに戻る    Space: 止める",
 		18, Color("c8d6f0"), 4)
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	keys.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	keys.custom_minimum_size = Vector2(660, 0)
 	box.add_child(keys)
 	_status = StudyHud.label("", 16, Color("8fa3c4"), 3)
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -128,7 +131,8 @@ func _add_card(parent: Control, index: int, number: String, heading: String, tex
 	sb.shadow_color = Color(0, 0, 0, 0.4)
 	sb.shadow_size = 8
 	card.add_theme_stylebox_override("panel", sb)
-	card.custom_minimum_size = Vector2(330 if choices.size() < 3 else 300, 0)
+	card.custom_minimum_size = Vector2(600, 0)
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	card.mouse_entered.connect(func(): select(index))
@@ -139,10 +143,10 @@ func _add_card(parent: Control, index: int, number: String, heading: String, tex
 	v.add_theme_constant_override("separation", 6)
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(v)
-	var head := StudyHud.label("%s  %s" % [number, heading], 40 if choices.size() < 3 else 34, Color.WHITE, 8)
+	var head := StudyHud.label("%s  %s" % [number, heading], 40, Color.WHITE, 8)
 	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(head)
-	var body := StudyHud.label(text, 20 if choices.size() < 3 else 17, Color("e8f0ff"), 4)
+	var body := StudyHud.label(text, 22, Color("e8f0ff"), 4)
 	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(body)
 	parent.add_child(card)

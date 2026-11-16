@@ -58,7 +58,7 @@ func setup(m: Node) -> void:
 	var top := _row()
 	_hub = StudyHud.label("", 18, YELLOW, 3)
 	_hub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hub.custom_minimum_size = Vector2(600, 0)
+	_hub.custom_minimum_size = Vector2(400, 0)
 	top.add_child(_hub)
 	var stop := _button(top, "STOP ALL（Space）", stop_all)
 	stop.add_theme_color_override("font_color", BAD)
@@ -149,13 +149,13 @@ func _sub(text: String) -> void:
 func _note(text: String) -> void:
 	var l := StudyHud.label(text, 16, MUTED, 2)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
+	l.custom_minimum_size = Vector2(SettingsScreen.INNER_W - 20.0, 0)
 	add_child(l)
 
 func _value() -> Label:
 	var l := StudyHud.label("", 17, Color.WHITE, 3)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
+	l.custom_minimum_size = Vector2(SettingsScreen.INNER_W - 20.0, 0)
 	add_child(l)
 	return l
 

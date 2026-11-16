@@ -5,10 +5,25 @@ extends Control
 ## words. A step really done gets one big "OK". Drawn in the game's dot size (2 px) with
 ## rectangles: no picture files. It only shows what GestureTutorialController says.
 
-const SCREEN := Vector2(1280, 720)
-const PANEL := Rect2(150, 84, 980, 560)
+## Portrait (#157): the panel fills the screen under the status row, and each step is laid
+## out down it: the hand on top, what it does below, then the words.
+const SCREEN := GameModeLayout.SCREEN
+const PANEL := Rect2(20, 250, 680, 830)
+## where the two halves of a step's picture are centred: the hand (top), its effect (below)
+const TOP_AT := Vector2(360, 470)
+const LOW_AT := Vector2(360, 720)
+## where each line of words sits: [the steps, the practice capsule]
+const LINES := {
+	"progress": [Rect2(40, 262, 320, 36), Rect2(24, 8, 320, 30)],
+	"mode": [Rect2(380, 266, 300, 28), Rect2(380, 10, 316, 26)],
+	"speech": [Rect2(40, 302, 640, 32), Rect2(20, 250, 680, 32)],
+	"title": [Rect2(30, 826, 660, 90), Rect2(20, 36, 680, 44)],
+	"sub": [Rect2(30, 916, 660, 52), Rect2(190, 1128, 340, 72)],
+	"guide": [Rect2(30, 968, 660, 40), Rect2(20, 80, 680, 34)],
+	"status": [Rect2(30, 1010, 660, 62), Rect2(190, 1204, 340, 60)],
+}
 ## the practice capsule: only a banner, so the field and the ports are in view
-const BANNER := Rect2(150, 84, 980, 132)
+const BANNER := Rect2(8, 4, 704, 114)
 const YELLOW := Color("ffe03c")
 const CYAN := Color("3ff0ff")
 const MAGENTA := Color("ff4fd8")
@@ -56,14 +71,16 @@ func setup(c: GameModeController) -> void:
 		_ufo_tex = load(GameModeVFX.UFO_SHEET)
 	if ResourceLoader.exists(GameModeVFX.UFO_FACES_SHEET):
 		_faces_tex = load(GameModeVFX.UFO_FACES_SHEET)
-	_progress = _label(26, YELLOW, Rect2(172, 94, 420, 38), HORIZONTAL_ALIGNMENT_LEFT)
-	_mode = _label(18, Color("b8c6ff"), Rect2(888, 100, 220, 28), HORIZONTAL_ALIGNMENT_RIGHT)
+	_progress = _label(26, YELLOW, LINES.progress[0], HORIZONTAL_ALIGNMENT_LEFT)
+	_mode = _label(18, Color("b8c6ff"), LINES.mode[0], HORIZONTAL_ALIGNMENT_RIGHT)
 	# what UFOくん is saying now, as words (the voice may be off or missing)
-	_speech = _label(20, Color("9ff3ff"), Rect2(400, 96, 480, 34), HORIZONTAL_ALIGNMENT_CENTER)
-	_title = _label(40, Color.WHITE, Rect2(160, 444, 960, 58), HORIZONTAL_ALIGNMENT_CENTER)
-	_sub = _label(22, Color("cfe0ff"), Rect2(170, 504, 940, 34), HORIZONTAL_ALIGNMENT_CENTER)
-	_guide = _label(26, YELLOW, Rect2(170, 544, 940, 40), HORIZONTAL_ALIGNMENT_CENTER)
-	_status = _label(18, Color("9fb4d8"), Rect2(170, 598, 940, 30), HORIZONTAL_ALIGNMENT_CENTER)
+	_speech = _label(20, Color("9ff3ff"), LINES.speech[0], HORIZONTAL_ALIGNMENT_CENTER)
+	_title = _label(30, Color.WHITE, LINES.title[0], HORIZONTAL_ALIGNMENT_CENTER)
+	_sub = _label(22, Color("cfe0ff"), LINES.sub[0], HORIZONTAL_ALIGNMENT_CENTER)
+	_guide = _label(26, YELLOW, LINES.guide[0], HORIZONTAL_ALIGNMENT_CENTER)
+	_status = _label(18, Color("9fb4d8"), LINES.status[0], HORIZONTAL_ALIGNMENT_CENTER)
+	for l in [_title, _sub, _status]:
+		l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY  # a long line wraps inside the screen
 	for i in 6:
 		var tag := _label(17, Color.WHITE, Rect2(0, 0, 190, 50), HORIZONTAL_ALIGNMENT_CENTER)
 		tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -148,11 +165,13 @@ func _process(dt: float) -> void:
 	_guide.text = tut.guide
 	_speech.text = speech_text()
 	_status.text = status_text(ctl._hand_snapshot()) if not practice else ""
-	var top := 0.0 if not practice else -340.0
-	_title.position.y = 444.0 + top + (26.0 if practice else 0.0)
-	_sub.position.y = 504.0 + top + (16.0 if practice else 0.0)
-	_guide.position.y = 544.0 if not practice else 222.0
-	_title.add_theme_font_size_override("font_size", 40 if not practice else 34)
+	var which := 1 if practice else 0
+	var labels := {"progress": _progress, "mode": _mode, "speech": _speech, "title": _title, "sub": _sub, "guide": _guide, "status": _status}
+	for key in labels.keys():
+		var r: Rect2 = LINES[key][which]
+		labels[key].position = r.position
+		labels[key].size = r.size
+	_title.add_theme_font_size_override("font_size", 30)
 	_guide.pivot_offset = _guide.size * 0.5
 	_guide.scale = Vector2.ONE * (1.0 + 0.03 * sin(_t * 5.0))
 	for tag in _tags:
@@ -179,7 +198,7 @@ func _draw() -> void:
 	var practice := kind == "practice"
 	var r := BANNER if practice else PANEL
 	if not practice:
-		draw_rect(Rect2(0, 76, 1280, 644), Color(0.01, 0.02, 0.08, 0.55))
+		draw_rect(Rect2(0, PANEL.position.y - 6.0, SCREEN.x, SCREEN.y - PANEL.position.y + 6.0), Color(0.01, 0.02, 0.08, 0.55))
 	PinballField.glow_rect(self, r, PURPLE, 0.6)
 	draw_rect(r.grow(4.0), DARK)
 	draw_rect(r, GLASS)
@@ -208,13 +227,13 @@ func _draw() -> void:
 		"practice":
 			_draw_practice()
 	if not practice and GestureTutorialController.is_hand_kind(kind) and tut.state == "judging" and not tut.telling():
-		_draw_bar(Rect2(300, 414, 260, 14), tut.progress)
+		_draw_bar(Rect2(SCREEN.x * 0.5 - 130.0, TOP_AT.y + 136.0, 260, 14), tut.progress)
 	if tut.telling() and kind != "summon":
 		_chip(Rect2(r.end.x - 150.0, r.position.y + 50.0, 130, 30), "せつめい", Color("b8c6ff"), 5)
 	if bool(s.get("future", false)):
-		_chip(Rect2(560, 150, 180, 34), "じゅんびちゅう", YELLOW, 4)
+		_chip(Rect2(SCREEN.x * 0.5 - 90.0, PANEL.position.y + 90.0, 180, 34), "じゅんびちゅう", YELLOW, 4)
 	if _ok_t < ctl.tutorial.ok_s + 0.2 and tut.state == "success":
-		_draw_ok(Vector2(640, 280) if not practice else Vector2(640, 400))
+		_draw_ok(Vector2(SCREEN.x * 0.5, 600) if not practice else GameModeLayout.CENTRE)
 
 ## A small framed word (a Label from the pool inside a pixel frame).
 func _chip(r: Rect2, text: String, color: Color, tag_index: int) -> void:
@@ -329,27 +348,34 @@ func _arrow(a: Vector2, b: Vector2, col: Color, w := 6.0) -> void:
 			var h: Vector2 = (b - dir * (j * w) + side * sgn * (j * w)).snapped(Vector2(DOT, DOT))
 			draw_rect(Rect2(h - Vector2(w, w) * 0.5, Vector2(w, w)), col)
 
+## The hand's picture is drawn from its top-left corner: this puts its middle on `c`.
+func _hand_at(c: Vector2, d := 8.0) -> Vector2:
+	return c - Vector2(11.0, 16.0) * d
+
 func _draw_hand_step(pose: String) -> void:
 	var bob := snappedf(sin(_t * 3.0) * 4.0, DOT)
-	draw_hand(Vector2(340, 150 + bob), 8.0, pose)
-	_draw_ufo(Vector2(860, 280 + sin(_t * 2.2) * 8.0), 4.0, _face())
+	var hand := _hand_at(TOP_AT + Vector2(0, bob))
+	draw_hand(hand, 8.0, pose)
+	var ufo := LOW_AT + Vector2(0, 20.0 + sin(_t * 2.2) * 8.0)
+	_draw_ufo(ufo, 4.0, _face())
 	if pose == "pinch":  # the light runs from the fingertips to UFOくん: in sync
-		var a := Vector2(368, 234 + bob)
-		var b := Vector2(760, 270)
+		var a := hand + Vector2(28, 84)
+		var b := ufo + Vector2(-20, -90)
 		for i in 9:
 			var k := fmod(i / 9.0 + _t * 0.6, 1.0)
-			var q := a.lerp(b, k) + Vector2(0, sin(k * PI) * -50.0)
+			var q := a.lerp(b, k) + Vector2(sin(k * PI) * -60.0, 0)
 			_spark(q, 6.0, CYAN.lerp(YELLOW, k))
 
 func _draw_move(pose: String) -> void:
 	var sway := Vector2(sin(_t * 1.6) * 44.0, sin(_t * 0.8) * 12.0).snapped(Vector2(DOT, DOT))
-	draw_hand(Vector2(340, 150) + sway, 8.0, pose)
+	draw_hand(_hand_at(TOP_AT) + sway, 8.0, pose)
 	for dir in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
 		var d: Vector2 = dir
-		var c := Vector2(420, 280) + d * Vector2(190, 150)
+		var c := TOP_AT + d * Vector2(200, 128)
 		_arrow(c - d * 34.0, c + d * 10.0, CYAN)
-	_draw_ufo(Vector2(860, 280) + sway * Vector2(1.6, 1.6), 4.0, _face())
-	draw_rect(Rect2(720, 372, 280, 4), Color(1, 1, 1, 0.25))
+	var ufo := LOW_AT + Vector2(0, 30)
+	_draw_ufo(ufo + sway * Vector2(1.6, 1.6), 4.0, _face())
+	draw_rect(Rect2(ufo.x - 140.0, ufo.y + 92.0, 280, 4), Color(1, 1, 1, 0.25))
 
 ## The claw of the arm, open (k = 0) to closed (k = 1), over a capsule.
 func _draw_claw(c: Vector2, k: float, col: Color) -> void:
@@ -365,36 +391,36 @@ func _draw_claw(c: Vector2, k: float, col: Color) -> void:
 
 func _draw_grab(s: Dictionary) -> void:
 	var pose := str(s.get("art_pose", "fist"))
-	draw_hand(Vector2(300, 150), 8.0, pose if pose in HAND_POSES else "fist")
-	_draw_claw(Vector2(640, 300), 0.5 + 0.5 * sin(_t * 3.0), CYAN)
-	_arrow(Vector2(500, 290), Vector2(570, 290), YELLOW)
-	_draw_ufo(Vector2(930, 200 + sin(_t * 2.2) * 6.0), 3.0, _face())
+	draw_hand(_hand_at(Vector2(190, 470)), 8.0, pose if pose in HAND_POSES else "fist")
+	_arrow(Vector2(318, 470), Vector2(388, 470), YELLOW)
+	_draw_claw(Vector2(480, 500), 0.5 + 0.5 * sin(_t * 3.0), CYAN)
+	_draw_ufo(Vector2(610, 390 + sin(_t * 2.2) * 6.0), 2.0, _face())
 	# the hand scheme's other shapes, small
 	var hints: Array = s.get("hints", [])
 	for i in mini(hints.size(), 2):
-		var at := Vector2(724.0, 312.0 + 62.0 * i)
+		var at := Vector2(96.0, 660.0 + 76.0 * i)
 		var art := str(hints[i][0])
 		draw_hand(at, 1.75, "pinch" if art == "pinch_down" else (art if art in HAND_POSES else "open"))
-		_tag(i, str(hints[i][1]), at + Vector2(226, 28), Color("cfe0ff"), 370.0)
+		_tag(i, str(hints[i][1]), at + Vector2(280, 28), Color("cfe0ff"), 460.0)
 
 ## The easy mode's catch as three frames: down, catch, up. Not built yet: the screen says so.
 func _draw_easy_grab() -> void:
-	draw_hand(Vector2(210, 150), 8.0, "fist")
+	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, "fist")
 	for i in 3:
-		var c := Vector2(560.0 + 170.0 * i, 310.0)
+		var c := Vector2(190.0 + 170.0 * i, 716.0)
 		var fr := Rect2(c - Vector2(72, 100), Vector2(144, 190))
 		draw_rect(fr, Color(0.06, 0.08, 0.24, 0.9))
 		draw_rect(fr, PURPLE, false, 2.0)
 		_draw_claw(c + Vector2(0, [-20.0, 20.0, -20.0][i]), [0.0, 1.0, 1.0][i], CYAN)
 		if i != 1:
 			_arrow(c + Vector2(52, -40.0 if i == 0 else 40.0), c + Vector2(52, 40.0 if i == 0 else -40.0), YELLOW, 4.0)
-		_tag(i, ["おりる", "つかむ", "あがる"][i], c + Vector2(0, 112), Color("cfe0ff"))
+		_tag(i, ["おりる", "つかむ", "あがる"][i], c + Vector2(0, 110), Color("cfe0ff"))
 
 func _draw_easy_one() -> void:
-	draw_hand(Vector2(260, 150), 8.0, "point")
-	_arrow(Vector2(480, 290), Vector2(700, 290), YELLOW)
-	_draw_dial(Vector2(800, 290), CYAN, "1")
-	_tag(0, "1ごうき", Vector2(800, 384), CYAN)
+	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, "point")
+	_arrow(Vector2(360, 610), Vector2(360, 664), YELLOW)
+	_draw_dial(Vector2(360, 740), CYAN, "1")
+	_tag(0, "1ごうき", Vector2(360, 820), CYAN)
 
 ## A Dial's port: a ring in its colour with its number.
 func _draw_dial(c: Vector2, col: Color, number: String) -> void:
@@ -405,7 +431,7 @@ func _draw_dial(c: Vector2, col: Color, number: String) -> void:
 
 ## The spell: a summoning circle, UFOくん coming down in its beam.
 func _draw_summon() -> void:
-	var c := Vector2(640, 330)
+	var c := Vector2(SCREEN.x * 0.5, 640)
 	var rise := clampf(ctl.tutorial.t / 1.6, 0.0, 1.0)
 	for i in 3:  # the circle, seen at a slant: rings of dots turning
 		var rad := 120.0 + 60.0 * i
@@ -420,22 +446,22 @@ func _draw_summon() -> void:
 		var a0 := TAU * j / 6.0 + _t * 0.3
 		var a1 := TAU * (j + 2) / 6.0 + _t * 0.3
 		draw_line(c + Vector2(cos(a0) * 170.0, sin(a0) * 54.0 + 70.0), c + Vector2(cos(a1) * 170.0, sin(a1) * 54.0 + 70.0), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.8), 4.0)
-	var ufo := Vector2(640, lerpf(60.0, 250.0, rise * rise * (3.0 - 2.0 * rise)) + sin(_t * 2.2) * 6.0)
+	var ufo := Vector2(c.x, lerpf(330.0, 540.0, rise * rise * (3.0 - 2.0 * rise)) + sin(_t * 2.2) * 6.0)
 	var beam := PackedVector2Array([ufo + Vector2(-40, 50), ufo + Vector2(40, 50), c + Vector2(150, 96), c + Vector2(-150, 96)])
 	draw_colored_polygon(beam, Color(CYAN.r, CYAN.g, CYAN.b, 0.12 + 0.06 * sin(_t * 5.0)))
 	_draw_ufo(ufo, 4.0, "excited" if rise >= 1.0 and int(_t * 2.0) % 2 == 0 else "")
 	for i in 10:  # stars of an old science-fiction poster
-		var q := Vector2(200.0 + fmod(i * 197.0, 880.0), 150.0 + fmod(i * 83.0, 250.0))
+		var q := Vector2(50.0 + fmod(i * 197.0, 620.0), 350.0 + fmod(i * 83.0, 470.0))
 		_spark(q, 4.0, Color(1, 1, 0.8, 0.5 + 0.5 * sin(_t * 3.0 + i)))
-	PixelText.draw_centered(self, "SHOWA OCCULT X REIWA TECH", Vector2(640, 146), 2.0, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9), DARK)
+	PixelText.draw_centered(self, "SHOWA OCCULT X REIWA TECH", Vector2(c.x, 356), 2.0, Color(MAGENTA.r, MAGENTA.g, MAGENTA.b, 0.9), DARK)
 
 ## The rule as one picture: catch -> a port -> pinball on the screen -> points -> back out
 ## of the same port.
 func _draw_rules() -> void:
-	var xs := [250.0, 445.0, 640.0, 835.0, 1030.0]
-	var y := 270.0
+	# five frames in two rows down the panel: 1 2 3, then 4 5
+	var cs := [Vector2(130, 468), Vector2(360, 468), Vector2(590, 468), Vector2(245, 706), Vector2(475, 706)]
 	for i in 5:
-		var c := Vector2(xs[i], y)
+		var c: Vector2 = cs[i]
 		var fr := Rect2(c - Vector2(82, 92), Vector2(164, 176))
 		draw_rect(fr.grow(2.0), DARK)
 		draw_rect(fr, Color(0.06, 0.08, 0.24, 0.92))
@@ -467,8 +493,8 @@ func _draw_rules() -> void:
 				var k2 := fmod(_t * 0.9, 1.0)
 				PinballField.draw_capsule_at(self, c + Vector2(0, -10.0 + 80.0 * k2), _t * 3.0, MAGENTA, 0.5 + 0.5 * k2)
 		_tag(i, RULE_TAGS[i], c + Vector2(0, 116), Color.WHITE)
-		if i < 4:
-			_arrow(Vector2(xs[i] + 88.0, y), Vector2(xs[i + 1] - 92.0, y), Color.WHITE, 4.0)
+		if i < 4 and is_equal_approx(cs[i].y, cs[i + 1].y):
+			_arrow(Vector2(cs[i].x + 88.0, c.y), Vector2(cs[i + 1].x - 92.0, c.y), Color.WHITE, 4.0)
 
 ## The practice capsule: the field stays in view; arrows show the two ports.
 func _draw_practice() -> void:
@@ -477,7 +503,8 @@ func _draw_practice() -> void:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		var port: Vector2 = GameModeVFX.PORTS[side]
 		var x: float = port.x
-		_tag(0 if side == "left" else 1, "1ごうき" if side == "left" else "2ごうき", Vector2(x, 404), l.color)
+		# over each port (Dial 1 bottom left, Dial 2 bottom right): its name, and an arrow down into it
+		# (the port carries its own name, DIAL 1 / DIAL 2, and its lane's words say "put it in here")
 		if waiting and l.state == "READY":
 			var bounce := snappedf(absf(sin(_t * 4.0)) * 16.0, DOT)
-			_arrow(Vector2(x, 430 + bounce), Vector2(x, 500 + bounce), l.color, 8.0)
+			_arrow(Vector2(x, port.y - 160.0 + bounce), Vector2(x, port.y - 90.0 + bounce), l.color, 8.0)

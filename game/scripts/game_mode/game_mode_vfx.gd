@@ -28,7 +28,7 @@ const SHEETS := {
 }
 const MOMENTS := ["capsule_portal_open", "capsule_absorb", "capsule_transfer_trail", "capsule_materialize",
 	"capsule_release_burst", "capsule_portal_close"]
-const PORTS := {"left": Vector2(75, 640), "right": Vector2(1205, 640)}
+const PORTS: Dictionary = GameModeLayout.PORTS
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
 const UFO_SCALE := 2.0
 const UFO_FACES_SHEET := "res://assets/ufo/ufo_expressions.png"
@@ -59,7 +59,7 @@ const RELEASE_STREAM_MAX_S := 12.0
 
 ## UFO-DeviceHub's default unit colours (the Dials' LEDs): cyan and magenta
 var colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
-var ufo_pos := Vector2(640, 92)
+var ufo_pos := Vector2(GameModeLayout.CX, GameModeLayout.UFO_Y)
 var ufo_visible := true
 ## normal / hurry / over / happy / sad / stopped (the controller sets it from the round)
 var ufo_mood := "normal"
@@ -121,7 +121,7 @@ func port(side: String) -> Vector2:
 
 ## The screen edge on the Dial's side, level with the port.
 func dial_edge(side: String) -> Vector2:
-	return Vector2(-10.0 if side == "left" else 1290.0, PORTS[side].y)
+	return GameModeLayout.dial_edge(side)
 
 func tint(side: String) -> Color:
 	var c: Color = colors[side]
@@ -151,7 +151,7 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 			_fly(at, p, secs, side, 40.0, 1.0, 0.4)
 			_stream(side, false, secs + 0.8)
 		"capsule_release_burst":  # the light keeps running to the Dial until the port closes
-			_sheet(moment, side, Vector2(clampf(dial_edge(side).x, 40.0, 1240.0), p.y - 30.0))
+			_sheet(moment, side, Vector2(clampf(dial_edge(side).x, 40.0, GameModeLayout.SCREEN.x - 40.0), p.y - 30.0))
 			_stream(side, false, RELEASE_STREAM_MAX_S)
 		"capsule_portal_close":
 			_close_port(side)
@@ -205,7 +205,7 @@ func hit(kind: String, at: Vector2, color: Color) -> void:
 		"star", "alien", "warp":
 			_spawn("hit_star", at, Color.WHITE)
 		"switch_bonus", "jackpot":
-			_spawn("bonus", Vector2(640, 300), Color.WHITE)
+			_spawn("bonus", GameModeLayout.CENTRE, Color.WHITE)
 			_spawn("hit_star", at, Color.WHITE)
 
 ## The points just scored, shown for a moment where they were scored. `level` (the combo,
@@ -400,7 +400,7 @@ func _draw_top() -> void:
 		var sc := popup_scale(p.big, p.level) + (2.0 if effects and p.t < 0.08 else 0.0)
 		var rise := 56.0 * (1.0 - (1.0 - k) * (1.0 - k))
 		var pos: Vector2 = (p.pos + Vector2(0, -24.0 - rise)).snapped(Vector2(2, 2))
-		pos.x = clampf(pos.x, 150.0 + PixelText.width(p.text, sc) * 0.5, 1130.0 - PixelText.width(p.text, sc) * 0.5)
+		pos.x = clampf(pos.x, PinballField.LEFT + PixelText.width(p.text, sc) * 0.5, PinballField.RIGHT - PixelText.width(p.text, sc) * 0.5)
 		var col: Color = p.color if not (p.big and int(p.t * 12.0) % 2 == 0) else Color.WHITE
 		PixelText.draw_centered(top, p.text, pos, sc, col, Color("050818"))
 	if _banner.t < BANNER_S:
@@ -408,7 +408,7 @@ func _draw_top() -> void:
 		if not (bk > 0.7 and int(_banner.t * 20.0) % 2 == 0):
 			var bs := 4.0 + (2.0 if _banner.level >= 3 else 0.0) + (2.0 if _banner.t < 0.08 else 0.0)
 			var bc: Color = BANNER_COLORS[clampi(_banner.level, 0, 3)]
-			var bp := Vector2(640, 250.0 - 20.0 * bk).snapped(Vector2(2, 2))
+			var bp := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 170.0 - 20.0 * bk).snapped(Vector2(2, 2))
 			PixelText.draw_centered(top, _banner.text, bp + Vector2(4, 4), bs, Color(0.02, 0.03, 0.1, 0.8))
 			PixelText.draw_centered(top, _banner.text, bp, bs, bc if int(_banner.t * 10.0) % 2 == 0 else Color.WHITE, Color("050818"))
 
