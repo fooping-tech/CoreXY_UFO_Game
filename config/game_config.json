@@ -350,6 +350,10 @@
       "stall_s": 1.2,
       "gravity_scale": 0.7,
       "bounce": 0.45,
+      "settle_after_s": 5.0,
+      "settle_over_s": 3.0,
+      "settle_kick": 0.1,
+      "settle_gravity": 2.5,
       "star_respawn_s": 8.0
     },
     "score": {
