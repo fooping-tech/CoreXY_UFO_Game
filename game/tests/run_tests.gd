@@ -79,6 +79,7 @@ func _ready() -> void:
 	_test_game_mode_visuals(rs)
 	_test_game_mode_juice(rs)
 	_test_game_mode_scope(rs)
+	_test_game_mode_audio(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -3634,6 +3635,125 @@ func _test_game_mode_scope(rs: Node) -> void:
 	ctl.close()
 	_ok(not sc.visible and sc._demo_view.render_target_update_mode == SubViewport.UPDATE_DISABLED,
 		"game mode scope: closed with the score game (nothing drawn)")
+	_gm_free(game, rs)
+
+## #143: the score game's sound files (Kenney, CC0), the buses, the pan, the priority, the
+## fallback to the synthesised sounds, the music's two takes.
+func _test_game_mode_audio(rs: Node) -> void:
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(GameModeSounds.MANIFEST))
+	var entries: Dictionary = manifest.sounds
+	var files_ok := true
+	for key in entries.keys():
+		var m: Dictionary = entries[key]
+		var path := GameModeSounds.AUDIO_DIR + str(m.file)
+		if not FileAccess.file_exists(path) or FileAccess.get_sha256(path) != str(m.sha256) or not str(m.page).begins_with("https://kenney.nl/assets/") \
+				or str(m.pack) == "" or str(m.purpose) == "" or float(m.seconds) <= 0.0:
+			files_ok = false
+			print("  manifest: ", key, " ", path)
+	_ok(files_ok and entries.size() >= 27 and manifest.licence == "CC0-1.0" and str(manifest.mirror.commit).length() == 40
+		and FileAccess.file_exists("res://assets/audio/licenses/kenney_cc0.md"),
+		"audio: every sound in the manifest is here unchanged (sha256), with its pack, its page at the source and the CC0 licence recorded")
+	var snd := GameModeSounds.new()
+	add_child(snd)
+	snd.enabled = true
+	# every sound the controller asks for exists, as a file, and as a synthesised fallback
+	var src := FileAccess.get_file_as_string("res://scripts/game_mode/game_mode_controller.gd")
+	var re := RegEx.new()
+	re.compile("sounds\\.play\\(\"([a-z_]+)\"\\)")
+	var asked: Array = []
+	for hit in re.search_all(src):
+		if not asked.has(hit.get_string(1)):
+			asked.append(hit.get_string(1))
+	for kind in ScoreManager.DEFAULT_TABLE.keys():  # the hits play their kind's name ("goal" for the goals)
+		var k: String = "goal" if str(kind).begins_with("goal") else ("bonus" if kind == "switch_bonus" else str(kind))
+		if not asked.has(k):
+			asked.append(k)
+	var with_files: bool = asked.all(func(k): return snd.source_of(k) == "file")
+	snd.use_files = false
+	var synth: bool = asked.all(func(k): return snd.source_of(k) == "synth")
+	snd.use_files = true
+	snd.load_manifest("res://assets/audio/no_such_manifest.json")
+	var no_manifest: bool = asked.all(func(k): return snd.source_of(k) == "synth") and snd.source_of("nothing") == ""
+	snd.play("bumper")  # still sounds, synthesised
+	var fallback_plays: bool = snd.sounding() == 1 and snd.log.has("bumper")
+	snd.load_manifest()
+	snd.silence()
+	_ok(asked.size() >= 26 and with_files and synth and no_manifest and fallback_plays,
+		"audio: every sound the score game asks for has a file and a synthesised fallback; with files off or the manifest missing it still plays",
+		"%d %s %s %s %s" % [asked.size(), with_files, synth, no_manifest, fallback_plays])
+	# the buses, the Dial's side, the gap, the priority
+	var buses: bool = [AudioBuses.SFX, AudioBuses.SFX_LEFT, AudioBuses.SFX_RIGHT, AudioBuses.BGM, AudioBuses.VOICE].all(
+		func(b): return AudioServer.get_bus_index(b) >= 0)
+	var pan_l: float = (AudioServer.get_bus_effect(AudioServer.get_bus_index(AudioBuses.SFX_LEFT), 0) as AudioEffectPanner).pan
+	var pan_r: float = (AudioServer.get_bus_effect(AudioServer.get_bus_index(AudioBuses.SFX_RIGHT), 0) as AudioEffectPanner).pan
+	snd.on_lane("right", "ABSORBING")
+	snd.on_lane("left", "RETURNING")
+	snd.play("absorb")
+	snd.play("return")
+	snd.play("go")
+	var sides: Array = snd.voices.filter(func(v): return not v.is_empty()).map(func(v): return "%s:%s" % [v.key, v.side])
+	var bus_r: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_RIGHT)
+	var bus_l: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_LEFT)
+	_ok(buses and pan_l < 0.0 and pan_r > 0.0 and sides.has("absorb:right") and sides.has("return:left") and sides.has("go:") and bus_r and bus_l,
+		"audio: effects, music and voice have their own buses; a Dial's sounds go to its side (left Dial left, right Dial right), the others stay in the middle",
+		str(sides))
+	snd.silence()
+	snd.log.clear()
+	snd.play("pin")
+	snd.play("pin")  # inside the gap: not again
+	var gap_ok: bool = snd.log.count("pin") == 1 and snd.min_gap_ms("pin") > 0
+	for k in ["bumper", "pop", "spinner", "switch", "target", "gem", "goal", "warp"]:
+		snd.play(k)
+	var full := snd.sounding()
+	var before_drop := snd.dropped
+	snd.play("sling")  # priority 0 with every player busy: dropped
+	var was_dropped: bool = snd.dropped == before_drop + 1 and snd.sounding() == GameModeSounds.PLAYERS
+	snd.play("jackpot")  # priority 2: takes a lesser sound's player
+	var stole: bool = snd.voices.any(func(v): return v.get("key", "") == "jackpot") and snd.sounding() == GameModeSounds.PLAYERS \
+		and not snd.voices.any(func(v): return v.get("key", "") == "pin")
+	snd.play("stop")
+	var cut: bool = snd.sounding() == 1 and snd.voices.filter(func(v): return not v.is_empty()).size() == 1
+	_ok(gap_ok and full == GameModeSounds.PLAYERS and was_dropped and stole and cut and snd.priority_of("pin") == 0 and snd.priority_of("jackpot") == 2,
+		"audio: one pin sound per gap; with every player busy a pin-level sound is dropped and a jackpot takes the least important one's player; stop cuts the rest",
+		"%s %d %s %s %s" % [gap_ok, full, was_dropped, stole, cut])
+	# volumes and mutes; the music's two takes fade and are not the same take pitched up
+	AudioBuses.apply({"enabled": true, "bgm_enabled": false, "sfx_volume_db": -6.0})
+	var muted: bool = AudioBuses.muted(AudioBuses.BGM) and not AudioBuses.muted(AudioBuses.SFX) and AudioBuses.volume_db(AudioBuses.SFX) == -6.0
+	AudioBuses.apply({"enabled": false})
+	var all_off: bool = AudioBuses.muted(AudioBuses.BGM) and AudioBuses.muted(AudioBuses.SFX)
+	AudioBuses.apply({})
+	snd.set_bgm(true)
+	snd._process(GameModeSounds.FADE_S)
+	var normal: bool = snd._bgm.playing and snd._bgm_gain == 1.0 and snd._fast_gain == 0.0 and not snd._bgm_fast.playing
+	snd.set_bgm(true, true)
+	snd._process(GameModeSounds.FADE_S * 0.5)
+	var crossing: bool = snd._bgm.playing and snd._bgm_fast.playing and snd.hurry
+	snd._process(GameModeSounds.FADE_S)
+	var fast: bool = snd._bgm_fast.playing and not snd._bgm.playing and snd._bgm_fast.pitch_scale == 1.0
+	snd.set_bgm(false)
+	snd._process(GameModeSounds.FADE_S * 2.0)
+	var faded: bool = not snd._bgm.playing and not snd._bgm_fast.playing and not snd.bgm_on
+	var takes: bool = (snd._bgm_fast.stream as AudioStreamWAV).data.size() < (snd._bgm.stream as AudioStreamWAV).data.size()
+	_ok(muted and all_off and not AudioBuses.muted(AudioBuses.BGM) and normal and crossing and fast and faded and takes and snd.duck_db() == 0.0,
+		"audio: effects and music are turned down and muted separately; the music fades in, crosses to its own faster take for the last 30 s (not the same take pitched up) and fades out",
+		"%s %s %s %s %s %s %s" % [muted, all_off, normal, crossing, fast, faded, takes])
+	remove_child(snd)
+	snd.free()
+	# in a round: the combo's step has its sound, the voices go to the Voice bus
+	var game := _gm_game()
+	var ctl: GameModeController = _gm_playing(game)
+	ctl.mock_hub.mock_ball(GM_R)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(ctl.lanes["right"].capsule.capsule_id)
+	var f := ctl.field
+	for target in ["bumper_0", "pop_1"]:
+		f._on_capsule_body(f.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == target)[0], id)
+	ctl.tick(1.0 / 60.0)
+	_ok(ctl.sounds.log.has("combo") and ctl.sounds.combo_step == 1 and ctl.sounds.side_of("absorb") == "right" and ctl.sounds.side_of("drop") == "right"
+		and ctl.sounds.log.has("absorb") and ctl.sounds.log.has("drop") and ctl.sounds.log.has("bumper") and ctl.sounds.log.has("pop")
+		and game.study_mode.speech._player.bus == AudioBuses.VOICE,
+		"audio: in a round the combo's step has its sound, the right Dial's transfer sounds are on the right, and UFOくん's voice is on the Voice bus",
+		"%s %d %s" % [ctl.sounds.log, ctl.sounds.combo_step, ctl.sounds.side_of("absorb")])
 	_gm_free(game, rs)
 
 ## The real field: capsules dropped from several X reach a goal by themselves (Godot's

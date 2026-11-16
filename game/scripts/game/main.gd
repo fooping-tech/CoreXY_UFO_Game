@@ -376,6 +376,10 @@ func _on_settings_closed(saved: bool) -> void:
 func apply_live_settings() -> void:
 	sfx.enabled = bool(GameConfig.value("audio.enabled", true))
 	sfx.volume_db = float(GameConfig.value("audio.volume_db", -8.0))
+	AudioBuses.apply(GameConfig.data.get("audio", {}) if GameConfig.data.get("audio") is Dictionary else {})
+	if game_mode != null:
+		game_mode.sounds.enabled = sfx.enabled
+		game_mode.sounds.volume_db = sfx.volume_db
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
 	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))

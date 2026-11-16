@@ -48,6 +48,10 @@
   "audio": {
     "enabled": true,
     "volume_db": -8.0,
+    "sfx_enabled": true,
+    "sfx_volume_db": 0.0,
+    "bgm_enabled": true,
+    "bgm_volume_db": 0.0,
     "dir": "res://assets/audio",
     "move": "wizard-flight1.mp3",
     "up": "magic-statusup1.mp3",
@@ -170,6 +174,8 @@
         {"key": "title_screen.enabled", "apply": "restart", "label": "起動時にタイトル画面を出す", "type": "bool", "note": "オフにするとこの画面も開けなくなる。戻すときは config/local_settings.json を消す"},
         {"key": "audio.enabled", "apply": "now", "label": "効果音", "type": "bool"},
         {"key": "audio.volume_db", "apply": "now", "label": "効果音の大きさ（dB）", "type": "number", "min": -40, "max": 0, "step": 1},
+        {"key": "audio.bgm_enabled", "apply": "now", "label": "音楽（スコアゲーム）", "type": "bool"},
+        {"key": "audio.bgm_volume_db", "apply": "now", "label": "音楽の大きさ（dB、効果音との差）", "type": "number", "min": -30, "max": 6, "step": 1},
         {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
         {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
       ]},
@@ -322,6 +328,11 @@
     "dial_leds": true,
     "visual_quality": "high",
     "effects": true,
+    "sounds": {
+      "files": true,
+      "pan": 0.6,
+      "_note": "The score game's sounds (#143). files: true = the sound files of game/assets/audio/manifest.json (Kenney, CC0; where each came from is in that file and docs/audio_sources.md), false = only the sounds synthesised in the game (also what a missing file falls back to). pan 0..1: how far a Dial's sounds (absorb, drop, return, release, fault) are to its side (left Dial left, right Dial right). Volumes: audio.volume_db (effects), audio.sfx_volume_db / audio.bgm_volume_db (the buses), audio.sfx_enabled / audio.bgm_enabled."
+    },
     "scope": {
       "enabled": true,
       "optical_flow": true,

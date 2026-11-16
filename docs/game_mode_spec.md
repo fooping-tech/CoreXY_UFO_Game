@@ -36,7 +36,7 @@
 | `RESULT` | 得点、カプセル数、最大コンボ、ジャックポット数、異常のあった Dial。Enter でもう一回、Esc でタイトル |
 | `STOPPED` | Space（停止）で止めた。Enter でやり直し |
 
-- 残り 30 秒（`hurry_s`）: 音楽を速くし、イルミを速くする。残り 10 秒（`warning_s`）: 毎秒の警告音、時計が赤く点滅。
+- 残り 30 秒（`hurry_s`）: 音楽を速いテイクへ切り替え（クロスフェード）、イルミを速くする。残り 10 秒（`warning_s`）: 毎秒の警告音、時計が赤く点滅。
 - 0 秒の境界: 0 秒より前に `BALL_RECEIVED` が届いたカプセルはプレイする。0 秒の時点で空いている Dial には `DISARM_RECEIVER` を送る（受取待ちにする途中・応答待ちの Dial にも送る）。それでも 0 秒の直前に入って後から届いたカプセル（遅れカプセル）は、**盤面に出さず・得点せず**、そのまま排出する。
 - `SETTLING` が 30 秒で終わらないとき: まだ終わっていない側を `FAULT` にして `RESULT` に進む（その Dial は係の人が確かめる）。
 
@@ -277,7 +277,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 | 盤面（物理） | `pinball_field.gd`（`PinballField`） |
 | 背景・ドット文字 | `game_mode_backdrop.gd`（`GameModeBackdrop`）、`pixel_text.gd`（`PixelText`） |
 | 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは pixelfx（`VFXManager` 経由。下の表）。ポートの枠と光はコードで描く |
-| 音 | `game_mode_sounds.gd`（合成。音源ファイルなし） |
+| 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は合成。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
 | HUD | `game_mode_hud.gd` |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |
