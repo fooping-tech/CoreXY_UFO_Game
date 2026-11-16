@@ -17,8 +17,8 @@ extends Control
 ## shows the overview camera; with no camera at all it stays hidden (the planet is there
 ## instead).
 
-const RECT := Rect2(1145, 124, 133, 236)
-const RADIUS := 58.0
+const RECT := GameModeLayout.SCOPE_RECT
+const RADIUS := 44.0
 ## a correction this large (fraction of the frame's width) fills the shake meter
 const SHAKE_FULL := 0.04
 const DEMO_SIZE := 160
@@ -82,7 +82,7 @@ func setup(h: CameraHub) -> void:
 
 ## The disc's centre in this panel.
 func centre() -> Vector2:
-	return Vector2(RECT.size.x * 0.5, 8.0 + RADIUS + 6.0)
+	return Vector2(RADIUS + 12.0, RECT.size.y * 0.5)  # on the left of its panel; the words beside it
 
 ## Which camera the disc shows: "focus" (the arm), "overview" (when the arm has none),
 ## "demo" or "".
@@ -197,15 +197,15 @@ func _draw_art() -> void:
 			var p := c + Vector2(sx, sy) * gap
 			_line(p, p - Vector2(sx * 10.0, 0), col, 2.0)
 			_line(p, p - Vector2(0, sy * 10.0), col, 2.0)
-	# under the disc: what it is, which picture, and how much shake is being cancelled
-	var y := c.y + RADIUS + 20.0
-	PixelText.draw_centered(_art, "ARM CAM", Vector2(c.x, y), 2.0, CYAN, DARK)
-	PixelText.draw_centered(_art, st, Vector2(c.x, y + 22.0), 2.0, col, DARK)
+	# beside the disc: what it is, which picture, and how much shake is being cancelled
+	var tx := (c.x + RADIUS + 8.0 + RECT.size.x) * 0.5
+	PixelText.draw_centered(_art, "ARM CAM", Vector2(tx, 22.0), 2.0, CYAN, DARK)
+	PixelText.draw_centered(_art, st, Vector2(tx, 46.0), 2.0, col, DARK)
 	if st.begins_with("STAB O"):
-		PixelText.draw(_art, "SHAKE", Vector2(8, y + 40.0), 2.0, Color(CYAN, 0.8 if steady else 0.35), DARK)
+		PixelText.draw_centered(_art, "SHAKE", Vector2(tx, 72.0), 2.0, Color(CYAN, 0.8 if steady else 0.35), DARK)
 		for i in 5:
 			var on := steady and i < int(ceil(_shake * 5.0))
-			_art.draw_rect(Rect2(74.0 + i * 11.0, y + 42.0, 8, 10), (YELLOW if i >= 3 else CYAN) if on else Color(CYAN, 0.18))
+			_art.draw_rect(Rect2(tx - 28.0 + i * 12.0, 86.0, 8, 10), (YELLOW if i >= 3 else CYAN) if on else Color(CYAN, 0.18))
 
 ## Where the demo's camera looks now (px of its desk).
 func demo_pan() -> Vector2:

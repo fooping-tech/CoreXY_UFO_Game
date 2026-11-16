@@ -15,7 +15,7 @@ const GOOD := Color("9ff0a8")
 const INK := Color("e8eefc")
 const CARD_BG := Color("1f2a44")
 const CARD_BORDER := Color("34446a")
-const WIDTH := 800.0  # wrapped text inside a card
+const WIDTH := 590.0  # wrapped text inside a card (portrait, #157: the settings panel is 690 wide)
 
 var main: Node
 var hw: HomeworkClient
@@ -99,6 +99,7 @@ func setup(m: Node) -> void:
 	var keys := StudyHud.label("キー: 矢印 = XY　W / S = 上下　[ ] = 爪を回す　Q / A = 開く / 閉じる　Space = 止める",
 		15, MUTED, 2)
 	keys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	keys.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	keys.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	th.add_child(keys)
@@ -199,13 +200,13 @@ func setup(m: Node) -> void:
 	_overview = OverviewPicker.new()
 	_overview.hw = hw
 	_overview.clickable = true
-	_overview.custom_minimum_size = Vector2(440, 248)
+	_overview.custom_minimum_size = Vector2(336, 189)
 	_overview.picked.connect(_on_picked)
 	cams.add_child(_overview)
 	_focus = OverviewPicker.new()
 	_focus.hw = hw
 	_focus.center_cross = true
-	_focus.custom_minimum_size = Vector2(330, 248)
+	_focus.custom_minimum_size = Vector2(252, 189)
 	cams.add_child(_focus)
 	if main.cameras != null:
 		_overview.texture = main.cameras.texture(hw.camera_role if hw != null else "overview")

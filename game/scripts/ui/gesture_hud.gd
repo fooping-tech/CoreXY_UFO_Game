@@ -17,11 +17,11 @@ const SIZE := Vector2(460, 100)
 const RING_R := 38.0
 ## The mini camera view (4:3).
 const CAM_RECT := Rect2(8, 6, 117, 88)
-## The tall, narrow form for the score game (#141): it stands in the left column beside
-## the pinball field (camera on top, then the stick, the state, the speed), so nothing of
-## it lies over the field, the goals or the Dial's port.
-const COLUMN_SIZE := Vector2(133, 236)
-const COLUMN_POS := Vector2(2, 124)
+## The compact form for the score game (#141; portrait since #157): it sits on the left of
+## the status row over the UFO's rail (the camera, the stick beside it, the state under
+## them), so nothing of it lies over the field, the goals or a Dial's port.
+const COLUMN_SIZE := GameModeLayout.GESTURE_RECT.size
+const COLUMN_POS := GameModeLayout.GESTURE_RECT.position
 const COLUMN_RING_R := 30.0
 
 var gesture: GestureControl
@@ -83,7 +83,7 @@ func panel_size() -> Vector2:
 ## The stick ring's centre and radius in the panel.
 func ring() -> Array:
 	if column:
-		return [Vector2(COLUMN_SIZE.x * 0.5, CAM_RECT.end.y + 8.0 + COLUMN_RING_R), COLUMN_RING_R]
+		return [Vector2(CAM_RECT.end.x + 16.0 + COLUMN_RING_R + 6.0, 8.0 + COLUMN_RING_R + 4.0), COLUMN_RING_R]
 	return [Vector2(CAM_RECT.end.x + 12.0 + RING_R, SIZE.y * 0.5), RING_R]
 
 func step(dt: float) -> void:
@@ -239,15 +239,14 @@ func _draw() -> void:
 	var frac := clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
 	var n := int(roundf(frac * 10.0))
 	var speed := "%2d mm/s" % int(roundf(g.velocity.length()))
-	if column:  # under the ring: the state (wrapped), the gauge, the speed; the hint stays out
-		var ty := c0.y + rr + 20.0
-		draw_multiline_string(f, Vector2(7, ty + 1.0), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 13, 2, Color(0, 0, 0, 0.7 * a))
-		draw_multiline_string(f, Vector2(6, ty), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 13, 2, Color(PINK if live else Color.WHITE, a))
+	if column:  # the gauge under the ring, the state along the bottom; the hint and the speed stay out
 		for i in range(10):
 			var on := i < n
 			var col := (GOLD if i >= 7 else CYAN) if on else Color(CYAN, 0.18)
-			draw_rect(Rect2(Vector2(8.0 + i * 12.0, psize.y - 30.0), Vector2(9.0, 6.0)), Color(col, a if on else 0.6))
-		draw_string(f, Vector2(6, psize.y - 8.0), speed, HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 11, Color(CYAN, 0.8 * a))
+			draw_rect(Rect2(Vector2(c0.x - 44.0 + i * 9.0, c0.y + rr + 8.0), Vector2(7.0, 6.0)), Color(col, a if on else 0.6))
+		var ty := psize.y - 5.0
+		draw_string(f, Vector2(7, ty + 1.0), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(0, 0, 0, 0.7 * a))
+		draw_string(f, Vector2(6, ty), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(PINK if live else Color.WHITE, a))
 		return
 	var tx := c0.x + rr + 14.0
 	_text(f, Vector2(tx, 34), t[0], 18, Color(PINK if live else Color.WHITE, a))

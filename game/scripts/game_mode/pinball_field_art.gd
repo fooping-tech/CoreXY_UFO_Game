@@ -1,9 +1,9 @@
 class_name PinballFieldArt
 extends Node2D
 ## The picture of the pinball field (#141), drawn in code as pixel art. It lives in the
-## score game's low-resolution canvas (640 x 360, shown at 2x: one dot is two screen
+## score game's low-resolution canvas (360 x 640, shown at 2x: one dot is two screen
 ## pixels, the same as UFOくん's 64 x 64 sprite at 2x), so every line, circle and turning
-## arm here comes out in the same dots as the UFO. Coordinates are still the 1280 x 720
+## arm here comes out in the same dots as the UFO. Coordinates are the 720 x 1280
 ## design space; a width of 2 is one dot.
 ##
 ## The style: a dark one-dot outline round everything, a highlight and a shadow, a few
@@ -146,17 +146,18 @@ func _draw_board() -> void:
 	# a darker band down each side and a lighter lane down the middle: the table has depth
 	draw_rect(Rect2(l, top, 60, floor_y - top), _a(DARK, 0.35))
 	draw_rect(Rect2(r - 60.0, top, 60, floor_y - top), _a(DARK, 0.35))
-	draw_rect(Rect2(570, top, 140, floor_y - top), _a(INLAY, 0.12))
-	# orbit rings round the centre
-	var c := Vector2(640, 420)
+	var cx := PinballField.CENTRE_X
+	draw_rect(Rect2(cx - 70.0, top, 140, floor_y - top), _a(INLAY, 0.12))
+	# orbit rings round the bumpers
+	var c := Vector2(cx, PinballField.BUMPERS[1].y + 30.0)
 	_dashes(c, 300.0, _a(PURPLE, 0.35), 36, _t * 0.05 if effects else 0.0)
 	_dashes(c, 210.0, _a(EDGE, 0.22), 24, -_t * 0.08 if effects else 0.0)
 	draw_arc(c, 130.0, 0, TAU, 40, _a(INLAY, 0.7), 2.0)
-	PixelText.draw_centered(self, "UFO", Vector2(640, 372), 18.0, _a(INLAY, 0.26))
+	PixelText.draw_centered(self, "UFO", Vector2(cx, PinballField.BUMPERS[1].y + 74.0), 18.0, _a(INLAY, 0.26))
 	# lane lines from the switches down through the pins
 	for x in PinballField.SWITCH_X:
 		for j in 9:
-			draw_rect(Rect2(float(x) - 1.0, 204.0 + 16.0 * j, 2, 8), _a(YELLOW, 0.22))
+			draw_rect(Rect2(float(x) - 1.0, PinballField.SWITCH_Y + 19.0 + 16.0 * j, 2, 8), _a(YELLOW, 0.22))
 	# arrow lamps: a row pointing down at each bumper, and towards the centre goal
 	for i in PinballField.BUMPERS.size():
 		var b: Vector2 = PinballField.BUMPERS[i]
@@ -164,16 +165,16 @@ func _draw_board() -> void:
 			_arrow(Vector2(b.x, b.y - 62.0 + 14.0 * j), Vector2.DOWN, MAGENTA if _chase(j + i, 3) else _a(MAGENTA, 0.3))
 	for j in 3:
 		var on := _chase(2 - j, 3) if not field.jackpot_on else int(_t * 8.0) % 2 == 0
-		_arrow(Vector2(640, 556.0 + 16.0 * j), Vector2.DOWN, YELLOW if on else _a(YELLOW, 0.3))
+		_arrow(Vector2(cx, PinballField.POST_TOP - 50.0 + 16.0 * j), Vector2.DOWN, YELLOW if on else _a(YELLOW, 0.3))
 	# starburst behind the star
 	for i in 8:
 		var a := TAU * i / 8.0 + PI / 8.0
 		var d := Vector2(cos(a), sin(a))
 		draw_line(PinballField.STAR + d * 30.0, PinballField.STAR + d * 44.0, _a(YELLOW, 0.3), 2.0)
 	# small round inserts along the sides (they run like a marquee)
-	for i in 8:
+	for i in int((PinballField.TARGETS[0][0].y - 40.0 - PinballField.TOP - 50.0) / 26.0):
 		for side in 2:
-			var p := Vector2(l + 30.0 if side == 0 else r - 30.0, 190.0 + 26.0 * i)
+			var p := Vector2(l + 30.0 if side == 0 else r - 30.0, PinballField.TOP + 50.0 + 26.0 * i)
 			var col: Color = field.wall_colors[side]
 			draw_rect(Rect2(p - Vector2(4, 4), Vector2(8, 8)), DARK)
 			draw_rect(Rect2(p - Vector2(2, 2), Vector2(4, 4)), col if _chase(i, 4) else _a(col, 0.25))
@@ -198,7 +199,7 @@ func _draw_frame() -> void:
 		draw_rect(Rect2(x, top, 12, h), WALL)
 		draw_rect(Rect2(x + 4.0, top, 4, h), col)
 		draw_rect(Rect2(x + 4.0, top, 2, h), col.lerp(Color.WHITE, 0.7))
-		for j in 9:  # bolts
+		for j in int(h / 70.0):  # bolts
 			draw_rect(Rect2(x + 2.0, top + 20.0 + 70.0 * j, 8, 8), DARK)
 			draw_rect(Rect2(x + 4.0, top + 22.0 + 70.0 * j, 2, 2), Color(1, 1, 1, 0.7))
 	var l := PinballField.LEFT - 14.0
@@ -207,7 +208,7 @@ func _draw_frame() -> void:
 	draw_rect(Rect2(l + 2.0, top - 6.0, w - 4.0, 10), WALL)
 	draw_rect(Rect2(l + 2.0, top - 6.0, w - 4.0, 2), PURPLE.lerp(Color.WHITE, 0.4))
 	draw_rect(Rect2(l + 2.0, top - 4.0, w - 4.0, 2), PURPLE)
-	for i in 25:
+	for i in int((PinballField.RIGHT - PinballField.LEFT) / 40.0) + 1:
 		draw_rect(Rect2(PinballField.LEFT + 40.0 * i + 6.0, top - 2.0, 4, 4), YELLOW if _chase(i, 5) else Color(0.3, 0.3, 0.6))
 	for i in 2:  # the bevelled caps at the top corners
 		var x := l if i == 0 else l + w - 20.0
@@ -290,12 +291,13 @@ func _draw_switches() -> void:
 		lit += 1 if on else 0
 		var f := clampf(field._switch_flash[i] * 2.5, 0.0, 1.0)
 		var x: float = PinballField.SWITCH_X[i]
-		var r := Rect2(x - 28.0, sy - 8.0, 56, 14)
+		var sw := PinballField.SWITCH_W
+		var r := Rect2(x - sw * 0.5, sy - 8.0, sw, 14)
 		var b := breath(i * 1.3)
-		draw_rect(Rect2(x - 30.0, PinballField.TOP - 12.0, 60, sy - PinballField.TOP + 12.0), _a(YELLOW, 0.06 + (0.12 if on else 0.06 * b)))
+		draw_rect(Rect2(x - sw * 0.5 - 2.0, PinballField.TOP - 12.0, sw + 4.0, sy - PinballField.TOP + 12.0), _a(YELLOW, 0.06 + (0.12 if on else 0.06 * b)))
 		for side in [-1.0, 1.0]:  # the lane's rails
-			draw_rect(Rect2(x + side * 32.0 - 2.0, PinballField.TOP - 12.0, 4, sy - PinballField.TOP + 20.0), DARK)
-			draw_rect(Rect2(x + side * 32.0 - 1.0, PinballField.TOP - 12.0, 2, sy - PinballField.TOP + 18.0), _a(YELLOW, 0.7))
+			draw_rect(Rect2(x + side * (sw * 0.5 + 4.0) - 2.0, PinballField.TOP - 12.0, 4, sy - PinballField.TOP + 20.0), DARK)
+			draw_rect(Rect2(x + side * (sw * 0.5 + 4.0) - 1.0, PinballField.TOP - 12.0, 2, sy - PinballField.TOP + 18.0), _a(YELLOW, 0.7))
 		if not on:  # aim here
 			var bob := fmod(_t * 1.2, 1.0) * 10.0 if effects else 0.0
 			_arrow(Vector2(x, sy - 36.0 + bob), Vector2.DOWN, Color(1, 1, 1, 0.5 + 0.4 * b))
@@ -303,21 +305,21 @@ func _draw_switches() -> void:
 		if on or f > 0.0:
 			PinballField.glow_rect(self, r, YELLOW, 1.2 + 2.0 * f)
 		_box(r, (YELLOW if on else Color("4a4290").lerp(Color("6a60c0"), b)).lerp(Color.WHITE, f))
-		draw_rect(Rect2(r.position + Vector2(4, 2), Vector2(48, 2)), Color(1, 1, 1, 0.9 if on else 0.3))
-		draw_rect(Rect2(r.position + Vector2(0, 10), Vector2(56, 4)), Color(0, 0, 0, 0.25))
+		draw_rect(Rect2(r.position + Vector2(4, 2), Vector2(sw - 8.0, 2)), Color(1, 1, 1, 0.9 if on else 0.3))
+		draw_rect(Rect2(r.position + Vector2(0, 10), Vector2(sw, 4)), Color(0, 0, 0, 0.25))
 	# the mission, between the lanes: three lamps and where they lead
 	for g in 2:
 		var cx := (float(PinballField.SWITCH_X[g]) + float(PinballField.SWITCH_X[g + 1])) * 0.5
 		if g == 0:
 			for i in 3:
-				var p := Vector2(cx - 24.0 + 24.0 * i, 150.0)
+				var p := Vector2(cx - 24.0 + 24.0 * i, PinballField.TOP + 12.0)
 				_box(Rect2(p - Vector2(6, 6), Vector2(12, 12)), YELLOW if i < lit else Color("2a2658"))
-			PixelText.draw_centered(self, "LAMPS", Vector2(cx, 174), 2.0, _a(YELLOW, 0.9), DARK)
+			PixelText.draw_centered(self, "LAMPS", Vector2(cx, PinballField.TOP + 36.0), 2.0, _a(YELLOW, 0.9), DARK)
 		else:
 			var jack := field.jackpot_on
 			var col := (Color.WHITE if int(_t * 8.0) % 2 == 0 else YELLOW) if jack else _a(YELLOW, 0.9)
-			PixelText.draw_centered(self, "> JACKPOT", Vector2(cx, 150), 2.0, col, DARK)
-			PixelText.draw_centered(self, _pts("jackpot"), Vector2(cx, 174), 2.0, col, DARK)
+			PixelText.draw_centered(self, "> JACKPOT", Vector2(cx, PinballField.TOP + 12.0), 2.0, col, DARK)
+			PixelText.draw_centered(self, _pts("jackpot"), Vector2(cx, PinballField.TOP + 36.0), 2.0, col, DARK)
 
 ## Standup targets on the walls: a plate that lights for a while when it is hit.
 func _draw_targets() -> void:

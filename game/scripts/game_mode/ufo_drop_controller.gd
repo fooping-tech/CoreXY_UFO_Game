@@ -6,10 +6,10 @@ extends RefCounted
 ## this UFO is a picture of the game mode, not the crane (it never reads or writes
 ## RobotState; the rope UFO of the crane screen is untouched).
 
-var x_min := 248.0
-var x_max := 1032.0
+var x_min := 96.0
+var x_max := 624.0
 var one_way_s := 6.0
-var y := 92.0
+var y := GameModeLayout.UFO_Y
 ## 0..1 along the rail and which way it goes
 var u := 0.5
 var dir := 1.0

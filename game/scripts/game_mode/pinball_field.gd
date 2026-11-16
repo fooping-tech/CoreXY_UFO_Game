@@ -7,8 +7,8 @@ extends Node2D
 ##
 ## The field only reports: target_hit when a capsule touches something that scores and
 ## capsule_exited when it leaves (a goal, or "timeout" after max_stay_s). The score, the
-## timing and the devices are the controller's. Coordinates are the 1280 x 720 design
-## space (the window stretches as a whole).
+## timing and the devices are the controller's. Coordinates are the 720 x 1280 portrait
+## design space (GameModeLayout; the window stretches as a whole).
 ##
 ## The picture is PinballFieldArt's (#141): this node is the physics and the state the
 ## picture reads (what is lit, what was just hit, where each capsule has been). More kinds
@@ -19,54 +19,62 @@ signal target_hit(capsule_id: String, kind: String, target: String, pos: Vector2
 ## goal: "left" / "center" / "right" / "timeout"
 signal capsule_exited(capsule_id: String, goal: String, pos: Vector2)
 
-const LEFT := 150.0
-const RIGHT := 1130.0
-const TOP := 140.0
-const FLOOR_Y := 652.0
-const SPAWN_Y := 150.0
+# The field is tall (#157): the capsule is seen falling all the way down it. Nothing here
+# is the old wide field stretched: everything was placed again for this width, with the
+# same sizes of things (the capsule, the pins, the bumpers, the gaps a capsule fits through).
+const LEFT := GameModeLayout.FIELD_LEFT
+const RIGHT := GameModeLayout.FIELD_RIGHT
+const TOP := GameModeLayout.FIELD_TOP
+const FLOOR_Y := GameModeLayout.FIELD_FLOOR
+const CENTRE_X := (LEFT + RIGHT) * 0.5
+const SPAWN_Y := TOP + 14.0
 const CAPSULE_R := 18.0
 const PIN_R := 6.0
 const BUMPER_R := 26.0
 const STAR_R := 17.0
-const SPINNER_ARM := 44.0
-const PIN_ROWS := [[230.0, 199.0, 10], [285.0, 248.0, 9], [340.0, 199.0, 10]]  # y, first x, count
-const PIN_STEP := 98.0
-const SWITCH_Y := 185.0
-const SWITCH_X := [444.0, 640.0, 836.0]
-const BUMPERS := [Vector2(395, 430), Vector2(640, 415), Vector2(885, 430)]
-const SPINNERS := [Vector2(500, 520), Vector2(780, 520)]
-const STAR := Vector2(640, 505)
-const POPS := [Vector2(262, 440), Vector2(1018, 440)]
+const SPINNER_ARM := 30.0
+## the pins: two bands (three rows under the switches, two rows under the bumpers); y, first x, count
+const PIN_ROWS := [[452.0, 78.0, 7], [506.0, 125.0, 6], [560.0, 78.0, 7], [800.0, 125.0, 6]]
+const PIN_STEP := 94.0
+const SWITCH_Y := 404.0
+const SWITCH_X := [180.0, 360.0, 540.0]
+## the switch plate's width: narrow, so that on this narrower field a capsule finds a
+## switch about as often as it did on the wide one
+const SWITCH_W := 28.0
+const BUMPERS := [Vector2(190, 684), Vector2(360, 660), Vector2(530, 684)]
+const SPINNERS := [Vector2(226, 934), Vector2(494, 934)]
+const STAR := Vector2(360, 916)
+const POPS := [Vector2(126, 896), Vector2(594, 896)]
 const POP_R := 16.0
 ## standup targets on the walls: [centre, side (-1 left wall, 1 right wall)]
-const TARGETS := [[Vector2(156, 400), -1], [Vector2(156, 480), -1], [Vector2(1124, 400), 1], [Vector2(1124, 480), 1]]
+const TARGETS := [[Vector2(36, 652), -1], [Vector2(36, 732), -1], [Vector2(684, 652), 1], [Vector2(684, 732), 1]]
 const TARGET_SIZE := Vector2(12, 44)
 const TARGET_LIT_S := 6.0
 ## the bottom slopes (slingshots): from the wall at SLOPE_TOP_Y down to SLOPE_END
-const SLOPE_TOP_Y := 530.0
+const SLOPE_TOP_Y := 968.0
 const SLOPE_W := 110.0
-const SLOPE_BOTTOM_Y := 605.0
+const SLOPE_BOTTOM_Y := 1034.0
 const TRAIL_POINTS := 12
 ## warp holes above the side goals: a capsule that falls in is held a moment and shot back up
-const WARPS := [Vector2(350, 588), Vector2(930, 588)]
+const WARPS := [Vector2(224, 1022), Vector2(496, 1022)]
 const WARP_R := 20.0
 const WARP_HOLD_S := 0.7
 ## a capsule is warped this many times at most, then it passes the holes freely (it always
 ## gets down, well inside max_stay_s)
 const WARPS_PER_CAPSULE := 1
-## gems above the last row of pins (sensors: they do not block); taken, each comes back later
-const GEMS := [Vector2(297, 312), Vector2(493, 312), Vector2(787, 312), Vector2(983, 312)]
+## gems above the last row of the upper pins (sensors: they do not block); taken, each comes back later
+const GEMS := [Vector2(172, 533), Vector2(266, 533), Vector2(454, 533), Vector2(548, 533)]
 const GEM_R := 12.0
 const GEM_RESPAWN_S := 10.0
 ## the little alien drifts across between the pins and the bumpers (a sensor too)
-const ALIEN_Y := 372.0
-const ALIEN_X0 := 230.0
-const ALIEN_X1 := 1050.0
+const ALIEN_Y := 614.0
+const ALIEN_X0 := 96.0
+const ALIEN_X1 := 624.0
 const ALIEN_R := 16.0
 const ALIEN_PERIOD_S := 9.0
 const ALIEN_RESPAWN_S := 5.0
-const POSTS_X := [570.0, 710.0]
-const POST_TOP := 606.0
+const POSTS_X := [306.0, 414.0]
+const POST_TOP := 1024.0
 const LAYER_STATIC := 1
 const LAYER_CAPSULE := 2
 # the palette (#141): deep navy with cyan, magenta, yellow and purple accents
@@ -85,7 +93,7 @@ var max_stay_s := 15.0
 ## a capsule slower than this (px/s) for stall_s gets a nudge
 var stall_speed := 14.0
 var stall_s := 1.2
-var gravity_scale := 0.7
+var gravity_scale := 0.85
 var bounce := 0.45
 var bumper_kick := 420.0
 var pop_kick := 300.0
@@ -196,8 +204,9 @@ func _area(kind: String, target: String, at: Vector2) -> Area2D:
 func _build() -> void:
 	# the walls (tall enough that nothing leaves over the top)
 	var walls := _static("wall", "wall")
-	_rect(walls, Vector2(24, 800), Vector2(LEFT - 12, 300))
-	_rect(walls, Vector2(24, 800), Vector2(RIGHT + 12, 300))
+	var wall_h := FLOOR_Y - TOP + 600.0
+	_rect(walls, Vector2(24, wall_h), Vector2(LEFT - 12, FLOOR_Y + 100.0 - wall_h * 0.5))
+	_rect(walls, Vector2(24, wall_h), Vector2(RIGHT + 12, FLOOR_Y + 100.0 - wall_h * 0.5))
 	# the slopes that keep the corners moving
 	for side in [-1, 1]:
 		var wedge := CollisionPolygon2D.new()
@@ -252,7 +261,7 @@ func _build() -> void:
 		_rect(post, Vector2(10, FLOOR_Y - POST_TOP), Vector2(0, (FLOOR_Y + POST_TOP) * 0.5))
 		_circle(post, 7.0, Vector2(0, POST_TOP))
 	for i in SWITCH_X.size():
-		_rect(_area("switch", "switch_%d" % i, Vector2(SWITCH_X[i], SWITCH_Y)), Vector2(56, 14))
+		_rect(_area("switch", "switch_%d" % i, Vector2(SWITCH_X[i], SWITCH_Y)), Vector2(SWITCH_W, 14))
 	_circle(_area("star", "star", STAR), STAR_R)
 	for i in WARPS.size():
 		_circle(_area("warp", "warp_%d" % i, WARPS[i]), WARP_R)

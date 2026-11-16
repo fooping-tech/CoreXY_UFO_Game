@@ -42,6 +42,8 @@
     "particles": true,
     "screen_shake": true,
     "shake_max_px": 12.0,
+    "fullscreen": false,
+    "_fullscreen_note": "The screen is portrait, 9:16 (#157): design size 720 x 1280, the exhibit's monitor is 1080 x 1920 (or 2160 x 3840) standing on end. The monitor is turned in the OS's display settings, never inside the game. fullscreen: true = the game fills the monitor (also --fullscreen / --windowed on the command line, F11 while it runs). On a monitor of another shape the picture keeps its 9:16 and gets bars at the sides: nothing is cut off or stretched. docs/display_setup.md.",
     "particle_amount": 1.0,
     "vfx": true
   },
@@ -176,6 +178,7 @@
         {"key": "audio.volume_db", "apply": "now", "label": "効果音の大きさ（dB）", "type": "number", "min": -40, "max": 0, "step": 1},
         {"key": "audio.bgm_enabled", "apply": "now", "label": "音楽（スコアゲーム）", "type": "bool"},
         {"key": "audio.bgm_volume_db", "apply": "now", "label": "音楽の大きさ（dB、効果音との差）", "type": "number", "min": -30, "max": 6, "step": 1},
+        {"key": "render.fullscreen", "apply": "now", "label": "フルスクリーン（縦置きモニタ。F11 でも切り替え）", "type": "bool"},
         {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
         {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
       ]},
@@ -395,7 +398,8 @@
     "field": {
       "max_stay_s": 15.0,
       "stall_s": 1.2,
-      "gravity_scale": 0.7,
+      "gravity_scale": 0.85,
+      "_portrait_note": "The field is tall since #157 (660 x 714, the screen is portrait): the capsule is seen falling all the way down. gravity_scale went 0.7 -> 0.85 with it so a capsule does not stay much longer than on the old wide field (measured over 60 capsules: 6.2 s on average, 11.9 s at most; the wide field: 4.9 s, 9.9 s). Where everything stands is in game/scripts/game_mode/pinball_field.gd and docs/game_mode_spec.md §4.",
       "bounce": 0.45,
       "settle_after_s": 5.0,
       "settle_over_s": 3.0,

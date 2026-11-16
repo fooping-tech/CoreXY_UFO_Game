@@ -293,6 +293,23 @@ func _setup_study_mode() -> void:
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 
+## Full screen or a window (#157: the exhibit's monitor stands on end; the OS turns the
+## picture, the game only fills it). config render.fullscreen, --fullscreen / --windowed on
+## the command line (these win), F11 while it runs. Nothing to do with no window (headless).
+var fullscreen_override := ""  # "" (the config decides) / "on" / "off"
+
+func fullscreen_wanted() -> bool:
+	if fullscreen_override != "":
+		return fullscreen_override == "on"
+	return bool(GameConfig.value("render.fullscreen", false))
+
+func apply_window_mode() -> void:
+	if DisplayServer.get_name() == "headless" or not is_inside_tree():
+		return
+	var want := Window.MODE_FULLSCREEN if fullscreen_wanted() else Window.MODE_WINDOWED
+	if get_window().mode != want:
+		get_window().mode = want
+
 ## The title at start unless the start is already decided (a scenario, a capture, the study
 ## mode by argument or by study_mode.autostart) or nobody looks (headless: the tests and CI).
 ## --title shows it anyway, --no-title never.
@@ -315,7 +332,8 @@ var _debug_before_title := false
 ## #114: at start the settings screen's 校正 tab comes first (the Z top, the heights, the AI's
 ## reachability); closing it shows the title. title_screen.calibration_first false = the title.
 func open_startup_screen() -> void:
-	if settings == null or not bool(GameConfig.get_value("title_screen", "calibration_first", true)):
+	if settings == null or not bool(GameConfig.get_value("title_screen", "calibration_first", true)) \
+			or OS.get_cmdline_user_args().has("--title-only"):  # (a capture of the title itself)
 		return
 	open_settings()
 	settings.show_tab(SettingsScreen.CALIBRATION_TAB)
@@ -383,6 +401,7 @@ func apply_live_settings() -> void:
 		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
 		game_mode.tutorial_mode = str(GameConfig.value("game_mode.tutorial.mode", game_mode.tutorial_mode))
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
+	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
 	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
 	if sch != gesture.scheme.id():
@@ -504,6 +523,12 @@ func _apply_cmdline() -> void:
 			"--game-mode-demo":
 				if game_mode != null:
 					game_mode.demo = true
+			"--fullscreen":
+				fullscreen_override = "on"
+				apply_window_mode()
+			"--windowed":
+				fullscreen_override = "off"
+				apply_window_mode()
 			"--game-mode-ranking-file":
 				# the high scores (#155) in a file of its own, and a rehearsal's rounds
 				# (--game-mode-demo, --game-mode-seconds) are recorded in it: for captures and
@@ -1480,6 +1505,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# debug panel (F1 / Tab); typing in a settings field never gets here
 		# the 校正 tab lets the claw keys through to the match below (#98)
 		var claw_key: bool = calibrating() and ev.keycode in CALIBRATION_KEYS
+		if ev.keycode == KEY_F11:  # full screen / a window, in any screen
+			fullscreen_override = "off" if fullscreen_wanted() else "on"
+			apply_window_mode()
+			return
 		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)
 			return

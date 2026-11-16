@@ -28,9 +28,13 @@ VFXManager="*res://scripts/vfx/vfx_manager.gd"
 
 [display]
 
-window/size/viewport_width=1280
-window/size/viewport_height=720
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/size/window_width_override=540
+window/size/window_height_override=960
 window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+window/handheld/orientation=1
 
 [gui]
 
