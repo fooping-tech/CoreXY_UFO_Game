@@ -28,6 +28,9 @@ signal scored(points: int, kind: String, at: Vector2)
 ## ("closed" when the easy mode's fist step is done, "open" when the practice capsule begins). The
 ## main scene sends it like the hand's own claw request, with all its checks; nothing is sent here.
 signal tutorial_claw(which: String)
+## #183: the practice's finger steps show the carry: the main scene is asked to move the arm
+## over that Dial (1 / 2). The backend moves XY only, with its own checks.
+signal tutorial_goto(destination: int)
 
 ## IDLE (not started) -> COUNTDOWN -> PLAYING -> SETTLING (time is up: capsules in play
 ## finish and go out) -> RESULT; STOPPED = the stop key
@@ -658,6 +661,8 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
+	if int(step.get("goto_demo", 0)) in [1, 2]:
+		tutorial_goto.emit(int(step.goto_demo))
 	if bool(step.get("claw_demo", false)):
 		_demo_claw_closed = true
 		tutorial_claw.emit("closed")

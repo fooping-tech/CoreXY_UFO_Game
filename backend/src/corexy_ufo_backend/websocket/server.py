@@ -148,8 +148,9 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             "calibration_prepare", "calibration_prepare_status",
             "easy_grab", "easy_reset", "easy_deliver", "easy_cancel", "easy_status", "easy_dial_set", "easy_dial_confirm",
+            "easy_goto",
             *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
-MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
+MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover", "easy_goto")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
 # Out-of-band commands that only read: cancelled at once when their client disconnects, so
@@ -756,6 +757,8 @@ class GameServer:
             if name == "easy_cancel":
                 self.easy.cancel(params.get("grab_id"))
                 return self._ack(name, self.easy.status())
+            if name == "easy_goto":
+                return await self._easy_goto(params)
             if name == "easy_dial_set":
                 return self._easy_dial_set(params)
             if name == "easy_dial_confirm":
@@ -1062,6 +1065,32 @@ class GameServer:
             return self._easy_dry
         raw = self.backend_cfg.raw if self.backend_cfg is not None else {}
         return real_catch_params(raw, easy, self._easy_limits, self.backend_cfg)
+
+    async def _easy_goto(self, params: dict) -> dict:
+        """#183 (the practice shows the carry): one XY move to a Dial's recorded point at the
+        easy mode's feed, nothing else (no Z, no claw). Only with the easy mode's values usable
+        and the arm at the travel height (the carry's own height); an ordinary XY move under
+        the motion lock, stopped like any other."""
+        name = "easy_goto"
+        try:
+            dest = int(params.get("destination"))
+        except (TypeError, ValueError):
+            return self._nack(name, "bad params: destination must be 1 or 2")
+        if dest not in (1, 2):
+            return self._nack(name, "bad params: destination must be 1 or 2")
+        self._easy_refresh()
+        problems = self.easy.problems()
+        if problems:
+            return self._nack(name, "easy mode not ready: " + "; ".join(problems))
+        p = self.easy.params
+        z = self.robot.snapshot().z
+        tol = max(float(p.z_tolerance or 0.0), self.backend_cfg.home_z_tolerance if self.backend_cfg is not None else 5.0)
+        if p.safe_z is None or abs(z - float(p.safe_z)) > tol:
+            return self._nack(name, f"the arm is not at the travel height (Z {z:.1f}, travel {p.safe_z}): raise it first")
+        x, y = self.easy.easy.dials[dest]
+        async with self._motion_lock:
+            await self.robot.move_xy(float(x), float(y), p.xy_feed_mm_min)
+        return self._ack(name, {"destination": dest, **self.robot.snapshot().to_message()["data"]})
 
     def _easy_refresh(self) -> None:
         """The saved values (and the Z calibration they depend on) as they are now."""

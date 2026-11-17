@@ -4699,6 +4699,13 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	var ctl: GameModeController = game.game_mode
 	var asked = []
 	ctl.tutorial_claw.connect(func(w): asked.append(w))
+	var gotos = []
+	ctl.tutorial_goto.connect(func(d): gotos.append(d))
+	for st in easy:
+		if st.id in ["easy_one", "easy_two"]:
+			ctl._on_tutorial_ok(0, st)
+	var hard_gotos = hard.filter(func(s): return int(s.get("goto_demo", 0)) != 0).is_empty()
+	_ok(gotos == [1, 2] and hard_gotos, "tutorial carry (#183): the easy finger steps ask for the arm over Dial 1 and Dial 2; the hard mode's ask nothing", str(gotos))
 	game.mock.arm_marks = {"open": 10.0, "closed": 120.0}
 	game.mock.arm_deg = 10.0
 	var grab = easy.filter(func(s): return s.id == "easy_grab")[0]
