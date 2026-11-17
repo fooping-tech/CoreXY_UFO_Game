@@ -82,6 +82,11 @@ class BackendConfig:
     # off for a bare BackendConfig (tests)
     home_requires_z_top: bool = False
     home_z_tolerance: float = 5.0
+    # #161: a command sent and nothing at all read for this long = the link is dead even if
+    # the port looks open (a USB hiccup can stop the reading side alone); 0 = never
+    serial_rx_stall_s: float = 5.0
+    # #161: after the link was lost while running, reopen the port this often; 0 = never
+    serial_reopen_s: float = 3.0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -217,6 +222,8 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
     cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))
     cfg.home_z_tolerance = float(b.get("home_z_tolerance", 5.0))
+    cfg.serial_rx_stall_s = float(b.get("serial_rx_stall_s", 5.0))
+    cfg.serial_reopen_s = float(b.get("serial_reopen_s", 3.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))
     hostport = url.split("://", 1)[-1].rstrip("/")
     if ":" in hostport:

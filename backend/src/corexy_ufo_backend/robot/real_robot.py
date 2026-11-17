@@ -36,7 +36,7 @@ import time
 
 from ..config import BackendConfig
 from ..serial_service import protocol as P
-from ..serial_service.service import CommandRejected, CommandTimeout, SerialError, SerialService
+from ..serial_service.service import SERIAL_SILENT_MSG, CommandRejected, CommandTimeout, SerialError, SerialService
 from .claw import WHICH as CLAW_WHICH
 from .claw import ClawCalibration, deg_in_turn
 from .interface import RobotCommandError, RobotInterface
@@ -143,6 +143,9 @@ class RealRobot(RobotInterface):
         self._z_poll_interval = 1.0 / max(cfg.z_poll_hz, 0.1)
         self._poll_interval = 1.0 / max(cfg.status_poll_hz, 0.5)
         self.serial.add_listener(self._on_line)
+        # #161: the link was lost while running: reopen the port (from tick)
+        self._reopen_wanted = False
+        self._reopen_at = 0.0
 
     # ---------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
@@ -185,6 +188,47 @@ class RealRobot(RobotInterface):
         self.motors_enabled = False
         self._state = MachineState.UNKNOWN
         self.error = self.serial.last_error
+        # a jog of the lost link is over for the host (the next link starts afresh)
+        self._cancel_z_ramp()
+        self._jogging = self._jog_requested = False
+        if self.cfg.serial_reopen_s > 0:
+            self._reopen_wanted = True
+            self._reopen_at = time.monotonic() + self.cfg.serial_reopen_s
+
+    async def _drop_silent_link(self, silent_s: float) -> None:
+        """#161: commands go out but nothing comes back (e.g. the USB hub's transaction
+        error stopped the reading side; writes still reach the firmware). Stop what may be
+        moving with the writes alone, best effort (unconfirmed: this guarantees nothing),
+        then drop the link like a lost one."""
+        try:
+            if self._jogging or self._jog_requested or self._z_rate:
+                self.serial.write_raw(P.cmd_jog(0.0, 0.0))
+            if self._busy:
+                self.serial.write_raw("ABORT")
+        except Exception as e:  # pragma: no cover - the writes may be dead too
+            log.warning("stop on a silent link not sent: %s", e)
+        await self.serial.drop_link(
+            f"{SERIAL_SILENT_MSG} ({silent_s:.0f} s without a reply)")
+
+    async def _reopen(self, now: float) -> None:
+        if now < self._reopen_at:
+            return
+        self._reopen_at = now + self.cfg.serial_reopen_s
+        reason = self.error
+        try:
+            await self.connect()
+        except Exception as e:
+            log.info("serial reopen failed: %s", e)
+            self.error = reason  # still why the link is down
+            return
+        if not self.serial.connected:
+            # lost again while connecting: _on_serial_lost asked for the next try; say why
+            # (not connect()'s "no POS reply")
+            self.error = self.serial.last_error or reason
+            return
+        self._reopen_wanted = False
+        self.error = ""
+        log.warning("serial link reopened on %s (motors disabled: enable them again)", self.serial.port)
 
     def recent_log(self, n: int = 50) -> list[str]:
         return list(self.serial.log_lines)[-n:]
@@ -980,9 +1024,17 @@ class RealRobot(RobotInterface):
 
     # ---------------------------------------------------------------- polling
     async def tick(self) -> None:
+        now = time.monotonic()
+        if self.serial.connected:
+            silent = self.serial.rx_stalled_for(now)
+            if self.cfg.serial_rx_stall_s > 0 and silent >= self.cfg.serial_rx_stall_s:
+                await self._drop_silent_link(silent)
+                return
+        elif self._reopen_wanted:
+            await self._reopen(now)
+            return
         if not self.serial.connected or self._busy:
             return
-        now = time.monotonic()
         if (not self._jogging and not self._jog_requested
                 and now - self._last_z_poll >= self._z_poll_interval and now - self._last_poll >= 0.05):
             # Track the drum servo when something else moves it (joystick, other tools).

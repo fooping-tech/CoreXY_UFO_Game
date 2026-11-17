@@ -17,6 +17,9 @@ except ImportError:  # pragma: no cover
 
 log = logging.getLogger(__name__)
 
+# #161: the start of SerialService.SERIAL_SILENT_MSG (a dropped silent link)
+SILENT_PREFIX = "no reply from the robot"
+
 _PORT_HINTS = ("usbserial", "usbmodem", "SLAB", "wchusb", "cu.usb", "ttyUSB", "ttyACM")
 
 
@@ -48,13 +51,16 @@ def link_report(registered: list[str], port: str | None, available: list[str], c
     problem: "" (connected) | "port_missing" (the registered boards are not plugged in;
     `others` are the ports seen instead: maybe another board) | "no_port" (nothing
     registered and no serial port at all) | "open_failed" (the port is there but the link
-    is down: used by another program, the board did not answer, unplugged since).
+    is down: used by another program, the board did not answer, unplugged since) | "silent"
+    (#161: the link stopped answering while running and was dropped; the backend reopens it).
     not_robot: ports known to be something else (the peripherals' hub), never in `others`."""
     reg = [p.strip() for p in registered if p and p.strip()]
     tried = (port or "").strip()
     others = [p for p in available if p not in reg and p not in not_robot and "Bluetooth" not in p and "debug-console" not in p]
     if connected:
         problem = ""
+    elif error.startswith(SILENT_PREFIX):
+        problem = "silent"  # #161: was open, stopped answering; the backend reopens it
     elif reg and not any(p in available for p in reg):
         problem = "port_missing"
     elif not reg and (not tried or tried not in available) and not others:
