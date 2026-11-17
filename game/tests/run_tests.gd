@@ -88,10 +88,14 @@ func _ready() -> void:
 	_test_game_mode_audio(rs)
 	_test_game_mode_reactions(rs)
 	_test_gesture_tutorial_logic()
+	_test_gesture_tutorial_more_steps()
 	_test_gesture_tutorial_game(rs)
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
 	await _test_game_mode_physics()
+	# (after the physics run: the field is chaotic, and a scene made and freed before it shifts
+	# which capsule takes longest; the run's own limit is kept as it is)
+	_test_score_game_panel_and_spell_voice(rs)
 	_test_game_mode_music_files(rs)
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -4412,11 +4416,20 @@ func _test_gesture_tutorial_logic() -> void:
 	var easy := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", pinch_claw)
 	var changed := GestureTutorialSteps.resolve({"steps": {"open": {"title": "X", "hold_s": 2.0}}, "modes": {"hard": {"pinch_joystick": ["open", "practice"]}}},
 		"hard", "pinch_joystick", pinch_claw)
-	_ok(ids == ["summon", "open", "pinch", "move", "grab", "rules", "practice"] and GestureTutorialSteps.counted(hard) == 6
+	# (the tests below go through the steps with short holds; the real ones take about 3 s, #171)
+	var quick := GestureTutorialSteps.resolve({"steps": {"open": {"hold_s": 0.6}, "pinch": {"hold_s": 0.5}, "move": {"move_s": 0.5}},
+		"modes": {"hard": {"pinch_joystick": ["summon", "open", "pinch", "move", "grab", "rules", "practice"]}}}, "hard", "pinch_joystick", pinch_claw)
+	var by_id := {}
+	for s in hard:
+		by_id[s.id] = s
+	_ok(ids == ["summon", "open", "pinch", "move", "grab", "release", "z_pinch", "z_move", "rules", "practice"] and GestureTutorialSteps.counted(hard) == 9
+		and is_equal_approx(float(by_id.open.hold_s), 3.0) and is_equal_approx(float(by_id.pinch.hold_s), 3.0) and is_equal_approx(float(by_id.move.move_s), 3.0)
+		and by_id.release.title == "チョキで はなす！" and by_id.release.poses == ["peace"] and by_id.z_pinch.palm == "down" and by_id.z_move.axis == "z"
+		and (by_id.grab.hints as Array).is_empty() and pose_steps.filter(func(s): return s.id == "release")[0].title == "パーで はなす！"
 		and GestureTutorialSteps.number_of(hard, 0) == 0 and GestureTutorialSteps.number_of(hard, 2) == 2
 		and str(hard[0].title).contains("ベントラベントラスペースピープル") and (hard[0].say as Array)[0] == "ベントラベントラスペースピープル！"
 		and hard[4].title == "グーで キャッチ！" and "fist" in hard[4].poses and not "peace" in hard[4].poses
-		and pose_steps.map(func(s): return s.id) == ["summon", "open", "point", "point_move", "grab", "rules", "practice"]
+		and pose_steps.map(func(s): return s.id) == ["summon", "open", "point", "point_move", "grab", "release", "rules", "practice"]
 		and pose_grab.title == "チョキで キャッチ！" and pose_grab.poses == ["peace"],
 		"tutorial steps: the spell, パー, the pinch, moving, the catch, the rule, one capsule; the catch asks for the shape that closes the claw in the hand scheme in use",
 		"%s %s %s" % [ids, hard[4].poses, pose_grab.poses])
@@ -4434,13 +4447,13 @@ func _test_gesture_tutorial_logic() -> void:
 	t.step_succeeded.connect(func(_i, s): oks.append(s.id))
 	t.finished.connect(func(how): ends.append(how))
 	t.say.connect(func(lines): said.append(lines))
-	t.begin(hard, true)
+	t.begin(quick, true)
 	var spell_telling := t.telling()
 	_tut_run(t, 6.0, _tut_hand({"pose": "open"}), {"speech_busy": true})
 	var spell_waits := t.kind() == "summon"
 	_tut_run(t, 0.1, _tut_hand(), {"speech_busy": false})
 	var never := GestureTutorialController.new()
-	never.begin(hard, true)
+	never.begin(quick, true)
 	_tut_run(never, never.tell_max_s + 0.1, _tut_hand(), {"speech_busy": true})  # a voice that never ends
 	_ok(spell_telling and spell_waits and t.kind() == "pose" and oks.is_empty() and said.size() == 2 and never.kind() == "pose",
 		"tutorial: the spell is said to the end and goes on by itself, with no OK (nothing was done yet); a voice that never ends is not waited for for ever", "%s %s" % [t.kind(), oks])
@@ -4510,14 +4523,16 @@ func _test_gesture_tutorial_logic() -> void:
 	var t2 := GestureTutorialController.new()
 	var oks2 := []
 	t2.step_succeeded.connect(func(_i, s): oks2.append(s.id))
-	t2.begin(hard.filter(func(s): return s.id in ["move", "grab"]), true)
+	t2.begin(quick.filter(func(s): return s.id in ["move", "grab"]), true)
 	var gate := {"gate": "実機のジェスチャー操作は無効"}
 	_tut_run(t2, 1.0, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.5, 0.5)})))
 	for i in 60:  # a trembling hand: never far enough
 		_tut_run(t2, 1.0 / 60.0, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.5 + 0.03 * sin(i), 0.5)})))
 	var tremble := oks2.is_empty() and t2.hand_only
 	_tut_run(t2, 0.3, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.68, 0.5)})))
-	var moved := oks2 == ["move"]
+	var not_at_once := oks2.is_empty() and t2.progress > 0.3  # carried there: the gauge fills while it is kept there
+	_tut_run(t2, 0.4, _tut_hand(gate.merged({"pinch": true, "pos": Vector2(0.68, 0.5)})))
+	var moved := not_at_once and oks2 == ["move"]
 	_tut_run(t2, 1.5, _tut_hand(gate))
 	_tut_run(t2, 0.3, _tut_hand(gate.merged({"pose": "fist"})))
 	var too_short := oks2.size() == 1
@@ -4553,16 +4568,134 @@ func _test_gesture_tutorial_logic() -> void:
 	t5.step_succeeded.connect(func(_i, s): oks5.append(s.id))
 	t5.begin(hard, true)
 	var demo_hand_only := false
-	for i in 60 * 40:
+	for i in 60 * 120:
 		if t5.kind() == "practice":
 			break
 		t5.tick(1.0 / 60.0, GestureTutorialController.demo_hand(t5.step(), t5.t), {"speech_busy": false})
 		demo_hand_only = demo_hand_only or t5.hand_only
 	_ok(skipped_to == "pose" and ends4 == ["skipped"] and oks4.is_empty() and not t4.active()
-		and oks5 == ["open", "pinch", "move", "grab"] and demo_hand_only,
+		and oks5 == ["open", "pinch", "move", "grab", "release", "z_pinch", "z_move"] and demo_hand_only,
 		"tutorial: staff can go on or leave it out (no OK for a step not done); the scripted hand goes through the hand steps without the robot",
 		"%s %s %s" % [skipped_to, ends4, oks5])
 
+## #171: the gauges take about 3 s; letting go and the up / down mode have steps of their own.
+func _test_gesture_tutorial_more_steps() -> void:
+	var claw := PinchJoystickScheme.new().claw_poses()
+	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)
+	var pick := func(ids: Array) -> Array: return hard.filter(func(s): return s.id in ids)
+	var oks = []
+	var t := GestureTutorialController.new()
+	t.step_succeeded.connect(func(_i, s): oks.append(s.id))
+	# パー, the pinch, moving: the gauge fills in about 3 s, not at once
+	t.begin(pick.call(["open", "pinch", "move"]), true)
+	_tut_run(t, 2.5, _tut_hand({"pose": "open"}))
+	var half = oks.is_empty() and t.progress > 0.7 and t.progress < 0.95
+	_tut_run(t, 0.7, _tut_hand({"pose": "open"}))
+	var open_done = oks == ["open"]
+	_tut_run(t, 1.6, _tut_hand())
+	_tut_run(t, 2.5, _tut_hand({"pinch": true, "pinch_finger": "index"}))
+	var pinch_half = oks.size() == 1
+	_tut_run(t, 0.7, _tut_hand({"pinch": true, "pinch_finger": "index"}))
+	_tut_run(t, 1.6, _tut_hand({"pinch": true, "pinch_finger": "index"}))
+	_tut_run(t, 2.5, _tut_hand({"pinch": true, "active": true, "speed": 0.6}))
+	var move_half = oks == ["open", "pinch"]
+	_tut_run(t, 0.7, _tut_hand({"pinch": true, "active": true, "speed": 0.6}))
+	_ok(half and open_done and pinch_half and move_half and oks == ["open", "pinch", "move"],
+		"tutorial gauges: パー, the pinch and moving each take about 3 s of really doing it before the OK", "%s %s %s %s %s" % [half, open_done, pinch_half, move_half, oks])
+	# letting go: the claw's own request to open (not the one to close, not the shape alone)
+	var t2 := GestureTutorialController.new()
+	var oks2 = []
+	t2.step_succeeded.connect(func(_i, s): oks2.append(s.id))
+	t2.begin(pick.call(["grab", "release"]), true)
+	t2.on_claw("closed")
+	_tut_run(t2, 1.0, _tut_hand({"pose": "fist"}))
+	_tut_run(t2, 1.6, _tut_hand())
+	var at_release = t2.step().id == "release" and oks2 == ["grab"]
+	t2.on_claw("closed")
+	_tut_run(t2, 2.0, _tut_hand({"pose": "peace", "claw_progress": 1.0}))
+	var not_by_shape = oks2.size() == 1 and t2.guide.contains("かたちを かえて")
+	t2.on_claw("open")
+	_tut_run(t2, 0.1, _tut_hand({"pose": "peace"}))
+	# without the robot: the shape that opens the claw, held
+	var t3 := GestureTutorialController.new()
+	var oks3 = []
+	t3.step_succeeded.connect(func(_i, s): oks3.append(s.id))
+	t3.begin(pick.call(["release"]), true)
+	_tut_run(t3, 1.5, _tut_hand({"gate": "x", "pose": "fist"}))
+	var fist_no = oks3.is_empty()
+	_tut_run(t3, 1.0, _tut_hand({"gate": "x", "pose": "peace"}))
+	_ok(at_release and not_by_shape and oks2 == ["grab", "release"] and fist_no and oks3 == ["release"] and t3.hand_only,
+		"tutorial letting go: the hand control's request to open the claw ends it (closing does not, the shape alone does not while the robot is ready); without the robot the opening shape held",
+		"%s %s %s %s %s" % [at_release, not_by_shape, oks2, fist_no, oks3])
+	# the up / down mode: the back of the hand to the camera, pinch, then up or down
+	var t4 := GestureTutorialController.new()
+	var oks4 = []
+	t4.step_succeeded.connect(func(_i, s): oks4.append(s.id))
+	t4.begin(pick.call(["z_pinch", "z_move"]), true)
+	_tut_run(t4, 4.0, _tut_hand({"pinch": true, "pinch_finger": "index", "palm": "up"}))
+	var palm_up_no = oks4.is_empty() and t4.guide.contains("てのこう")
+	_tut_run(t4, 3.2, _tut_hand({"pinch": true, "pinch_finger": "index", "palm": "down"}))
+	var z_pinched = oks4 == ["z_pinch"]
+	_tut_run(t4, 1.6, _tut_hand({"pinch": true, "palm": "down"}))
+	_tut_run(t4, 4.0, _tut_hand({"pinch": true, "palm": "up", "active": true, "mode": "xy", "speed": 0.8}))
+	var xy_no = oks4.size() == 1 and t4.guide.contains("てのこう")
+	_tut_run(t4, 3.2, _tut_hand({"pinch": true, "palm": "down", "active": true, "mode": "z", "speed": 0.8}))
+	var z_moved = oks4 == ["z_pinch", "z_move"]
+	var t5 := GestureTutorialController.new()
+	var oks5 = []
+	t5.step_succeeded.connect(func(_i, s): oks5.append(s.id))
+	t5.begin(pick.call(["z_move"]), true)
+	_tut_run(t5, 0.9, _tut_hand({"gate": "x", "pinch": true, "palm": "down", "pos": Vector2(0.5, 0.5)}))
+	_tut_run(t5, 4.0, _tut_hand({"gate": "x", "pinch": true, "palm": "down", "pos": Vector2(0.8, 0.5)}))  # sideways: not up / down
+	var sideways_no = oks5.is_empty()
+	_tut_run(t5, 3.2, _tut_hand({"gate": "x", "pinch": true, "palm": "down", "pos": Vector2(0.8, 0.3)}))
+	_ok(palm_up_no and z_pinched and xy_no and z_moved and sideways_no and oks5 == ["z_move"],
+		"tutorial up / down: a pinch with the palm to the camera is not it, with the back of the hand it is; then only the up / down steer counts (without the robot: the pinch carried up or down, not sideways)",
+		"%s %s %s %s %s %s" % [palm_up_no, z_pinched, xy_no, z_moved, sideways_no, oks5])
+
+## #171: the debug panel is not beside the score game; the spell waits a moment for its voice.
+func _test_score_game_panel_and_spell_voice(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game._set_debug_visible(true)
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	var closed = not game.debug_ui.visible and ctl.active()
+	game._unhandled_input(_key(KEY_F1))
+	var f1_opens = game.debug_ui.visible
+	game._unhandled_input(_key(KEY_F1))
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))  # another mode: the panel is as it was before the score game
+	var back = game.debug_ui.visible
+	game.show_title()
+	ctl.debug_panel = true  # config game_mode.debug_panel
+	game._unhandled_input(_key(KEY_3))
+	var kept = game.debug_ui.visible
+	_ok(closed and f1_opens and back and kept,
+		"score game: the debug panel is closed when the score game opens (F1 opens it; it is back for the other modes; game_mode.debug_panel keeps it)",
+		"%s %s %s %s" % [closed, f1_opens, back, kept])
+	# the spell: its voice comes over a link that is only just opening
+	ctl.tutorial_auto = true
+	var hw = ctl._voice_client()
+	game._unhandled_input(_key(KEY_ENTER))
+	var waits = hw == null or (not ctl._say_pending.is_empty() and ctl.tutorial_speech.current == "")
+	_gm_step(ctl, 1.0)
+	var still = hw == null or (not ctl._say_pending.is_empty() and ctl.tutorial.kind() == "summon")
+	if hw != null:
+		hw.link.enabled = false  # (no link to wait for any more: as when it is up and the hello came)
+	_gm_step(ctl, 0.1)
+	if hw != null:
+		hw.link.enabled = true
+	var said_after_hello = ctl._say_pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
+	# no link ever: the words come anyway, after the wait, and the practice goes on
+	ctl.close()
+	ctl.open()
+	ctl.start_tutorial()
+	_gm_step(ctl, ctl.voice_link_wait_s + 0.2)
+	var words_anyway = ctl._say_pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
+	_ok(waits and still and said_after_hello and words_anyway and is_equal_approx(ctl.tutorial_speech.voice_wait_s, 6.0),
+		"tutorial voice: the spell waits for the voice's link (at most a moment) instead of being shown without its voice",
+		"%s %s %s %s hw=%s" % [waits, still, said_after_hello, words_anyway, hw != null])
 ## #173: the music from the files of assets/audio/bgm (each machine's own): menu, round, result.
 func _test_game_mode_music_files(rs: Node) -> void:
 	# two made-up files (the real ones are never in Git); the third track has none
@@ -4673,15 +4806,15 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_ENTER))  # Enter in the practice: nothing
 	var enter_nothing := ctl.phase == "TUTORIAL" and ctl.tutorial.kind() == "summon"
 	var hud_on := ctl.tutorial_hud.showing() and ctl.hud.title_showing() == false
-	for i in 60 * 60:
+	for i in 60 * 150:
 		if ctl.tutorial.kind() == "practice":
 			break
 		ctl.tick(1.0 / 60.0)
 	ctl.demo = false
 	var oks_before := ctl.sounds.log.count("tutorial_ok")
-	_ok(in_tutorial and enter_nothing and hud_on and ctl.tutorial.kind() == "practice" and oks_before == 4
+	_ok(in_tutorial and enter_nothing and hud_on and ctl.tutorial.kind() == "practice" and oks_before == 7
 		and ctl.sounds.log.has("summon") and is_equal_approx(ctl.time_left, ctl.duration_s) and ctl.score.score == 0
-		and game.mock.target == mock_before and ctl.tutorial_hud.progress_text() == "れんしゅう 6 / 6",
+		and game.mock.target == mock_before and ctl.tutorial_hud.progress_text() == "れんしゅう 9 / 9",
 		"tutorial in the game: Enter on the score game's title goes into the practice, not the countdown; the clock stands, Enter skips nothing, each hand step chimes once, the scripted hand moves no robot",
 		"%s %s %s %s %.1f" % [ctl.phase, ctl.tutorial.kind(), oks_before, ctl.tutorial_hud.progress_text(), ctl.time_left])
 	# the practice capsule: a real transaction of the Dial
