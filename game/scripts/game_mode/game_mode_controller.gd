@@ -1508,7 +1508,7 @@ func _on_powerup_collected(capsule_id: String, kind: String, pos: Vector2) -> vo
 			# FRONT is the visual upgrade; TRANSFER retains its intake/release role.
 			if dial_leds and l.led_ok and devices.available():
 				_send(l, "led", "SET_DIAL_EFFECT", {"effect": "COMET", "direction": "TO_DIAL",
-					"duration_ms": 7000, "priority": "BACKGROUND", "target": "FRONT"})
+					"duration_ms": 0, "priority": "BACKGROUND", "target": "FRONT"})
 		"double":
 			_light("SET_LIGHT_MODE", {"mode": "CUSTOM", "color": [255, 174, 32],
 				"brightness": 190, "speed": 190, "transition_ms": 250})
@@ -1658,8 +1658,17 @@ func _released(l: Lane) -> void:
 func _fault(l: Lane, why: String) -> void:
 	l.fault = why
 	if not l.capsule.is_empty():
-		capsules.finish(l.capsule.capsule_id, "failed")
-		field.remove_capsule(l.capsule.capsule_id)
+		var root := str(l.capsule.capsule_id)
+		capsules.finish(root, "failed")
+		field.remove_capsule(root)
+		# A physical Dial failure ends every virtual child of that capsule.
+		for vid in _multi_parent.keys():
+			if str(_multi_parent[vid]) == root:
+				field.remove_capsule(str(vid))
+				_multi_parent.erase(vid)
+		_multi_left.erase(root)
+		_multi_side.erase(root)
+		fx.set_power_portal(l.side, false)
 	_set_lane(l, "FAULT")
 	_led(l, "FAULT")
 	fx.play("capsule_fault", l.side)
@@ -1905,6 +1914,14 @@ func _halt(why: String) -> void:
 	devices.stop_all()
 	_cmds.clear()
 	_end_tutorial()
+	field.set_powerups_enabled(false)
+	powerups.reset()
+	_multi_parent.clear()
+	_multi_left.clear()
+	_multi_side.clear()
+	fx.power_status.clear()
+	fx.set_power_portal("left", false)
+	fx.set_power_portal("right", false)
 	field.set_frozen(true)
 	fx.react("stop")
 	sounds.set_bgm(false)
