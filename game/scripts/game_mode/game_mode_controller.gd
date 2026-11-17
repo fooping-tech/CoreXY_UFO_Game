@@ -494,6 +494,7 @@ func close() -> void:
 	_flush_ranking()
 	_active = false
 	sounds.set_bgm(false)
+	sounds.ending_on = false
 	field.clear()
 	fx.reset()
 	_clear_result()
@@ -739,6 +740,7 @@ func _reset_round() -> void:
 	_hitstop_left = 0.0
 	_bounce = 0.0
 	sounds.set_bgm(false)
+	sounds.ending_on = false
 	practice = ""
 	practice_released = 0
 	_practice_skip = false
@@ -987,6 +989,7 @@ func _result() -> void:
 	result = ResultBonus.of_round(score, capsules, _result_bonus_cfg)
 	field.clear()
 	sounds.set_bgm(false)
+	sounds.ending_on = true  # the result's music (#173), until the next round or the title
 	for side in SIDES:
 		var l: Lane = lanes[side]
 		if l.state == "CLOSED":  # a faulted Dial is left as it is for a person to look at
@@ -1671,6 +1674,7 @@ func _halt(why: String) -> void:
 	field.set_frozen(true)
 	fx.react("stop")
 	sounds.set_bgm(false)
+	sounds.ending_on = false
 	sounds.play("stop")
 	for side in SIDES:
 		var l: Lane = lanes[side]

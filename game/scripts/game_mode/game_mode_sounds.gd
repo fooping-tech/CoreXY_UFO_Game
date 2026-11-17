@@ -40,6 +40,13 @@ const PLAYERS := 8
 const BGM_DB := -8.0
 const DUCK_DB := -10.0
 const FADE_S := 0.6
+## The music files (#173): game/assets/audio/bgm/ is each machine's own (never in Git, #151).
+## A track whose file is not there, or does not load, is as before: the synthesised tune for
+## the round, silence for the menu and the result.
+const MUSIC_DIR := "res://assets/audio/bgm/"
+const TRACKS := ["menu", "game", "ending"]
+## false: no music file is read (the tests: this machine's files must not change them)
+static var load_music := true
 ## sounds of a Dial's side: the key -> the lane state that side has just entered
 const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETURNING", "release": "RELEASING", "fault": "FAULT"}
 ## the pitch of "combo" by the step the combo reached
@@ -62,6 +69,17 @@ var last_pitch := 1.0
 var log: Array[String] = []
 var bgm_on := false
 var hurry := false
+## The menu is on the screen (the title screens): the main scene sets it. / The round is
+## over and its result is shown: the score game's controller sets it.
+var menu_on := false
+var ending_on := false
+## track -> file name in MUSIC_DIR (config game_mode.sounds.bgm), and its own gain (dB)
+var music_names := {"menu": "intro.mp3", "game": "game.wav", "ending": "ending.mp3"}
+var music_gain_db := {"menu": 0.0, "game": 0.0, "ending": 0.0}
+## config game_mode.sounds.bgm.files: false = never the files
+var use_music := true
+var _music: Dictionary = {}  # track -> AudioStreamPlayer (only the tracks whose file loaded)
+var _music_gain: Dictionary = {}  # track -> 0..1
 ## the combo's step (0..3), for the pitch of "combo" (the controller's picture sets it)
 var combo_step := 0
 ## what each player is playing: {key, priority, side, at_ms} ({} = free); tests read it
@@ -87,6 +105,13 @@ func _ready() -> void:
 	var gm = GameConfig.data.get("game_mode", {})
 	var cfg: Dictionary = gm.get("sounds", {}) if gm is Dictionary and gm.get("sounds") is Dictionary else {}
 	use_files = bool(cfg.get("files", true))
+	var music: Dictionary = cfg.get("bgm", {}) if cfg.get("bgm") is Dictionary else {}
+	use_music = bool(music.get("files", true))
+	for track in TRACKS:
+		if music.get(track) is String:
+			music_names[track] = str(music[track])
+		if music.get("gain_db") is Dictionary and music.gain_db.get(track) != null:
+			music_gain_db[track] = clampf(float(music.gain_db[track]), -40.0, 12.0)
 	AudioBuses.ensure(clampf(float(cfg.get("pan", AudioBuses.DEFAULT_PAN)), 0.0, 1.0))
 	AudioBuses.apply(GameConfig.data.get("audio", {}) if GameConfig.data.get("audio") is Dictionary else {})
 	_rng.seed = 143
@@ -150,6 +175,78 @@ func _ready() -> void:
 	_bgm_fast.bus = AudioBuses.BGM
 	_bgm_fast.stream = _tune(HURRY_BPM, true)
 	add_child(_bgm_fast)
+	load_music_files()
+
+## Reads the music files that are there (each as a loop). A track with no file keeps what it
+## had before there were files. Never an error: the folder is empty on most machines.
+func load_music_files(dir := MUSIC_DIR) -> void:
+	for track in _music.keys():
+		_music[track].queue_free()
+	_music = {}
+	_music_gain = {}
+	if not load_music or not use_music:
+		return
+	for track in TRACKS:
+		var file := str(music_names.get(track, ""))
+		var stream := load_music_stream(dir.path_join(file)) if file != "" else null
+		if stream == null:
+			if file != "" and FileAccess.file_exists(dir.path_join(file)):
+				push_warning("bgm: %s could not be read as music (%s): as without a file" % [file, track])
+			continue
+		print("[bgm] %s: %s (%.0f s, loops)" % [track, file, stream.get_length()])
+		var p := AudioStreamPlayer.new()
+		p.name = "Music_" + track
+		p.bus = AudioBuses.BGM
+		p.stream = stream
+		add_child(p)
+		_music[track] = p
+		_music_gain[track] = 0.0
+
+## A music file as a looping stream (.mp3 / .ogg / .wav, read from the disk as it is: the
+## folder's files are not imported resources of the project). null = not there / not readable.
+static func load_music_stream(path: String) -> AudioStream:
+	if not FileAccess.file_exists(path):
+		return null
+	var disk := ProjectSettings.globalize_path(path)
+	match path.get_extension().to_lower():
+		"mp3":
+			var mp3 := AudioStreamMP3.load_from_file(disk)
+			if mp3 != null:
+				mp3.loop = true
+			return mp3
+		"ogg":
+			var ogg := AudioStreamOggVorbis.load_from_file(disk)
+			if ogg != null:
+				ogg.loop = true
+			return ogg
+		"wav":
+			var wav := AudioStreamWAV.load_from_file(disk)
+			if wav == null or wav.data.is_empty():
+				return null
+			var frame := (2 if wav.format == AudioStreamWAV.FORMAT_16_BITS else 1) * (2 if wav.stereo else 1)
+			if wav.format in [AudioStreamWAV.FORMAT_8_BITS, AudioStreamWAV.FORMAT_16_BITS]:
+				wav.loop_begin = 0
+				wav.loop_end = wav.data.size() / frame
+				wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+			return wav
+	return null
+
+## Which music should sound now: "game" (the clock runs) / "ending" (the result) / "menu"
+## (a title screen) / "" (none: the practice, the countdown, the other modes).
+func track_wanted() -> String:
+	if not enabled:
+		return ""
+	if bgm_on:
+		return "game"
+	if ending_on:
+		return "ending"
+	if menu_on:
+		return "menu"
+	return ""
+
+## The track is played from its file (else: the synthesised tune for "game", nothing otherwise).
+func has_music(track: String) -> bool:
+	return _music.has(track)
 
 ## Reads the manifest and loads the files it names. A missing manifest, a missing file or
 ## one that does not load is skipped: that key keeps its synthesised sound.
@@ -289,7 +386,7 @@ func set_bgm(on: bool, fast := false) -> void:
 	hurry = on and fast
 	if _bgm == null or not is_inside_tree():
 		return
-	if on and enabled:
+	if on and enabled and not _music.has("game"):
 		for p in [_bgm, _bgm_fast]:
 			if not p.playing:
 				p.volume_db = -60.0
@@ -298,20 +395,32 @@ func set_bgm(on: bool, fast := false) -> void:
 func _process(dt: float) -> void:
 	if _bgm == null:
 		return
-	var want := 1.0 if bgm_on and enabled and not hurry else 0.0
-	var want_fast := 1.0 if bgm_on and enabled and hurry else 0.0
+	# the round's music from its file: one track to the end (the last stretch has its own
+	# sounds; the synthesised hurry take is another tune and is not laid over it)
+	var synth := not _music.has("game")
+	var want := 1.0 if bgm_on and enabled and not hurry and synth else 0.0
+	var want_fast := 1.0 if bgm_on and enabled and hurry and synth else 0.0
+	var track := track_wanted()
+	for t in _music.keys():
+		var p: AudioStreamPlayer = _music[t]
+		var on: bool = t == track
+		if on and not p.playing:
+			p.volume_db = -60.0
+			p.play()  # from its start, every time it comes back
+		_music_gain[t] = move_toward(float(_music_gain[t]), 1.0 if on else 0.0, dt / FADE_S)
+		_fade(p, float(_music_gain[t]), float(music_gain_db.get(t, 0.0)))
 	_bgm_gain = move_toward(_bgm_gain, want, dt / FADE_S)
 	_fast_gain = move_toward(_fast_gain, want_fast, dt / FADE_S)
 	_duck = move_toward(_duck, DUCK_DB if AudioBuses.voice_active() else 0.0, dt * 40.0)
 	_fade(_bgm, _bgm_gain)
 	_fade(_bgm_fast, _fast_gain)
 
-func _fade(p: AudioStreamPlayer, gain: float) -> void:
+func _fade(p: AudioStreamPlayer, gain: float, extra_db := 0.0) -> void:
 	if gain <= 0.0:
 		if p.playing:
 			p.stop()
 		return
-	p.volume_db = volume_db + BGM_DB + _duck + linear_to_db(maxf(gain, 0.001))
+	p.volume_db = volume_db + BGM_DB + _duck + extra_db + linear_to_db(maxf(gain, 0.001))
 
 ## How far the music is turned down for a voice now (dB, 0 = not at all).
 func duck_db() -> float:
