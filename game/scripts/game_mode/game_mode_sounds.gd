@@ -53,11 +53,13 @@ const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETU
 ## the pitch of "combo" by the step the combo reached
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
 ## sounds that are only synthesised here (#149: no file was added for the practice)
-const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit", "new_record"]
+const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit", "new_record", "power_speed", "power_multi", "power_double"]
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
 ## two of a key (the counting blips come many a second and must never fill the players)
 const SYNTH_META := {"timeup_hit": {"priority": 2}, "result_count": {"priority": 0, "min_gap_ms": 40}, "score_lock": {"priority": 2},
-	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}, "new_record": {"priority": 2}}
+	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}, "new_record": {"priority": 2},
+	"power_speed": {"priority": 2, "min_gap_ms": 400}, "power_multi": {"priority": 2, "min_gap_ms": 400},
+	"power_double": {"priority": 2, "min_gap_ms": 400}}
 
 var enabled := true
 var volume_db := -8.0
@@ -175,6 +177,10 @@ func _ready() -> void:
 		"alien": StudySounds._tones([[659.3, 0.06], [880.0, 0.06], [1318.5, 0.06], [1760.0, 0.2]], 0.35),
 		"warp": StudySounds._sweep(330.0, 1760.0, 0.3, 0.3),
 		"combo": StudySounds._tones([[1046.5, 0.05], [1568.0, 0.12]], 0.3),
+		# #188: distinct arcade pickup cues. Synthesized; no third-party audio required.
+		"power_speed": StudySounds._sweep(320.0, 1900.0, 0.46, 0.5),
+		"power_multi": StudySounds._tones([[659.3, 0.09], [987.8, 0.09], [1568.0, 0.32]], 0.5),
+		"power_double": StudySounds._tones([[523.3, 0.10], [784.0, 0.10], [1046.5, 0.10], [1568.0, 0.48]], 0.5),
 	}
 	load_manifest()
 	for i in PLAYERS:
