@@ -47,6 +47,7 @@ var _height_filled := false
 ## #169: the easy mode's drop points over the two Dials, as the backend has them (easy_status)
 var easy_status: Dictionary = {}
 var _easy: Label
+var _prep_was_active := false
 var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
 var _z_use: Button
 ## #126: to the recorded top / bottom (move_z), like the claw's 開く / 閉じる
@@ -263,19 +264,25 @@ func setup(m: Node) -> void:
 	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
 
 	# --- 8. the easy mode's drop points (#169)
-	_card("easy", "スコアゲームのかんたんモードで、つかんだカプセルを自動で運んで落とす場所。左の Dial 1 と右の Dial 2 の"
-		+ "真上の XY と、爪を開く高さ（Z）。実機でだけ記録する（仮想クレーンは模擬の値）。2 の Z の上下と原点復帰のあとで。")
+	_card("easy", "スコアゲームのかんたんモードで自動で動く場所。左の Dial 1 と右の Dial 2 の真上（XY）、"
+		+ "カプセルをつかむ高さと、Dial の上で爪を開く高さ（Z）。実機でだけ記録する。2 の Z の上下と原点復帰のあとで。"
+		+ "一度記録して確かめた値は次の起動でもそのまま使う（記録し直すのは、置き場所を変えたときと Z を測り直したとき）。")
 	_easy = _value()
-	_step("①", "矢印キーでアームを Dial 1（左）の受け口の真上へ動かし「ここを Dial 1 に記録」。Dial 2（右）も同じ")
-	_step("②", "受け口の上で S で下ろし、爪を開けばカプセルが入る高さで「この高さを投入の高さに記録」")
-	_step("③", "カプセルなしで両方の位置へ手で動かして下ろし、何にも当たらないことを見てから「確かめた」")
+	_easy.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_easy.custom_minimum_size = Vector2(WIDTH, 0)
+	_step("①", "矢印キーでアームを Dial 1（左）の受け口の真上へ動かして「Dial 1 に記録」。Dial 2（右）も、その真上へ動かしてから")
+	_step("②", "カプセルの上で Q で爪を開き、S でつかめる高さまで下ろして「キャッチの高さに記録」")
+	_step("③", "Dial の受け口の上で、爪を開けばカプセルが入る高さまで S で下ろして「投入の高さに記録」")
+	_step("④", "カプセルなしで両方の位置と 2 つの高さへ手で動かし、何にも当たらないことを見てから「確かめた」")
 	_caution("アームが届かない所に Dial があるときは記録しない（置き場所を直す）。値を変えると「確かめた」は取り消される。"
-		+ "キャッチの高さ・速さは config の auto_catch.real（実機で測って confirmed にするまで自動では動かない）。")
+		+ "移動の高さは Z の一番上。自動の動きは一番上まで巻き上げてある状態から始まる。")
 	row = _row()
-	_ws_button(row, "ここを Dial 1（左）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_1"}), "primary")
-	_ws_button(row, "ここを Dial 2（右）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_2"}), "primary")
+	_ws_button(row, "Dial 1（左）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_1"}), "primary")
+	_ws_button(row, "Dial 2（右）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_2"}), "primary")
 	row = _row()
-	_ws_button(row, "この高さを投入の高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "release_z"}), "primary")
+	_ws_button(row, "キャッチの高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "catch_z"}), "primary")
+	_ws_button(row, "投入の高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "release_z"}), "primary")
+	row = _row()
 	_ws_button(row, "確かめた", func(): main.ws.send_command("easy_dial_confirm", {"confirmed": true}))
 	_ws_button(row, "全部消す", func(): main.ws.send_command("easy_dial_set", {"which": "clear"}), "danger")
 	_box = self
@@ -375,28 +382,46 @@ static func easy_state(st: Dictionary) -> Dictionary:
 	if str(d.get("profile", "")) != "real":
 		return {"state": "na", "text": "仮想クレーンは模擬の値を使う（記録は実機でだけ）"}
 	var missing: Array[String] = []
-	for k in [["dial_1", "Dial 1"], ["dial_2", "Dial 2"], ["release_z", "投入の高さ"]]:
+	for k in EASY_VALUES:
 		if d.get(k[0]) == null:
 			missing.append(str(k[1]))
-	if missing.size() == 3:
+	if missing.size() == EASY_VALUES.size():
 		return {"state": "na", "text": "まだ記録していない（かんたんモードを使うときだけ要る）"}
+	if bool(d.get("stale_z", false)):
+		return {"state": "todo", "text": "Z を測り直した: キャッチの高さと投入の高さを記録し直す"}
 	if not missing.is_empty():
 		return {"state": "todo", "text": "まだ: " + "、".join(missing)}
-	if not bool(d.get("confirmed", false)):
-		return {"state": "todo", "text": "記録済み。試してから「確かめた」"}
 	var problems: Array = st.problems if st.get("problems") is Array else []
+	for p in problems:
+		if str(p).contains("same place"):
+			return {"state": "todo", "text": "Dial 1 と Dial 2 が同じ場所: それぞれの真上へ動かして記録し直す"}
+	if not bool(d.get("confirmed", false)):
+		# anything else wrong with the values is said before asking for the confirmation
+		for p in problems:
+			if not str(p).contains("not confirmed"):
+				return {"state": "todo", "text": "このままでは使えない: " + str(p)}
+		return {"state": "todo", "text": "記録済み。試してから「確かめた」"}
 	if not problems.is_empty():
-		return {"state": "todo", "text": "投入位置は確認済み。まだ動かせない: " + str(problems[0])}
-	return {"state": "ok", "text": "記録・確認済み"}
+		return {"state": "todo", "text": "まだ動かせない: " + str(problems[0])}
+	return {"state": "ok", "text": "記録・確認済み（次の起動でもこの値を使う）"}
+
+## the easy mode's four recorded values: key in easy_status.dials, its name
+const EASY_VALUES := [["dial_1", "Dial 1"], ["dial_2", "Dial 2"], ["catch_z", "キャッチの高さ"], ["release_z", "投入の高さ"]]
 
 static func easy_text(st: Dictionary) -> String:
 	var d: Dictionary = st.dials if st.get("dials") is Dictionary else {}
 	if d.is_empty():
 		return "（バックエンドに問い合わせ中）"
 	var xy := func(v) -> String: return "X %.0f / Y %.0f" % [float(v[0]), float(v[1])] if v is Array and v.size() == 2 else "まだ"
-	return "Dial 1（左）: %s　Dial 2（右）: %s　投入の高さ: %s　%s" % [xy.call(d.get("dial_1")), xy.call(d.get("dial_2")),
-		("Z %.1f" % float(d.release_z)) if d.get("release_z") != null else "まだ",
-		"模擬の値" if str(d.get("profile", "")) != "real" else ("確認済み" if bool(d.get("confirmed", false)) else "未確認")]
+	if str(d.get("profile", "")) != "real":
+		return "仮想クレーン: 模擬の値を使う（Dial 1 %s　Dial 2 %s　投入 Z %.0f）" % [xy.call(d.get("dial_1")), xy.call(d.get("dial_2")),
+			float(d.release_z) if d.get("release_z") != null else 0.0]
+	var z := func(v) -> String: return ("Z %.1f" % float(v)) if v != null else "まだ"
+	var when := str(d.get("saved_at", "")).replace("T", " ")
+	return "Dial 1（左）: %s　Dial 2（右）: %s\nキャッチの高さ: %s　投入の高さ: %s\n%s%s\n→ %s" % [
+		xy.call(d.get("dial_1")), xy.call(d.get("dial_2")), z.call(d.get("catch_z")), z.call(d.get("release_z")),
+		"確認済み" if bool(d.get("confirmed", false)) else "未確認", ("（%s に記録した値）" % when) if when != "" else "",
+		str(easy_state(st).text)]
 
 ## The first section not done, in words ("" when all are).
 static func next_text(states: Array) -> String:
@@ -722,6 +747,8 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		if ok:
 			easy_status = data
 		return
+	if ok and cmd in ["z_set", "z_restore", "calibration_prepare"] and main != null and main.get("ws") != null:
+		main.ws.send_command("easy_status")  # the easy mode's heights follow the Z calibration
 	if ok and cmd in ["easy_dial_set", "easy_dial_confirm"]:
 		easy_status = data
 	if not COMMANDS.has(cmd) or not is_visible_in_tree():
@@ -878,6 +905,9 @@ func refresh() -> void:
 		b.disabled = not ready
 	var prep := RobotState.calibration_prepare if RobotState.source == "websocket" else {}
 	_prepare.disabled = not ready or bool(prep.get("active", false))
+	if _prep_was_active and not bool(prep.get("active", false)) and ready:
+		main.ws.send_command("easy_status")  # the preparation ended: Z is back, the easy mode's values count again
+	_prep_was_active = bool(prep.get("active", false))
 	_prepare_label.text = prepare_text(prep)
 	_prepare_label.add_theme_color_override("font_color", BAD if str(prep.get("last_result", "")) == "fault"
 		else (GOOD if str(prep.get("last_result", "")) == "done" else MUTED))

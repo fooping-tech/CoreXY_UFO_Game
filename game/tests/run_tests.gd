@@ -4382,9 +4382,14 @@ func _test_easy_mode_game(rs: Node) -> void:
 	# the practice shows the difficulty that is played
 	var easy_steps := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", PinchJoystickScheme.new().claw_poses()).map(func(s): return s.id)
 	_ok(easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).state == "todo"
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "confirmed": false}}).text.contains("確かめた")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "confirmed": true}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": false}}).text.contains("確かめた")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true},
+			"problems": ["Dial 1 and Dial 2 are recorded at the same place (1,2): move the arm"]}).text.contains("同じ場所")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "stale_z": true}}).text.contains("測り直した")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true,
+			"saved_at": "2026-11-17T10:00:00"}, "problems": []}).contains("2026-11-17 10:00:00 に記録した値")
 		and CalibrationPanel.easy_state({"dials": {"profile": "real"}}).state == "na",
 		"easy mode: the practice has both carries; the 校正 tab says what of the drop points is missing, unconfirmed or done", str(easy_steps))
 	RobotState.easy_mode = {}
