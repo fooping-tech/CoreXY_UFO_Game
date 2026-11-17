@@ -134,8 +134,9 @@ class MockRobot(RobotInterface):
             return
         self._require(homed=bool(vx_mm_s or vy_mm_s))  # Z alone works un-homed, like the firmware
         speed = math.hypot(vx_mm_s, vy_mm_s)
-        if speed > self.jog_max_mm_s > 0:
-            vx_mm_s, vy_mm_s = vx_mm_s * self.jog_max_mm_s / speed, vy_mm_s * self.jog_max_mm_s / speed
+        cap = self.jog_cap(self.jog_max_mm_s)
+        if speed > cap > 0:
+            vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
         lim = self.limits
         bounds = [(lim.x_min, lim.x_max), (lim.y_min, lim.y_max), (lim.z_min, lim.z_max)]
         vz_units_s = max(-self.speed[2], min(self.speed[2], vz_units_s))

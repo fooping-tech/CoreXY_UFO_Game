@@ -74,6 +74,7 @@ func _ready() -> void:
 	_test_game_mode_ufo_and_mock_dials()
 	_test_game_mode_round(rs)
 	_test_game_mode_powerup_integration(rs)
+	_test_game_mode_powerup_followup(rs)
 	_test_game_mode_duplicates_and_sessions(rs)
 	_test_game_mode_release_faults(rs)
 	_test_game_mode_dial_leds(rs)
@@ -3028,7 +3029,7 @@ func _test_game_mode_powerups() -> void:
 	_ok(sc.power_multiplier == 1.0, "x2 resets with the round")
 	var field := PinballField.new()
 	add_child(field)
-	field.configure_powerups({"first_spawn_s": 0.1, "spawn_interval_s": 0.1})
+	field.configure_powerups({"first_spawn_s": 0.1, "spawn_interval_s": 0.1, "weights": {"speed": 1, "multiball": 0, "double": 0}})
 	field.set_powerups_enabled(true)
 	field.advance(0.2)
 	_ok(field.powerup_kind == "speed", "field presents one collectible at a time")
@@ -3038,8 +3039,28 @@ func _test_game_mode_powerups() -> void:
 	field._on_area(field._capsules["test"].body, field._powerup_area)
 	field._on_area(field._capsules["test"].body, field._powerup_area)
 	_ok(seen.size() == 1 and seen[0] == "speed" and field.powerup_kind == "", "one item can be collected only once")
-	field.split_capsule("test", ["test-mb1", "test-mb2"])
-	_ok(field.capsule_count() == 3, "one virtual capsule can split into three")
+	var made := field.split_capsule("test", ["test-mb1", "test-mb2"])
+	_ok(field.capsule_count() == 3 and made == ["test-mb1", "test-mb2"], "one virtual capsule can split into three")
+	_ok(field.split_capsule("gone", ["x1", "x2"]).is_empty() and field.split_capsule("test", ["test-mb1"]).is_empty()
+		and field.capsule_count() == 3, "a split reports only the balls it really made")
+	# which item comes: by weight, and not at all when its chance or every weight is 0
+	field.configure_powerups({"weights": {"speed": 3, "multiball": 0, "double": 1}})
+	var picked := {"speed": 0, "multiball": 0, "double": 0}
+	for i in 800:
+		picked[field.pick_powerup()] += 1
+	_ok(picked.multiball == 0 and picked.speed > 520 and picked.speed < 680 and picked.double > 120,
+		"the items come by their weights (3 : 0 : 1)", str(picked))
+	field.configure_powerups({"weights": {"speed": 0, "multiball": 0, "double": 0}})
+	_ok(field.pick_powerup() == "", "every weight 0: no item")
+	field.clear()
+	field.configure_powerups({"first_spawn_s": 0.1, "spawn_interval_s": 2.0, "spawn_chance": 0.0, "weights": {"speed": 1}})
+	field.set_powerups_enabled(true)
+	field.advance(0.2)
+	field.advance(2.1)
+	_ok(field.powerup_kind == "", "spawn_chance 0: the time comes and nothing appears")
+	field.configure_powerups({"first_spawn_s": 0.1, "spawn_chance": 1.0})
+	field.advance(0.2)
+	_ok(field.powerup_kind != "" and field.powerup_pos in PinballField.POWERUP_SPOTS, "spawn_chance 1: an item at one of the spots")
 	field.clear()
 	_ok(field.capsule_count() == 0 and field.powerup_kind == "", "field clears extra balls and pickups")
 	field.queue_free()
@@ -3158,19 +3179,35 @@ func _test_game_mode_powerup_integration(rs: Node) -> void:
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
 	var id := str(lane.capsule.capsule_id)
 	var pos := Vector2(350, 600)
+	var hand_top: float = game.gesture.joystick.max_speed
+	_ok(game.hand_boost_scale() == 1.0 and game.powerup_xy_speed(true) == game.jog_speed_real_mm
+		and game.powerup_xy_speed(false) == game.jog_speed_mm,
+		"no power: the hand and the keys are as fast as outside the game")
+	var told: Array[float] = []
+	game.jog_boost_sender = func(s: float) -> void: told.append(s)
 	ctl._on_powerup_collected(id, "speed", pos)
-	_ok(ctl.powerups.active("speed") and game.powerup_xy_speed(true) <= 60.0
-		and game.powerup_xy_speed(true) > 40.0 and ctl.sounds.log.has("power_speed"),
-		"pickup speed: XY only up to the configured backend cap, audible")
+	game._sync_jog_boost(true)
+	game._sync_jog_boost(true)
+	_ok(ctl.powerups.active("speed") and is_equal_approx(game.powerup_xy_speed(true), 100.0)
+		and is_equal_approx(game.hand_boost_scale() * hand_top, 100.0) and ctl.sounds.log.has("power_speed"),
+		"pickup speed: the hand and the keys go up to 100 mm/s in XY, audible",
+		"keys=%s hand=%s" % [str(game.powerup_xy_speed(true)), str(game.hand_boost_scale() * hand_top)])
+	_ok(told.size() == 1 and is_equal_approx(told[0], 10.0), "speed: the backend is told once, for the power's seconds", str(told))
+	_gm_step(ctl, 3.0)
+	game._sync_jog_boost(true)
+	ctl._on_powerup_collected(id, "speed", pos)  # taken again: the time starts again, and the backend hears it
+	game._sync_jog_boost(true)
+	_ok(told.size() == 2 and is_equal_approx(told[1], 10.0), "speed taken again: the backend's time is renewed", str(told))
 	ctl._on_powerup_collected(id, "double", pos)
 	ctl.field.target_hit.emit(id, "bumper", "bumper_0", pos)
 	var light_changed := hub.executed.any(func(e): return e[0] == GameModeDevices.ILLUMINATION and e[1] == "SET_LIGHT_MODE" and e[2].get("mode", "") == "CUSTOM")
 	_ok(ctl.score.score == 200 and ctl.powerups.active("double") and light_changed
 		and ctl.sounds.log.has("power_double"), "pickup x2: doubled scoring, gold illumination and cue")
 	ctl._on_powerup_collected(id, "multiball", pos)
+	ctl.tick(1.0 / 60.0)
 	var children := [id + "-mb1", id + "-mb2"]
 	var multi_led := hub.executed.any(func(e): return e[0] == GM_L and e[1] == "SET_DIAL_EFFECT" and e[2].get("target", "") == "FRONT" and e[2].get("effect", "") == "COMET")
-	_ok(ctl.field.capsule_count() == 3 and int(ctl._multi_left[id]) == 3
+	_ok(ctl.field.capsule_count() == 3 and (ctl._multi_balls[id] as Array).size() == 3
 		and ctl.fx.power_portals.left and not ctl.fx.power_portals.right and multi_led
 		and ctl.sounds.log.has("power_multi"),
 		"pickup multi: three physics balls, same-side portal LED, distinct audio",
@@ -3179,17 +3216,20 @@ func _test_game_mode_powerup_integration(rs: Node) -> void:
 	ctl.field.capsule_exited.emit(children[0], "left", pos)
 	ctl.field.capsule_exited.emit(id, "left", pos)
 	_ok(lane.state == "SIMULATING" and hub.count(GM_L, "RELEASE_BALL") == 0
-		and int(ctl._multi_left[id]) == 1,
+		and (ctl._multi_balls[id] as Array) == [children[1]],
 		"multiball: no physical release until last virtual ball")
 	ctl.field.capsule_exited.emit(children[1], "left", pos)
-	_ok(lane.state == "RETURNING" and not ctl.fx.power_portals.left and ctl._multi_left.is_empty(),
+	_ok(lane.state == "RETURNING" and not ctl.fx.power_portals.left and ctl._multi_balls.is_empty()
+		and ctl._virtual_root.is_empty(),
 		"multiball: last ball starts one return and restores portal")
 	_gm_step(ctl, 4.0)
 	_ok(hub.count(GM_L, "RELEASE_BALL") == 1 and lane.released == 1
 		and lane.state == "READY", "multiball: original Dial releases exactly once")
 	ctl._halt("test stop")
-	_ok(not ctl.powerups.active("speed") or game.powerup_xy_speed(true) == game.jog_speed_real_mm,
-		"speed upgrade cannot persist when the round stops")
+	game._sync_jog_boost(true)
+	_ok(not ctl.powerups.active("speed") and game.powerup_xy_speed(true) == game.jog_speed_real_mm
+		and game.hand_boost_scale() == 1.0 and told[-1] == 0.0,
+		"speed upgrade cannot persist when the round stops (and the backend is told to end it)", str(told))
 	_gm_free(game, rs)
 
 func _test_game_mode_round(rs: Node) -> void:
@@ -6305,3 +6345,118 @@ func _test_fonts() -> void:
 		str([files_ok, labels_ok, glyphs_ok]))
 	for l in [big, small, box]:
 		l.free()
+
+## #188, the second part: the light follows the state, a MULTI BALL always gives its capsule
+## back, the switches, the staff's keys, the music under a pickup.
+func _gm_light_modes(hub: MockDialHub) -> Array:
+	return hub.executed.filter(func(e): return e[0] == GameModeDevices.ILLUMINATION and e[1] == "SET_LIGHT_MODE").map(func(e): return e[2])
+
+func _test_game_mode_powerup_followup(rs: Node) -> void:
+	# ---- the light's mode is a function of the state
+	var f := GameModeController.light_mode_for
+	_ok(f.call("COUNTDOWN", false, false).mode == "GAME_READY" and f.call("RESULT", true, true).mode == "RESULT"
+		and f.call("IDLE", true, true).is_empty() and f.call("STOPPED", false, true).is_empty(),
+		"light: READY in the countdown, RESULT at the end, not the game's outside a round")
+	_ok(f.call("PLAYING", false, false).speed == 128 and f.call("PLAYING", true, false).speed == 230
+		and f.call("PLAYING", true, true).mode == "CUSTOM" and f.call("SETTLING", true, false).speed == 230,
+		"light: rainbow, the fast rainbow in the last stretch, gold over both while x2 runs")
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hub := ctl.mock_hub
+	var lane: GameModeController.Lane = ctl.lanes["left"]
+	var modes := _gm_light_modes(hub)
+	_ok(modes.size() == 2 and modes[0].mode == "GAME_READY" and modes[1].mode == "GAME_PLAY" and int(modes[1].speed) == 128,
+		"light: one command per change (READY, then PLAY)", str(modes))
+	_gm_step(ctl, 1.0)
+	_ok(_gm_light_modes(hub).size() == 2, "light: nothing is sent while nothing changes")
+	_ok(ctl.force_powerup("double") and _gm_light_modes(hub)[-1].mode == "CUSTOM", "x2 (forced, no ball needed): gold at once")
+	ctl.time_left = ctl.hurry_s + 0.5
+	_gm_step(ctl, 1.0)  # the last stretch begins under the gold
+	_ok(ctl._hurry_done and _gm_light_modes(hub)[-1].mode == "CUSTOM" and _gm_light_modes(hub).size() == 3,
+		"last stretch during x2: the gold stays, no rainbow is sent over it")
+	_gm_step(ctl, float(ctl.powerups.duration.double))
+	var last: Dictionary = _gm_light_modes(hub)[-1]
+	_ok(not ctl.powerups.active("double") and last.mode == "GAME_PLAY" and int(last.speed) == 230 and int(last.brightness) == 220
+		and _gm_light_modes(hub).size() == 4,
+		"x2 ends in the last stretch: back to the FAST rainbow, with one command", str(last))
+	# ---- the staff's keys, and what they need
+	_ok(not ctl.force_powerup("multiball") and not ctl.force_powerup("nothing"), "forced MULTI BALL needs a ball on the field")
+	game._unhandled_input(_key(KEY_F2))
+	_ok(ctl.powerups.active("speed"), "F2: SPEED UP now")
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(lane.capsule.capsule_id)
+	game._unhandled_input(_key(KEY_F3))
+	ctl.tick(1.0 / 60.0)
+	_ok(ctl.field.capsule_count() == 3 and ctl._multi_balls.has(id) and not ctl.force_powerup("multiball"),
+		"F3: MULTI BALL on the ball in play, once per capsule")
+	# ---- the balls vanish without a word: the capsule still goes back
+	for vid in (ctl._multi_balls[id] as Array).duplicate():
+		ctl.field.remove_capsule(str(vid))
+	ctl.tick(1.0 / 60.0)
+	_ok(lane.state == "RETURNING" and ctl._multi_balls.is_empty() and ctl._virtual_root.is_empty()
+		and not ctl.fx.power_portals.left, "multiball: balls that vanished do not hold the capsule (it returns)")
+	_gm_step(ctl, 4.0)
+	_ok(hub.count(GM_L, "RELEASE_BALL") == 1 and lane.state == "READY", "…and it is released once")
+	# ---- the ball left before the split was made: nothing waits for balls that never were
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	id = str(lane.capsule.capsule_id)
+	ctl._multi_pending.append({"ball": id, "root": id})  # as asked for inside a physics callback
+	ctl.field.capsule_exited.emit(id, "left", Vector2(200, 1000))
+	ctl.tick(1.0 / 60.0)
+	_ok(lane.state == "RETURNING" and ctl._multi_balls.is_empty() and ctl._multi_pending.is_empty()
+		and ctl.field.capsule_count() == 0, "multiball asked for as the ball left: no split, the capsule returns")
+	_gm_step(ctl, 4.0)
+	_ok(hub.count(GM_L, "RELEASE_BALL") == 2 and lane.state == "READY", "…and the Dial is ready again")
+	# ---- a FAULT ends the capsule's balls
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	id = str(lane.capsule.capsule_id)
+	ctl.force_powerup("multiball")
+	ctl._fault(lane, "test")
+	_ok(ctl.field.capsule_count() == 0 and ctl._multi_balls.is_empty() and ctl._virtual_root.is_empty(),
+		"a faulted Dial: its capsule's three balls are gone")
+	_gm_free(game, rs)
+	# ---- the switches
+	game = _gm_game()
+	ctl = game.game_mode
+	ctl.powerups_on = false
+	ctl = _gm_playing(game)
+	_gm_step(ctl, ctl.field.powerup_first_s + 1.0)
+	_ok(not ctl.field.powerup_enabled and ctl.field.powerup_kind == "", "powerups.enabled false: no item appears")
+	ctl.power_notice = false
+	ctl.power_sounds = false
+	ctl.power_lights = false
+	hub = ctl.mock_hub
+	lane = ctl.lanes["left"]
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	id = str(lane.capsule.capsule_id)
+	var lights_before := _gm_light_modes(hub).size()
+	ctl.sounds.log.clear()
+	ctl.force_powerup("double")
+	ctl.force_powerup("multiball")
+	ctl.force_powerup("speed")
+	ctl.tick(1.0 / 60.0)
+	ctl.field.target_hit.emit(id, "bumper", "bumper_0", Vector2(300, 600))
+	_ok(ctl.score.score == 200 and ctl.field.capsule_count() == 3 and ctl.powerups.active("speed"),
+		"notice, sounds and lights off: the powers themselves work")
+	_ok(ctl.fx._power_notice.text == "" and ctl.fx.power_status.size() == 3, "notice off: no big notice, the small timers stay")
+	_ok(not ctl.sounds.log.has("power_double") and not ctl.sounds.log.has("power_multi") and ctl.sounds.pickup_duck() == 0.0,
+		"sounds off: no pickup sound, the music is not turned down")
+	_ok(_gm_light_modes(hub).size() == lights_before
+		and not hub.executed.any(func(e): return e[1] == "SET_DIAL_EFFECT" and e[2].get("target", "") == "FRONT"),
+		"lights off: no gold light, no Dial front LED")
+	_gm_free(game, rs)
+	# ---- the music steps down under a pickup, and back
+	var snd := GameModeSounds.new()
+	add_child(snd)
+	snd.duck(0.5, -8.0)
+	var down := snd.pickup_duck()
+	snd._process(0.6)
+	_ok(down == -8.0 and snd.pickup_duck() == 0.0, "pickup: the music is 8 dB down for its time, then as it was")
+	snd.duck(0.0, -8.0)
+	snd.duck(1.0, 0.0)
+	_ok(snd.pickup_duck() == 0.0, "pickup duck: no time or no dB = nothing")
+	snd.queue_free()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 
 from ..config import RobotLimits
@@ -17,6 +18,30 @@ class RobotInterface(ABC):
     # The soft limits this robot enforces; None when it has none of its own (the server
     # then uses the config's).
     limits: RobotLimits | None = None
+
+    # #188 (SPEED UP): the jog's XY cap raised for a while. jog_boost_mm_s is the cap while
+    # it lasts (0 = this robot has none), jog_boost_max_s the longest one request may ask for.
+    # It ends by itself (a monotonic deadline kept here, not in the game), and with a stop.
+    jog_boost_mm_s: float = 0.0
+    jog_boost_max_s: float = 30.0
+    _jog_boost_until: float = 0.0
+
+    def jog_boost(self, seconds: float) -> float:
+        """Raise the jog's XY cap to jog_boost_mm_s for `seconds` (at most jog_boost_max_s)
+        from now; 0 or less ends it now. Returns the seconds it will last."""
+        if seconds <= 0 or self.jog_boost_mm_s <= 0:
+            self._jog_boost_until = 0.0
+            return 0.0
+        s = min(float(seconds), max(self.jog_boost_max_s, 0.0))
+        self._jog_boost_until = time.monotonic() + s
+        return s
+
+    def jog_boost_left(self) -> float:
+        return max(self._jog_boost_until - time.monotonic(), 0.0)
+
+    def jog_cap(self, base: float) -> float:
+        """The jog's XY cap now: `base`, or the boost's while one lasts (never lower)."""
+        return max(base, self.jog_boost_mm_s) if self.jog_boost_left() > 0 else base
 
     @property
     def is_real(self) -> bool:

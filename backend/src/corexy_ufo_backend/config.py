@@ -56,6 +56,10 @@ class BackendConfig:
     xy_feed_mm_min: float = 900.0
     # serial JOG speed cap (firmware recommends <= 50 mm/s = 3000 mm/min, see REPLY_FIRMWARE_JOG.md)
     jog_max_mm_s: float = 50.0
+    # #188 (SPEED UP): the jog's XY cap while the game's boost lasts (the jog_boost command),
+    # and the longest one request may last. None / not above jog_max_mm_s = no boost.
+    jog_boost_mm_s: float | None = None
+    jog_boost_max_s: float = 30.0
     # #185: a jog (keys, the hand stick) stays this far inside the XY soft limits, and slows
     # down towards that line (speed towards an edge <= distance / jog_edge_slow_s). The home
     # corner's limit switches are pressed within about 1 mm of 0: a jog that reaches them is
@@ -251,6 +255,10 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     ff = b.get("xy_fast_feed_mm_min")
     cfg.xy_fast_feed_mm_min = float(ff) if isinstance(ff, (int, float)) and not isinstance(ff, bool) and ff > 0 else None
     cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
+    jb = b.get("jog_boost_mm_s")
+    cfg.jog_boost_mm_s = (float(jb) if isinstance(jb, (int, float)) and not isinstance(jb, bool)
+                          and jb > cfg.jog_max_mm_s else None)
+    cfg.jog_boost_max_s = min(max(float(b.get("jog_boost_max_s", 30.0)), 0.0), 60.0)
     cfg.jog_edge_margin_mm = max(float(b.get("jog_edge_margin_mm", 5.0)), 0.0)
     cfg.jog_edge_slow_s = max(float(b.get("jog_edge_slow_s", 0.25)), 0.0)
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))

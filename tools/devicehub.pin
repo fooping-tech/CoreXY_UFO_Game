@@ -3,4 +3,4 @@
 # Change it in the same PR as the game's change that needs the newer hub code, after that
 # commit is reviewed (merged) in UFO-DeviceHub: see README「UFO-DeviceHub のコードを使う」.
 repo=https://github.com/fooping-tech/UFO-DeviceHub.git
-commit=a402c3735e1ca504a7c13aab46b092a8c867d59d
+commit=6983f64dd52af481f88fc584639269989b6eb846

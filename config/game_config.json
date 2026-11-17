@@ -326,16 +326,24 @@
   },
   "game_mode": {
     "powerups": {
+      "enabled": true,
+      "notice": true,
+      "sounds": true,
+      "lights": true,
+      "debug_keys": true,
       "first_spawn_s": 5.0,
       "spawn_interval_s": 12.0,
+      "spawn_chance": 1.0,
       "item_life_s": 8.0,
+      "weights": {"speed": 1.0, "multiball": 1.0, "double": 1.0},
       "duration_s": {"speed": 10.0, "double": 15.0},
+      "duck_db": -8.0,
+      "duck_s": 0.7,
       "speed": {
-        "normal_mm_s": 40.0,
-        "max_mm_s": 60.0,
-        "_safety": "Only real/manual XY joystick and keyboard in PLAYING. Never exceed backend.jog_max_mm_s (currently 60), firmware soft limits, the 5 mm jog edge margin or the existing dead-man/stop. Does not affect Z or automated Easy-mode carry. Validate on the real crane before exhibit."
+        "boost_mm_s": 100.0,
+        "_safety": "SPEED UP: the hand's stick and the arrow keys go up to boost_mm_s in XY while it lasts (Z never changes; the easy mode's automatic carry is not touched). Without it the hand is at gesture.joystick.max_speed_mm_s (60) and the keys at their usual speed. On the real crane the backend decides: its jog cap is backend.jog_max_mm_s (60) and becomes backend.jog_boost_mm_s (100) only while the jog_boost the game sends lasts; the backend ends it by itself, and at a stop. The 5 mm jog edge margin, the dead-man and the firmware's soft limits are unchanged. 100 mm/s is NOT verified on the real crane."
       },
-      "_note": "#188: pickups appear in the field in the order speed/multiball/double, one at a time. Speed and x2 run on timers (re-pick refreshes, never stacks), multi splits one virtual ball to three but keeps one physical Dial cycle. Effects/lighting never hold robot motion or physics."
+      "_note": "#188. enabled: the items appear at all. notice: the big name on the screen with its burst and shake (the small timers stay). sounds: the pickup's sound, and the music duck_db lower for duck_s under it. lights: the Dial's front LED (MULTI BALL) and the gold exhibition light (DOUBLE SCORE). debug_keys: while playing, F2 = SPEED UP, F3 = MULTI BALL (needs a ball on the field), F4 = DOUBLE SCORE now. An item appears first_spawn_s after GO, then every spawn_interval_s after the last one was taken or went away, with the chance spawn_chance (0..1); which one by weights (0 = never), at one of three spots, one at a time, for item_life_s. Speed and x2 run on timers (taking it again starts the time again, never stacks); MULTI BALL splits one ball into three but keeps one physical Dial cycle. Effects/lighting never hold robot motion or physics."
     },
     "enabled": true,
     "duration_s": 150,
@@ -520,6 +528,9 @@
     "xy_fast_feed_mm_min": 15900,
     "_xy_fast_feed_note": "#179: the feed (mm/min) of the automatic XY moves that are to be as quick as the machine goes: to the middle of the stage after homing, and the easy mode's carry to a Dial (game_mode.easy.real.xy_feed_mm_min overrides it there). 15900 = just under the firmware's MAX_FEED_MM_MIN (15909.9 mm/min = 265 mm/s, 1000 mm/s2; a larger feed is clamped there). null = xy_feed_mm_min. NOT yet run at this feed on the real machine (lost steps, a carried capsule swinging): lower it here if it is too much.",
     "jog_max_mm_s": 60,
+    "jog_boost_mm_s": 100,
+    "jog_boost_max_s": 30,
+    "_jog_boost_note": "#188 (SPEED UP): while the game's boost lasts (the jog_boost command, sent by the game when the item is taken) a jog's XY cap is jog_boost_mm_s instead of jog_max_mm_s. The backend keeps the deadline (at most jog_boost_max_s per request) and goes back by itself; a stop, motors off or the last client leaving ends it at once. The edge margin (jog_edge_margin_mm, jog_edge_slow_s), the dead-man and the firmware's soft limits are unchanged. Omit it or set it <= jog_max_mm_s for no boost. 100 mm/s is NOT verified on the real crane (the firmware's own jog cap is far above it): try it there before the exhibit.",
     "jog_edge_margin_mm": 5.0,
     "jog_edge_slow_s": 0.25,
     "_jog_edge_note": "#185: a jog (the arrow keys, the hand stick) stays jog_edge_margin_mm inside the XY soft limits and slows down towards that line (speed towards an edge <= distance left / jog_edge_slow_s). Seen on the machine 2026-11-17: at 60 mm/s the hand stick ran to Y = 0.3 mm (the firmware's soft limit is at 0.5 mm), the home limit switch was pressed and the next jog ended in ALARM. 0 = off. Programmed moves (move_xy, the easy mode) are not changed.",

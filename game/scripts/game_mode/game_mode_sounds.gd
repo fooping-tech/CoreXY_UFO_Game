@@ -109,6 +109,9 @@ var _bgm_fast: AudioStreamPlayer
 var _bgm_gain := 0.0
 var _fast_gain := 0.0
 var _duck := 0.0
+## #188: the music a step down under a pickup's sound, for this long (no fade: #181)
+var _pickup_duck_left := 0.0
+var _pickup_duck_db := 0.0
 var _last_ms: Dictionary = {}  # key -> when it last played
 var _side_of: Dictionary = {}  # lane state -> the side that entered it last
 var _rng := RandomNumberGenerator.new()
@@ -466,6 +469,7 @@ func _process(dt: float) -> void:
 	for pair in [[_bgm, want], [_bgm_fast, want_fast]]:
 		if pair[1] > 0.0 and not pair[0].playing:
 			pair[0].play()
+	_pickup_duck_left = maxf(_pickup_duck_left - dt, 0.0)
 	_duck = move_toward(_duck, DUCK_DB if AudioBuses.voice_active() else 0.0, dt * 40.0)
 	_fade(_bgm, _bgm_gain)
 	_fade(_bgm_fast, _fast_gain)
@@ -479,7 +483,20 @@ func _fade(p: AudioStreamPlayer, gain: float, extra_db := 0.0) -> void:
 		if p.playing:
 			p.stop()
 		return
-	p.volume_db = volume_db + BGM_DB + _duck + extra_db + linear_to_db(maxf(gain, 0.001))
+	p.volume_db = volume_db + BGM_DB + minf(_duck, pickup_duck()) + extra_db + linear_to_db(maxf(gain, 0.001))
+
+## The music is `db` lower for `seconds` (a pickup's sound is heard over it), then as it was:
+## a step down and a step back, never a fade. A voice's own, deeper duck stays.
+func duck(seconds: float, db: float) -> void:
+	if seconds <= 0.0 or db >= 0.0:
+		return
+	_pickup_duck_left = seconds
+	_pickup_duck_db = db
+	if _bgm != null and is_inside_tree():
+		_process(0.0)
+
+func pickup_duck() -> float:
+	return _pickup_duck_db if _pickup_duck_left > 0.0 else 0.0
 
 ## How far the music is turned down for a voice now (dB, 0 = not at all).
 func duck_db() -> float:

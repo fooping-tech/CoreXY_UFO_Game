@@ -57,6 +57,9 @@ const LED_ANIMATIONS := {
 	"INTAKE": {"effect": "CHASE", "direction": "TO_SCREEN", "duration_ms": 1500, "priority": "NORMAL", "target": "BOTH"},
 	"RETURN_FLOW": {"effect": "COMET", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "BOTH"},
 	"RELEASING": {"effect": "CHASE", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "BOTH"},
+	# #188: three balls on the screen for this Dial's one capsule. The front strip only (the
+	# transfer strip keeps its role); NORMAL so it may replace a running INTAKE; RETURN_FLOW ends it
+	"MULTI_BALL": {"effect": "COMET", "direction": "TO_DIAL", "duration_ms": 0, "priority": "NORMAL", "target": "FRONT"},
 	"FAULT": {"effect": "FLASH", "direction": "NONE", "duration_ms": 1500, "priority": "HIGH", "target": "BOTH", "color": [255, 0, 0]},
 	"CLEAR": {"effect": "NONE", "direction": "NONE", "duration_ms": 0, "priority": "HIGH", "target": "BOTH"},
 }
@@ -111,10 +114,28 @@ var mock_hub: MockDialHub
 var backend_hub: BackendDialHub
 var score := ScoreManager.new()
 var powerups := PowerUpManager.new()
-## Virtual child ID -> one real capsule ID. At most two extra balls per physical capsule.
-var _multi_parent: Dictionary = {}
-var _multi_left: Dictionary = {}
-var _multi_side: Dictionary = {}
+## MULTI BALL (#188): one real capsule, up to three balls on the screen.
+##   _virtual_root   ball id on the field -> the real capsule's id (the capsule's own ball too)
+##   _multi_balls    real capsule's id -> the ids of its balls still on the field
+##   _multi_pending  splits asked for inside a physics callback: made in the next tick
+## The real capsule goes back to its Dial when the list of its balls is empty. The list is
+## made from the balls that were really put on the field, and checked against the field
+## every tick, so a ball that never appeared (or vanished) cannot hold the capsule back.
+var _virtual_root: Dictionary = {}
+var _multi_balls: Dictionary = {}
+var _multi_pending: Array[Dictionary] = []
+## game_mode.powerups: the items appear at all / the big notice and the burst on the screen /
+## the pickup's sounds (and the music turned down under them) / the Dial's front LED and
+## the gold exhibition light / the staff's keys F2 F3 F4 (take one now)
+var powerups_on := true
+var power_notice := true
+var power_sounds := true
+var power_lights := true
+var power_debug_keys := true
+var power_duck_db := -8.0
+var power_duck_s := 0.7
+## the exhibition light's base mode that was last sent ({} = none of the game's)
+var _light_sent: Dictionary = {}
 var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
@@ -421,7 +442,15 @@ func _configure(cfg: Dictionary) -> void:
 	release_retries = maxi(int(t.get("release_retries", release_retries)), 0)
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
-	powerups.configure(cfg.get("powerups", {}) if cfg.get("powerups") is Dictionary else {})
+	var pw: Dictionary = cfg.get("powerups", {}) if cfg.get("powerups") is Dictionary else {}
+	powerups.configure(pw)
+	powerups_on = bool(pw.get("enabled", powerups_on))
+	power_notice = bool(pw.get("notice", power_notice))
+	power_sounds = bool(pw.get("sounds", power_sounds))
+	power_lights = bool(pw.get("lights", power_lights))
+	power_debug_keys = bool(pw.get("debug_keys", power_debug_keys))
+	power_duck_db = clampf(float(pw.get("duck_db", power_duck_db)), -40.0, 0.0)
+	power_duck_s = clampf(float(pw.get("duck_s", power_duck_s)), 0.0, 5.0)
 	_result_bonus_cfg = cfg.get("result_bonus", {}) if cfg.get("result_bonus") is Dictionary else {}
 	if cfg.get("result_show") is Dictionary:
 		result_show.configure(cfg.result_show)
@@ -599,10 +628,7 @@ func close() -> void:
 	sounds.set_bgm(false)
 	sounds.ending_on = false
 	field.clear()
-	powerups.reset()
-	_multi_parent.clear()
-	_multi_left.clear()
-	_multi_side.clear()
+	_clear_powerups()
 	fx.reset()
 	_clear_result()
 	_clear_ranking_view()
@@ -859,16 +885,13 @@ func start(after_practice := false) -> void:
 	message = ""
 	for side in SIDES:
 		_prepare(lanes[side])
-	_light("SET_LIGHT_MODE", {"mode": "GAME_READY", "brightness": 160, "speed": 128, "transition_ms": 300})
+	_sync_light()
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
 	_flush_ranking()
 	score.reset()
-	powerups.reset()
-	_multi_parent.clear()
-	_multi_left.clear()
-	_multi_side.clear()
+	_clear_powerups()
 	capsules.reset()
 	ufo.reset()
 	field.clear()
@@ -1007,20 +1030,25 @@ func tick(dt: float) -> void:
 	_tick_ranking(dt)
 	backdrop.advance(dt)
 	if phase in ["PLAYING", "SETTLING"]:
-		var finished_powers := powerups.advance(dt)
-		if "double" in finished_powers and phase == "PLAYING":
-			_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 180, "speed": 128, "transition_ms": 240})
+		powerups.advance(dt)
+		_apply_multiball()
+		_watch_multiball()
 	score.power_multiplier = 2.0 if powerups.active("double") else 1.0
 	fx.power_status.clear()
 	if powerups.active("speed"):
 		fx.power_status.append("SPD %dS" % powerups.seconds("speed"))
 	if powerups.active("double"):
 		fx.power_status.append("x2 %dS" % powerups.seconds("double"))
-	if not _multi_left.is_empty():
+	if not _multi_balls.is_empty():
 		var balls := 0
-		for n in _multi_left.values():
-			balls += int(n)
+		for live in _multi_balls.values():
+			balls += (live as Array).size()
 		fx.power_status.append("MULTI %d BALL" % balls)
+	# under the easy mode's strip / panel (#169) when that is on the screen
+	fx.power_top = 12.0
+	if easy_on() and (phase in ["COUNTDOWN", "PLAYING", "SETTLING"]) and main != null and main.get("easy") != null:
+		fx.power_top = 212.0 if (main.easy.busy() or main.easy.faulted()) else 96.0
+	_sync_light()  # a power that ended, the last stretch: the light follows the state
 	if phase != "STOPPED":
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
@@ -1074,13 +1102,13 @@ func tick(dt: float) -> void:
 
 func _go() -> void:
 	_set_phase("PLAYING")
-	field.set_powerups_enabled(true)
+	field.set_powerups_enabled(powerups_on)
 	fx.react("start")
 	particles.burst(ufo.position(), Color("ffe03c"), 24, 260.0)
 	particles.ring(ufo.position(), Color("3ff0ff"), 110.0, 0.5)
 	sounds.play("go")
 	sounds.set_bgm(true)
-	_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 180, "speed": 128, "transition_ms": 300})
+	_sync_light()
 	_light("TRIGGER_EFFECT", {"effect": "GAME_START", "duration_ms": 1000, "intensity": 200})
 	for side in SIDES:
 		var l: Lane = lanes[side]
@@ -1103,8 +1131,7 @@ func _clock_cues() -> void:
 		sounds.play("hurry")
 		sounds.set_bgm(true, true)
 		backdrop.pulse(Color("ff4fd8"), 0.8)
-		if not powerups.active("double"):
-			_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200})
+		_sync_light()  # the faster rainbow, or still the gold of a DOUBLE SCORE
 		_trace("hurry", null, {})
 	var s := int(ceil(time_left))
 	if time_left <= warning_s and s < _warned_at and s > 0:
@@ -1149,12 +1176,7 @@ func _result() -> void:
 	# score.score by now, and nothing can score after this (the field is cleared)
 	result = ResultBonus.of_round(score, capsules, _result_bonus_cfg)
 	field.clear()
-	powerups.reset()
-	_multi_parent.clear()
-	_multi_left.clear()
-	_multi_side.clear()
-	fx.set_power_portal("left", false)
-	fx.set_power_portal("right", false)
+	_clear_powerups()
 	sounds.set_bgm(false)
 	sounds.ending_on = true  # the result's music (#173), until the next round or the title
 	for side in SIDES:
@@ -1162,7 +1184,7 @@ func _result() -> void:
 		if l.state == "CLOSED":  # a faulted Dial is left as it is for a person to look at
 			_led(l, "CLEAR")
 			_send(l, "standby", "SET_MODE", {"mode": "STANDBY"})
-	_light("SET_LIGHT_MODE", {"mode": "RESULT", "brightness": 180, "speed": 128, "transition_ms": 500})
+	_sync_light()
 	_light("TRIGGER_EFFECT", {"effect": "GAME_CLEAR", "duration_ms": 2000, "intensity": 220})
 	message = "Enter: すぐ はじめる    T: もういちど れんしゅう    Esc: タイトル"
 	# the same numbers as the screen: the score while playing and the whole breakdown
@@ -1482,45 +1504,135 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 ## Acquire a visible pickup. The field guarantees one pickup per spawned item;
 ## this controller guarantees one physical Dial cycle even with 3 virtual balls.
 func _on_powerup_collected(capsule_id: String, kind: String, pos: Vector2) -> void:
+	if capsules.get_capsule(str(_virtual_root.get(capsule_id, capsule_id))) != null:
+		_collect_powerup(capsule_id, kind, pos)
+
+## The staff's "take this one now" (F2 SPEED UP / F3 MULTI BALL / F4 DOUBLE SCORE, and the
+## tests): the same path as a ball touching the item. MULTI BALL needs a ball on the field.
+func force_powerup(kind: String) -> bool:
+	if phase != "PLAYING" or not kind in PowerUpManager.KINDS:
+		return false
+	var ball := ""
+	for side in SIDES:
+		var l: Lane = lanes[side]
+		if l.state != "SIMULATING" or l.capsule.is_empty():
+			continue
+		var root := str(l.capsule.capsule_id)
+		if kind == "multiball" and (_multi_balls.has(root) or _multi_asked(root) or not field.has_capsule(root)):
+			continue
+		ball = root
+		break
+	if kind == "multiball" and ball == "":
+		return false
+	var pos := field.capsule_position(ball) if ball != "" and field.has_capsule(ball) \
+		else Vector2(GameModeLayout.CX, PinballField.STAR.y - 200.0)
+	_collect_powerup(ball, kind, pos)
+	return true
+
+func _multi_asked(root_id: String) -> bool:
+	return _multi_pending.any(func(p): return str(p.root) == root_id)
+
+func _collect_powerup(capsule_id: String, kind: String, pos: Vector2) -> void:
 	if phase != "PLAYING":
 		return
-	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var root_id := str(_virtual_root.get(capsule_id, capsule_id))
 	var cap = capsules.get_capsule(root_id)
-	if cap == null or (kind == "multiball" and _multi_left.has(root_id)):
+	var l: Lane = _lane_of(cap.source_dial) if cap != null else null
+	if kind == "multiball" and (l == null or l.state != "SIMULATING" or _multi_balls.has(root_id) or _multi_asked(root_id)):
 		return
 	if not powerups.collect(kind):
 		return
-	var l: Lane = _lane_of(cap.source_dial)
-	fx.powerup_notice(kind)
-	sounds.play({"speed": "power_speed", "multiball": "power_multi", "double": "power_double"}[kind])
-	particles.burst(pos, Color("ffe03c"), 32, 380.0)
-	particles.ring(pos, Color("3ff0ff"), 120.0, 0.5)
-	backdrop.pulse(Color("ffe03c"), 0.9)
-	_shake(0.5)
+	if power_notice:
+		fx.powerup_notice(kind)
+		particles.burst(pos, Color("ffe03c"), 32, 380.0)
+		particles.ring(pos, Color("3ff0ff"), 120.0, 0.5)
+		backdrop.pulse(Color("ffe03c"), 0.9)
+		_shake(0.5)
+	if power_sounds:
+		sounds.play({"speed": "power_speed", "multiball": "power_multi", "double": "power_double"}[kind])
+		sounds.duck(power_duck_s, power_duck_db)  # the tune steps back under the pickup's sound
 	match kind:
 		"multiball":
-			var children: Array[String] = [root_id + "-mb1", root_id + "-mb2"]
-			_multi_left[root_id] = 1 + children.size()
-			_multi_parent[root_id] = root_id
-			for child_id in children:
-				_multi_parent[child_id] = root_id
-			_multi_side[root_id] = l.side
-			field.split_capsule(capsule_id, children)
-			fx.set_power_portal(l.side, true)
-			# FRONT is the visual upgrade; TRANSFER retains its intake/release role.
-			if dial_leds and l.led_ok and devices.available():
-				_send(l, "led", "SET_DIAL_EFFECT", {"effect": "COMET", "direction": "TO_DIAL",
-					"duration_ms": 0, "priority": "NORMAL", "target": "FRONT"})
+			# Bodies are never added inside a physics callback (the item's Area2D reports
+			# from one): the split is made in the next tick, from the ball that is there then.
+			_multi_pending.append({"ball": capsule_id, "root": root_id})
+			if not Engine.is_in_physics_frame():
+				_apply_multiball()
 		"double":
-			_light("SET_LIGHT_MODE", {"mode": "CUSTOM", "color": [255, 174, 32],
-				"brightness": 190, "speed": 190, "transition_ms": 250})
 			score.power_multiplier = 2.0
+			_sync_light()  # gold, until it ends
 		"speed":
-			pass  # main.gd reads the timed boost and caps XY at backend.jog_max_mm_s
+			pass  # main.gd reads the timer: the hand's and the keys' XY speed, the backend's jog_boost
 	_trace("powerup", l, {"effect_id": kind, "physics_position": [pos.x, pos.y]})
 
+## The splits asked for: two more balls beside the one that took the item, if that ball is
+## still on the field and its capsule still in play. What is listed is what was really made.
+func _apply_multiball() -> void:
+	if _multi_pending.is_empty():
+		return
+	var todo := _multi_pending.duplicate()
+	_multi_pending.clear()
+	for p in todo:
+		var root_id := str(p.root)
+		var ball := str(p.ball)
+		var cap = capsules.get_capsule(root_id)
+		var l: Lane = _lane_of(cap.source_dial) if cap != null else null
+		if l == null or l.state != "SIMULATING" or l.capsule.is_empty() or str(l.capsule.capsule_id) != root_id \
+				or _multi_balls.has(root_id) or not field.has_capsule(ball):
+			_trace("multiball_skipped", l, {})  # the ball left first: nothing to wait for
+			continue
+		var made: Array[String] = field.split_capsule(ball, [root_id + "-mb1", root_id + "-mb2"])
+		if made.is_empty():
+			continue
+		var live: Array[String] = [ball]
+		live.append_array(made)
+		_multi_balls[root_id] = live
+		for id in live:
+			_virtual_root[id] = root_id
+		fx.set_power_portal(l.side, true)
+		if power_lights:
+			_led(l, "MULTI_BALL")
+
+## A MULTI BALL whose balls are not on the field any more (none of them reported leaving)
+## still ends: the capsule goes back to its Dial instead of waiting for ever.
+func _watch_multiball() -> void:
+	for root_id in _multi_balls.keys():
+		var live: Array = _multi_balls[root_id]
+		for id in live.duplicate():
+			if not field.has_capsule(str(id)):
+				live.erase(id)
+				_virtual_root.erase(id)
+		if not live.is_empty():
+			continue
+		var cap = capsules.get_capsule(str(root_id))
+		var l: Lane = _lane_of(cap.source_dial) if cap != null else null
+		_end_multiball(str(root_id), l)
+		if l != null and l.state == "SIMULATING" and not l.capsule.is_empty() and str(l.capsule.capsule_id) == str(root_id):
+			_trace("multiball_lost", l, {})
+			_begin_return(l, PinballField.STAR)
+
+func _end_multiball(root_id: String, l: Lane) -> void:
+	_multi_balls.erase(root_id)
+	for id in _virtual_root.keys():
+		if str(_virtual_root[id]) == root_id:
+			_virtual_root.erase(id)
+	if l != null:
+		fx.set_power_portal(l.side, false)
+
+## Every power ends here: the round's end, a stop, the title.
+func _clear_powerups() -> void:
+	powerups.reset()
+	_virtual_root.clear()
+	_multi_balls.clear()
+	_multi_pending.clear()
+	score.power_multiplier = 1.0
+	if fx != null:
+		fx.power_status.clear()
+		fx.set_power_portal("left", false)
+		fx.set_power_portal("right", false)
+
 func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vector2) -> void:
-	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var root_id := str(_virtual_root.get(capsule_id, capsule_id))
 	var c = capsules.get_capsule(root_id)
 	if c == null or not running():
 		return
@@ -1534,7 +1646,7 @@ func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vecto
 	_trace("score", l, {"score_delta": r.points, "effect_id": kind, "physics_position": [pos.x, pos.y]})
 
 func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
-	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var root_id := str(_virtual_root.get(capsule_id, capsule_id))
 	var c = capsules.get_capsule(root_id)
 	if c == null:
 		return
@@ -1553,15 +1665,17 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 		fx.react("miss")  # it ran out of time on the field: no goal
 	field.remove_capsule(capsule_id)
 	score.forget(capsule_id)
-	if _multi_left.has(root_id):
-		_multi_left[root_id] = int(_multi_left[root_id]) - 1
-		_multi_parent.erase(capsule_id)
-		if int(_multi_left[root_id]) > 0:
+	if _multi_balls.has(root_id):
+		var live: Array = _multi_balls[root_id]
+		live.erase(capsule_id)
+		_virtual_root.erase(capsule_id)
+		if not live.is_empty():
 			return  # the real Dial still holds its one capsule
-		_multi_left.erase(root_id)
-		_multi_parent.erase(root_id)
-		_multi_side.erase(root_id)
-		fx.set_power_portal(l.side, false)
+		_end_multiball(root_id, l)
+	_begin_return(l, pos)
+
+## The capsule's time on the field is over (its last ball left): back to its Dial.
+func _begin_return(l: Lane, pos: Vector2) -> void:
 	l.t = release_sync_s
 	_set_lane(l, "RETURNING")
 	fx.play("capsule_return", l.side, pos, return_s)
@@ -1664,14 +1778,11 @@ func _fault(l: Lane, why: String) -> void:
 		var root := str(l.capsule.capsule_id)
 		capsules.finish(root, "failed")
 		field.remove_capsule(root)
-		# A physical Dial failure ends every virtual child of that capsule.
-		for vid in _multi_parent.keys():
-			if str(_multi_parent[vid]) == root:
+		# A physical Dial failure ends every virtual ball of that capsule.
+		for vid in _virtual_root.keys():
+			if str(_virtual_root[vid]) == root:
 				field.remove_capsule(str(vid))
-				_multi_parent.erase(vid)
-		_multi_left.erase(root)
-		_multi_side.erase(root)
-		fx.set_power_portal(l.side, false)
+		_end_multiball(root, l)
 	_set_lane(l, "FAULT")
 	_led(l, "FAULT")
 	fx.play("capsule_fault", l.side)
@@ -1918,13 +2029,7 @@ func _halt(why: String) -> void:
 	_cmds.clear()
 	_end_tutorial()
 	field.set_powerups_enabled(false)
-	powerups.reset()
-	_multi_parent.clear()
-	_multi_left.clear()
-	_multi_side.clear()
-	fx.power_status.clear()
-	fx.set_power_portal("left", false)
-	fx.set_power_portal("right", false)
+	_clear_powerups()
 	field.set_frozen(true)
 	fx.react("stop")
 	sounds.set_bgm(false)
@@ -1981,6 +2086,12 @@ func handle_key(keycode: int) -> bool:
 			return false
 		KEY_F6, KEY_F7, KEY_F8:
 			return _staff_key(keycode)
+		KEY_F2, KEY_F3, KEY_F4:
+			# the staff's / the developer's: take that power now (#188)
+			if not power_debug_keys or phase != "PLAYING":
+				return false
+			force_powerup({KEY_F2: "speed", KEY_F3: "multiball", KEY_F4: "double"}[keycode])
+			return true
 		KEY_Z:
 			return _mock_ball("left")
 		KEY_M:
@@ -2023,11 +2134,46 @@ func _mock_ball(side: String) -> bool:
 
 # ------------------------------------------------------------------ lights / trace
 ## The Illumination: decoration. Sent and forgotten (a refusal is only traced).
-func _light(name: String, params: Dictionary) -> void:
+func _light(name: String, params: Dictionary) -> bool:
 	if not lights or not devices.available():
-		return
+		return false
 	var rid := devices.command(GameModeDevices.ILLUMINATION, name, params)
 	_cmds[rid] = {"lane": null, "what": "light", "left": command_timeout_s}
+	return true
+
+## The exhibition light's base mode is a function of the game's state, and of nothing else:
+## which phase, whether it is the last stretch, whether a DOUBLE SCORE runs. Nothing
+## remembers "what to go back to": when the gold ends in the last 30 s the answer is the
+## fast rainbow, because that is what the state says. {} = not the game's to set.
+static func light_mode_for(phase_now: String, last_stretch: bool, gold: bool) -> Dictionary:
+	match phase_now:
+		"COUNTDOWN":
+			return {"mode": "GAME_READY", "brightness": 160, "speed": 128, "transition_ms": 300}
+		"PLAYING", "SETTLING":
+			if gold:
+				return {"mode": "CUSTOM", "color": [255, 174, 32], "brightness": 190, "speed": 190, "transition_ms": 250}
+			if last_stretch:
+				return {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200}
+			return {"mode": "GAME_PLAY", "brightness": 180, "speed": 128, "transition_ms": 300}
+		"RESULT":
+			return {"mode": "RESULT", "brightness": 180, "speed": 128, "transition_ms": 500}
+	return {}
+
+func light_mode() -> Dictionary:
+	return light_mode_for(phase, phase in ["PLAYING", "SETTLING"] and time_left <= hurry_s,
+		power_lights and powerups.active("double"))
+
+## The one place SET_LIGHT_MODE is sent from: when what the state asks for is not what was
+## last sent. Called at every change of phase and once a tick. Best effort, like all lights.
+func _sync_light() -> void:
+	var want := light_mode()
+	if want.is_empty():
+		_light_sent = {}
+		return
+	if want == _light_sent:
+		return
+	if _light("SET_LIGHT_MODE", want.duplicate(true)):
+		_light_sent = want
 
 ## The Dial's own transfer LEDs (its front LED and the one towards the screen), as
 ## UFO-DeviceHub's docs/game-mode-interface.md says: the named animation in the Dial's unit

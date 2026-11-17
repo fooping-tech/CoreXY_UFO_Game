@@ -1169,23 +1169,52 @@ func _send_jog(v: Vector3, dt: float) -> void:
 
 ## Every physics tick: keyboard and hand joystick -> ControlArbiter -> the one
 ## jog path (real robot) or the MockRobot target.
-## The boost never raises the firmware/backend's absolute jog cap (#188).
-## During the 150 s round normal movement is deliberately 40 mm/s, and a pickup
-## temporarily grants up to 60 mm/s. This applies to both keyboard and hand XY only.
-## The boost is derived from the game phase each tick: stopping/closing cannot latch it.
+## SPEED UP (#188). Without it everything is as outside the game: the hand's stick at its
+## own top speed (gesture.joystick.max_speed_mm_s, 60), the keys at theirs. While it lasts
+## both go up to game_mode.powerups.speed.boost_mm_s (100) in XY; Z never changes. It is
+## read from the game's phase and the power's timer every tick, so a stop, the round's end
+## or the title cannot leave it on. On the real crane the speed is the backend's to allow:
+## its jog cap is raised only by jog_boost, for the seconds asked, and falls back by itself.
+func speed_boost_on() -> bool:
+	return game_mode != null and game_mode.active() and game_mode.phase == "PLAYING" \
+		and game_mode.powerups.active("speed")
+
+func speed_boost_mm_s() -> float:
+	return clampf(float(GameConfig.value("game_mode.powerups.speed.boost_mm_s", 100.0)), 1.0, 300.0)
+
+## how many times the hand's top speed the boost is (1 = no boost, never below 1)
+func hand_boost_scale() -> float:
+	if not speed_boost_on():
+		return 1.0
+	return maxf(speed_boost_mm_s() / maxf(gesture.joystick.max_speed, 1.0), 1.0)
+
+## the keys' XY speed now
 func powerup_xy_speed(real: bool) -> float:
-	var default_speed := jog_speed_real_mm if real else jog_speed_mm
-	if game_mode == null or not game_mode.active() or game_mode.phase != "PLAYING":
-		return default_speed
-	var cfg = GameConfig.value("game_mode.powerups.speed", {})
-	var opts: Dictionary = cfg if cfg is Dictionary else {}
-	var wanted := float(opts.get("max_mm_s", 60.0)) if game_mode.powerups.active("speed") else float(opts.get("normal_mm_s", 40.0))
-	var limit := float(GameConfig.value("backend.jog_max_mm_s", 60.0))
-	return clampf(wanted, 1.0, maxf(1.0, limit)) if real else clampf(wanted, 1.0, 200.0)
+	var usual := jog_speed_real_mm if real else jog_speed_mm
+	if not speed_boost_on():
+		return usual
+	return maxf(speed_boost_mm_s(), usual) if real else usual * hand_boost_scale()
+
+## The backend is told how long its jog cap may be the boost's: when the power starts, when
+## it was taken again (more seconds than it knows of), and 0 when it ended early.
+var _boost_told_s := 0.0
+## how jog_boost {seconds} reaches the backend (the tests put their own here)
+var jog_boost_sender: Callable = func(seconds: float) -> void: _easy_send("jog_boost", {"seconds": seconds})
+func _sync_jog_boost(real: bool) -> void:
+	var left := float(game_mode.powerups.left.get("speed", 0.0)) if speed_boost_on() else 0.0
+	if not real:
+		_boost_told_s = 0.0
+		return
+	if left > 0.0 and left > _boost_told_s + 0.25:
+		jog_boost_sender.call(snappedf(left, 0.01))
+	elif left <= 0.0 and _boost_told_s > 0.05:
+		jog_boost_sender.call(0.0)
+	_boost_told_s = left
 
 func _handle_input(dt: float) -> void:
 	var real := RobotState.source == "websocket"
 	var xy_speed := powerup_xy_speed(real)
+	_sync_jog_boost(real)
 	var keys := _latched_jog_input()
 	var kb := Vector3.ZERO
 	if keys != Vector3.ZERO:
@@ -1220,9 +1249,7 @@ func _handle_input(dt: float) -> void:
 		elif easy.faulted():
 			gesture_gate_reason = GATE_EASY_FAULT  # the keys stay, for the staff
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
-	if game_mode != null and game_mode.active() and game_mode.phase == "PLAYING":
-		# Keep the shape/dead zone; scale only the XY velocity, never Z.
-		gv *= xy_speed / maxf(gesture.joystick.max_speed, 1.0)
+	gv *= hand_boost_scale()  # SPEED UP: the same stick, faster in XY (never Z)
 	_tick_easy(dt, easy_on, base_gate, kb != Vector3.ZERO)
 	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
