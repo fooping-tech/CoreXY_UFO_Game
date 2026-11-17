@@ -25,6 +25,8 @@ var combo_window_s := 2.5
 var cooldown_s := 0.4
 var jackpot_s := 20.0
 
+## Separate from the existing combo multiplier; controlled only by the score game.
+var power_multiplier := 1.0
 var score := 0
 var chain := 0
 var best_chain := 0
@@ -51,6 +53,7 @@ func configure(cfg: Dictionary) -> void:
 
 func reset() -> void:
 	score = 0
+	power_multiplier = 1.0
 	chain = 0
 	best_chain = 0
 	jackpots = 0
@@ -136,7 +139,7 @@ func forget(capsule_id: String) -> void:
 			_cool.erase(k)
 
 func _add(out: Dictionary, kind: String, base: int, now: float) -> Dictionary:
-	var m := multiplier(now)
+	var m := multiplier(now) * power_multiplier
 	var pts := int(round(base * m))
 	score += pts
 	counts[kind] = int(counts.get(kind, 0)) + 1
