@@ -242,7 +242,7 @@ func send_aux(msg: Dictionary) -> Error:
 ## A home / move / grab command is still waiting for its answer.
 func has_pending_motion() -> bool:
 	for rid in _pending.keys():
-		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step", "arm_goto"]:
+		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "easy_goto"]:
 			return true
 	return false
 

@@ -24,6 +24,13 @@ extends Node
 signal phase_changed(phase: String)
 signal lane_changed(side: String, state: String)
 signal scored(points: int, kind: String, at: Vector2)
+## #183: the practice shows what the fist does: the main scene is asked for the claw
+## ("closed" when the easy mode's fist step is done, "open" when the practice capsule begins). The
+## main scene sends it like the hand's own claw request, with all its checks; nothing is sent here.
+signal tutorial_claw(which: String)
+## #183: the practice's finger steps show the carry: the main scene is asked to move the arm
+## over that Dial (1 / 2). The backend moves XY only, with its own checks.
+signal tutorial_goto(destination: int)
 
 ## IDLE (not started) -> COUNTDOWN -> PLAYING -> SETTLING (time is up: capsules in play
 ## finish and go out) -> RESULT; STOPPED = the stop key
@@ -423,6 +430,71 @@ func set_difficulty(d: String) -> void:
 func easy_on() -> bool:
 	return difficulty == "easy" and easy_block == ""
 
+## #183: the game mode's title by hand. An open hand held title_start_hold_s starts (as Enter),
+## one finger = easy, two fingers = hard (held title_mode_hold_s). A shape counts only after
+## the hand was seen in another shape (or not at all) since the title came up: the two
+## fingers that chose the game mode on the first screen do not switch the difficulty.
+var title_start_hold_s := 3.0
+var title_mode_hold_s := 0.8
+const TITLE_HAND := {"open": "start", "point": "easy", "peace": "hard"}
+var title_hand := ""  # what the hand holds now: "start" / "easy" / "hard" / ""
+var title_hand_progress := 0.0
+var _title_hand_armed := false
+var _title_hand_entry := "?"  # the shape seen when the title came up ("?" = not looked yet)
+
+func tick_title_hand(dt: float, hand: Dictionary) -> void:
+	if phase != "IDLE" or ranking_view != "":
+		title_hand = ""
+		title_hand_progress = 0.0
+		_title_hand_entry = "?"
+		_title_hand_armed = false
+		return
+	var pose := str(hand.get("pose", "")) if bool(hand.get("fresh", false)) and bool(hand.get("detected", false)) else ""
+	if _title_hand_entry == "?":
+		_title_hand_entry = pose
+	if pose != _title_hand_entry or not TITLE_HAND.has(pose):
+		_title_hand_armed = true
+		_title_hand_entry = ""
+	var what := str(TITLE_HAND.get(pose, "")) if _title_hand_armed else ""
+	if what in ["easy", "hard"] and what == difficulty:
+		what = ""  # already that
+	if what != title_hand:
+		title_hand = what
+		title_hand_progress = 0.0
+	if what == "":
+		return
+	title_hand_progress = minf(title_hand_progress + dt / maxf(title_start_hold_s if what == "start" else title_mode_hold_s, 0.05), 1.0)
+	if title_hand_progress < 1.0:
+		return
+	title_hand = ""
+	title_hand_progress = 0.0
+	if what == "start":
+		begin()
+	else:
+		set_difficulty(what)
+		sounds.play("count")
+
+## #183: the best score of today (this machine's date): of the ranking's records, and of the
+## rounds played since the game was started that did not get into it. 0 = none yet.
+var _today_date := ""
+var _today_best := 0
+
+func today_best() -> int:
+	var d := Time.get_date_string_from_system()
+	var best := _today_best if _today_date == d else 0
+	if ranking != null:
+		for e in ranking.entries:
+			if str(e.get("timestamp", "")).begins_with(d):
+				best = maxi(best, int(e.get("score", 0)))
+	return best
+
+func _note_today(score: int) -> void:
+	var d := Time.get_date_string_from_system()
+	if _today_date != d:
+		_today_date = d
+		_today_best = 0
+	_today_best = maxi(_today_best, score)
+
 ## D on the title (never in a round): the other difficulty.
 func toggle_difficulty() -> void:
 	if running():
@@ -433,7 +505,7 @@ func toggle_difficulty() -> void:
 ## The line under START on the title: the difficulty, and why easy is not used when it is not.
 func difficulty_text() -> String:
 	var name := str(GestureTutorialSteps.MODE_NAMES.get(difficulty, difficulty))
-	var out := "D：モード きりかえ　［ %s ］" % name
+	var out := "ゆび 1ぽん：かんたん　2ほん：むずかしい　（D キーでも）\nいまは ［ %s ］" % name
 	if difficulty == "easy" and easy_block != "":
 		out += "\n" + easy_block + " → むずかしいモードの操作で遊ぶ"
 	return out
@@ -473,6 +545,11 @@ func open() -> void:
 	if _active:
 		return
 	_active = true
+	# every visit needs a fresh hand shape (the title's is not ticked while the screen is closed)
+	title_hand = ""
+	title_hand_progress = 0.0
+	_title_hand_armed = false
+	_title_hand_entry = "?"
 	use_devices(devices_wanted)
 	layer.visible = true
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -636,7 +713,14 @@ func _tick_say(dt: float) -> void:
 		_say_pending = []
 		tutorial_speech.say(lines)
 
+var _demo_claw_closed := false
+
 func _on_tutorial_step(_index: int, step: Dictionary) -> void:
+	# the claw closed by the fist step stays closed (the carry is shown with it) and opens
+	# when the practice capsule begins
+	if _demo_claw_closed and str(step.get("kind", "")) == "practice":
+		_demo_claw_closed = false
+		tutorial_claw.emit("open")
 	match str(step.get("kind", "")):
 		"summon":
 			sounds.play("summon")
@@ -647,6 +731,11 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
+	if int(step.get("goto_demo", 0)) in [1, 2]:
+		tutorial_goto.emit(int(step.goto_demo))
+	if bool(step.get("claw_demo", false)):
+		_demo_claw_closed = true
+		tutorial_claw.emit("closed")
 	fx.react("big")
 	_trace("tutorial_ok", null, {"effect_id": str(step.get("id", ""))})
 
@@ -886,6 +975,7 @@ func tick(dt: float) -> void:
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
 	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
+	tick_title_hand(dt, main.hand_for_menus() if main != null and main.has_method("hand_for_menus") and not demo else {})
 	match phase:
 		"TUTORIAL":
 			if practice != "":
@@ -1165,6 +1255,8 @@ func _register_score() -> void:
 	var final := final_score()
 	if ranking_note == "" and final <= 0:
 		ranking_note = "zero"
+	if ranking_note == "":
+		_note_today(final)  # also when it does not get into the ranking
 	if ranking_note == "":
 		ranking_rank = ranking.submit(final, round_id)
 		if ranking_rank == 0:
@@ -1686,6 +1778,7 @@ func on_stop_key() -> void:
 		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
+	_demo_claw_closed = false  # a stop: nothing more is asked of the claw
 	devices.stop_all()
 	_cmds.clear()
 	_end_tutorial()

@@ -23,7 +23,7 @@ const HOW_TO := ["クレーンで カプセルをつかむ", "左か右の Dial 
 ## the easy mode's three cards (#169): what the hand does there, each with its hand
 const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "ゆび 1ぽん＝ひだり　2ほん＝みぎ へ じどうで はこぶ", "ピンボールで 高得点をねらおう！"]
 ## the difficulty's line on the title, over START
-const MODE_RECT := Rect2(40, 736, 640, 56)
+const MODE_RECT := Rect2(40, 712, 640, 82)
 ## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards
 const LOGO_LINES := ["SUMMON", "THE UFO"]
 const LOGO_Y := 158.0
@@ -109,16 +109,17 @@ func setup(c: GameModeController) -> void:
 	_recover_button.size = Vector2(RECOVER_RECT.size.x - 340.0, 44)
 	_recover_button.pressed.connect(func(): if ctl.main != null and ctl.main.has_method("recover_arm"): ctl.main.recover_arm())
 	add_child(_recover_button)
-	_mode = _label("", 20, CYAN, MODE_RECT.position, MODE_RECT.size)
+	_mode = _label("", 18, CYAN, MODE_RECT.position, MODE_RECT.size)
 	_mode.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_mode.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_mode.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
-	_start = _label("Enter でスタート", 34, Color.WHITE, Vector2(60, START_RECT.position.y + 8.0), Vector2(GameModeLayout.SCREEN.x - 120.0, START_RECT.size.y - 16.0))
+	_start = _label("パーを 3びょう（Enter でも）で スタート", 26, Color.WHITE, Vector2(60, START_RECT.position.y + 8.0), Vector2(GameModeLayout.SCREEN.x - 120.0, START_RECT.size.y - 16.0))
 	_start.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_start.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	for i in HOW_TO.size():
 		var h := _label(HOW_TO[i], 26, Color("e8f0ff"), title_card(i).position + Vector2(112, 10), Vector2(title_card(i).size.x - 124.0, title_card(i).size.y - 20.0))
 		h.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		h.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY  # a long line wraps inside its card (#183)
 		_how.append(h)
 
 func _label(text: String, size: int, color: Color, pos: Vector2, box: Vector2) -> Label:
@@ -240,7 +241,7 @@ func _process(dt: float) -> void:
 	for i in _how.size():
 		_how[i].visible = title
 		_how[i].text = HOW_TO_EASY[i] if ctl.easy_on() else HOW_TO[i]
-		_how[i].add_theme_font_size_override("font_size", 22 if ctl.easy_on() else 26)
+		_how[i].add_theme_font_size_override("font_size", 20 if ctl.easy_on() else 24)
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		# (the result and the ranking have the screen: only a Dial a person must look at keeps its line)
@@ -252,7 +253,7 @@ func _process(dt: float) -> void:
 	if ctl.devices != null and ctl.devices.can_mock_ball():
 		hint += "   Mock: Z = 左 / M = 右に入れる"
 	if ctl.phase == "TUTORIAL":
-		hint = "Space: 止める   Esc: タイトル   スタッフ: F6 やりなおし / F7 つぎへ / F8 れんしゅうを とばす"
+		hint = "Space: 止める　Esc: タイトル　F6 やりなおし / F7 つぎへ / F8 とばす"
 		if ctl.practice != "" and ctl.devices != null and ctl.devices.can_mock_ball():
 			hint += "   Mock: Z / M"
 	_hint.text = hint
@@ -274,8 +275,10 @@ func _draw_art() -> void:
 	var rising := ctl.display_score() - _shown_score > 0.5
 	_panel(SCORE_RECT, YELLOW.lerp(Color.WHITE, 0.6) if rising else YELLOW)
 	# in the practice the numbers are not the round's: the panel says so
-	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else "SCORE", SCORE_RECT.position + Vector2(14, 10), 4.0, YELLOW)
-	var st := "%d" % int(round(_shown_score))
+	# on the title: today's best score (#183)
+	var today := title_showing()
+	PixelText.draw(art, "PRACTICE" if ctl.phase == "TUTORIAL" else ("TODAY BEST" if today else "SCORE"), SCORE_RECT.position + Vector2(14, 10), 4.0, YELLOW)
+	var st := "%d" % (ctl.today_best() if today else int(round(_shown_score)))
 	PixelText.draw_right(art, st, Vector2(SCORE_RECT.end.x - 14.0, SCORE_RECT.position.y + 42.0 - (2.0 if rising else 0.0)),
 		GameModeLayout.fit_scale(st, SCORE_RECT.size.x - 28.0, 8.0), YELLOW if rising else Color.WHITE, DARK)
 	var cc := clock_color()
@@ -349,6 +352,8 @@ func _draw_title() -> void:
 	art.draw_rect(sr.grow(3.0), DARK)
 	art.draw_rect(sr, Color(0.12, 0.1, 0.32, 0.95))
 	art.draw_rect(sr, YELLOW.lerp(Color.WHITE, pulse * 0.5), false, 3.0)
+	if ctl.title_hand == "start":  # the open hand's hold fills START (#183)
+		art.draw_rect(Rect2(sr.position, Vector2(snappedf(sr.size.x * ctl.title_hand_progress, 2.0), sr.size.y)), Color(YELLOW.r, YELLOW.g, YELLOW.b, 0.45))
 	var sy := sr.get_center().y
 	for side in [-1, 1]:  # arrows pointing at it
 		for d in 3:

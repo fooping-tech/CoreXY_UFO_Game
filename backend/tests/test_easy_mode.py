@@ -692,3 +692,32 @@ async def test_the_dry_run_crane_does_not_record_drop_points(server):
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "nack" and "仮想クレーン" in r["data"]["reason"]
     assert (await srv.execute("easy_dial_confirm", {}))["type"] == "nack"
+
+
+async def test_easy_goto_moves_xy_to_a_dial_and_nothing_else(server):
+    """#183: the practice's carry: one XY move to the Dial's point at the easy feed, only at
+    the travel height, never while a sequence runs."""
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        assert (await _cmd(ws, "b", "easy_goto", destination=3))["type"] == "nack"
+        z0 = robot.snapshot().z
+        n = len(robot.commands)
+        r = await _cmd(ws, "g1", "easy_goto", destination=2)
+        assert r["type"] == "ack", r
+        x, y = srv.easy.easy.dials[2]
+        sent = robot.commands[n:]
+        assert sent == [f"XY {x:.3f} {y:.3f} F{srv.easy.params.xy_feed_mm_min:.0f}"]
+        assert robot.target[0] == x and robot.target[1] == y and robot.snapshot().z == z0
+        # the arm lowered: refused, nothing sent
+        robot.pos[2] = robot.target[2] = float(srv.easy.params.safe_z) - 40.0
+        n = len(robot.commands)
+        r = await _cmd(ws, "g2", "easy_goto", destination=1)
+        assert r["type"] == "nack" and "travel height" in r["data"]["reason"] and robot.commands[n:] == []
+        robot.pos[2] = robot.target[2] = float(srv.easy.params.safe_z)
+        # while the easy catch runs: busy
+        assert (await _cmd(ws, "c", "easy_grab"))["type"] == "ack"
+        r = await _cmd(ws, "g3", "easy_goto", destination=1)
+        assert r["type"] == "nack" and "busy" in r["data"]["reason"]
+        assert (await _cmd(ws, "s", "stop"))["type"] == "ack"
+        await srv.easy.wait()

@@ -271,6 +271,10 @@ func _ready() -> void:
 		add_child(game_mode)
 		game_mode.setup(self)
 		game_mode.phase_changed.connect(_on_game_mode_phase)
+		game_mode.tutorial_claw.connect(_on_tutorial_claw)
+		game_mode.tutorial_goto.connect(_on_tutorial_goto)
+		var hand_cam = GameConfig.get_value("camera", "overview", {})  # #183: the practice shows the hand camera
+		game_mode.tutorial_hud.attach(cameras, gesture, hand_cam is Dictionary and bool(hand_cam.get("flip_h", false)), hand_cam is Dictionary and bool(hand_cam.get("flip_v", false)))
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)
@@ -441,6 +445,14 @@ func _set_debug_visible(on: bool) -> void:
 		debug_ui.visible = on
 		debug_ui.study_panel_visibility_changed(on)
 		_layout()
+
+## #183: what the menus read of the hand (the title's choice, the game mode's start and
+## difficulty): only whether a fresh hand is seen, and its shape. No steering here.
+func hand_for_menus() -> Dictionary:
+	if gesture == null or not gesture.enabled:
+		return {}
+	var age := gesture.age_ms(float(Time.get_ticks_msec()))
+	return {"fresh": age >= 0.0 and age <= gesture.stale_ms and gesture.camera_ok, "detected": gesture.detected, "pose": gesture.pose}
 
 func title_active() -> bool:
 	return title != null and title.active()
@@ -824,6 +836,8 @@ func _process(dt: float) -> void:
 		game_mode.sounds.silent = calibrating()
 	if title_active():
 		title.set_status(_title_status())
+		if not settings_active():  # #183: one finger / two fingers pick a mode
+			title.hand_tick(dt, hand_for_menus())
 	_update_origin()
 	if _cur_points.is_empty():
 		return
@@ -1409,6 +1423,25 @@ func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient
 	if gesture_sim or _gesture_demo_t >= 0.0 or (link == ws) != (RobotState.source == "websocket"):
 		return
 	gesture.on_event(data, recv_ms)
+
+## #183: the practice's finger steps (easy mode): the arm really goes over that Dial, at the
+## carry's speed. Asked of the backend (easy_goto: XY only, refused unless the easy mode's
+## values are usable and the arm is up); the virtual crane of --game-only does not move.
+func _on_tutorial_goto(destination: int) -> void:
+	debug_log.emit("tutorial: to Dial %d" % destination)
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
+		return
+	if RobotState.source == "websocket" and not ws.has_pending_motion():
+		_easy_send("easy_goto", {"destination": destination})
+
+## #183: the practice's fist step (easy mode): the claw closes as a show of what the fist
+## does, and opens again with the next step. The same request as the hand's own (arm_goto:
+## nothing while a sequence drives the claw, nothing while another motion is pending).
+func _on_tutorial_claw(which: String) -> void:
+	debug_log.emit("tutorial: claw %s" % which)
+	if which == "closed":
+		sfx.play_cue("pinch")
+	arm_goto(which)
 
 ## A held fist / peace sign: the claw to its recorded position (like A / Q).
 func _on_gesture_claw(which: String) -> void:

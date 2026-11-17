@@ -11,6 +11,12 @@ const SCREEN := GameModeLayout.SCREEN
 const PANEL := Rect2(20, 250, 680, 830)
 ## where the two halves of a step's picture are centred: the hand (top), its effect (below)
 const TOP_AT := Vector2(360, 470)
+## #183: with the hand camera's picture beside it, the hand's picture stands to the left
+const TOP_AT_CAM := Vector2(250, 470)
+## where the hand camera's picture goes: beside the hand, and (the catch's art fills the
+## right side) small in the corner
+const CAM_RECT := Rect2(420, 372, 264, 198)
+const CAM_RECT_SMALL := Rect2(516, 322, 168, 126)
 const LOW_AT := Vector2(360, 720)
 ## where each line of words sits: [the steps, the practice capsule]
 const LINES := {
@@ -59,6 +65,10 @@ var _t := 0.0
 var _ok_t := 9.0
 ## what was drawn last (tests)
 var shown_art := ""
+var top_at := TOP_AT
+var _cam: TextureRect
+var _cam_overlay: GestureCameraOverlay
+var _hub: CameraHub
 
 func setup(c: GameModeController) -> void:
 	ctl = c
@@ -98,6 +108,37 @@ func _label(font_size: int, color: Color, r: Rect2, align: int) -> Label:
 	l.clip_text = false
 	add_child(l)
 	return l
+
+## #183: the hand camera's picture (the overview role, what the hand detection sees) beside
+## the hand's picture, with the detected hand drawn over it. Display only.
+func attach(hub: CameraHub, gesture: GestureControl, flip_h := false, flip_v := false) -> void:
+	_hub = hub
+	if _cam == null:
+		_cam = TextureRect.new()
+		_cam.name = "HandCamera"
+		_cam.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_cam.stretch_mode = TextureRect.STRETCH_SCALE
+		_cam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_cam.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		_cam.visible = false
+		add_child(_cam)
+		_cam_overlay = GestureCameraOverlay.new()
+		_cam_overlay.compact = true
+		_cam.add_child(_cam_overlay)
+	_cam.texture = hub.texture("overview")
+	_cam_overlay.gesture = gesture
+	_cam_overlay.flip_h = flip_h
+	_cam_overlay.flip_v = flip_v
+
+## Where the camera's picture shows now (no area = not shown): a hand step that is judged,
+## and a camera that gives a picture.
+func camera_rect() -> Rect2:
+	if not showing() or _hub == null or not _hub.has_feed("overview"):
+		return Rect2()
+	var tut := ctl.tutorial
+	if not GestureTutorialController.is_hand_kind(tut.kind()) or tut.no_hand:
+		return Rect2()
+	return CAM_RECT_SMALL if str(tut.step().get("art", "")) in ["grab", "release"] else CAM_RECT
 
 ## The practice is on the screen now.
 func showing() -> bool:
@@ -178,6 +219,15 @@ func _process(dt: float) -> void:
 	_guide.scale = Vector2.ONE * (1.0 + 0.03 * sin(_t * 5.0))
 	for tag in _tags:
 		tag.visible = false
+	var cr := camera_rect()
+	top_at = TOP_AT_CAM if cr == CAM_RECT else TOP_AT
+	if _cam != null:
+		_cam.visible = cr.has_area()
+		if cr.has_area():
+			_cam.position = cr.position
+			_cam.size = cr.size
+			_cam_overlay.position = Vector2.ZERO
+			_cam_overlay.size = cr.size
 	queue_redraw()
 
 func _tag(i: int, text: String, centre: Vector2, color := Color.WHITE, width := 190.0) -> void:
@@ -222,7 +272,7 @@ func _draw() -> void:
 			_draw_grab(s)
 		"z_pinch":
 			_draw_hand_step("pinch")
-			_tag(0, "てのこうを カメラに むける", TOP_AT + Vector2(0, 122), YELLOW, 420.0)
+			_tag(0, "てのこうを カメラに むける", top_at + Vector2(0, 122), YELLOW, 420.0)
 		"z_move":
 			_draw_z_move()
 		"easy_grab":
@@ -235,8 +285,12 @@ func _draw() -> void:
 			_draw_rules()
 		"practice":
 			_draw_practice()
+	var cr := camera_rect()
+	if cr.has_area():  # the camera's frame (its picture is a child, drawn over this)
+		draw_rect(cr.grow(6.0), DARK)
+		draw_rect(cr.grow(3.0), CYAN, false, 2.0)
 	if not practice and GestureTutorialController.is_hand_kind(kind) and tut.state == "judging" and not tut.telling():
-		_draw_bar(Rect2(SCREEN.x * 0.5 - 130.0, TOP_AT.y + 136.0, 260, 14), tut.progress)
+		_draw_bar(Rect2(SCREEN.x * 0.5 - 130.0, top_at.y + 136.0, 260, 14), tut.progress)
 	if tut.telling() and kind != "summon":
 		_chip(Rect2(r.end.x - 150.0, r.position.y + 50.0, 130, 30), "せつめい", Color("b8c6ff"), 5)
 	if bool(s.get("future", false)):
@@ -367,7 +421,7 @@ func _hand_at(c: Vector2, d := 8.0) -> Vector2:
 
 func _draw_hand_step(pose: String) -> void:
 	var bob := snappedf(sin(_t * 3.0) * 4.0, DOT)
-	var hand := _hand_at(TOP_AT + Vector2(0, bob))
+	var hand := _hand_at(top_at + Vector2(0, bob))
 	draw_hand(hand, 8.0, pose)
 	var ufo := LOW_AT + Vector2(0, 20.0 + sin(_t * 2.2) * 8.0)
 	_draw_ufo(ufo, 4.0, _face())
@@ -381,10 +435,10 @@ func _draw_hand_step(pose: String) -> void:
 
 func _draw_move(pose: String) -> void:
 	var sway := Vector2(sin(_t * 1.6) * 44.0, sin(_t * 0.8) * 12.0).snapped(Vector2(DOT, DOT))
-	draw_hand(_hand_at(TOP_AT) + sway, 8.0, pose)
+	draw_hand(_hand_at(top_at) + sway, 8.0, pose)
 	for dir in [Vector2(-1, 0), Vector2(1, 0), Vector2(0, -1), Vector2(0, 1)]:
 		var d: Vector2 = dir
-		var c := TOP_AT + d * Vector2(200, 128)
+		var c := top_at + d * Vector2(150.0 if top_at != TOP_AT else 200.0, 128)
 		_arrow(c - d * 34.0, c + d * 10.0, CYAN)
 	var ufo := LOW_AT + Vector2(0, 30)
 	_draw_ufo(ufo + sway * Vector2(1.6, 1.6), 4.0, _face())
@@ -393,12 +447,15 @@ func _draw_move(pose: String) -> void:
 ## The up / down mode: the pinched hand goes up and down, and UFOくん with it.
 func _draw_z_move() -> void:
 	var sway := Vector2(0, sin(_t * 1.6) * 40.0).snapped(Vector2(DOT, DOT))
-	draw_hand(_hand_at(TOP_AT) + sway, 8.0, "pinch")
+	draw_hand(_hand_at(top_at) + sway, 8.0, "pinch")
 	for d in [Vector2(0, -1), Vector2(0, 1)]:
-		var c: Vector2 = TOP_AT + Vector2(190, 0) + d * 70.0
+		var near := top_at != TOP_AT  # the camera's picture is beside the hand
+		var c: Vector2 = top_at + Vector2(130.0 if near else 190.0, 0) + d * 70.0
 		_arrow(c - d * 34.0, c + d * 10.0, CYAN)
-	_tag(0, "うえ = あがる", TOP_AT + Vector2(-210, -60), CYAN, 220.0)
-	_tag(1, "した = さがる", TOP_AT + Vector2(-210, 60), CYAN, 220.0)
+	var side := Vector2(-150.0 if top_at != TOP_AT else -210.0, 60)
+	var wide := 170.0 if top_at != TOP_AT else 220.0
+	_tag(0, "うえ = あがる", top_at + side * Vector2(1, -1), CYAN, wide)
+	_tag(1, "した = さがる", top_at + side, CYAN, wide)
 	var ufo := LOW_AT + Vector2(0, 30)
 	_draw_ufo(ufo + sway * Vector2(0, 1.2), 4.0, _face())
 
@@ -419,7 +476,8 @@ func _draw_grab(s: Dictionary) -> void:
 	draw_hand(_hand_at(Vector2(190, 470)), 8.0, pose if pose in HAND_POSES else "fist")
 	_arrow(Vector2(318, 470), Vector2(388, 470), YELLOW)
 	_draw_claw(Vector2(480, 500), 0.5 + 0.5 * sin(_t * 3.0), CYAN)
-	_draw_ufo(Vector2(610, 390 + sin(_t * 2.2) * 6.0), 2.0, _face())
+	if not camera_rect().has_area():  # the camera's picture has that corner
+		_draw_ufo(Vector2(610, 390 + sin(_t * 2.2) * 6.0), 2.0, _face())
 	# the hand scheme's other shapes, small
 	var hints: Array = s.get("hints", [])
 	for i in mini(hints.size(), 2):
@@ -430,7 +488,7 @@ func _draw_grab(s: Dictionary) -> void:
 
 ## The easy mode's catch as three frames: down, catch, up (what the round does by itself).
 func _draw_easy_grab() -> void:
-	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, "fist")
+	draw_hand(_hand_at(top_at + Vector2(0, -10)), 8.0, "fist")
 	for i in 3:
 		var c := Vector2(190.0 + 170.0 * i, 716.0)
 		var fr := Rect2(c - Vector2(72, 100), Vector2(144, 190))
@@ -443,7 +501,7 @@ func _draw_easy_grab() -> void:
 
 ## The easy mode's carry: the fingers shown, and the Dial they mean (1 = left, 2 = right).
 func _draw_easy_number(pose: String, number: String, side: float, col: Color) -> void:
-	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, pose)
+	draw_hand(_hand_at(top_at + Vector2(0, -10)), 8.0, pose)
 	var dial := Vector2(360.0 + side * 190.0, 740.0)
 	_arrow(Vector2(360, 610), dial + Vector2(-side * 40.0, -70.0), YELLOW)
 	_draw_dial(dial, col, number)

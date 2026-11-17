@@ -90,6 +90,8 @@ func _ready() -> void:
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_more_steps()
 	_test_gesture_tutorial_done_say()
+	_test_tutorial_claw_demo(rs)
+	_test_game_title_hand(rs)
 	_test_gesture_tutorial_game(rs)
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
@@ -2459,7 +2461,7 @@ func _test_settings(rs: Node) -> void:
 	var held: bool = game.settings_active() and game.title_active() and game.control_source == "halt"
 	_ok(held and st.layer > t.layer and game.debug_ui.layer > st.layer,
 		"settings: S opens it over the title; the arm stays held; the debug panel above it", game.control_source)
-	game._unhandled_input(_key(KEY_2))
+	game._unhandled_input(_key(KEY_G))
 	_ok(game.settings_active() and game.title_active(), "settings: the title's keys do not reach through it")
 	# #126: each section of the schema is a card holding its own rows
 	var in_card := true
@@ -2870,7 +2872,7 @@ func _test_title_screen(rs: Node) -> void:
 	var held: bool = game.title_active() and game.control_source == "halt"
 	game._unhandled_input(_key(KEY_C))  # the auto catch key goes nowhere
 	game._unhandled_input(_key(KEY_RIGHT))
-	var moved_sel: bool = t.selected_mode() == "game" and game.title_active()
+	var moved_sel: bool = t.selected_mode() == t.choices[1] and t.choices.size() == 2 and game.title_active()
 	game._unhandled_input(_key(KEY_LEFT))
 	_ok(held and moved_sel and t.selected_mode() == "study" and not ctl.active(),
 		"title: holds the manual controls; arrows choose, other keys are swallowed", game.control_source)
@@ -2880,8 +2882,8 @@ func _test_title_screen(rs: Node) -> void:
 	var free_again: bool = game.control_source != "halt"
 	game._unhandled_input(_key(KEY_ESCAPE))
 	_ok(free_again and game.title_active() and not ctl.active(), "title: Esc stops the study mode and comes back", ctl.state)
-	game._unhandled_input(_key(KEY_2))
-	_ok(not game.title_active() and not ctl.active(), "title: 2 picks the game mode (the crane game, no study mode)")
+	game._unhandled_input(_key(KEY_G))
+	_ok(not game.title_active() and not ctl.active(), "title: G (staff) picks the plain crane screen, no study mode")
 	game.show_title()
 	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))  # as if the arm were on its way
 	game._unhandled_input(_key(KEY_SPACE))
@@ -2889,7 +2891,36 @@ func _test_title_screen(rs: Node) -> void:
 	_ok(game.title_active() and stopped, "title: Space still reaches the game's stop (the mock halts) and leaves the title up")
 	var card: PanelContainer = t._cards[1]
 	card.gui_input.emit(_mouse_press())
-	_ok(not game.title_active() and not ctl.active() and t.selected_mode() == "game", "title: a click on a card picks it")
+	_ok(not game.title_active() and not ctl.active() and t.selected_mode() == t.choices[1], "title: a click on a card picks it")
+	# #183: the hand picks: one finger = the first card, two fingers = the second, held; a
+	# shape that was already up when the title opened does not choose
+	game.show_title()
+	var two = {"fresh": true, "detected": true, "pose": "peace"}
+	var one = {"fresh": true, "detected": true, "pose": "point"}
+	for i in 200:
+		t.hand_tick(1.0 / 60.0, two)
+	var not_yet: bool = game.title_active() and t.hand_index == -1
+	t.hand_tick(1.0 / 60.0, {"fresh": true, "detected": true, "pose": "open"})
+	for i in 30:
+		t.hand_tick(1.0 / 60.0, one)
+	var holding: bool = game.title_active() and t.hand_index == 0 and t.hand_progress > 0.2 and t.hand_progress < 0.5 and t.selected == 0
+	for i in 30:
+		t.hand_tick(1.0 / 60.0, two)  # another shape: the hold starts again
+	var restarted: bool = game.title_active() and t.hand_index == 1 and t.hand_progress < 0.5
+	t.hand_tick(1.0 / 60.0, {"fresh": false, "detected": true, "pose": "peace"})  # a stale hand is no hand
+	var stale_none: bool = t.hand_index == -1
+	var picked := ""
+	for i in 100:
+		var got: String = t.hand_tick(1.0 / 60.0, two)
+		if got != "":
+			picked = got
+	_ok(not_yet and holding and restarted and stale_none and picked == t.choices[1] and not game.title_active() and t.choices == ["study", "score"],
+		"title (#183): two modes (study, the game mode = the score game); one finger / two fingers held pick a card; the shape already up when the title opened does not",
+		"%s %s %s %s %s" % [not_yet, holding, restarted, stale_none, picked])
+	var logo := TitleScreen.logo_label("SUMMON", 104)
+	_ok(logo.get_theme_font("font") is FontVariation and t.sky != null and TitleScreen.NightSky.ridge(0, 0.3) > TitleScreen.NightSky.ridge(2, 0.3) - 0.2,
+		"title (#183): the logo is in its display font over the drawn night sky")
+	logo.free()
 	game.show_title()
 	game._unhandled_input(_key(KEY_F5))
 	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
@@ -2906,7 +2937,7 @@ func _test_title_screen(rs: Node) -> void:
 	var above: bool = dbg.layer > t.layer and not dbg.visible
 	game._unhandled_input(_key(KEY_F1))
 	var shown: bool = dbg.visible and game.title_active()
-	game._unhandled_input(_key(KEY_2))
+	game._unhandled_input(_key(KEY_G))
 	_ok(above and shown and dbg.layer < t.layer and dbg.visible, "title: the debug panel opens above it (F1) and goes back after",
 		"layer %d" % dbg.layer)
 	# when the title is shown at start
@@ -3071,11 +3102,11 @@ func _test_game_mode_round(rs: Node) -> void:
 	game.show_title()
 	game._unhandled_input(_key(KEY_RIGHT))
 	game._unhandled_input(_key(KEY_RIGHT))
-	var third: bool = game.title.selected_mode() == "score" and game.title._cards.size() == 3
+	var third: bool = game.title.selected_mode() == "score" and game.title._cards.size() == 2
 	game._unhandled_input(_key(KEY_ENTER))
 	_ok(third and not game.title_active() and ctl.active() and ctl.phase == "IDLE" and ctl.layer.visible
 		and ctl.devices == ctl.mock_hub and game.debug_ui.layer > GameModeController.LAYER,
-		"game mode: the title's third card opens it (waiting for Enter), on the Dials simulated in the game")
+		"game mode: the title's second card (the game mode) opens it (waiting for Enter), on the Dials simulated in the game")
 	game._unhandled_input(_key(KEY_Z))  # no capsule is taken before the start
 	var hub := ctl.mock_hub
 	game._unhandled_input(_key(KEY_ENTER))
@@ -3161,7 +3192,7 @@ func _test_game_mode_round(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_ESCAPE))
 	_ok(game.title_active() and not ctl.active() and not ctl.layer.visible and hub.count(GM_L, "STOP_ALL") == 1
 		and ctl.field.capsule_count() == 0, "game mode: Esc goes back to the title; a running round is stopped (STOP_ALL)")
-	game._unhandled_input(_key(KEY_2))
+	game._unhandled_input(_key(KEY_G))
 	_ok(not ctl.active() and not game.title_active(), "game mode: the crane game (2) is as before, without the score game")
 	_gm_free(game, rs)
 
@@ -4687,6 +4718,117 @@ func _test_gesture_tutorial_logic() -> void:
 		"%s %s %s" % [skipped_to, ends4, oks5])
 
 ## #171: the gauges take about 3 s; letting go and the up / down mode have steps of their own.
+## #183: the game mode's title by hand (open hand = start, one / two fingers = easy / hard), and today's best.
+func _test_game_title_hand(rs: Node) -> void:
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	ctl.ranking.path = ""
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	var opened = ctl.active() and ctl.phase == "IDLE"
+	var hand := func(pose: String) -> Dictionary: return {"fresh": true, "detected": true, "pose": pose}
+	ctl.set_difficulty("easy")
+	# the two fingers that chose the mode are still up: they do not switch the difficulty
+	for i in 120:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("peace"))
+	var carried_over = ctl.difficulty == "easy" and ctl.title_hand == ""
+	ctl.tick_title_hand(1.0 / 60.0, hand.call("fist"))
+	for i in 60:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("peace"))
+	var to_hard = ctl.difficulty == "hard"
+	for i in 60:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("point"))
+	var to_easy = ctl.difficulty == "easy"
+	# the open hand: 3 s, shown filling; let go before that = nothing
+	for i in 120:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("open"))
+	var filling = ctl.title_hand == "start" and ctl.title_hand_progress > 0.6 and ctl.phase == "IDLE"
+	ctl.tick_title_hand(1.0 / 60.0, {})
+	var let_go = ctl.title_hand == "" and ctl.phase == "IDLE"
+	for i in 185:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("open"))
+	var started = ctl.phase in ["TUTORIAL", "COUNTDOWN"]
+	for i in 240:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("point"))  # not on the title: the hand changes nothing
+	var only_title = ctl.difficulty == "easy" and ctl.title_hand == ""
+	_ok(opened and carried_over and to_hard and to_easy and filling and let_go and started and only_title,
+		"game title (#183): an open hand held 3 s starts (as Enter), one finger = easy, two = hard; the shape that chose the mode does not switch; nothing outside the title",
+		"%s %s %s %s %s %s %s %s" % [opened, carried_over, to_hard, to_easy, filling, let_go, started, only_title])
+	# left on the title and chosen again with two fingers: that shape does not switch it either
+	ctl._halt("test")
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	ctl.set_difficulty("easy")
+	for i in 30:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("open"))  # armed, a start hold half done
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	for i in 120:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("peace"))
+	_ok(ctl.phase == "IDLE" and ctl.difficulty == "easy" and ctl.title_hand == "" and ctl.title_hand_progress == 0.0,
+		"game title (#183): every visit needs a fresh shape: back from the top menu with two fingers up, the difficulty stays", "%s %s" % [ctl.phase, ctl.difficulty])
+	# today's best: of the ranking's records of today and of rounds that did not get in
+	ctl._halt("test")
+	var none = ctl.today_best() == 0
+	var d := Time.get_date_string_from_system()
+	ctl.ranking.entries.assign([{"score": 9000, "timestamp": "2001-01-01T10:00:00", "id": "old"}, {"score": 700, "timestamp": d + "T09:00:00", "id": "a"}])
+	var from_board = ctl.today_best() == 700
+	ctl._note_today(450)
+	var lower_kept = ctl.today_best() == 700
+	ctl._note_today(1200)
+	_ok(none and from_board and lower_kept and ctl.today_best() == 1200,
+		"game title (#183): today's best is the best of today's records and of today's rounds, not an older day's", str(ctl.today_best()))
+	ctl.ranking.entries.clear()
+	_gm_free(game, rs)
+
+## #183: the easy practice's fist step closes the claw as a show, the next step opens it again.
+func _test_tutorial_claw_demo(rs: Node) -> void:
+	var claw := PinchJoystickScheme.new().claw_poses()
+	var easy = GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw)
+	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)
+	var only_easy = easy.filter(func(s): return bool(s.get("claw_demo", false))).map(func(s): return s.id) == ["easy_grab"] \
+		and hard.filter(func(s): return bool(s.get("claw_demo", false))).is_empty()
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var asked = []
+	ctl.tutorial_claw.connect(func(w): asked.append(w))
+	var gotos = []
+	ctl.tutorial_goto.connect(func(d): gotos.append(d))
+	for st in easy:
+		if st.id in ["easy_one", "easy_two"]:
+			ctl._on_tutorial_ok(0, st)
+	var hard_gotos = hard.filter(func(s): return int(s.get("goto_demo", 0)) != 0).is_empty()
+	_ok(gotos == [1, 2] and hard_gotos, "tutorial carry (#183): the easy finger steps ask for the arm over Dial 1 and Dial 2; the hard mode's ask nothing", str(gotos))
+	game.mock.arm_marks = {"open": 10.0, "closed": 120.0}
+	game.mock.arm_deg = 10.0
+	var grab = easy.filter(func(s): return s.id == "easy_grab")[0]
+	ctl._on_tutorial_ok(0, {"id": "open", "kind": "pose"})
+	var none_yet = asked.is_empty()
+	ctl._on_tutorial_ok(1, grab)
+	var closed = asked == ["closed"] and is_equal_approx(game.mock.arm_deg, 120.0)
+	ctl._on_tutorial_step(2, {"id": "easy_one", "kind": "pose"})
+	ctl._on_tutorial_step(3, {"id": "rules", "kind": "info"})
+	var kept = asked == ["closed"]  # it stays closed through the carry's steps
+	ctl._on_tutorial_step(4, {"id": "practice", "kind": "practice"})
+	var opened = kept and asked == ["closed", "open"] and is_equal_approx(game.mock.arm_deg, 10.0)
+	ctl._on_tutorial_step(5, {"id": "practice", "kind": "practice"})
+	var once = asked.size() == 2
+	# a stop after the claw closed: nothing more is asked of it
+	ctl._on_tutorial_ok(1, grab)
+	ctl._halt("test")
+	ctl._on_tutorial_step(2, {"id": "practice", "kind": "practice"})
+	var stopped = asked == ["closed", "open", "closed"]
+	_ok(only_easy and none_yet and closed and opened and once and stopped,
+		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the practice capsule's start opens it once; not after a stop; the hard mode's steps ask nothing",
+		"%s %s %s %s %s %s %s" % [only_easy, none_yet, closed, opened, once, stopped, asked])
+	# the hand camera's picture beside the hand: only in a judged hand step with a camera picture
+	var hud: GestureTutorialHud = ctl.tutorial_hud
+	var attached = hud._cam != null and hud._cam_overlay.gesture == game.gesture
+	var no_feed = not hud.camera_rect().has_area()
+	_ok(attached and no_feed, "tutorial camera (#183): the practice has the hand camera's view attached; without a camera picture nothing is shown and the hand stays in the middle",
+		"%s %s" % [attached, no_feed])
+	_gm_free(game, rs)
+
 ## #179: the moving step says its own words when it is done, and the next step waits for them.
 func _test_gesture_tutorial_done_say() -> void:
 	var claw := PinchJoystickScheme.new().claw_poses()
@@ -4835,7 +4977,7 @@ func _test_score_game_panel_and_spell_voice(rs: Node) -> void:
 	var f1_opens = game.debug_ui.visible
 	game._unhandled_input(_key(KEY_F1))
 	game.show_title()
-	game._unhandled_input(_key(KEY_2))  # another mode: the panel is as it was before the score game
+	game._unhandled_input(_key(KEY_G))  # another mode: the panel is as it was before the score game
 	var back = game.debug_ui.visible
 	game.show_title()
 	ctl.debug_panel = true  # config game_mode.debug_panel
@@ -4970,7 +5112,7 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	game.show_title()
 	tick.call(0.2)
 	var back_to_menu = snd.track_wanted() == "top"
-	game._unhandled_input(_key(KEY_2))  # another mode: no music
+	game._unhandled_input(_key(KEY_G))  # another mode: no music
 	tick.call(0.2)
 	var other_mode = snd.track_wanted() == ""
 	# a file that is not music is as no file: the round keeps the synthesised tune
