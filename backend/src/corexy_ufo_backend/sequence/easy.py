@@ -8,7 +8,13 @@
         with the arm down closes the claw where it is and brings it up)
     MANUAL_XY --start_reset()--> RESET: OPEN_CLAW -> RAISE_EMPTY -> MANUAL_XY (#177: the start of a
         game: the claw open, the arm at the top, from whatever height it was left at)
+    WAIT_DESTINATION --cancel()--> CANCEL: RELEASE (the claw opens where it is, at the safe height)
+        -> MANUAL_XY (#179: the catch missed the capsule: let go and try again)
     WAIT_DESTINATION --nothing chosen in wait_destination_s--> EXPIRED
+    WAIT_DESTINATION --stop_waiting() (the game's stop key)--> STOPPED: like EXPIRED, nothing is
+        moving, so nothing has to be cut with ABORT: no alarm, homing kept, the claw still closed
+        (#179). In every moving state the stop key is still FAULT + ABORT: the firmware's STOP
+        does not stop the servos (Z drum, claw), only ABORT does.
     any state --fault / stop / the operator gone--> FAULT (ABORT sent: alarm, homing lost)
 
 One run of one task: the server's motion lock is held from the catch to the end of the
@@ -66,6 +72,8 @@ from .params import AutoCatchParams, height
 log = logging.getLogger(__name__)
 
 MIN_DIAL_GAP_MM = 20.0  # two Dials recorded closer than this are the same place recorded twice
+CANCELLED = -1  # the "destination" of a catch given up (cancel())
+STOPPED = -2  # the wait ended by the stop key (stop_waiting())
 DESTINATIONS = (1, 2)  # Dial 1 = the left of the screen, Dial 2 = the right (#138)
 WAIT_KEY = "wait_destination"
 WAIT_MARGIN_S = 5.0  # the monitoring's own timeout of the wait: never reached before the expiry
@@ -83,6 +91,7 @@ class EasyPhase(StrEnum):
     RELEASE = "RELEASE"
     RAISE_EMPTY = "RAISE_EMPTY"
     EXPIRED = "EXPIRED"
+    STOPPED = "STOPPED"
     FAULT = "FAULT"
 
 
@@ -264,6 +273,7 @@ class EasySequencer(AutoCatchSequencer):
         self._t_begin = 0.0
         self._t_wait = 0.0
         self._reset_only = False
+        self._stop_reason = ""
         self._strict: AutoCatchParams | None = None  # the params as validated, while a run uses relaxed ones
         self.easy = easy or EasyParams(profile=params.profile)
         self.set_easy(self.easy)
@@ -299,7 +309,7 @@ class EasySequencer(AutoCatchSequencer):
             "elapsed_s": round(now - self._t_begin, 2) if self.active else 0.0,
             "wait_left_s": round(max(self.easy.wait_destination_s - (now - self._t_wait), 0.0), 2) if waiting else 0.0,
             "wait_s": self.easy.wait_destination_s,
-            "last_result": self.last_result,  # "" | "done" | "fault" | "expired"
+            "last_result": self.last_result,  # "" | "done" | "cancelled" | "stopped" | "fault" | "expired"
             "error": self.error,
             "reason": self.error,
             "profile": self.params.profile,
@@ -395,6 +405,31 @@ class EasySequencer(AutoCatchSequencer):
             raise RobotCommandError(f"already chosen (Dial {self._chosen})")
         self._chosen = int(destination)
 
+    def cancel(self, grab_id: Any) -> None:
+        """The player gives this catch up (the claw came up empty): the claw opens where it
+        is and the hand has the crane again. Like a choice: once, only while waiting, only
+        for this catch. Nothing is carried."""
+        if not self.active or self.state != "WAIT_DESTINATION":
+            raise RobotCommandError(f"not waiting for a destination (state {self.state})")
+        if not grab_id or str(grab_id) != self.grab_id:
+            raise RobotCommandError("stale: this is not the current catch")
+        if self._abort_reason:
+            raise RobotCommandError(f"stopping ({self._abort_reason})")
+        if self._chosen:
+            raise RobotCommandError("already chosen")
+        self._chosen = CANCELLED
+
+    def stop_waiting(self, reason: str) -> bool:
+        """The stop key while the run only waits (nothing is moving): the run ends there, with
+        no ABORT. Returns False when it is not waiting (then the caller aborts it as ever)."""
+        if not self.active or self.state != "WAIT_DESTINATION" or self._chosen or self._abort_reason:
+            return False
+        if self._action is not None and not self._action.done():
+            return False  # (never: the wait has no action; a moving run is never ended this way)
+        self._stop_reason = reason
+        self._chosen = STOPPED
+        return True
+
     # ------------------------------------------------------------------ run loop
     async def _run(self) -> None:
         try:
@@ -410,6 +445,21 @@ class EasySequencer(AutoCatchSequencer):
                 self._set_phase(EasyPhase.IDLE, "done (at the start)")  # type: ignore[arg-type]
                 return
             dest = await self._wait_destination()
+            if dest == STOPPED:
+                self.error = (f"{self._stop_reason} while waiting for the destination: the claw is still closed "
+                              "at the safe height; nothing was moved or released")
+                self.last_result = "stopped"
+                self.state = "STOPPED"
+                self._set_phase(EasyPhase.STOPPED, self.error)  # type: ignore[arg-type]
+                return
+            if dest == CANCELLED:
+                self._set_state("CANCEL")
+                self.step_index = len(self.steps) + 1
+                await self._do_step(Step(EasyPhase.RELEASE, "release", "claw", claw=self.params.claw_open))  # type: ignore[arg-type]
+                self.state = "MANUAL_XY"
+                self.last_result = "cancelled"
+                self._set_phase(EasyPhase.IDLE, "cancelled: the claw is open, nothing was carried")  # type: ignore[arg-type]
+                return
             self.destination = dest
             self._set_state(f"DELIVER_DIAL_{dest}")
             self._require_safe_height()

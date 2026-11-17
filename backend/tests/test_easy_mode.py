@@ -397,14 +397,13 @@ async def test_server_runs_catch_and_delivery_and_locks_manual_control(server, d
         assert (await _cmd(ws, "m2", "move_xy", x=100, y=100))["type"] == "ack"  # manual again
 
 
-@pytest.mark.parametrize("stop", ["stop", "soft_stop"])
-async def test_server_stop_while_waiting_for_the_destination_aborts(server, stop):
+async def test_server_emergency_stop_while_waiting_for_the_destination_aborts(server):
     srv, robot, port = server
     async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
         await _ready(ws, robot)
         gid = (await _cmd(ws, "g1", "easy_grab"))["data"]["grab_id"]
         await _until_state(ws, "WAIT_DESTINATION")
-        assert (await _cmd(ws, "s", stop))["type"] == "ack"
+        assert (await _cmd(ws, "s", "stop"))["type"] == "ack"
         await srv.easy.wait()
         assert srv.easy.state == "FAULT" and robot.commands.count("ABORT") == 1 and robot.alarm
         r = await _cmd(ws, "d1", "easy_deliver", destination=1, grab_id=gid)
@@ -413,6 +412,61 @@ async def test_server_stop_while_waiting_for_the_destination_aborts(server, stop
         assert sum(c.startswith("XY") for c in robot.commands) == 2
         r = await _cmd(ws, "g2", "easy_grab")
         assert r["type"] == "nack" and "alarm active" in r["data"]["reason"]
+
+
+async def test_server_soft_stop_while_waiting_ends_the_run_without_an_alarm(server):
+    """#179: the game's stop key while nothing moves: no ABORT, no alarm, homing kept, the claw
+    still closed; nothing is carried afterwards. While it moves, the stop key is ABORT as ever."""
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        gid = (await _cmd(ws, "g1", "easy_grab"))["data"]["grab_id"]
+        await _until_state(ws, "WAIT_DESTINATION")
+        assert (await _cmd(ws, "s", "soft_stop"))["type"] == "ack"
+        await srv.easy.wait()
+        st = srv.easy.status()
+        assert st["state"] == "STOPPED" and st["last_result"] == "stopped" and "nothing was moved" in st["error"]
+        assert "ABORT" not in robot.commands and not robot.alarm and robot.snapshot().homed
+        assert abs(robot.arm_deg - robot.arm_marks["closed"]) < 1e-6 and not srv._motion_lock.locked()
+        r = await _cmd(ws, "d1", "easy_deliver", destination=1, grab_id=gid)
+        assert r["type"] == "nack"  # too late: nothing is carried after the stop
+        assert (await _cmd(ws, "c1", "easy_cancel", grab_id=gid))["type"] == "nack"
+        # the next game's start brings the arm to its start again (the claw open), no clear_alarm needed
+        assert (await _cmd(ws, "r1", "easy_reset"))["type"] == "ack"
+        await srv.easy.wait()
+        assert srv.easy.status()["last_result"] == "done"
+        # while it moves: ABORT, as ever
+        assert (await _cmd(ws, "g2", "easy_grab"))["type"] == "ack"
+        await asyncio.sleep(0.05)
+        assert (await _cmd(ws, "s2", "soft_stop"))["type"] == "ack"
+        await srv.easy.wait()
+        assert srv.easy.state == "FAULT" and "ABORT" in robot.commands and robot.alarm
+
+
+async def test_server_cancel_opens_the_claw_and_gives_the_crane_back(server):
+    """#179: the claw came up empty: easy_cancel while it waits opens the claw where it is."""
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        gid = (await _cmd(ws, "g1", "easy_grab"))["data"]["grab_id"]
+        assert (await _cmd(ws, "c0", "easy_cancel", grab_id=gid))["type"] == "nack"  # still catching
+        await _until_state(ws, "WAIT_DESTINATION")
+        assert (await _cmd(ws, "c1", "easy_cancel", grab_id="another"))["type"] == "nack"
+        n = len(robot.commands)
+        assert (await _cmd(ws, "c2", "easy_cancel", grab_id=gid))["type"] == "ack"
+        assert (await _cmd(ws, "d1", "easy_deliver", destination=1, grab_id=gid))["type"] == "nack"  # given up: not carried
+        await srv.easy.wait()
+        st = srv.easy.status()
+        assert st["state"] == "MANUAL_XY" and st["last_result"] == "cancelled" and st["destination"] == 0
+        assert robot.commands[n:] == ["CLAW -> open"] and abs(robot.pos[0] - 120) < 0.5 and abs(robot.pos[2] - 95) < 1.0
+        assert not robot.alarm and not srv._motion_lock.locked()
+        assert (await _cmd(ws, "c3", "easy_cancel", grab_id=gid))["type"] == "nack"  # a repeat: nothing
+        # and again: catch, this time carried
+        gid2 = (await _cmd(ws, "g2", "easy_grab"))["data"]["grab_id"]
+        await _until_state(ws, "WAIT_DESTINATION")
+        assert (await _cmd(ws, "d2", "easy_deliver", destination=2, grab_id=gid2))["type"] == "ack"
+        await srv.easy.wait()
+        assert srv.easy.status()["last_result"] == "done"
 
 
 @pytest.mark.parametrize("when", ["AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1"])

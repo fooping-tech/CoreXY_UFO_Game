@@ -82,7 +82,9 @@ closed, up to the safe height; ACK = started; progress in robot_state.easy_mode 
 {destination: 1 | 2, grab_id} (only while that catch waits for its destination, once: carry to
 Dial 1 / Dial 2 at the safe height, lower, open, up), easy_status. #177: easy_grab with the arm
 below the safe height closes the claw where it is and raises it (nothing goes down); easy_reset
-(the start of a game) opens the claw and raises the arm to the top from any height. Nothing chosen within
+(the start of a game) opens the claw and raises the arm to the top from any height. #179:
+easy_cancel {grab_id} (only while that catch waits for its destination, once): the claw opens
+where it is and the run ends (last_result "cancelled"); nothing is carried. Nothing chosen within
 game_mode.easy.wait_destination_s: the run ends EXPIRED with the claw still closed (nothing
 moved, nothing released, no ABORT). The Dials' drop points of the real crane: easy_dial_set
 {which: dial_1 | dial_2 (the arm's XY now) | release_z | catch_z (its Z now) | clear} saves
@@ -145,7 +147,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_height_status", "study_height_set", "study_height_confirm",
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             "calibration_prepare", "calibration_prepare_status",
-            "easy_grab", "easy_reset", "easy_deliver", "easy_status", "easy_dial_set", "easy_dial_confirm",
+            "easy_grab", "easy_reset", "easy_deliver", "easy_cancel", "easy_status", "easy_dial_set", "easy_dial_confirm",
             *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
@@ -158,7 +160,7 @@ CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "devicehub_meta", "d
 PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status", "calibration_prepare_status",
-                     "easy_deliver", "easy_status")
+                     "easy_deliver", "easy_cancel", "easy_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
 AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
                       "gesture_config", "homework_approach_status", "camera_map_status", "study_cleanup_status",
@@ -178,7 +180,7 @@ CLEANUP_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_
 # Accepted while the easy mode catches, waits for its destination or carries (#169).
 EASY_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
                 "homework_approach_status", "camera_map_status", "study_cleanup_status", "study_height_status",
-                "easy_deliver", "easy_status")
+                "easy_deliver", "easy_cancel", "easy_status")
 
 
 def now_ms() -> int:
@@ -750,6 +752,9 @@ class GameServer:
             if name == "easy_deliver":
                 self.easy.choose(params.get("destination"), params.get("grab_id"))
                 return self._ack(name, self.easy.status())
+            if name == "easy_cancel":
+                self.easy.cancel(params.get("grab_id"))
+                return self._ack(name, self.easy.status())
             if name == "easy_dial_set":
                 return self._easy_dial_set(params)
             if name == "easy_dial_confirm":
@@ -803,6 +808,10 @@ class GameServer:
                 self._jog_owner = None
                 for s in self.sequences:
                     if s.seq.active:
+                        if s.seq is self.easy and self.easy.stop_waiting("stopped (soft_stop)"):
+                            # #179: it only waits for the destination: nothing moves, so there is
+                            # nothing ABORT would have to cut. The run ends there, with no alarm.
+                            continue
                         # STOP does not stop the servos (Z drum, claw): end the sequence with ABORT
                         await s.seq.abort(f"stopped (soft_stop) during {s.during}")
                         return self._ack(name, self.robot.snapshot().to_message()["data"])
