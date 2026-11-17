@@ -621,4 +621,4 @@ rank	score	timestamp	id
 |---|---|---|---|---|
 | 2026-11-16 | v0.3（初版） | `f98999f`（`pc/` のコピー元。`__init__.py` に記録） | 1 | 既存のコマンド・イベントだけで実装。`pc/protocol.py` を `1302bac` → `f98999f` に更新（`DialState.SETTINGS` の追加だけ）。LED の契約（`docs/game-mode-interface.md`）は未作成 |
 | 2026-11-16 | v0.3（LED 契約の取り込み） | `e965cdf`（UFO-DeviceHub PR #9。`pc/` 一式をコピーし直し: `protocol.py` `device_gateway.py` `mock_hub.py`、新規 `trace.py` `game_mode.py`） | 1（追加のみ。ファームウェア 0.3） | `SET_DIAL_COLOR` / `SET_DIAL_EFFECT` を §8 の表のとおり送る。号機色の初期値を DeviceHub の既定色に合わせた。`RELEASE_DONE` が来ないときは契約 §7 のとおり `GET_STATUS` で確かめる。既存コマンド・イベントの意味は変わっていない。Mock のみ・実機未検証 |
-| 2026-11-17 | v0.3（変更なし） | `a402c37`（UFO-DeviceHub のブランチ `feat/python-package`。マージ後は main のコミットに書き換える。`tools/devicehub.pin`） | 1（変更なし） | #159: `pc/` のコピーをやめ、UFO-DeviceHub の Python パッケージ `ufo-devicehub` を依存として使う。コマンド・イベント・LED の契約は同じ。UFO-DeviceHub 側の追加は PC 側だけ（開かないポートの指定、排他、つながらない理由の取得） |
+| 2026-11-17 | v0.3（変更なし） | `a402c37`（UFO-DeviceHub PR #10、main にマージ済み。`tools/devicehub.pin`） | 1（変更なし） | #159: `pc/` のコピーをやめ、UFO-DeviceHub の Python パッケージ `ufo-devicehub` を依存として使う。コマンド・イベント・LED の契約は同じ。UFO-DeviceHub 側の追加は PC 側だけ（開かないポートの指定、排他、つながらない理由の取得） |

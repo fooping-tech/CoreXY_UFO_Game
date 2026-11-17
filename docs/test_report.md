@@ -48,7 +48,7 @@
 
 ## UFO-DeviceHub をパッケージの依存にする（2026-11-17、Issue #159 Phase 1）
 
-環境: macOS (Darwin 25.1), uv / CPython 3.13。**実機のハブ・M5Dial・イルミは接続していない（実機未検証）。** UFO-DeviceHub はコミット `a402c37`（ブランチ `feat/python-package`、プロトコル版 1。`tools/devicehub.pin`）。
+環境: macOS (Darwin 25.1), uv / CPython 3.13。**実機のハブ・M5Dial・イルミは接続していない（実機未検証）。** UFO-DeviceHub はコミット `a402c37`（PR #10、main にマージ済み。プロトコル版 1。`tools/devicehub.pin`）。
 
 - バックエンドの `devicehub/` にあった UFO-DeviceHub の `pc/` のコピー 5 ファイルをなくし、UFO-DeviceHub の Python パッケージ `ufo-devicehub`（`external/UFO-DeviceHub/` の clone、editable なパス依存）を使う。ゲーム側に残るのは `service.py` だけ。
 - Python 394 件 + skip 1（2 件追加、`backend/tests/test_devicehub.py` 13 件）。模擬ハブで: 接続、USB を抜いて戻す（抜けている間の命令は断られ、後に持ち越されない。新しいセッションになる）、ACK を 2 回失っても排出は 1 回（同じコマンド ID での再送）、二重の排出の拒否、`STOP_ALL`、別のシステムのハブの拒否、ロボットのポートを開かない（後から分かったポートを含む）、つながらない理由の表示。コピーが残っていないことも 1 件で確かめる。
