@@ -221,6 +221,11 @@ class RealRobot(RobotInterface):
             log.info("serial reopen failed: %s", e)
             self.error = reason  # still why the link is down
             return
+        if not self.serial.connected:
+            # lost again while connecting: _on_serial_lost asked for the next try; say why
+            # (not connect()'s "no POS reply")
+            self.error = self.serial.last_error or reason
+            return
         self._reopen_wanted = False
         self.error = ""
         log.warning("serial link reopened on %s (motors disabled: enable them again)", self.serial.port)

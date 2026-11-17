@@ -150,6 +150,26 @@ async def test_a_failed_reopen_keeps_the_reason_and_tries_again(rig):
     assert r.serial.connected
 
 
+async def test_a_link_lost_again_while_reopening_is_tried_again(rig):
+    r, ports = rig
+    r.serial._on_transport_lost(OSError("device disconnected"))
+
+    class Flaky(FakeFirmware):
+        async def open(self) -> None:
+            await super().open()
+            self._loop.call_soon(self.on_disconnect, OSError("gone again"))  # during the start's drain
+
+    ports_open = ports.__call__
+    r.serial._transport_factory = lambda port, baud, **kw: Flaky(port, baud, **kw)
+    r._reopen_at = 0.0
+    await r.tick()
+    assert not r.serial.connected and r._reopen_wanted and "gone again" in r.error
+    r.serial._transport_factory = ports_open
+    r._reopen_at = 0.0
+    await r.tick()
+    assert r.serial.connected and not r._reopen_wanted
+
+
 async def test_no_reopen_when_turned_off(rig):
     r, ports = rig
     r.cfg.serial_reopen_s = 0.0
