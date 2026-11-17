@@ -18,6 +18,7 @@ extends Node2D
 signal target_hit(capsule_id: String, kind: String, target: String, pos: Vector2)
 ## goal: "left" / "center" / "right" / "timeout"
 signal capsule_exited(capsule_id: String, goal: String, pos: Vector2)
+signal powerup_collected(capsule_id: String, kind: String, pos: Vector2)
 
 # The field is tall (#157): the capsule is seen falling all the way down it. Nothing here
 # is the old wide field stretched: everything was placed again for this width, with the
@@ -46,6 +47,8 @@ const SPINNERS := [Vector2(226, 934), Vector2(494, 934)]
 const STAR := Vector2(360, 916)
 const POPS := [Vector2(126, 896), Vector2(594, 896)]
 const POP_R := 16.0
+const POWERUP_KINDS := ["speed", "multiball", "double"]
+const POWERUP_SPOTS := [Vector2(350, 600), Vector2(235, 740), Vector2(480, 840)]
 ## standup targets on the walls: [centre, side (-1 left wall, 1 right wall)]
 const TARGETS := [[Vector2(36, 652), -1], [Vector2(36, 732), -1], [Vector2(684, 652), 1], [Vector2(684, 732), 1]]
 const TARGET_SIZE := Vector2(12, 44)
@@ -137,8 +140,55 @@ var _alien_area: Area2D
 var _warp_flash: Array[float] = [0.0, 0.0]
 ## how many capsules each warp hole holds now (the picture)
 var warp_holding: Array[int] = [0, 0]
+## A single collectible at a time, represented by an Area2D. It cannot block the ball.
+var powerup_enabled := false
+var powerup_kind := ""
+var powerup_pos := Vector2.ZERO
+var powerup_spawn_s := 12.0
+var powerup_life_s := 8.0
+var powerup_first_s := 5.0
+var _powerup_wait := 5.0
+var _powerup_left := 0.0
+var _powerup_index := 0
+var _powerup_area: Area2D
 var _rng := RandomNumberGenerator.new()
 var _t := 0.0
+
+func configure_powerups(cfg: Dictionary) -> void:
+	powerup_spawn_s = clampf(float(cfg.get("spawn_interval_s", powerup_spawn_s)), 2.0, 120.0)
+	powerup_life_s = clampf(float(cfg.get("item_life_s", powerup_life_s)), 1.0, 30.0)
+	powerup_first_s = clampf(float(cfg.get("first_spawn_s", powerup_first_s)), 0.1, 120.0)
+	_powerup_wait = powerup_first_s
+
+func set_powerups_enabled(on: bool) -> void:
+	if not on and powerup_enabled:
+		_hide_powerup()
+	powerup_enabled = on
+
+func _hide_powerup() -> void:
+	powerup_kind = ""
+	powerup_pos = Vector2.ZERO
+	if _powerup_area != null:
+		_powerup_area.position = Vector2(-1000, -1000)
+
+func _advance_powerup(dt: float) -> void:
+	if not powerup_enabled:
+		return
+	if powerup_kind != "":
+		_powerup_left -= dt
+		if _powerup_left <= 0.0:
+			_hide_powerup()
+			_powerup_wait = powerup_spawn_s
+		return
+	_powerup_wait -= dt
+	if _powerup_wait > 0.0:
+		return
+	var index := _powerup_index
+	_powerup_index += 1
+	powerup_kind = POWERUP_KINDS[index % POWERUP_KINDS.size()]
+	powerup_pos = POWERUP_SPOTS[index % POWERUP_SPOTS.size()]
+	_powerup_area.position = powerup_pos
+	_powerup_left = powerup_life_s
 
 func _ready() -> void:
 	_rng.seed = 138
@@ -269,6 +319,8 @@ func _build() -> void:
 		_circle(_area("gem", "gem_%d" % i, GEMS[i]), GEM_R)
 	_alien_area = _area("alien", "alien", alien_position())
 	_circle(_alien_area, ALIEN_R)
+	_powerup_area = _area("powerup", "powerup", Vector2(-1000, -1000))
+	_circle(_powerup_area, 22.0)
 	# the goals: sensors under the floor line
 	var edges := [LEFT, POSTS_X[0], POSTS_X[1], RIGHT]
 	var names := ["left", "center", "right"]
@@ -301,6 +353,23 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 	add_child(b)
 	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "flash": 0.0, "trail": PackedVector2Array(), "trail_t": 0.0}
 
+## Split a single *virtual* ball. All children share the one physical Dial/capsule,
+## which is released only once by GameModeController after its last child exits.
+func split_capsule(id: String, ids: Array[String]) -> void:
+	if not _capsules.has(id):
+		return
+	var src: Dictionary = _capsules[id]
+	var original: RigidBody2D = src.body
+	for i in ids.size():
+		var child_id := ids[i]
+		spawn_capsule(child_id, original.position.x, src.color)
+		if not _capsules.has(child_id):
+			continue
+		var child: RigidBody2D = _capsules[child_id].body
+		child.position = original.position + Vector2(-26.0 if i == 0 else 26.0, -10.0)
+		child.linear_velocity = original.linear_velocity.rotated(-0.45 if i == 0 else 0.45) + Vector2(-120.0 if i == 0 else 120.0, -90.0)
+		_capsules[child_id].age = src.age
+
 func remove_capsule(id: String) -> void:
 	if not _capsules.has(id):
 		return
@@ -312,6 +381,10 @@ func remove_capsule(id: String) -> void:
 func clear() -> void:
 	for id in _capsules.keys():
 		remove_capsule(id)
+	set_powerups_enabled(false)
+	_powerup_wait = powerup_first_s
+	_powerup_left = 0.0
+	_powerup_index = 0
 	switch_lit = [false, false, false]
 	jackpot_on = false
 	star_left = 0.0
@@ -417,6 +490,12 @@ func _on_area(body: Node, area: Area2D) -> void:
 	var kind := str(area.get_meta("kind"))
 	var pos := (body as Node2D).position
 	match kind:
+		"powerup":
+			if powerup_kind != "":
+				var picked := powerup_kind
+				_hide_powerup()  # before emitting: two balls cannot collect one item
+				_powerup_wait = powerup_spawn_s
+				powerup_collected.emit(id, picked, pos)
 		"goal":
 			_exit(id, str(area.get_meta("target")), pos)
 		"star":
@@ -477,6 +556,7 @@ func advance(dt: float) -> void:
 	_t += dt
 	if frozen:
 		return
+	_advance_powerup(dt)
 	for i in _spinners.size():
 		_spinners[i].rotation += spinner_speed * dt * (1.0 if i % 2 == 0 else -1.0)
 	star_left = maxf(star_left - dt, 0.0)
