@@ -4821,6 +4821,19 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	_ok(only_easy and none_yet and closed and opened and once and stopped,
 		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the practice capsule's start opens it once; not after a stop; the hard mode's steps ask nothing",
 		"%s %s %s %s %s %s %s" % [only_easy, none_yet, closed, opened, once, stopped, asked])
+	# #185: the "touch the fingers" step moves nothing; the moving step does
+	ctl.open()
+	ctl.set_difficulty("easy")
+	ctl.start_tutorial()
+	var seen := {}
+	for i in 12:
+		seen[ctl.tutorial.kind()] = ctl.hand_holds_still()
+		ctl.tutorial.skip_step()
+		if not ctl.tutorial.active():
+			break
+	ctl._halt("test")
+	_ok(seen.get("pinch", false) == true and seen.get("move", true) == false and seen.get("pose", true) == false and not ctl.hand_holds_still(),
+		"tutorial (#185): the hand stick moves nothing in the practice's pinch step (only there)", str(seen))
 	# the hand camera's picture beside the hand: only in a judged hand step with a camera picture
 	var hud: GestureTutorialHud = ctl.tutorial_hud
 	var attached = hud._cam != null and hud._cam_overlay.gesture == game.gesture

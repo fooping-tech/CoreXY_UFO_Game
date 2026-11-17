@@ -365,3 +365,35 @@ async def test_state_stream_does_not_wait_for_slow_polls():
             assert n >= 22, n  # ~30 Hz
     finally:
         await srv.stop()
+
+
+async def test_jog_stays_inside_the_edges_and_slows_towards_them(robot):
+    """#185: the home corner's limit switches are pressed within about 1 mm of 0: a jog never
+    goes nearer an edge than jog_edge_margin_mm, slows down towards that line, and may always
+    go back."""
+    def jogs():
+        return [tuple(float(v) for v in l.split()[1:3]) for l in fw(robot).sent if l.startswith("JOG ")]
+    await robot.enable_motors(True)
+    await robot.home()
+    await robot.move_xy(100, 50)
+    await robot.jog(0, -40)
+    assert jogs()[-1] == (0.0, -40.0)  # far from the edge: as asked
+    await robot.jog(0, 0)
+    await settle()
+    await robot.move_xy(100, 10)  # 5 mm from the line (margin 5): at most 5 / 0.25 = 20 mm/s towards it
+    await robot.jog(30, -40)
+    vx, vy = jogs()[-1]
+    assert vx == 30.0 and vy == pytest.approx(-20.0, abs=0.5)
+    await robot.jog(0, 0)
+    await settle()
+    await robot.move_xy(100, 3)  # beyond the line: nothing towards the edge, the way back is free
+    await robot.jog(30, -40)
+    assert jogs()[-1] == (30.0, 0.0)
+    await robot.jog(0, 40)
+    assert jogs()[-1] == (0.0, 40.0)
+    await robot.jog(0, 0)
+    await settle()
+    robot.cfg.jog_edge_margin_mm = 0.0  # off: the firmware's own soft limit only
+    await robot.jog(0, -40)
+    assert jogs()[-1] == (0.0, -40.0)
+    await robot.jog(0, 0)

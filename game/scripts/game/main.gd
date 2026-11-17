@@ -1248,6 +1248,11 @@ func _handle_input(dt: float) -> void:
 			gesture.stop("easy_mode")
 	# gesture Z is "+ = arm up", like W: the same z_up_is_positive sign as the keys
 	var gz := gesture.velocity_z * (1.0 if GameConfig.robot().z_up_is_positive else -1.0)
+	# #185: the practice's "touch the fingers" steps only look at the pinch: the stick stays
+	# as it is (the next step moves with the same pinch) but moves nothing yet
+	if game_mode != null and game_mode.hand_holds_still():
+		gv = Vector2.ZERO
+		gz = 0.0
 	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
 	control_source = d.source
 	var v: Vector3 = d.v

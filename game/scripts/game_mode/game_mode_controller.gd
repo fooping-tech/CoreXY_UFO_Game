@@ -28,6 +28,13 @@ signal scored(points: int, kind: String, at: Vector2)
 ## ("closed" when the easy mode's fist step is done, "open" when the practice capsule begins). The
 ## main scene sends it like the hand's own claw request, with all its checks; nothing is sent here.
 signal tutorial_claw(which: String)
+
+## #185: the practice is at a step that only asks for the pinch (not for moving): the main
+## scene lets the hand stick move nothing meanwhile (a hand is never quite still while its
+## fingers close, and the arm ran sideways).
+func hand_holds_still() -> bool:
+	return _active and phase == "TUTORIAL" and tutorial.active() and tutorial.kind() == "pinch"
+
 ## #183: the practice's finger steps show the carry: the main scene is asked to move the arm
 ## over that Dial (1 / 2). The backend moves XY only, with its own checks.
 signal tutorial_goto(destination: int)
