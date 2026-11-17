@@ -595,7 +595,7 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | 盤面（物理） | `pinball_field.gd`（`PinballField`） |
 | 背景・ドット文字 | `game_mode_backdrop.gd`（`GameModeBackdrop`）、`pixel_text.gd`（`PixelText`） |
 | 演出 | `game_mode_vfx.gd`（`GameModeVFX`）。シートは pixelfx（`VFXManager` 経由。下の表）。ポートの枠と光はコードで描く |
-| 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は合成。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
+| 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は `game/assets/audio/bgm/` に置いたファイル（#173: メニュー `intro.mp3`、ゲーム中 `game.wav`、結果発表 `ending.mp3`。Git に入れない各 PC のファイル）、なければゲーム中だけ合成の曲。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
 | HUD | `game_mode_hud.gd` |
 | 縦画面の配置（#157） | `game_mode_layout.gd`（`GameModeLayout`: 画面・各帯・ポート・中央の位置。数字はここだけに書く） |
 | ハイスコアランキング（#155） | 順位・保存・読み込み・重複の防止 `ranking_manager.gd`（`RankingManager`。画面なしでテストできる）、画面 `game_mode_ranking_hud.gd`（`GameModeRankingHud`）、登録と画面の切り替え `GameModeController._tick_ranking` ほか |

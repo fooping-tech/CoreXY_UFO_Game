@@ -92,6 +92,7 @@ func _ready() -> void:
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
 	await _test_game_mode_physics()
+	_test_game_mode_music_files(rs)
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -4561,6 +4562,99 @@ func _test_gesture_tutorial_logic() -> void:
 		and oks5 == ["open", "pinch", "move", "grab"] and demo_hand_only,
 		"tutorial: staff can go on or leave it out (no OK for a step not done); the scripted hand goes through the hand steps without the robot",
 		"%s %s %s" % [skipped_to, ends4, oks5])
+
+## #173: the music from the files of assets/audio/bgm (each machine's own): menu, round, result.
+func _test_game_mode_music_files(rs: Node) -> void:
+	# two made-up files (the real ones are never in Git); the third track has none
+	var dir := "user://test_bgm/"
+	DirAccess.make_dir_recursive_absolute(dir)
+	var tone = StudySounds._tones([[440.0, 0.3]], 0.2)
+	tone.save_to_wav(dir + "menu.wav")
+	tone.save_to_wav(dir + "round.wav")
+	var f := FileAccess.open(dir + "broken.mp3", FileAccess.WRITE)
+	f.store_string("not music")
+	f.close()
+	var loaded = GameModeSounds.load_music_stream(dir + "menu.wav")
+	var loops = loaded is AudioStreamWAV and loaded.loop_mode == AudioStreamWAV.LOOP_FORWARD and loaded.loop_end > 1000
+	var missing = GameModeSounds.load_music_stream(dir + "nothing.ogg") == null and GameModeSounds.load_music_stream(dir + "x.txt") == null
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var snd: GameModeSounds = ctl.sounds
+	snd.enabled = true
+	var none_by_default = not snd.has_music("menu") and not snd.has_music("game")  # the tests read no file of this machine
+	GameModeSounds.load_music = true
+	snd.music_names = {"menu": "menu.wav", "game": "round.wav", "ending": "ending.mp3"}  # (no ending.mp3 there)
+	snd.load_music_files(dir)
+	GameModeSounds.load_music = false
+	var found = snd.has_music("menu") and snd.has_music("game") and not snd.has_music("ending")
+	var tick := func(secs: float) -> void:
+		for i in int(secs * 60.0):
+			game._process(1.0 / 60.0)
+			snd._process(1.0 / 60.0)
+	# the title screen, then the score game's own title: the menu's music
+	game.show_title()
+	tick.call(1.0)
+	var on_title = snd.track_wanted() == "menu" and snd._music["menu"].playing
+	game._unhandled_input(_key(KEY_3))
+	tick.call(0.2)
+	var on_game_title = snd.track_wanted() == "menu" and snd._music["menu"].playing
+	# the round: its file, not the synthesised tune, also in the last stretch
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, 0.5)
+	tick.call(1.0)
+	var countdown_quiet = ctl.phase == "COUNTDOWN" and snd.track_wanted() == "" and not snd._music["menu"].playing
+	_gm_step(ctl, ctl.countdown_s)
+	tick.call(1.0)
+	var in_round = ctl.phase == "PLAYING" and snd.track_wanted() == "game" and snd._music["game"].playing \
+		and not snd._bgm.playing and not snd._bgm_fast.playing
+	ctl.time_left = ctl.hurry_s - 0.1
+	_gm_step(ctl, 0.2)
+	tick.call(1.0)
+	var hurry_same = snd.hurry and snd._music["game"].playing and not snd._bgm_fast.playing
+	# the result: no file for it here -> silence, and the round's music has faded out
+	ctl.time_left = 0.05
+	_gm_step(ctl, ctl.closing_wait_s + 1.0)
+	tick.call(1.0)
+	var result_wanted = ctl.phase == "RESULT" and snd.ending_on and snd.track_wanted() == "ending" and not snd._music["game"].playing
+	# with a file for the result it plays; a new round ends it; music off = nothing
+	snd.music_names["ending"] = "menu.wav"
+	GameModeSounds.load_music = true
+	snd.load_music_files(dir)
+	GameModeSounds.load_music = false
+	tick.call(0.5)
+	var ending_plays = snd._music["ending"].playing
+	snd.enabled = false
+	tick.call(1.0)
+	var off_silent = snd.track_wanted() == "" and not snd._music["ending"].playing
+	snd.enabled = true
+	game._unhandled_input(_key(KEY_ENTER))
+	game._unhandled_input(_key(KEY_ENTER))
+	game._unhandled_input(_key(KEY_ENTER))
+	var next_round = not snd.ending_on
+	game.show_title()
+	tick.call(0.2)
+	var back_to_menu = snd.track_wanted() == "menu"
+	game._unhandled_input(_key(KEY_2))  # another mode: no music
+	tick.call(0.2)
+	var other_mode = snd.track_wanted() == ""
+	# a file that is not music is as no file: the round keeps the synthesised tune
+	snd.music_names = {"menu": "", "game": "broken.mp3", "ending": ""}
+	GameModeSounds.load_music = true
+	snd.load_music_files(dir)
+	GameModeSounds.load_music = false
+	snd.set_bgm(true)
+	tick.call(0.5)
+	var synth_kept = not snd.has_music("game") and snd._bgm.playing
+	snd.set_bgm(false)
+	_ok(loops and missing and none_by_default and found and on_title and on_game_title and countdown_quiet and in_round and hurry_same,
+		"music files: the menu's on the title screens, the round's while the clock runs (one track to the end, no synthesised tune over it), nothing in the countdown; files loop",
+		"%s %s %s %s %s %s %s %s %s" % [loops, missing, none_by_default, found, on_title, on_game_title, countdown_quiet, in_round, hurry_same])
+	_ok(result_wanted and ending_plays and off_silent and next_round and back_to_menu and other_mode and synth_kept,
+		"music files: the result's after the round until the next one; sound off = none; other modes = none; a missing or unreadable file leaves things as they were (the synthesised tune for the round)",
+		"%s %s %s %s %s %s %s" % [result_wanted, ending_plays, off_silent, next_round, back_to_menu, other_mode, synth_kept])
+	for name in ["menu.wav", "round.wav", "broken.mp3"]:
+		DirAccess.remove_absolute(dir + name)
+	_gm_free(game, rs)
 
 ## #149 in the game: Enter goes through the practice, the practice capsule is a real
 ## transaction of the Dial, nothing of it reaches the round, the stops stay.

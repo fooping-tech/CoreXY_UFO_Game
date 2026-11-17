@@ -190,7 +190,10 @@ func load_music_files(dir := MUSIC_DIR) -> void:
 		var file := str(music_names.get(track, ""))
 		var stream := load_music_stream(dir.path_join(file)) if file != "" else null
 		if stream == null:
+			if file != "" and FileAccess.file_exists(dir.path_join(file)):
+				push_warning("bgm: %s could not be read as music (%s): as without a file" % [file, track])
 			continue
+		print("[bgm] %s: %s (%.0f s, loops)" % [track, file, stream.get_length()])
 		var p := AudioStreamPlayer.new()
 		p.name = "Music_" + track
 		p.bus = AudioBuses.BGM
