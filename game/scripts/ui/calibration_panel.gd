@@ -235,21 +235,17 @@ func setup(m: Node) -> void:
 	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear(), "danger")
 
 	# --- 6. the study mode's capture height
-	_card("height", "HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。2 の Z の上下から計算する"
-		+ "（机 = 2 の「下」の記録）。ロープが重なって巻かれると計算がずれるので、定規で 1 回だけ確かめる。")
+	_card("height", "HELP でアームを下ろして撮る高さ。2 の Z の「下」の記録を机として、そこから 10cm 巻き上げた所"
+		+ "（爪先が机から 10cm）。2 の上下を記録すれば、そのまま勉強モードで使う（保存・確認は要らない）。")
 	_height = _value()
-	_step("①", "巻き上げドラムの半径を入れて「保存」")
+	_step("（任意）", "巻き上げドラムの半径が 15mm でなければ、入れて「保存」")
 	row = _row()
 	_drum = _spin(row, "巻き上げドラムの半径 mm", 3.0, 100.0, 0.5, 15.0)
 	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"), "primary")
 	_ws_button(row, "ここを机に記録して保存", func(): save_height("here"))
-	_step("②", "「10cm へ動かす（試す）」で、爪先と机の間を定規で測る")
+	_step("（任意）", "「10cm へ動かす（試す）」で高さを見る")
 	row = _row()
 	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]), "primary")
-	_step("③", "10cm なら「確かめた」")
-	row = _row()
-	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}), "primary")
-	_ws_button(row, "確認を外す", func(): main.ws.send_command("study_height_confirm", {"confirmed": false}))
 
 	# --- 7. the AI / outside services
 	_card("services", "勉強モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
@@ -319,15 +315,14 @@ func section_states() -> Array[Dictionary]:
 			"height":
 				if bool(height_status.get("usable", false)):
 					st = "ok"
-					text = "確認済み（勉強モードで使う）"
-				elif height_status.get("saved") != null and not height_status.has("trial_problem"):
-					st = "wait"
-					text = "保存済み: 10cm を試して「確かめた」"
+					text = "使う（Z の下 + 10cm）"
 				elif height_status.is_empty():
 					st = "wait"
 					text = "問い合わせ中"
+				elif not bool(height_status.get("z_calibrated", true)):
+					text = "2 の Z の上と下を記録すると使える"
 				else:
-					text = "まだ保存していない"
+					text = "使えない: " + str(height_status.get("problem", ""))
 			"services":
 				if services.is_empty():
 					st = "wait"
@@ -447,7 +442,7 @@ static func height_text(st: Dictionary) -> String:
 	if not bool(st.get("z_calibrated", true)):
 		lines.append("2 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
 	if bool(st.get("z_changed", false)):
-		lines.append("Z を測り直したので、撮影の高さを「保存」し直して、試してから「確かめた」")
+		lines.append("Z を測り直したので、記録した机の Z は使えない:「保存（机 = Z の下の記録）」か「ここを机に記録して保存」をやり直す")
 	if v.get("z_per_cm") != null:
 		lines.append("1cm = Z %.2f　机 = Z %s" % [float(v.z_per_cm), str(v.get("z_desk_tip", "?"))])
 	var stages: Array = st.get("stages", []) if not (st.get("stages", []) as Array).is_empty() else st.get("trial_stages", [])
@@ -458,13 +453,11 @@ static func height_text(st: Dictionary) -> String:
 	if not parts.is_empty():
 		lines.append("　".join(parts))
 	if bool(st.get("usable", false)):
-		lines.append("確認済み: 勉強モードで使う")
+		lines.append("勉強モードで使う（Z の下 + 10cm）")
 	elif st.has("trial_problem"):
 		lines.append("このままでは使えない: " + str(st.trial_problem))
-	elif st.get("saved") != null:
-		lines.append("まだ確認していない: 試してから「確かめた」")
-	else:
-		lines.append("まだ保存していない")
+	elif str(st.get("problem", "")) != "":
+		lines.append("このままでは使えない: " + str(st.problem))
 	return "\n".join(lines)
 
 func _card_panel() -> PanelContainer:
@@ -671,6 +664,8 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		return
 	if ok and cmd in ["study_height_set", "study_height_confirm"]:
 		show_heights(data)
+	if ok and cmd in ["z_set", "z_restore"] and main != null and main.get("ws") != null:
+		main.ws.send_command("study_height_status")  # #165: the heights follow the Z records
 	result_ok = ok
 	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])

@@ -102,7 +102,7 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 | 項目 | 設定 | 内容 |
 |---|---|---|
 | 俯瞰カメラ ↔ XY | 宿題タブの校正（`config/calibration.json` の `camera_xy`） | 既存（#78）。4 点以上 |
-| 高さ | 校正タブの「勉強モードの撮影の高さ」（#110。`config/calibration.json` の `study_height`。ないときは `study_mode.height.real`） | `z_per_cm` は巻き上げドラムの半径と Z の換算から計算、`z_desk_tip` は Z の「下」の記録（爪先を机に付けて記録）か「ここを机に記録」、`camera_offset_cm` と `landing_tip_cm` は入力。「試す」で各高さへ動かして定規で確かめ、「確かめた」で確定（値を変えると外れる）。以下は手で書くときの意味: | `z_desk_tip`（爪先が机に触れる Z）、`z_per_cm`（高さ 1 cm あたりの Z。既知の高さの台で測る）、`camera_offset_cm`（爪先からレンズまで）、`landing_tip_cm`。接触する着地は `allow_landing_contact` を実機で確かめてから。全部の `confirmed` を手で true にするまで実機の段階下降は拒否 |
+| 高さ | 校正タブの「勉強モードの撮影の高さ」（#110。`config/calibration.json` の `study_height`。ないときは `study_mode.height.real`） | `z_per_cm` は巻き上げドラムの半径と Z の換算から計算、`z_desk_tip` は Z の「下」の記録（爪先を机に付けて記録）か「ここを机に記録」、`camera_offset_cm` と `landing_tip_cm` は入力。#165: 実機では確認（`confirmed`）を求めない。何も保存していなければ、半径 15 mm・机 = Z の「下」・カメラのずれ 0 で、Z の換算を測ってあればそのまま使う。「試す」は高さを見るだけ。以下は手で書くときの意味: | `z_desk_tip`（爪先が机に触れる Z）、`z_per_cm`（高さ 1 cm あたりの Z。既知の高さの台で測る）、`camera_offset_cm`（爪先からレンズまで）、`landing_tip_cm`。接触する着地は `allow_landing_contact` を実機で確かめてから。全部の `confirmed` を手で true にするまで実機の段階下降は拒否 |
 | 片付け | `study_mode.cleanup.real` と `enabled_real` | ジグの保管位置・把持高さ・爪の開閉・経路・回収位置・禁止領域・速度・タイムアウト。`enabled_real` と全部の `confirmed` が要る |
 | 前提 | — | `z_sign` / `z_counts_per_unit` / `arm_open_turns` は実機で未確認のまま |
 
