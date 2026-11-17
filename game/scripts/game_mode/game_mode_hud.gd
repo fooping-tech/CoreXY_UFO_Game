@@ -20,6 +20,10 @@ const SCREEN := GameModeLayout.SCREEN
 const SCORE_RECT := GameModeLayout.SCORE_RECT
 const TIME_RECT := GameModeLayout.TIME_RECT
 const HOW_TO := ["クレーンで カプセルをつかむ", "左か右の Dial に 入れる", "ピンボールで 高得点をねらおう！"]
+## the easy mode's three cards (#169): what the hand does there, each with its hand
+const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "ゆび 1ぽん＝ひだり　2ほん＝みぎ へ じどうで はこぶ", "ピンボールで 高得点をねらおう！"]
+## the difficulty's line on the title, over START
+const MODE_RECT := Rect2(40, 736, 640, 56)
 ## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards
 const LOGO_LINES := ["SUMMON", "THE UFO"]
 const LOGO_Y := 158.0
@@ -39,6 +43,7 @@ var _hint: Label
 var _problem: Label
 var _start: Label
 var _rank_hint: Label
+var _mode: Label
 var _how: Array[Label] = []
 var _shown_score := 0.0
 var _ufo_tex: Texture2D
@@ -87,6 +92,10 @@ func setup(c: GameModeController) -> void:
 	# the title screen's words (Japanese: the game's normal font)
 	_rank_hint = _label("R：ランキング", 20, Color("b8f4ff"), Vector2(60, START_RECT.end.y + 12.0), Vector2(GameModeLayout.SCREEN.x - 120.0, 28))
 	_rank_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mode = _label("", 20, CYAN, MODE_RECT.position, MODE_RECT.size)
+	_mode.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_mode.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_mode.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_start = _label("Enter でスタート", 34, Color.WHITE, Vector2(60, START_RECT.position.y + 8.0), Vector2(GameModeLayout.SCREEN.x - 120.0, START_RECT.size.y - 16.0))
 	_start.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_start.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -187,8 +196,13 @@ func _process(dt: float) -> void:
 	_start.modulate.a = 0.8 + 0.2 * sin(_t * 5.0)  # START breathes
 	_start.scale = Vector2.ONE * (1.0 + 0.04 * sin(_t * 5.0))
 	_start.pivot_offset = _start.size * 0.5
-	for h in _how:
-		h.visible = title
+	_mode.visible = title
+	_mode.text = ctl.difficulty_text()
+	_mode.add_theme_color_override("font_color", CYAN if ctl.easy_on() else (Color("ffd24a") if ctl.difficulty == "easy" else MAGENTA))
+	for i in _how.size():
+		_how[i].visible = title
+		_how[i].text = HOW_TO_EASY[i] if ctl.easy_on() else HOW_TO[i]
+		_how[i].add_theme_font_size_override("font_size", 22 if ctl.easy_on() else 26)
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		# (the result and the ranking have the screen: only a Dial a person must look at keeps its line)
@@ -205,7 +219,9 @@ func _process(dt: float) -> void:
 			hint += "   Mock: Z / M"
 	_hint.text = hint
 	_problem.text = problem_text() if ctl.phase != "TUTORIAL" or ctl.practice != "" else ""
-	_problem.position.y = (START_RECT.position.y - 110.0) if title else (GameModeLayout.FIELD_TOP + 70.0)
+	_problem.position.y = (MODE_RECT.position.y - 96.0) if title else (GameModeLayout.FIELD_TOP + 70.0)
+	if ctl.easy_on() and not title:
+		_problem.position.y += 140.0  # under the easy mode's strip / panel
 
 # ------------------------------------------------------------------ drawing
 func _draw_art() -> void:
@@ -311,7 +327,12 @@ func _draw_title() -> void:
 		art.draw_rect(badge, cols[i])
 		PixelText.draw_centered(art, str(i + 1), badge.get_center(), 2.0, DARK)
 		var ic := r.position + Vector2(70, r.size.y * 0.5 + 6.0)
-		match i:
+		if ctl.easy_on() and i < 2:
+			# the easy mode: the hands that do it (pinch + fist; one finger + two fingers)
+			var hands: Array = [["pinch", "fist"], ["point", "peace"]][i]
+			for j in 2:
+				GestureTutorialHud.paint_hand(art, ic + Vector2(-34.0 + 34.0 * j, -30.0), 1.5, str(hands[j]))
+		match (-1 if ctl.easy_on() and i < 2 else i):
 			0:  # a claw over a capsule
 				art.draw_rect(Rect2(ic.x - 2.0, ic.y - 30.0, 4, 14), Color("c8d6ff"))
 				art.draw_line(ic + Vector2(0, -16), ic + Vector2(-12, -2), Color("c8d6ff"), 3.0)

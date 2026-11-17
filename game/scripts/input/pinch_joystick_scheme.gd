@@ -20,7 +20,7 @@ func sign_seen(g) -> bool:
 
 func on_arm(g, _now_ms: float) -> void:
 	g.joystick.set_anchor(g.hand)
-	g.mode = "z" if g.palm == "down" else "xy"
+	g.mode = "z" if g.palm == "down" and not g.xy_only else "xy"
 
 func velocity(g, dt: float) -> Vector3:
 	if g.mode == "z":
