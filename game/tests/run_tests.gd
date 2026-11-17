@@ -2659,9 +2659,9 @@ func _test_calibration_summary() -> void:
 		all_ok.append({"key": x[0], "title": x[1], "state": "ok", "text": ""})
 	var waiting := all_ok.duplicate(true)
 	waiting[5].state = "wait"
-	waiting[5].text = "10cm を試して「確かめた」"
+	waiting[5].text = "2 の Z の上と下を記録すると使える"
 	_ok(CalibrationPanel.next_text(all_ok).begins_with("すべて済み")
-		and CalibrationPanel.next_text(waiting).contains("6. 勉強モードの撮影の高さ: 10cm を試して"),
+		and CalibrationPanel.next_text(waiting).contains("6. 勉強モードの撮影の高さ: 2 の Z の上と下を記録すると使える"),
 		"calibration summary: the next thing to do is the first section not done")
 	_ok(CalibrationPanel.short_detail("2.1.325 (Claude Code)（/Users/x/.vscode/claude）") == "2.1.325 (Claude Code)"
 		and CalibrationPanel.short_detail("VOICEVOX 0.26.0（http://127.0.0.1:50021）") == "VOICEVOX 0.26.0"
@@ -2766,10 +2766,10 @@ func _test_calibration_tab(rs: Node) -> void:
 	_ok(svt.contains("✓ Jev（Cloudflare）") and svt.contains("✗ VOICEVOX: つながらない") and svt.contains("－ 学習支援 AI")
 		and svt.contains("✓ AI に試しに質問: claude が答えた: OK"),
 		"calibration: the AI / outside services are listed, an ask adds its line (#114)", svt)
-	# #110: the capture heights: the saved values fill the inputs, the stages and the state are shown
+	# #110 / #165: the capture heights: the saved values fill the inputs, the stages and the state are shown
 	var cp: CalibrationPanel = st.calibration
 	game.ws.ack.emit("h1", true, {"command": "study_height_status", "usable": false, "stages": [],
-		"problem": "not confirmed", "z_calibrated": true, "default_drum_radius_mm": 15.0,
+		"problem": "the 10 cm stage leaves no clearance", "z_calibrated": true, "default_drum_radius_mm": 15.0,
 		"saved": {"drum_radius_mm": 15.0, "camera_offset_cm": 3.0, "landing_tip_cm": 1.0, "allow_landing_contact": false,
 			"desk": "bottom", "confirmed": false},
 		"values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": false},
@@ -2778,16 +2778,18 @@ func _test_calibration_tab(rs: Node) -> void:
 	cp.refresh()
 	var hp := cp.height_params("bottom")
 	var unconfirmed_text: String = cp._height.text
-	game.ws.ack.emit("h2", true, {"command": "study_height_confirm", "usable": true, "z_calibrated": true,
-		"saved": {"confirmed": true}, "values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": true},
+	game.ws.ack.emit("h2", true, {"command": "study_height_status", "usable": true, "z_calibrated": true,
+		"saved": null, "values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": true},
 		"stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
 			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
 	cp.refresh()
 	_ok(not hp.has("camera_offset_cm") and is_equal_approx(float(hp.drum_radius_mm), 15.0)
 		and hp.desk == "bottom" and unconfirmed_text.contains("1cm = Z 5.40") and unconfirmed_text.contains("10cm: Z 37.8")
-		and unconfirmed_text.contains("まだ確認していない") and cp._height.text.contains("確認済み")
+		and unconfirmed_text.contains("このままでは使えない") and cp._height.text.contains("勉強モードで使う")
+		and not cp._height.text.contains("確かめた")
 		and is_equal_approx(cp.stage_z("5cm"), 10.81) and is_nan(cp.stage_z("bogus")),
-		"calibration: the study heights are entered, shown, tried and confirmed (#110)", unconfirmed_text)
+		"calibration: the study heights are shown and used from the Z bottom with no check (#110, #165)",
+		cp._height.text)
 	# #106: the call-back's estimate is shown, then used only with the same turn shift
 	game.ws.ack.emit("r4", true, {"command": "z_restore", "restore": {"turns": -1, "drift_counts": 150,
 		"drift_units": 1.9, "z": 42.5, "too_far": false, "applied": false}})
