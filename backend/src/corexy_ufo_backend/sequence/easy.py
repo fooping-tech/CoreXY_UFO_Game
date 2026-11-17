@@ -326,7 +326,7 @@ class EasySequencer(AutoCatchSequencer):
         the claw where it is). The arm may be lower than the recorded catch height (it was left
         there by hand), so for this run the floor is the bottom of the Z range and the bounds
         on one move are the whole range: the way up must never be the thing that is refused.
-        The validated params are back when the run ends."""
+        The validated params are back as soon as the arm is up (and whenever the run ends)."""
         lim = self.limits
         bottom = lim.z_min if lim.z_up_is_positive else lim.z_max
         span = abs(lim.z_max - lim.z_min)
@@ -334,6 +334,11 @@ class EasySequencer(AutoCatchSequencer):
         self._strict = self.params
         self.params = dataclasses.replace(self.params, z_floor=bottom, max_drop_units=span,
                                           max_drum_turns=span * cpu / 4096 * 1.05 + 0.05)
+
+    def _restore_strict(self) -> None:
+        if self._strict is not None:
+            self.params = self._strict
+            self._strict = None
 
     async def start_reset(self) -> None:
         """The start of a game (#177): the claw open and the arm at the top, from any height."""
@@ -396,6 +401,9 @@ class EasySequencer(AutoCatchSequencer):
             for i, step in enumerate(self.steps):
                 self.step_index = i + 1
                 await self._do_step(step)
+            # the arm is up: from here (the wait, the carry, the descent over the Dial) the
+            # validated floor and bounds count again (review on #178)
+            self._restore_strict()
             if self._reset_only:
                 self.state = "MANUAL_XY"
                 self.last_result = "done"
@@ -433,9 +441,7 @@ class EasySequencer(AutoCatchSequencer):
         finally:
             self._action = None
             self.active = False
-            if self._strict is not None:
-                self.params = self._strict
-                self._strict = None
+            self._restore_strict()
             if self.lock.locked():
                 self.lock.release()
             self._changed()

@@ -274,6 +274,9 @@ async def test_a_fist_with_the_arm_down_closes_where_it_is_and_comes_up(z):
         assert rig.robot.commands == ["CLAW -> closed", "Z -> 95.00"]
         assert rig.phases() == ["IDLE", "CLOSE_CLAW", "RAISE_WITH_ITEM", "WAIT_DESTINATION"]
         assert abs(rig.robot.pos[0] - 120.0) < 0.5 and abs(rig.robot.pos[2] - 95.0) < 1.0
+        # up: the validated floor and bounds count again for the wait and the carry
+        assert rig.seq.active and rig.seq._strict is None and rig.seq.params.z_floor == 20.0
+        assert rig.seq.params.max_drop_units == 80.0
         # and from there it is the usual run
         rig.seq.choose(1, rig.seq.grab_id)
         await rig.seq.wait()
