@@ -41,7 +41,9 @@ STEPS = (
     ("claw_close", "爪を閉じる"),
     ("home", "原点復帰"),
 )
-TRACK_JOG_UNITS_S = 5.0  # slow, upwards
+TRACK_JOG_UNITS_S = 5.0  # slow; upwards (the sign follows z_up_is_positive)
+# home waits up to 90 s for the firmware (RealRobot.home): its step may take longer than the others
+STEP_TIMEOUT_S = {"home": 120.0}
 TRACK_JOG_S = 0.3
 TRACK_SETTLE_S = 1.0  # the jog's end (and the firmware's hold check) before asking again
 NOT_TRACKING = "追跡がまだ始まっていない"
@@ -135,10 +137,14 @@ class PrepareSequencer:
                 self.step = key
                 self.states[key] = "run"
                 self._changed()
+                limit = STEP_TIMEOUT_S.get(key, self.step_timeout_s)
                 try:
-                    note = await asyncio.wait_for(getattr(self, "_do_" + key)(), self.step_timeout_s)
+                    note = await asyncio.wait_for(getattr(self, "_do_" + key)(), limit)
                 except asyncio.TimeoutError as e:
-                    raise SequenceFault(f"{key}: no answer within {self.step_timeout_s:g} s") from e
+                    # the firmware may still be moving (cancelling the wait does not stop it):
+                    # stop it before the motion lock is let go (review on #168)
+                    await self._stop_robot()
+                    raise SequenceFault(f"{key}: no answer within {limit:g} s (stopped with ABORT)") from e
                 except RobotCommandError as e:
                     self._check_abort()  # a stop makes the running command fail: say "stopped"
                     raise SequenceFault(str(e)) from e
@@ -151,6 +157,7 @@ class PrepareSequencer:
         except SequenceFault as f:
             self._fail(str(f))
         except asyncio.CancelledError:
+            await self._stop_robot()
             self._fail("cancelled")
             raise
         except Exception as e:  # pragma: no cover - a bug must still end with the lock released
@@ -161,6 +168,14 @@ class PrepareSequencer:
             if self.lock.locked():
                 self.lock.release()
             self._changed()
+
+    async def _stop_robot(self) -> None:
+        if self._abort_reason:
+            return  # aborted: the server's stop / the abort's own stop went out
+        try:
+            await self.robot.stop()
+        except Exception as e:  # pragma: no cover - best effort; the fault says why anyway
+            log.warning("preparation: stop failed: %s", e)
 
     def _fail(self, reason: str) -> None:
         if self.step:
@@ -190,7 +205,8 @@ class PrepareSequencer:
             if NOT_TRACKING not in str(e):
                 raise
         # the firmware starts tracking the drum with a jog: a short slow one, upwards
-        await self.robot.jog(0.0, 0.0, TRACK_JOG_UNITS_S)
+        up = 1.0 if self.robot.limits.z_up_is_positive else -1.0  # review on #168: the arm goes up
+        await self.robot.jog(0.0, 0.0, up * TRACK_JOG_UNITS_S)
         try:
             await asyncio.sleep(TRACK_JOG_S)
         finally:

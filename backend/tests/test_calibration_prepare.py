@@ -113,6 +113,56 @@ async def test_a_stop_aborts_it():
     assert not robot.snapshot().homed
 
 
+async def test_a_step_that_takes_too_long_stops_the_robot_before_the_lock_is_let_go():
+    """Review on #168: cancelling the wait does not stop the firmware: ABORT first."""
+    class SlowHome(MockRobot):
+        async def home(self) -> None:
+            await asyncio.sleep(10)
+
+    robot = SlowHome()
+    await robot.connect()
+    seq = PrepareSequencer(robot, lock=asyncio.Lock(), settle_s=0.0, step_timeout_s=0.05)
+    import corexy_ufo_backend.sequence.prepare as prepare_mod
+    old = dict(prepare_mod.STEP_TIMEOUT_S)
+    prepare_mod.STEP_TIMEOUT_S["home"] = 0.1
+    try:
+        st = await run(seq)
+    finally:
+        prepare_mod.STEP_TIMEOUT_S.clear()
+        prepare_mod.STEP_TIMEOUT_S.update(old)
+    assert st["last_result"] == "fault" and states(seq)["home"] == "fail" and "ABORT" in st["error"]
+    assert robot.snapshot().alarm  # the mock's stop = ABORT: alarm
+    assert not seq.lock.locked()
+
+
+async def test_the_tracking_jog_goes_up_whichever_way_z_counts():
+    """Review on #168: with z_up_is_positive false, up is a negative Z speed."""
+    from corexy_ufo_backend.config import RobotLimits
+
+    class RealLike(MockRobot):
+        name = "real"
+
+        def __init__(self) -> None:
+            super().__init__(limits=RobotLimits(z_up_is_positive=False))
+            self.jogs: list[float] = []
+            self.asked = 0
+
+        async def restore_z_points(self, apply, turns=None):
+            self.asked += 1
+            from corexy_ufo_backend.robot.interface import RobotCommandError
+            raise RobotCommandError("巻き上げサーボの回転の追跡がまだ始まっていない: W か S を一瞬押してから、もう一度")
+
+        async def jog(self, vx, vy, vz=0.0, *, z_free=False):
+            self.jogs.append(vz)
+
+    robot = RealLike()
+    await robot.connect()
+    await robot.enable_motors(True)
+    seq = PrepareSequencer(robot, lock=asyncio.Lock(), settle_s=0.0)
+    note = await seq._do_z_track()
+    assert robot.jogs[0] < 0 and robot.jogs[-1] == 0.0 and "巻き上げ" in note
+
+
 async def test_refused_while_busy():
     robot = MockRobot()
     await robot.connect()
