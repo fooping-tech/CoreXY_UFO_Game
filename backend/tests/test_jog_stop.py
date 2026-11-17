@@ -475,9 +475,10 @@ async def test_server_jog_boost(server):
         assert robot.jog_cap(50.0) == 100.0
         # it is only a cap: nothing moved, and the robot still has to be armed and homed to jog
         assert (await _cmd(ws, "j", "jog", vx=90, vy=0))["type"] == "nack"
-        # a stop of either kind ends it
-        assert (await _cmd(ws, "s", "soft_stop"))["type"] == "ack" and robot.jog_boost_left() == 0.0
-        await _cmd(ws, "b4", "jog_boost", seconds=10)
+        # a soft_stop (the hand was lost, the window lost the focus) stops the motion only: the
+        # game goes on with the same power, so the cap stays until its deadline
+        assert (await _cmd(ws, "s", "soft_stop"))["type"] == "ack" and robot.jog_boost_left() > 0.0
+        # the emergency stop ends it
         assert (await _cmd(ws, "s2", "stop"))["type"] == "ack" and robot.jog_boost_left() == 0.0
         # asked to end
         await _cmd(ws, "b5", "jog_boost", seconds=10)

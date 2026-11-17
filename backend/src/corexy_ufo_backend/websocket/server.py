@@ -815,7 +815,11 @@ class GameServer:
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
-                self.robot.jog_boost(0)
+                # #188: the SPEED UP's cap is NOT ended here. The game sends soft_stop whenever
+                # the hand is lost or the window loses focus, and goes on with the same power
+                # when the hand is back: ending it here left the screen saying SPEED UP while
+                # the crane was at its usual cap. Its deadline still ends it; so do the
+                # emergency stop, motors off, the game's jog_boost 0 and the last client leaving.
                 for s in self.sequences:
                     if s.seq.active:
                         if s.seq is self.easy and self.easy.stop_waiting("stopped (soft_stop)"):
@@ -840,7 +844,9 @@ class GameServer:
                 # #188 (SPEED UP): the jog's XY cap is backend.jog_boost_mm_s for `seconds`
                 # (at most backend.jog_boost_max_s), then the usual one again by itself: the
                 # deadline is kept here, so a game that dies cannot leave it raised. It moves
-                # nothing; the edge margin, the dead-man and the stops are as always.
+                # nothing; the edge margin, the dead-man and the stops are as always. Ended at
+                # once by stop (the emergency stop), motors off, seconds 0 and the last client
+                # leaving; a soft_stop only stops the motion (the game sends 0 when the power ends).
                 try:
                     seconds = float(params.get("seconds", 0.0))
                 except (TypeError, ValueError):
