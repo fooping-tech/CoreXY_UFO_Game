@@ -545,6 +545,11 @@ func open() -> void:
 	if _active:
 		return
 	_active = true
+	# every visit needs a fresh hand shape (the title's is not ticked while the screen is closed)
+	title_hand = ""
+	title_hand_progress = 0.0
+	_title_hand_armed = false
+	_title_hand_entry = "?"
 	use_devices(devices_wanted)
 	layer.visible = true
 	pixel_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS

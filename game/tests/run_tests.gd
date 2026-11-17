@@ -4754,6 +4754,19 @@ func _test_game_title_hand(rs: Node) -> void:
 	_ok(opened and carried_over and to_hard and to_easy and filling and let_go and started and only_title,
 		"game title (#183): an open hand held 3 s starts (as Enter), one finger = easy, two = hard; the shape that chose the mode does not switch; nothing outside the title",
 		"%s %s %s %s %s %s %s %s" % [opened, carried_over, to_hard, to_easy, filling, let_go, started, only_title])
+	# left on the title and chosen again with two fingers: that shape does not switch it either
+	ctl._halt("test")
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	ctl.set_difficulty("easy")
+	for i in 30:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("open"))  # armed, a start hold half done
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	for i in 120:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("peace"))
+	_ok(ctl.phase == "IDLE" and ctl.difficulty == "easy" and ctl.title_hand == "" and ctl.title_hand_progress == 0.0,
+		"game title (#183): every visit needs a fresh shape: back from the top menu with two fingers up, the difficulty stays", "%s %s" % [ctl.phase, ctl.difficulty])
 	# today's best: of the ranking's records of today and of rounds that did not get in
 	ctl._halt("test")
 	var none = ctl.today_best() == 0
