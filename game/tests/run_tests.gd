@@ -3173,7 +3173,9 @@ func _test_game_mode_powerup_integration(rs: Node) -> void:
 	_ok(ctl.field.capsule_count() == 3 and int(ctl._multi_left[id]) == 3
 		and ctl.fx.power_portals.left and not ctl.fx.power_portals.right and multi_led
 		and ctl.sounds.log.has("power_multi"),
-		"pickup multi: three physics balls, same-side portal LED, distinct audio")
+		"pickup multi: three physics balls, same-side portal LED, distinct audio",
+		"balls=%d left=%s right=%s LED=%s audio=%s" % [ctl.field.capsule_count(), str(ctl.fx.power_portals.left),
+			str(ctl.fx.power_portals.right), str(multi_led), str(ctl.sounds.log.has("power_multi"))])
 	ctl.field.capsule_exited.emit(children[0], "left", pos)
 	ctl.field.capsule_exited.emit(id, "left", pos)
 	_ok(lane.state == "SIMULATING" and hub.count(GM_L, "RELEASE_BALL") == 0
