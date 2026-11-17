@@ -446,6 +446,14 @@ func _set_debug_visible(on: bool) -> void:
 		debug_ui.study_panel_visibility_changed(on)
 		_layout()
 
+## #183: what the menus read of the hand (the title's choice, the game mode's start and
+## difficulty): only whether a fresh hand is seen, and its shape. No steering here.
+func hand_for_menus() -> Dictionary:
+	if gesture == null or not gesture.enabled:
+		return {}
+	var age := gesture.age_ms(float(Time.get_ticks_msec()))
+	return {"fresh": age >= 0.0 and age <= gesture.stale_ms and gesture.camera_ok, "detected": gesture.detected, "pose": gesture.pose}
+
 func title_active() -> bool:
 	return title != null and title.active()
 
@@ -828,6 +836,8 @@ func _process(dt: float) -> void:
 		game_mode.sounds.silent = calibrating()
 	if title_active():
 		title.set_status(_title_status())
+		if not settings_active():  # #183: one finger / two fingers pick a mode
+			title.hand_tick(dt, hand_for_menus())
 	_update_origin()
 	if _cur_points.is_empty():
 		return
