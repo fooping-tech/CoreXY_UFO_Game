@@ -277,6 +277,7 @@ class GameServer:
             robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             easy_check=lambda: self._easy_prepare_note(),
             center=lambda: self.backend_cfg.home_center() if self.backend_cfg is not None else None,
+            center_feed=lambda: self.backend_cfg.fast_feed() if self.backend_cfg is not None else None,
             on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
         # #169: the score game's easy mode (catch here, wait for the destination, carry to a Dial).
         # The catch uses the auto catch's profile; the Dials' drop points are the real crane's own
@@ -876,7 +877,7 @@ class GameServer:
         if center is None:
             return
         try:
-            await self.robot.move_xy(*center)
+            await self.robot.move_xy(*center, self.backend_cfg.fast_feed())
         except RobotCommandError as e:
             raise RobotCommandError(f"homed, but the move to the middle of the stage did not finish: {e}") from e
 

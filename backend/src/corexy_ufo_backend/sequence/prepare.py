@@ -68,6 +68,7 @@ class PrepareSequencer:
                  on_change: Callable[[dict], None] | None = None,
                  easy_check: Callable[[], str] | None = None,
                  center: Callable[[], tuple[float, float] | None] | None = None,
+                 center_feed: Callable[[], float | None] | None = None,
                  step_timeout_s: float = 60.0, settle_s: float = TRACK_SETTLE_S,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.robot = robot
@@ -76,6 +77,7 @@ class PrepareSequencer:
         self.on_change = on_change
         self.easy_check = easy_check
         self.center = center
+        self.center_feed = center_feed
         self.step_timeout_s = step_timeout_s
         self.settle_s = settle_s
         self.clock = clock
@@ -273,7 +275,7 @@ class PrepareSequencer:
         to = self.center() if self.center is not None else None
         if to is None:
             return "skip: 使っていない（backend.home_then_center）"
-        await self.robot.move_xy(*to)
+        await self.robot.move_xy(*to, self.center_feed() if self.center_feed is not None else None)
         return f"X {to[0]:.0f} / Y {to[1]:.0f}"
 
     async def _do_claw_ready(self) -> str:

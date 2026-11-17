@@ -181,6 +181,9 @@ func _succeed() -> void:
 	guide = ""
 	oks += 1
 	step_succeeded.emit(index, step())
+	var lines: Array = step().get("done_say", [])
+	if not lines.is_empty() and not no_hand:
+		say.emit(lines)
 
 func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 	if state == "off":
@@ -188,7 +191,9 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 	t += dt
 	if state == "success":
 		_ok_left -= dt
-		if _ok_left <= 0.0:
+		# a step with words for its success (done_say) waits for them, never for long
+		var told: bool = step().get("done_say", []).is_empty() or not bool(world.get("speech_busy", false)) or _ok_left <= -tell_max_s
+		if _ok_left <= 0.0 and told:
 			_next()
 		return
 	var s := step()

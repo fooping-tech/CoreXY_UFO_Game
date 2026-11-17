@@ -9,6 +9,7 @@ extends RefCounted
 ##         pose      a hand shape (`poses`) held for hold_s
 ##         pinch     thumb and `finger` together, held for hold_s; `palm` = "down": with the
 ##                   back of the hand to the camera (the pinch joystick's up / down mode)
+##         (any step: done_say = lines said when it is done; the next step waits for them)
 ##         move      really steering: the hand stick ACTIVE and asking for speed for move_s
 ##                   (`axis` = "z": in its up / down mode). When the robot may not be moved
 ##                   (`gate`), the hand alone: `by` = "hand" (the pinch carried move_dist
@@ -49,7 +50,8 @@ const STEPS := {
 	"move": {"kind": "move", "art": "move", "by": "hand", "move_s": 3.0, "move_dist": 0.12,
 		"title": "そのまま てを うごかそう！",
 		"sub": "つまんだまま うごかすと UFOくんも うごくよ。はなすと とまるよ",
-		"say": ["そのまま、てを、うごかそう！"]},
+		"say": ["そのまま、てを、うごかそう！"],
+		"done_say": ["きみと こころが つながったよ！", "ベントラベントラスペースピープル！", "これで ハンドパワーで うごかせるよ！"]},
 	"point": {"kind": "pose", "art": "point", "poses": ["point"], "hold_s": 3.0,
 		"title": "ひとさしゆびで ゆびさそう！",
 		"sub": "UFOくんと シンクロ！",

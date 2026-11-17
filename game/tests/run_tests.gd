@@ -89,6 +89,7 @@ func _ready() -> void:
 	_test_game_mode_reactions(rs)
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_more_steps()
+	_test_gesture_tutorial_done_say()
 	_test_gesture_tutorial_game(rs)
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
@@ -4690,6 +4691,42 @@ func _test_gesture_tutorial_logic() -> void:
 		"%s %s %s" % [skipped_to, ends4, oks5])
 
 ## #171: the gauges take about 3 s; letting go and the up / down mode have steps of their own.
+## #179: the moving step says its own words when it is done, and the next step waits for them.
+func _test_gesture_tutorial_done_say() -> void:
+	var claw := PinchJoystickScheme.new().claw_poses()
+	var moving = {"pinch": true, "active": true, "speed": 0.6}
+	for mode in ["hard", "easy"]:
+		var all = GestureTutorialSteps.resolve({}, mode, "pinch_joystick", claw)
+		var steps = all.filter(func(s): return s.id in ["move", "rules"])
+		var said = []
+		var t = GestureTutorialController.new()
+		t.say.connect(func(lines): said.append(lines))
+		t.begin(steps, true)
+		_tut_run(t, 2.5, _tut_hand(moving))
+		var before = said.size() == 1 and t.state == "judging"
+		_tut_run(t, 0.7, _tut_hand(moving))
+		var done = t.state == "success" and said.size() == 2
+		var words = "".join(said[1]) if said.size() > 1 else ""
+		_ok(before and done and words.contains("こころが つながったよ") and words.contains("ベントラベントラスペースピープル") and words.contains("ハンドパワー"),
+			"tutorial done_say (%s): moving the hand says the heart is linked, the spell and the hand power" % mode, words)
+		# while the voice is busy the next step does not start (its line would cut this one off)...
+		_tut_run(t, 4.0, _tut_hand(moving), {"speech_busy": true})
+		var waits = t.state == "success" and t.index == 0
+		_tut_run(t, 0.1, _tut_hand(moving), {"speech_busy": false})
+		_ok(waits and t.index == 1, "tutorial done_say (%s): the next step waits for the words" % mode, "%s %d" % [t.state, t.index])
+	# ...but never for long: a voice that never ends does not hold the practice
+	var t2 = GestureTutorialController.new()
+	t2.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["move", "rules"]), true)
+	_tut_run(t2, 3.2, _tut_hand(moving))
+	_tut_run(t2, t2.ok_s + t2.tell_max_s + 0.5, _tut_hand(moving), {"speech_busy": true})
+	_ok(t2.index == 1, "tutorial done_say: a voice that never ends does not hold the practice", str(t2.index))
+	# a step without done_say goes on after the OK alone, as before
+	var t3 = GestureTutorialController.new()
+	t3.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["open", "rules"]), true)
+	_tut_run(t3, 3.2, _tut_hand({"pose": "open"}))
+	_tut_run(t3, t3.ok_s + 0.2, _tut_hand({"pose": "open"}), {"speech_busy": true})
+	_ok(t3.index == 1, "tutorial done_say: a step without it does not wait", str(t3.index))
+
 func _test_gesture_tutorial_more_steps() -> void:
 	var claw := PinchJoystickScheme.new().claw_poses()
 	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)

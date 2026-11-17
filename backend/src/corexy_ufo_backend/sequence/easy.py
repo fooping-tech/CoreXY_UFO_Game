@@ -203,7 +203,8 @@ def real_catch_params(raw: dict[str, Any] | None, easy: EasyParams, limits: Robo
         setattr(p, k, n if n is not None else v)
     t = r.get("timeouts_s") if isinstance(r.get("timeouts_s"), dict) else {}
     p.timeouts_s = {k: (_num(t.get(k)) or v) for k, v in REAL_TIMEOUTS.items()}
-    feed = _num(r.get("xy_feed_mm_min")) or (backend.xy_feed_mm_min if backend is not None else None)
+    # the carry to a Dial is the only XY move of the easy mode: the quick feed (#179)
+    feed = _num(r.get("xy_feed_mm_min")) or (backend.fast_feed() if backend is not None else None)
     p.xy_feed_mm_min = p.xy_feed_max_mm_min = feed
     p.button_debounce_ms = 0.0
     p.claw_standby = None

@@ -87,6 +87,14 @@ class BackendConfig:
     # centre, or home_center_mm [x, y]) instead of staying in the home corner
     home_then_center: bool = True
     home_center_mm: tuple[float, float] | None = None
+    # #179: the feed (mm/min) of the automatic XY moves that are to be quick: to the middle
+    # after homing, and the easy mode's carry to a Dial. None = xy_feed_mm_min. The firmware
+    # clamps an XY feed to its MAX_FEED_MM_MIN (15909.9)
+    xy_fast_feed_mm_min: float | None = None
+
+    def fast_feed(self) -> float:
+        f = self.xy_fast_feed_mm_min
+        return f if f is not None and f > 0 else self.xy_feed_mm_min
 
     def home_center(self) -> tuple[float, float] | None:
         """Where the arm goes after homing (None = it stays at home). A configured point
@@ -234,6 +242,8 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_sign = int(b.get("z_sign", 1))
     cfg.arm_open_turns = float(b.get("arm_open_turns", 0.5))
     cfg.xy_feed_mm_min = float(b.get("xy_feed_mm_min", 900.0))
+    ff = b.get("xy_fast_feed_mm_min")
+    cfg.xy_fast_feed_mm_min = float(ff) if isinstance(ff, (int, float)) and not isinstance(ff, bool) and ff > 0 else None
     cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))

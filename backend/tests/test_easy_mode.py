@@ -616,7 +616,7 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     # recorded heights, the descent bounded by exactly what was recorded
     p = srv.easy.params
     assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
-    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == cfg.xy_feed_mm_min
+    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == cfg.fast_feed()
     # a change after the confirmation takes it back
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
