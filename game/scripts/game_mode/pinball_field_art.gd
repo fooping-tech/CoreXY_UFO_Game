@@ -112,6 +112,7 @@ func _draw() -> void:
 	_draw_spinners()
 	_draw_star()
 	_draw_alien()
+	_draw_powerup()
 	_draw_slopes()
 	_draw_frame()
 	_draw_capsules()
@@ -137,6 +138,21 @@ func _dashes(p: Vector2, r: float, col: Color, n: int, spin := 0.0) -> void:
 # ------------------------------------------------------------------ the table
 ## The floor: a dark panel the stars show through a little, with the inlays of a pinball
 ## table (orbit rings, lane lines, a big faint UFO, arrow lamps towards what scores).
+## Power-up icon in the pinball world (#188): independent of scoring targets.
+func _draw_powerup() -> void:
+	if field.powerup_kind == "":
+		return
+	var p: Vector2 = field.powerup_pos
+	var kind: String = field.powerup_kind
+	var col := Color("ffe03c") if kind == "double" else (Color("3ff0ff") if kind == "speed" else Color("ff4fd8"))
+	var r := 25.0 + 3.0 * sin(_t * 7.0)
+	draw_circle(p, r + 8.0, Color(col.r, col.g, col.b, 0.16))
+	draw_circle(p, r, Color("081432"))
+	draw_arc(p, r, 0.0, TAU, 24, col, 4.0)
+	draw_arc(p, r + 5.0, -_t * 3.0, PI - _t * 3.0, 16, Color.WHITE, 2.0)
+	var label := "SPD" if kind == "speed" else ("3B" if kind == "multiball" else "x2")
+	PixelText.draw_centered(self, label, p, 2.2, col, Color("050818"))
+
 func _draw_board() -> void:
 	var l := PinballField.LEFT
 	var r := PinballField.RIGHT

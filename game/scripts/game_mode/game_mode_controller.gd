@@ -110,6 +110,11 @@ var devices: GameModeDevices
 var mock_hub: MockDialHub
 var backend_hub: BackendDialHub
 var score := ScoreManager.new()
+var powerups := PowerUpManager.new()
+## Virtual child ID -> one real capsule ID. At most two extra balls per physical capsule.
+var _multi_parent: Dictionary = {}
+var _multi_left: Dictionary = {}
+var _multi_side: Dictionary = {}
 var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
@@ -293,9 +298,11 @@ func setup(m: Node) -> void:
 	field = PinballField.new()
 	field.name = "PinballField"
 	field.configure(cfg.get("field", {}) if cfg.get("field") is Dictionary else {})
+	field.configure_powerups(cfg.get("powerups", {}) if cfg.get("powerups") is Dictionary else {})
 	layer.add_child(field)
 	field.target_hit.connect(_on_target_hit)
 	field.capsule_exited.connect(_on_capsule_exited)
+	field.powerup_collected.connect(_on_powerup_collected)
 	field.process_mode = Node.PROCESS_MODE_DISABLED
 	field_art = PinballFieldArt.new()
 	field_art.name = "PinballFieldArt"
@@ -414,6 +421,7 @@ func _configure(cfg: Dictionary) -> void:
 	release_retries = maxi(int(t.get("release_retries", release_retries)), 0)
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
+	powerups.configure(cfg.get("powerups", {}) if cfg.get("powerups") is Dictionary else {})
 	_result_bonus_cfg = cfg.get("result_bonus", {}) if cfg.get("result_bonus") is Dictionary else {}
 	if cfg.get("result_show") is Dictionary:
 		result_show.configure(cfg.result_show)
@@ -591,6 +599,10 @@ func close() -> void:
 	sounds.set_bgm(false)
 	sounds.ending_on = false
 	field.clear()
+	powerups.reset()
+	_multi_parent.clear()
+	_multi_left.clear()
+	_multi_side.clear()
 	fx.reset()
 	_clear_result()
 	_clear_ranking_view()
@@ -853,6 +865,10 @@ func start(after_practice := false) -> void:
 func _reset_round() -> void:
 	_flush_ranking()
 	score.reset()
+	powerups.reset()
+	_multi_parent.clear()
+	_multi_left.clear()
+	_multi_side.clear()
 	capsules.reset()
 	ufo.reset()
 	field.clear()
@@ -990,6 +1006,21 @@ func tick(dt: float) -> void:
 	result_show.advance(dt)  # the result's timeline: its cues come out of this, in this tick
 	_tick_ranking(dt)
 	backdrop.advance(dt)
+	if phase in ["PLAYING", "SETTLING"]:
+		var finished_powers := powerups.advance(dt)
+		if "double" in finished_powers and phase == "PLAYING":
+			_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 180, "speed": 128, "transition_ms": 240})
+	score.power_multiplier = 2.0 if powerups.active("double") else 1.0
+	fx.power_status.clear()
+	if powerups.active("speed"):
+		fx.power_status.append("SPD %dS" % powerups.seconds("speed"))
+	if powerups.active("double"):
+		fx.power_status.append("x2 %dS" % powerups.seconds("double"))
+	if not _multi_left.is_empty():
+		var balls := 0
+		for n in _multi_left.values():
+			balls += int(n)
+		fx.power_status.append("MULTI %d BALL" % balls)
 	if phase != "STOPPED":
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
@@ -1043,6 +1074,7 @@ func tick(dt: float) -> void:
 
 func _go() -> void:
 	_set_phase("PLAYING")
+	field.set_powerups_enabled(true)
 	fx.react("start")
 	particles.burst(ufo.position(), Color("ffe03c"), 24, 260.0)
 	particles.ring(ufo.position(), Color("3ff0ff"), 110.0, 0.5)
@@ -1071,7 +1103,8 @@ func _clock_cues() -> void:
 		sounds.play("hurry")
 		sounds.set_bgm(true, true)
 		backdrop.pulse(Color("ff4fd8"), 0.8)
-		_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200})
+		if not powerups.active("double"):
+			_light("SET_LIGHT_MODE", {"mode": "GAME_PLAY", "brightness": 220, "speed": 230, "transition_ms": 200})
 		_trace("hurry", null, {})
 	var s := int(ceil(time_left))
 	if time_left <= warning_s and s < _warned_at and s > 0:
@@ -1081,6 +1114,7 @@ func _clock_cues() -> void:
 ## 0 s: nothing new is taken. Capsules in play finish (their score counts) and go out.
 func _time_up() -> void:
 	_set_phase("SETTLING")
+	field.set_powerups_enabled(false)
 	settle_left = settle_max_s
 	sounds.set_bgm(false)
 	sounds.play("timeup")
@@ -1115,6 +1149,12 @@ func _result() -> void:
 	# score.score by now, and nothing can score after this (the field is cleared)
 	result = ResultBonus.of_round(score, capsules, _result_bonus_cfg)
 	field.clear()
+	powerups.reset()
+	_multi_parent.clear()
+	_multi_left.clear()
+	_multi_side.clear()
+	fx.set_power_portal("left", false)
+	fx.set_power_portal("right", false)
 	sounds.set_bgm(false)
 	sounds.ending_on = true  # the result's music (#173), until the next round or the title
 	for side in SIDES:
@@ -1437,8 +1477,51 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	_led(l, "INTAKE")
 	_light("TRIGGER_EFFECT", {"effect": "BALL_RECEIVED", "duration_ms": 800, "intensity": 200})
 
+## One real capsule may own three virtual balls. Each virtual ID gets its own hit
+## cooldown, but all score goes to the same physical capsule's result.
+## Acquire a visible pickup. The field guarantees one pickup per spawned item;
+## this controller guarantees one physical Dial cycle even with 3 virtual balls.
+func _on_powerup_collected(capsule_id: String, kind: String, pos: Vector2) -> void:
+	if phase != "PLAYING":
+		return
+	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var cap = capsules.get_capsule(root_id)
+	if cap == null or (kind == "multiball" and _multi_left.has(root_id)):
+		return
+	if not powerups.collect(kind):
+		return
+	var l: Lane = _lane_of(cap.source_dial)
+	fx.powerup_notice(kind)
+	sounds.play({"speed": "power_speed", "multiball": "power_multi", "double": "power_double"}[kind])
+	particles.burst(pos, Color("ffe03c"), 32, 380.0)
+	particles.ring(pos, Color("3ff0ff"), 120.0, 0.5)
+	backdrop.pulse(Color("ffe03c"), 0.9)
+	_shake(0.5)
+	match kind:
+		"multiball":
+			var children: Array[String] = [root_id + "-mb1", root_id + "-mb2"]
+			_multi_left[root_id] = 1 + children.size()
+			_multi_parent[root_id] = root_id
+			for child_id in children:
+				_multi_parent[child_id] = root_id
+			_multi_side[root_id] = l.side
+			field.split_capsule(capsule_id, children)
+			fx.set_power_portal(l.side, true)
+			# FRONT is the visual upgrade; TRANSFER retains its intake/release role.
+			if dial_leds and l.led_ok and devices.available():
+				_send(l, "led", "SET_DIAL_EFFECT", {"effect": "COMET", "direction": "TO_DIAL",
+					"duration_ms": 0, "priority": "NORMAL", "target": "FRONT"})
+		"double":
+			_light("SET_LIGHT_MODE", {"mode": "CUSTOM", "color": [255, 174, 32],
+				"brightness": 190, "speed": 190, "transition_ms": 250})
+			score.power_multiplier = 2.0
+		"speed":
+			pass  # main.gd reads the timed boost and caps XY at backend.jog_max_mm_s
+	_trace("powerup", l, {"effect_id": kind, "physics_position": [pos.x, pos.y]})
+
 func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vector2) -> void:
-	var c = capsules.get_capsule(capsule_id)
+	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var c = capsules.get_capsule(root_id)
 	if c == null or not running():
 		return
 	var r := score.hit(capsule_id, kind, target, clock)
@@ -1451,7 +1534,8 @@ func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vecto
 	_trace("score", l, {"score_delta": r.points, "effect_id": kind, "physics_position": [pos.x, pos.y]})
 
 func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
-	var c = capsules.get_capsule(capsule_id)
+	var root_id := str(_multi_parent.get(capsule_id, capsule_id))
+	var c = capsules.get_capsule(root_id)
 	if c == null:
 		return
 	var l: Lane = _lane_of(c.source_dial)
@@ -1469,6 +1553,15 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 		fx.react("miss")  # it ran out of time on the field: no goal
 	field.remove_capsule(capsule_id)
 	score.forget(capsule_id)
+	if _multi_left.has(root_id):
+		_multi_left[root_id] = int(_multi_left[root_id]) - 1
+		_multi_parent.erase(capsule_id)
+		if int(_multi_left[root_id]) > 0:
+			return  # the real Dial still holds its one capsule
+		_multi_left.erase(root_id)
+		_multi_parent.erase(root_id)
+		_multi_side.erase(root_id)
+		fx.set_power_portal(l.side, false)
 	l.t = release_sync_s
 	_set_lane(l, "RETURNING")
 	fx.play("capsule_return", l.side, pos, return_s)
@@ -1568,8 +1661,17 @@ func _released(l: Lane) -> void:
 func _fault(l: Lane, why: String) -> void:
 	l.fault = why
 	if not l.capsule.is_empty():
-		capsules.finish(l.capsule.capsule_id, "failed")
-		field.remove_capsule(l.capsule.capsule_id)
+		var root := str(l.capsule.capsule_id)
+		capsules.finish(root, "failed")
+		field.remove_capsule(root)
+		# A physical Dial failure ends every virtual child of that capsule.
+		for vid in _multi_parent.keys():
+			if str(_multi_parent[vid]) == root:
+				field.remove_capsule(str(vid))
+				_multi_parent.erase(vid)
+		_multi_left.erase(root)
+		_multi_side.erase(root)
+		fx.set_power_portal(l.side, false)
 	_set_lane(l, "FAULT")
 	_led(l, "FAULT")
 	fx.play("capsule_fault", l.side)
@@ -1815,6 +1917,14 @@ func _halt(why: String) -> void:
 	devices.stop_all()
 	_cmds.clear()
 	_end_tutorial()
+	field.set_powerups_enabled(false)
+	powerups.reset()
+	_multi_parent.clear()
+	_multi_left.clear()
+	_multi_side.clear()
+	fx.power_status.clear()
+	fx.set_power_portal("left", false)
+	fx.set_power_portal("right", false)
 	field.set_frozen(true)
 	fx.react("stop")
 	sounds.set_bgm(false)

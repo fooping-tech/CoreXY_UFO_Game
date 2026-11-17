@@ -325,6 +325,18 @@
     "_note": "Homework watch (F1 panel tab). enabled = this watch in the F1 panel; the backend's homework service also starts when study_mode.enabled is true (the study mode uses it), and nothing is captured until a watch is started. While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
   "game_mode": {
+    "powerups": {
+      "first_spawn_s": 5.0,
+      "spawn_interval_s": 12.0,
+      "item_life_s": 8.0,
+      "duration_s": {"speed": 10.0, "double": 15.0},
+      "speed": {
+        "normal_mm_s": 40.0,
+        "max_mm_s": 60.0,
+        "_safety": "Only real/manual XY joystick and keyboard in PLAYING. Never exceed backend.jog_max_mm_s (currently 60), firmware soft limits, the 5 mm jog edge margin or the existing dead-man/stop. Does not affect Z or automated Easy-mode carry. Validate on the real crane before exhibit."
+      },
+      "_note": "#188: pickups appear in the field in the order speed/multiball/double, one at a time. Speed and x2 run on timers (re-pick refreshes, never stacks), multi splits one virtual ball to three but keeps one physical Dial cycle. Effects/lighting never hold robot motion or physics."
+    },
     "enabled": true,
     "duration_s": 150,
     "countdown_s": 3,

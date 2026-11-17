@@ -705,3 +705,27 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | 2026-11-16 | v0.3（初版） | `f98999f`（`pc/` のコピー元。`__init__.py` に記録） | 1 | 既存のコマンド・イベントだけで実装。`pc/protocol.py` を `1302bac` → `f98999f` に更新（`DialState.SETTINGS` の追加だけ）。LED の契約（`docs/game-mode-interface.md`）は未作成 |
 | 2026-11-16 | v0.3（LED 契約の取り込み） | `e965cdf`（UFO-DeviceHub PR #9。`pc/` 一式をコピーし直し: `protocol.py` `device_gateway.py` `mock_hub.py`、新規 `trace.py` `game_mode.py`） | 1（追加のみ。ファームウェア 0.3） | `SET_DIAL_COLOR` / `SET_DIAL_EFFECT` を §8 の表のとおり送る。号機色の初期値を DeviceHub の既定色に合わせた。`RELEASE_DONE` が来ないときは契約 §7 のとおり `GET_STATUS` で確かめる。既存コマンド・イベントの意味は変わっていない。Mock のみ・実機未検証 |
 | 2026-11-17 | v0.3（変更なし） | `a402c37`（UFO-DeviceHub PR #10、main にマージ済み。`tools/devicehub.pin`） | 1（変更なし） | #159: `pc/` のコピーをやめ、UFO-DeviceHub の Python パッケージ `ufo-devicehub` を依存として使う。コマンド・イベント・LED の契約は同じ。UFO-DeviceHub 側の追加は PC 側だけ（開かないポートの指定、排他、つながらない理由の取得） |
+
+
+## 14. パワーアップ（#188、展示用初期値）
+
+### アイテム出現と効果
+- PLAYING中のみ: 最初5秒後、その後12秒間隔。フィールド中に最大1個。出現後8秒で消える。出現順は SPEED UP → MULTI BALL → DOUBLE SCORE を循環。判定は `PinballField` の `Area2D`（物理衝突なし）。リセット・停止でアイテムは消える。
+- **SPEED UP!**: 10秒。Gameの入力処理がキーボード・手のXY速度を通常40 mm/sから最大60 mm/sへ変更。実機は `backend.jog_max_mm_s` を超えず、ジョグの端5 mm減速、Z、安全停止、Easyの自動搬送は変えない。実機で速度確認するまで60 mm/sより高く設定しない。ゲームフェーズから毎フレーム算出するため、タイムアップ・停止・タイトル復帰でブーストは必ず解除される。
+- **MULTI BALL!**: 実物Dialに入った1カプセルに対し、Godotの仮想ボールを3個に分裂させる。3個の得点を集計するが、同じ物理カプセルの `cycle` / `command_id` は共有し、**最後の仮想ボールが出るまで実物を排出しない**。最後に元のDialへ1回の論理排出を依頼。#185の限定再試行は排出センサー確認後に限る。
+- **DOUBLE SCORE!**: 15秒、盤面のヒットとゴール得点が2倍（コンボ倍率と乗算）。リザルト時に別計算するカプセル・コンボ等のボーナスは2倍にしない。再取得は15秒へ更新（乗算しない）。
+- MULTI BALLとDOUBLE SCORE、SPEED UPは同時発動可能。タイマーは別々。パワーアップ取得自体に点数は付かない。
+- 数値と出現間隔は `config/game_config.json#game_mode.powerups` から変更可能。展示テストで調整する。
+
+### 大きな告知・効果音
+- 取得時に画面中央付近へ `SPEED UP!` / `MULTI BALL!` / `DOUBLE SCORE!` を大きなドット文字で約1.35秒表示し、短い画面シェイク、火花と専用シンセSFXを同じ取得イベントから開始する。通知が重なった場合はキューに順に表示（最大3つ）。
+- 効果中はフィールド上部に残り時間、マルチボールでは残球数を表示。描画・SE・照明の失敗は得点や物理シミュレーションを止めない。
+
+### 物理LEDとの連動
+- MULTI BALL: 対応Dialの**前面**LEDに `SET_DIAL_EFFECT COMET` (`target=FRONT`, `priority=BACKGROUND`) を送り、Godot側の対応ポータルを3重回転表示。転送用LED、受取・排出・STOP_ALL・FAULTの既存優先順位を侵害しない。点灯中もカプセルは1個だけ。
+- DOUBLE SCORE: Illumination ATOMへ `SET_LIGHT_MODE CUSTOM`、金色RGB(255,174,32)と呼吸アニメを指示。15秒経過後は `GAME_PLAY`（通常の虹）へ戻す。異常時はERROR側の優先順位を尊重し、リレー／ミスト制御は変えない。
+- LED実機の消費電流・明るさ・向き・同時サーボ動作は未検証。展示前に確認する。
+
+### 受け入れテストと未検証事項
+- Godot headless: タイマーの独立性・再取得・リセット・得点2倍・同時取得防止・仮想3球・通知キューを検証。
+- 実機での確認が必要: XYブースト中の脱調・原点付近の余裕・緊急停止、左右Dialの3球排出待ち、前面LED・照明の電流と同期、長時間耐久、異常時の復帰。
