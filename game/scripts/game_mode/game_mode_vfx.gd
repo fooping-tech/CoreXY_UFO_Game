@@ -78,6 +78,11 @@ var _flights: Array[Dictionary] = []
 var _streams: Array[Dictionary] = []
 var _popups: Array[Dictionary] = []
 var _banner := {"text": "", "t": 9.0, "level": 0}
+## #188: large readable arcade notices and their own queue (separate from COMBO).
+var _power_notice := {"text": "", "kind": "", "t": 9.0}
+var _power_queue: Array[Dictionary] = []
+var power_status: Array[String] = []
+var power_portals := {"left": false, "right": false}
 ## false: the pop-ups do not jump or blink (a debug switch)
 var effects := true
 var _marks: Array[Dictionary] = []
@@ -104,6 +109,10 @@ func reset() -> void:
 	_streams.clear()
 	_popups.clear()
 	_banner.t = 9.0
+	_power_notice = {"text": "", "kind": "", "t": 9.0}
+	_power_queue.clear()
+	power_status.clear()
+	power_portals = {"left": false, "right": false}
 	_react = ""
 	reactions.clear()
 	ufo_mood = "normal"
@@ -232,6 +241,23 @@ func banner(text: String, level := 0) -> void:
 func banner_text() -> String:
 	return _banner.text if _banner.t < BANNER_S else ""
 
+## A second, larger banner slot: every pickup gets its full notice, even if two
+## balls touched different items in one physics frame. No animation blocks physics.
+func powerup_notice(kind: String) -> void:
+	var labels := {"speed": "SPEED UP!", "multiball": "MULTI BALL!", "double": "DOUBLE SCORE!"}
+	if not labels.has(kind):
+		return
+	var n := {"text": labels[kind], "kind": kind, "t": 0.0}
+	if _power_notice.t < 1.35:
+		if _power_queue.size() < 3:
+			_power_queue.append(n)
+	else:
+		_power_notice = n
+
+func set_power_portal(side: String, enabled: bool) -> void:
+	if power_portals.has(side):
+		power_portals[side] = enabled
+
 func flights() -> int:
 	return _flights.size()
 
@@ -318,6 +344,9 @@ func advance(dt: float) -> void:
 		if p.t >= POPUP_S:
 			_popups.erase(p)
 	_banner.t += dt
+	_power_notice.t += dt
+	if _power_notice.t >= 1.35 and not _power_queue.is_empty():
+		_power_notice = _power_queue.pop_front()
 	if _react != "":
 		_react_t += dt
 		if _react_t >= float(REACTIONS[_react][1]):
@@ -357,6 +386,11 @@ func _draw() -> void:
 			draw_rect(Rect2((p + Vector2(cos(ta), sin(ta)) * 31.0 - Vector2(2, 2)).snapped(Vector2(1, 1)), Vector2(4, 4)),
 				Color.WHITE if (i + int(_t * 4.0)) % 8 == 0 else Color(col.r, col.g, col.b, 0.9))
 		PixelText.draw_centered(self, "DIAL 1" if side == "left" else "DIAL 2", p + Vector2(0, 52), 2.0, col, Color("050818"))
+		if bool(power_portals[side]):
+			for ring in 3:
+				var rad := 38.0 + ring * 9.0 + 2.0 * sin(_t * 9.0 + ring)
+				var arc_col := col.lerp(Color.WHITE, 0.55 if ring % 2 == 0 else 0.2)
+				draw_arc(p, rad, _t * (4.0 + ring), _t * (4.0 + ring) + PI * 1.5, 24, arc_col, 3.0)
 		if o > 0.01:
 			draw_circle(p, 28.0 * o, Color(col.r, col.g, col.b, 0.25))  # a glow under the port's sheet
 	# the drop marks: a short beam where the capsule appears
@@ -411,6 +445,33 @@ func _draw_top() -> void:
 			var bp := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 170.0 - 20.0 * bk).snapped(Vector2(2, 2))
 			PixelText.draw_centered(top, _banner.text, bp + Vector2(4, 4), bs, Color(0.02, 0.03, 0.1, 0.8))
 			PixelText.draw_centered(top, _banner.text, bp, bs, bc if int(_banner.t * 10.0) % 2 == 0 else Color.WHITE, Color("050818"))
+
+	# #188: pickup notice occupies the middle, not the scoreboard/clock at the top.
+	if _power_notice.t < 1.35:
+		var t: float = _power_notice.t
+		var kind: String = str(_power_notice.kind)
+		var col := Color("ffe03c") if kind == "double" else (Color("ff4fd8") if kind == "multiball" else Color("3ff0ff"))
+		var word := str(_power_notice.text)
+		var size := minf(7.5, 660.0 / maxf(PixelText.width(word, 1.0), 1.0))
+		if effects:
+			size *= 1.12 if t < 0.12 else 1.0 + 0.025 * sin(t * 28.0)
+		var centre := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 235.0)
+		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 170)), Color(0.015, 0.025, 0.09, 0.87))
+		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 5)), col)
+		PixelText.draw_centered(top, word, centre + Vector2(4, 4), size, Color("050818"))
+		PixelText.draw_centered(top, word, centre, size, col if not effects or int(t * 12.0) % 2 == 0 else Color.WHITE, Color("050818"))
+		if kind == "multiball":
+			for i in 3:
+				top.draw_circle(centre + Vector2(-42 + i * 42, 58), 10, col.lerp(Color.WHITE, i / 4.0))
+		elif kind == "double":
+			PixelText.draw_centered(top, "x2", centre + Vector2(0, 64), 3.0, Color.WHITE)
+		else:
+			PixelText.draw_centered(top, ">>", centre + Vector2(0, 64), 3.0, Color.WHITE)
+	# Persistent, small power timers while active (drawn even with effects disabled).
+	for i in power_status.size():
+		var s: String = power_status[i]
+		if PixelText.supports(s):
+			PixelText.draw_centered(top, s, Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 12.0 + 26.0 * i), 2.3, Color("ffe03c"), Color("050818"))
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)
