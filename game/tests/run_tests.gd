@@ -3164,14 +3164,12 @@ func _test_game_mode_powerup_integration(rs: Node) -> void:
 		"pickup speed: XY only up to the configured backend cap, audible")
 	ctl._on_powerup_collected(id, "double", pos)
 	ctl.field.target_hit.emit(id, "bumper", "bumper_0", pos)
-	var light_changed := hub.executed.any(func(e): return e[0] == GameModeDevices.ILLUMINATION
-		and e[1] == "SET_LIGHT_MODE" and e[2].get("mode", "") == "CUSTOM")
+	var light_changed := hub.executed.any(func(e): return e[0] == GameModeDevices.ILLUMINATION and e[1] == "SET_LIGHT_MODE" and e[2].get("mode", "") == "CUSTOM")
 	_ok(ctl.score.score == 200 and ctl.powerups.active("double") and light_changed
 		and ctl.sounds.log.has("power_double"), "pickup x2: doubled scoring, gold illumination and cue")
 	ctl._on_powerup_collected(id, "multiball", pos)
 	var children := [id + "-mb1", id + "-mb2"]
-	var multi_led := hub.executed.any(func(e): return e[0] == GM_L and e[1] == "SET_DIAL_EFFECT"
-		and e[2].get("target", "") == "FRONT" and e[2].get("effect", "") == "COMET")
+	var multi_led := hub.executed.any(func(e): return e[0] == GM_L and e[1] == "SET_DIAL_EFFECT" and e[2].get("target", "") == "FRONT" and e[2].get("effect", "") == "COMET")
 	_ok(ctl.field.capsule_count() == 3 and int(ctl._multi_left[id]) == 3
 		and ctl.fx.power_portals.left and not ctl.fx.power_portals.right and multi_led
 		and ctl.sounds.log.has("power_multi"),
