@@ -4707,17 +4707,26 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	ctl._on_tutorial_ok(1, grab)
 	var closed = asked == ["closed"] and is_equal_approx(game.mock.arm_deg, 120.0)
 	ctl._on_tutorial_step(2, {"id": "easy_one", "kind": "pose"})
-	var opened = asked == ["closed", "open"] and is_equal_approx(game.mock.arm_deg, 10.0)
-	ctl._on_tutorial_step(3, {"id": "easy_two", "kind": "pose"})
+	ctl._on_tutorial_step(3, {"id": "rules", "kind": "info"})
+	var kept = asked == ["closed"]  # it stays closed through the carry's steps
+	ctl._on_tutorial_step(4, {"id": "practice", "kind": "practice"})
+	var opened = kept and asked == ["closed", "open"] and is_equal_approx(game.mock.arm_deg, 10.0)
+	ctl._on_tutorial_step(5, {"id": "practice", "kind": "practice"})
 	var once = asked.size() == 2
 	# a stop after the claw closed: nothing more is asked of it
 	ctl._on_tutorial_ok(1, grab)
 	ctl._halt("test")
-	ctl._on_tutorial_step(2, {"id": "easy_one", "kind": "pose"})
+	ctl._on_tutorial_step(2, {"id": "practice", "kind": "practice"})
 	var stopped = asked == ["closed", "open", "closed"]
 	_ok(only_easy and none_yet and closed and opened and once and stopped,
-		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the next step opens it once; not after a stop; the hard mode's steps ask nothing",
+		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the practice capsule's start opens it once; not after a stop; the hard mode's steps ask nothing",
 		"%s %s %s %s %s %s %s" % [only_easy, none_yet, closed, opened, once, stopped, asked])
+	# the hand camera's picture beside the hand: only in a judged hand step with a camera picture
+	var hud: GestureTutorialHud = ctl.tutorial_hud
+	var attached = hud._cam != null and hud._cam_overlay.gesture == game.gesture
+	var no_feed = not hud.camera_rect().has_area()
+	_ok(attached and no_feed, "tutorial camera (#183): the practice has the hand camera's view attached; without a camera picture nothing is shown and the hand stays in the middle",
+		"%s %s" % [attached, no_feed])
 	_gm_free(game, rs)
 
 ## #179: the moving step says its own words when it is done, and the next step waits for them.

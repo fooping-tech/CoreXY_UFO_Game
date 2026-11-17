@@ -272,6 +272,8 @@ func _ready() -> void:
 		game_mode.setup(self)
 		game_mode.phase_changed.connect(_on_game_mode_phase)
 		game_mode.tutorial_claw.connect(_on_tutorial_claw)
+		var hand_cam = GameConfig.get_value("camera", "overview", {})  # #183: the practice shows the hand camera
+		game_mode.tutorial_hud.attach(cameras, gesture, hand_cam is Dictionary and bool(hand_cam.get("flip_h", false)), hand_cam is Dictionary and bool(hand_cam.get("flip_v", false)))
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)

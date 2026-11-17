@@ -25,7 +25,7 @@ signal phase_changed(phase: String)
 signal lane_changed(side: String, state: String)
 signal scored(points: int, kind: String, at: Vector2)
 ## #183: the practice shows what the fist does: the main scene is asked for the claw
-## ("closed" when the easy mode's fist step is done, "open" when the next step starts). The
+## ("closed" when the easy mode's fist step is done, "open" when the practice capsule begins). The
 ## main scene sends it like the hand's own claw request, with all its checks; nothing is sent here.
 signal tutorial_claw(which: String)
 
@@ -643,7 +643,9 @@ func _tick_say(dt: float) -> void:
 var _demo_claw_closed := false
 
 func _on_tutorial_step(_index: int, step: Dictionary) -> void:
-	if _demo_claw_closed:
+	# the claw closed by the fist step stays closed (the carry is shown with it) and opens
+	# when the practice capsule begins
+	if _demo_claw_closed and str(step.get("kind", "")) == "practice":
 		_demo_claw_closed = false
 		tutorial_claw.emit("open")
 	match str(step.get("kind", "")):
