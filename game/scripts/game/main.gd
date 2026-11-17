@@ -783,6 +783,9 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 
 func _process(dt: float) -> void:
 	_capture_tick(dt)
+	if game_mode != null:
+		# the menu's music (#173): the title screen, and the score game's own title
+		game_mode.sounds.menu_on = title_active() or (game_mode.active() and game_mode.phase == "IDLE")
 	if title_active():
 		title.set_status(_title_status())
 	_update_origin()

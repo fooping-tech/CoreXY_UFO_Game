@@ -18,6 +18,7 @@ func _ok(cond: bool, name: String, detail: String = "") -> void:
 func _ready() -> void:
 	var rs: Node = RobotState
 	GameConfig.drop_local()  # this machine's config/local_settings.json (#93) must not change the tests
+	GameModeSounds.load_music = false  # nor this machine's music files (#173: game/assets/audio/bgm/)
 	_test_rest_state()
 	_test_inextensible_under_motion()
 	_test_sudden_stop_swing_and_decay()
