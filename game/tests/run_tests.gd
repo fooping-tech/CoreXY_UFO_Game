@@ -3826,19 +3826,15 @@ func _test_game_mode_audio(rs: Node) -> void:
 	var pan_kept: bool = AudioBuses.pan() == 0.0
 	AudioBuses.ensure(AudioBuses.DEFAULT_PAN)
 	snd.set_bgm(true)
-	snd._process(GameModeSounds.FADE_S)
 	var normal: bool = snd._bgm.playing and snd._bgm_gain == 1.0 and snd._fast_gain == 0.0 and not snd._bgm_fast.playing
 	snd.set_bgm(true, true)
-	snd._process(GameModeSounds.FADE_S * 0.5)
-	var crossing: bool = snd._bgm.playing and snd._bgm_fast.playing and snd.hurry
-	snd._process(GameModeSounds.FADE_S)
+	var crossing: bool = snd.hurry  # no fade (#181): the faster take is on at once
 	var fast: bool = snd._bgm_fast.playing and not snd._bgm.playing and snd._bgm_fast.pitch_scale == 1.0
 	snd.set_bgm(false)
-	snd._process(GameModeSounds.FADE_S * 2.0)
 	var faded: bool = not snd._bgm.playing and not snd._bgm_fast.playing and not snd.bgm_on
 	var takes: bool = (snd._bgm_fast.stream as AudioStreamWAV).data.size() < (snd._bgm.stream as AudioStreamWAV).data.size()
 	_ok(muted and all_off and pan_kept and is_equal_approx(AudioBuses.pan(), AudioBuses.DEFAULT_PAN) and not AudioBuses.muted(AudioBuses.BGM) and normal and crossing and fast and faded and takes and snd.duck_db() == 0.0,
-		"audio: effects and music are turned down and muted separately; the music fades in, crosses to its own faster take for the last 30 s (not the same take pitched up) and fades out",
+		"audio: effects and music are turned down and muted separately; the music starts at once, switches to its own faster take for the last 30 s (not the same take pitched up) and stops at once",
 		"%s %s %s %s %s %s %s" % [muted, all_off, normal, crossing, fast, faded, takes])
 	remove_child(snd)
 	snd.free()
@@ -4760,6 +4756,8 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	var tone = StudySounds._tones([[440.0, 0.3]], 0.2)
 	tone.save_to_wav(dir + "menu.wav")
 	tone.save_to_wav(dir + "round.wav")
+	for more in ["top.wav", "practice.wav", "jingle.wav"]:
+		tone.save_to_wav(dir + more)
 	var f := FileAccess.open(dir + "broken.mp3", FileAccess.WRITE)
 	f.store_string("not music")
 	f.close()
@@ -4772,7 +4770,8 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	snd.enabled = true
 	var none_by_default = not snd.has_music("menu") and not snd.has_music("game")  # the tests read no file of this machine
 	GameModeSounds.load_music = true
-	snd.music_names = {"menu": "menu.wav", "game": "round.wav", "ending": "ending.mp3"}  # (no ending.mp3 there)
+	snd.music_names = {"top": "top.wav", "menu": "menu.wav", "tutorial": "practice.wav", "game": "round.wav", "ending": "ending.mp3"}  # (no ending.mp3 there)
+	snd.jingle_name = "jingle.wav"
 	snd.load_music_files(dir)
 	GameModeSounds.load_music = false
 	var found = snd.has_music("menu") and snd.has_music("game") and not snd.has_music("ending")
@@ -4782,11 +4781,36 @@ func _test_game_mode_music_files(rs: Node) -> void:
 			snd._process(1.0 / 60.0)
 	# the title screen, then the score game's own title: the menu's music
 	game.show_title()
-	tick.call(1.0)
-	var on_title = snd.track_wanted() == "menu" and snd._music["menu"].playing
+	tick.call(2.0 / 60.0)
+	# #181: the title screen has its own music, at once and at its full level (no fade)
+	var on_title = snd.track_wanted() == "top" and snd._music["top"].playing and snd._music_gain["top"] == 1.0 and not snd._music["menu"].playing \
+		and is_equal_approx(snd._music["top"].volume_db, snd.volume_db + GameModeSounds.BGM_DB + float(snd.music_gain_db["top"]))
+	# the 校正 tab: no music at all; back from it the music is there again
+	snd.silent = true
+	snd._process(1.0 / 60.0)
+	var calib_quiet = snd.track_wanted() == "" and not snd._music["top"].playing
+	snd.silent = false
+	tick.call(2.0 / 60.0)
+	var calib_back = not game.calibrating() and snd._music["top"].playing
+	# a mode is chosen: the jingle once (not a loop), alone; then the score game's title music
+	var j0 = snd.jingles
 	game._unhandled_input(_key(KEY_3))
+	var jingle = snd.jingles == j0 + 1 and snd.jingle_playing() and not (snd._jingle.stream as AudioStreamWAV).loop_mode == AudioStreamWAV.LOOP_FORWARD
+	tick.call(2.0 / 60.0)
+	var jingle_alone = snd.track_wanted() == "" and not snd._music["top"].playing and not snd._music["menu"].playing
+	snd._jingle.stop()
 	tick.call(0.2)
-	var on_game_title = snd.track_wanted() == "menu" and snd._music["menu"].playing
+	var on_game_title = snd.track_wanted() == "menu" and snd._music["menu"].playing and not snd._music["top"].playing
+	_ok(calib_quiet and calib_back and jingle and jingle_alone,
+		"music (#181): none in the calibration tab; choosing a mode on the title plays the jingle once, alone, then the next music",
+		"%s %s %s %s" % [calib_quiet, calib_back, jingle, jingle_alone])
+	# the practice has its own music, the countdown after it none
+	game._unhandled_input(_key(KEY_T))
+	tick.call(2.0 / 60.0)
+	var practice_music = ctl.phase == "TUTORIAL" and snd.track_wanted() == "tutorial" and snd._music["tutorial"].playing and not snd._music["menu"].playing
+	ctl._halt("test")
+	tick.call(2.0 / 60.0)
+	_ok(practice_music and not snd._music["tutorial"].playing, "music (#181): the practice has its own music, stopped at once when it ends", "%s %s" % [practice_music, ctl.phase])
 	# the round: its file, not the synthesised tune, also in the last stretch
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, 0.5)
@@ -4822,12 +4846,12 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	var next_round = not snd.ending_on
 	game.show_title()
 	tick.call(0.2)
-	var back_to_menu = snd.track_wanted() == "menu"
+	var back_to_menu = snd.track_wanted() == "top"
 	game._unhandled_input(_key(KEY_2))  # another mode: no music
 	tick.call(0.2)
 	var other_mode = snd.track_wanted() == ""
 	# a file that is not music is as no file: the round keeps the synthesised tune
-	snd.music_names = {"menu": "", "game": "broken.mp3", "ending": ""}
+	snd.music_names = {"top": "", "menu": "", "tutorial": "", "game": "broken.mp3", "ending": ""}
 	GameModeSounds.load_music = true
 	snd.load_music_files(dir)
 	GameModeSounds.load_music = false
@@ -4841,7 +4865,7 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	_ok(result_wanted and ending_plays and off_silent and next_round and back_to_menu and other_mode and synth_kept,
 		"music files: the result's after the round until the next one; sound off = none; other modes = none; a missing or unreadable file leaves things as they were (the synthesised tune for the round)",
 		"%s %s %s %s %s %s %s" % [result_wanted, ending_plays, off_silent, next_round, back_to_menu, other_mode, synth_kept])
-	for name in ["menu.wav", "round.wav", "broken.mp3"]:
+	for name in ["menu.wav", "round.wav", "broken.mp3", "top.wav", "practice.wav", "jingle.wav"]:
 		DirAccess.remove_absolute(dir + name)
 	_gm_free(game, rs)
 
