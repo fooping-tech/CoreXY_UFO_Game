@@ -35,7 +35,8 @@ extends RefCounted
 ##   enabled   the easy mode is on (the score game is open, difficulty easy, usable)
 ##   taking    the round takes capsules now (PLAYING, or the practice capsule)
 ##   link      the backend's link is open
-##   gate      "" when the robot may be moved now, else why not
+##   gate      "" when the hand may ask the robot to move now, else why not (a catch and a
+##             carry are both new motion: neither sign is read while it is closed)
 ##   status    the backend's report (RobotState.easy_mode)
 
 signal state_changed(from: String, to: String)
@@ -338,6 +339,12 @@ func _tick_wait(dt: float, sgn: String, world: Dictionary) -> void:
 		# the round is over: nothing new is carried into a Dial that takes nothing
 		_hold_reset()
 		note = "じかんぎれ。かかりの ひとが カプセルを もどすよ"
+		return
+	if str(world.get("gate", "")) != "":
+		# the hand may not move the robot now (the window lost its focus, the hand control is
+		# off, ...): a carry is new motion, so its sign is not read either (review on #170)
+		_hold_reset()
+		note = str(world.get("gate", ""))
 		return
 	if holding != "" and holding != sgn:
 		_hold_reset()  # one finger turned into two (or back): the hold starts over

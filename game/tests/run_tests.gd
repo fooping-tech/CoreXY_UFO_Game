@@ -4171,6 +4171,9 @@ func _test_easy_mode_logic() -> void:
 	_easy_run(e5, be5, 0.3, open)
 	_easy_run(e5, be5, 1.5, one, {"taking": false})  # the time ran out while it waited
 	var time_up = e5.state == "WAIT_DESTINATION" and not be5.names().has("easy_deliver") and e5.note.contains("じかんぎれ")
+	_easy_run(e5, be5, 1.5, one, {"gate": "ゲームのウィンドウを選んでね"})  # the window lost its focus: no carry either
+	var gated = e5.state == "WAIT_DESTINATION" and not be5.names().has("easy_deliver") and e5.note.contains("ウィンドウ") and e5.progress == 0.0
+	time_up = time_up and gated
 	_easy_run(e5, be5, 0.1, open, {"enabled": false})  # back to the title in the middle
 	var left = e5.state == "OFF" and be5.names().count("soft_stop") == 2 and not e5.busy()
 	_easy_run(e5, be5, 0.1, open, {"enabled": false})
@@ -4252,6 +4255,14 @@ func _test_easy_mode_game(rs: Node) -> void:
 	feed.call("peace", 60)
 	feed.call("open", 6)
 	var no_claw = claws.is_empty() and be.sent.is_empty()
+	# the hand control switched off (H): the camera still sees the hand, but no shape asks for anything
+	game.set_gesture_enabled(false)
+	feed.call("open", 20)
+	feed.call("fist", 60)
+	var off_nothing = be.sent.is_empty() and e.state == "MANUAL_XY" and e.note.contains("オフ")
+	game.set_gesture_enabled(true)
+	feed.call("open", 20)
+	no_claw = no_claw and off_nothing
 	# --- left: fist -> catch -> one finger -> Dial 1 -> the mock Dial takes its capsule
 	feed.call("fist", 45)
 	var grabbed = be.names() == ["easy_grab"] and e.state == "AUTO_GRAB"
@@ -4265,8 +4276,14 @@ func _test_easy_mode_game(rs: Node) -> void:
 	ctl.easy_hud._process(0.016)
 	var panel: bool = e.state == "WAIT_DESTINATION" and ctl.easy_hud.view() == "panel" and ctl.easy_hud._title.text == "どっちに いれる？" \
 		and ctl.easy_hud.sub_text().contains("ひだり") and ctl.easy_hud._stop.text.contains("Space")
+	game.set_gesture_enabled(false)
+	feed.call("point", 60)  # switched off while it waits: the finger carries nothing
+	var off_no_carry = be.names() == ["easy_grab"] and e.state == "WAIT_DESTINATION"
+	game.set_gesture_enabled(true)
+	feed.call("open", 20)
+	panel = panel and off_no_carry
 	feed.call("point", 45)
-	var chose: bool = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": 1, "grab_id": "a"}
+	var chose = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": 1, "grab_id": "a"}
 	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_deliver"})
 	be.report("DELIVER_DIAL_1", "a", {"destination": 1, "step": "MOVE_TO_DIAL"})
 	feed.call("point", 30)

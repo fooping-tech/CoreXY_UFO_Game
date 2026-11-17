@@ -62,6 +62,7 @@ var easy := EasyModeControl.new()
 ## The backend's link is open, as the hand control's gate and the easy mode see it (the
 ## tests put a stand-in here; commands still go out through `ws` only).
 var backend_link: Callable = func() -> bool: return RobotState.source == "websocket" and ws.enabled and ws.is_open()
+const GATE_GESTURE_OFF := "ハンドジェスチャーが オフ（H で オン）"
 const GATE_EASY_BUSY := "かんたんモード: じどうで うごいているよ"
 const GATE_EASY_FAULT := "かんたんモード: とまっているよ（かかりの ひとを よんでね）"
 ## Who drove the crane on the last tick (ControlArbiter source).
@@ -1246,6 +1247,10 @@ func easy_wanted() -> bool:
 func _tick_easy(dt: float, on: bool, gate: String, keys_held: bool) -> void:
 	var now := float(Time.get_ticks_msec())
 	var age := gesture.age_ms(now)
+	# the hand control switched off (H, --no-gesture): the camera's events still come in, but
+	# no shape of the hand asks for anything (review on #170)
+	if not gesture.enabled and gate == "":
+		gate = GATE_GESTURE_OFF
 	var hand := {"fresh": age >= 0.0 and age <= gesture.stale_ms, "camera_ok": gesture.camera_ok, "detected": gesture.detected,
 		"pose": gesture.pose, "pinch": gesture.pinch or gesture.sign_seen,
 		# a catch never starts on top of a steer: the pinch let go, the stick at rest, the zero jog out
