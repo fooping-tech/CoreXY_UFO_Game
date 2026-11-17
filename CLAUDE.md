@@ -13,6 +13,8 @@
 
 ピクセル VFX（pixelfx のスプライトシート）を足す・変えるときはスキル **`pixelfx-vfx`**（`.claude/skills/pixelfx-vfx/SKILL.md`）。
 
+バックエンドは UFO-DeviceHub の Python パッケージに依存する（#159）。新しいチェックアウトでは先に `tools/setup_devicehub.sh`。そのコードをこのリポジトリにコピーしない（`docs/devicehub_dependency.md`）。
+
 人向けの文書: `README.md`、`docs/HANDOFF.md`、`docs/firmware_protocol.md`、`docs/test_report.md`。150 秒のスコアゲーム（#138）の仕様の正本は `docs/game_mode_spec.md`。
 
 ## GitHub での開発（Issue・PR・マージ）

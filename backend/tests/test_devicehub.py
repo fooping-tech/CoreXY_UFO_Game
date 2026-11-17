@@ -9,9 +9,10 @@ import json
 import pytest
 import websockets
 
+from ufo_devicehub import MockConfig, MockHub, TransportError
+from ufo_devicehub import device_gateway as gwmod
+
 from corexy_ufo_backend.devicehub import DeviceHubConfig, DeviceHubService
-from corexy_ufo_backend.devicehub import device_gateway as gwmod
-from corexy_ufo_backend.devicehub.device_gateway import TransportError
 from corexy_ufo_backend.devicehub.service import ExcludingSerialTransport
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
@@ -42,14 +43,20 @@ def test_auto_detect_never_opens_the_robots_port(monkeypatch):
     t = ExcludingSerialTransport("auto", exclude=["/dev/cu.usbserial-CORE2"])
     t.open()
     assert opened == [("/dev/cu.usbmodem-HUB", True)]  # the hub only, exclusively
-    t._rejected.add("/dev/cu.usbmodem-HUB")  # it was not a hub after all
+    t.reject_current()  # the gateway: it was not a hub after all
     t.open()  # every other port refused: starts over, but still never the robot's port
     assert opened == [("/dev/cu.usbmodem-HUB", True), ("/dev/cu.usbmodem-HUB", True)]
     monkeypatch.setattr(gwmod, "guess_ports", lambda: ["/dev/cu.usbserial-CORE2"])
-    with pytest.raises(TransportError, match="robot's ports are not tried"):
+    with pytest.raises(TransportError, match="no serial port"):
         ExcludingSerialTransport("auto", exclude=["/dev/cu.usbserial-CORE2"]).open()
-    with pytest.raises(TransportError, match="robot's"):
+    with pytest.raises(TransportError, match="excluded"):
         ExcludingSerialTransport("/dev/cu.usbserial-CORE2", exclude=["/dev/cu.usbserial-CORE2"]).open()
+    # the port the robot was found on, learnt after the hub's transport was made (main.py)
+    late = ExcludingSerialTransport("auto")
+    late.exclude.add("/dev/cu.usbserial-CORE2")
+    with pytest.raises(TransportError, match="no serial port"):
+        late.open()
+    assert opened == [("/dev/cu.usbmodem-HUB", True), ("/dev/cu.usbmodem-HUB", True)]  # the robot's: never
 
 
 def test_a_port_that_cannot_be_opened_does_not_hide_the_hub(monkeypatch):
@@ -313,8 +320,6 @@ async def test_the_dial_led_contract_on_the_mock_hub(tmp_path):
 async def test_why_the_hub_is_not_connected_is_said():
     """A hub that does not connect says why (the テスト tab, the score game): another UFO
     system's hub, no port, a port that is not a hub."""
-    from corexy_ufo_backend.devicehub.mock_hub import MockConfig, MockHub
-
     # the hub on the cable belongs to system 2, the settings say system 1
     hub = DeviceHubService(DeviceHubConfig(True, "mock", 1), transport=MockHub(MockConfig(system_id=2)))
     srv, port = await _server(hub)
@@ -339,16 +344,122 @@ async def test_why_the_hub_is_not_connected_is_said():
 
 
 def test_the_serial_port_problems_are_said(monkeypatch):
+    class Busy:
+        def __init__(self, port, *a, **k):
+            raise OSError("Resource busy")
+
+    import serial
+    monkeypatch.setattr(serial, "Serial", Busy)
     monkeypatch.setattr(gwmod, "guess_ports", lambda: [])
     svc = DeviceHubService(DeviceHubConfig(True, "auto", 1))
     assert "待っている" in svc.problem()
     with pytest.raises(TransportError):
         svc.transport.open()
     assert "見つからない" in svc.problem()
-    svc.transport.last_open_error = "/dev/cu.usbmodem1: Resource busy"
-    assert "開けない" in svc.problem() and "Resource busy" in svc.problem()
-    svc.transport.last_open_error = ""
-    svc.transport.current_port = "/dev/cu.usbmodem1"
+    monkeypatch.setattr(gwmod, "guess_ports", lambda: ["/dev/cu.usbmodem1"])
+    with pytest.raises(TransportError):
+        svc.transport.open()  # another program has the port
+    assert "開けない" in svc.problem() and "Resource busy" in svc.problem() and "usbmodem1" in svc.problem()
+    svc.transport.open_error_kind = svc.transport.open_error = ""
     svc.transport.reject_current()  # the gateway: no hub handshake on this port
     assert "ハブとして応答しない" in svc.problem() and "usbmodem1" in svc.problem()
     svc.close()
+    # the settings name the robot's own port as the hub's
+    named = DeviceHubService(DeviceHubConfig(True, "/dev/cu.usbserial-CORE2", 1), exclude_ports=["/dev/cu.usbserial-CORE2"])
+    with pytest.raises(TransportError):
+        named.transport.open()
+    assert "ロボット" in named.problem() and "usbserial-CORE2" in named.problem()
+    named.close()
+
+
+def test_the_hub_code_is_the_package_not_a_copy():
+    """#159: the gateway, the protocol and the mock are UFO-DeviceHub's own package. A copy in
+    this backend would be a second source of the protocol: there is none."""
+    import pathlib
+
+    import ufo_devicehub
+
+    import corexy_ufo_backend.devicehub as adapter
+    from corexy_ufo_backend.devicehub import service
+
+    here = pathlib.Path(adapter.__file__).parent
+    assert sorted(p.name for p in here.glob("*.py")) == ["__init__.py", "service.py"]
+    assert service.DeviceGateway is ufo_devicehub.DeviceGateway and service.P is ufo_devicehub.protocol
+    assert not pathlib.Path(ufo_devicehub.__file__).is_relative_to(here.parents[1])
+    # the adapter adds no transport code of its own: the exclusion and the exclusive open are the package's
+    assert set(vars(ExcludingSerialTransport)) <= {"__module__", "__doc__", "__init__", "__qualname__",
+                                                     "__firstlineno__", "__static_attributes__"}
+    t = ExcludingSerialTransport("auto", exclude=["/dev/cu.X"])
+    assert t.exclusive is True and t.exclude == {"/dev/cu.X"}
+
+
+async def test_the_hub_unplugged_and_back_and_a_lost_ack_is_one_release():
+    """#159: through the package's gateway as before the move. The cable out: commands are
+    refused (never queued for later) and nothing carries over to the new session; an ACK lost
+    on air is asked for again under the same command id, so the capsule is released once."""
+    mock = MockHub(MockConfig(system_id=1))
+    hub = DeviceHubService(DeviceHubConfig(True, "mock", 1), transport=mock)
+    hub.gw.hub_timeout, hub.gw.reconnect_interval, hub.gw.heartbeat_interval = 0.4, 0.05, 0.1
+    srv, port = await _server(hub)
+    events: list[dict] = []
+
+    async def cmd(ws, d, name, params, rid):
+        return await _cmd(ws, "devicehub_command", {"device": d, "name": name, "params": params}, rid=rid, events=events)
+
+    async def ready(ws, tag):
+        for i in range(60):
+            devs = (await _cmd(ws, "devicehub_devices", rid=f"{tag}d{i}", events=events))["data"]["devices"]
+            if sum(1 for d in devs if d.get("online")) >= 3:
+                break
+            await asyncio.sleep(0.1)
+        assert (await cmd(ws, DIAL1, "SET_MODE", {"mode": "GAME"}, f"{tag}m"))["data"]["result"]["ok"]
+        assert (await cmd(ws, DIAL1, "ARM_RECEIVER", {}, f"{tag}a"))["data"]["result"]["ok"]
+
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            first = (await _until_connected(ws, events))["data"]["session_id"]
+            await ready(ws, "one")
+            assert (await _cmd(ws, "devicehub_mock_ball", {"device": DIAL1}, rid="b1", events=events))["data"]["accepted"]
+            assert await _wait_event(ws, events, "BALL_RECEIVED", DIAL1)
+            mock.unplug()
+            for i in range(100):
+                meta = await _cmd(ws, "devicehub_meta", rid=f"gone{i}", events=events)
+                if not meta["data"]["connected"]:
+                    break
+                await asyncio.sleep(0.05)
+            assert not meta["data"]["connected"] and meta["data"]["problem"] != ""
+            gone = await cmd(ws, DIAL1, "RELEASE_BALL", {}, "gone-release")
+            assert gone["type"] == "nack" and "つながっていない" in gone["data"]["reason"], gone
+            stop = await _cmd(ws, "devicehub_stop_all", rid="gone-stop", events=events)
+            # said, not pretended: with the cable out no device is told to stop by the PC
+            assert stop["type"] == "ack" and stop["data"]["results"], stop
+            assert not any(r["ok"] for r in stop["data"]["results"].values()), stop
+            mock.replug()
+            for i in range(100):  # its own request ids: a repeated one is answered from the server's cache
+                again = (await _cmd(ws, "devicehub_meta", rid=f"back{i}", events=events))["data"]
+                if again["connected"]:
+                    break
+                await asyncio.sleep(0.05)
+            assert again["connected"] and again["session_id"] not in (0, first) and again["problem"] == ""
+            # the capsule of the lost session is not released by the new one
+            stale = await cmd(ws, DIAL1, "RELEASE_BALL", {}, "stale")
+            assert stale["type"] == "ack" and not stale["data"]["result"]["ok"], stale
+            assert mock.devices[DIAL1].servo_moves == 0
+            await ready(ws, "two")
+            assert (await _cmd(ws, "devicehub_mock_ball", {"device": DIAL1}, rid="b2", events=events))["data"]["accepted"]
+            for i in range(80):
+                if any(e.get("name") == "BALL_RECEIVED" and e.get("session_id") == again["session_id"] for e in events):
+                    break
+                await _cmd(ws, "devicehub_meta", rid=f"w{i}", events=events)
+                await asyncio.sleep(0.05)
+            mock.lose_acks(DIAL1, 2)
+            rel = (await cmd(ws, DIAL1, "RELEASE_BALL", {}, "lossy"))["data"]["result"]
+            assert rel["ok"] and rel["duplicate"] and rel["attempts"] == 3, rel
+            assert mock.devices[DIAL1].servo_moves == 1  # asked three times, moved once
+            twice = (await cmd(ws, DIAL1, "RELEASE_BALL", {}, "twice"))["data"]["result"]
+            assert not twice["ok"] and mock.devices[DIAL1].servo_moves == 1
+            stopped = await _cmd(ws, "devicehub_stop_all", rid="stop", events=events)
+            assert stopped["type"] == "ack" and all(r["ok"] for r in stopped["data"]["results"].values()), stopped
+            assert mock.devices[DIAL1].servo_moves == 1
+    finally:
+        await srv.stop()

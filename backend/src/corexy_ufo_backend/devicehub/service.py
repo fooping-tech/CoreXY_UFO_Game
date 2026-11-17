@@ -17,10 +17,19 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from . import device_gateway as _gateway_module
-from . import protocol as P
-from .device_gateway import DeviceGateway, GatewayError, GatewayNotConnected, SerialLineTransport, TransportError, guess_port
-from .protocol import CommandResult, DeviceEvent, ProtocolError
+from ufo_devicehub import (
+    CommandResult,
+    DeviceEvent,
+    DeviceGateway,
+    GatewayError,
+    GatewayNotConnected,
+    MockConfig,
+    MockHub,
+    ProtocolError,
+    SerialLineTransport,
+    TraceLog,
+)
+from ufo_devicehub import protocol as P
 
 log = logging.getLogger(__name__)
 
@@ -53,54 +62,13 @@ class DeviceHubConfig:
 
 
 class ExcludingSerialTransport(SerialLineTransport):
-    """The gateway's serial transport, but auto-detect never opens `exclude` (the robot's ports)
-    and the port is opened exclusively (no second program on the hub)."""
+    """The gateway's serial transport as this game opens it: auto-detect never opens `exclude`
+    (the robot's ports), naming one of them is refused, and the port is opened exclusively (no
+    second program on the hub). All of it is UFO-DeviceHub's own SerialLineTransport (its
+    `exclude` and `exclusive`): nothing of the transport is written again here."""
 
     def __init__(self, port: str, baudrate: int = 115200, exclude: Iterable[str] = ()) -> None:
-        super().__init__(port, baudrate)
-        self.exclude = {p for p in exclude if p}
-        # why the hub is not there, for the screen (DeviceHubService.problem)
-        self.last_open_error = ""
-        self.rejected_port = ""
-        self.rejected_at = 0.0
-
-    def reject_current(self) -> None:
-        """The gateway gave this port up (no hub handshake, or another system's hub): remembered."""
-        self.rejected_port = self.current_port or ""
-        self.rejected_at = time.monotonic()
-        super().reject_current()
-
-    def open(self) -> None:
-        try:
-            import serial
-        except ImportError as e:  # pragma: no cover
-            raise TransportError("pyserial is not installed") from e
-        if self.port == "auto":
-            port = guess_port(self._rejected | self.exclude)
-            if not port and self._rejected:
-                self._rejected.clear()  # every hub refused: start over (never the robot's ports)
-                port = guess_port(self.exclude)
-        else:
-            port = self.port
-            if port in self.exclude:
-                raise TransportError(f"{port} is the robot's (Core2) port, not the hub's")
-        if not port:
-            self.last_open_error = "none"
-            raise TransportError("no serial port found for the hub (the robot's ports are not tried)")
-        self.current_port = port
-        try:
-            self._ser = serial.Serial(port, self.baudrate, timeout=0.05, write_timeout=1.0, exclusive=True)
-            self._ser.reset_input_buffer()
-        except (OSError, serial.SerialException, ValueError) as e:
-            if self.port == "auto":
-                # review on #109: the next attempt tries the other candidates (a locked port first
-                # in the list must not hide the hub); when all are refused the list starts over
-                self._rejected.add(port)
-            self.last_open_error = f"{port}: {e}"
-            raise TransportError(f"{port}: {e} (another program, e.g. pc.web_console, may have it open)") from e
-        self.last_open_error = ""
-        self._buf.clear()
-        self._discarding = False
+        super().__init__(port, baudrate, exclude=exclude, exclusive=True)
 
 
 def result_dict(r: CommandResult) -> dict:
@@ -130,21 +98,6 @@ def enums() -> dict:
     }
 
 
-class _WrongSystemWatch(logging.Handler):
-    """The gateway only logs that a hub belongs to another UFO system (its own code is a copy
-    and is not changed here): this keeps that line for DeviceHubService.problem."""
-
-    def __init__(self) -> None:
-        super().__init__(logging.ERROR)
-        self.detail = ""
-        self.at = 0.0
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if "another UFO system" in str(record.msg):
-            self.detail = str(record.args[0]) if record.args else ""
-            self.at = time.monotonic()
-
-
 # how long a refusal is "now": the gateway tries again every few seconds
 PROBLEM_FRESH_S = 30.0
 
@@ -153,38 +106,37 @@ class DeviceHubService:
     def __init__(self, config: DeviceHubConfig, *, exclude_ports: Iterable[str] = (), transport=None) -> None:
         self.config = config
         if transport is None and config.port == "mock":
-            from .mock_hub import MockConfig, MockHub
             transport = MockHub(MockConfig(system_id=config.system_id))
         if transport is None:
             transport = ExcludingSerialTransport(config.port or "auto", exclude=exclude_ports)
         self.transport = transport
         self.trace = None
         if config.trace:
-            from .trace import TraceLog
             self.trace = TraceLog(config.trace)
         self.gw = DeviceGateway(transport=transport, system_id=config.system_id,
                                 trace=self.trace.record if self.trace is not None else None)
         self._unsubscribe: Callable[[], None] | None = None
-        self._wrong_system = _WrongSystemWatch()
-        _gateway_module.log.addHandler(self._wrong_system)
 
     def problem(self) -> str:
-        """Why the hub is not connected, in words for the screen ("" = connected). Read only."""
-        if self.gw.connected:
+        """Why the hub is not connected, in words for the screen ("" = connected). Read only:
+        the facts are the gateway's link_diagnostics(), nothing is sent."""
+        d = self.gw.link_diagnostics()
+        if d["connected"]:
             return ""
-        now = time.monotonic()
-        t = self.transport
-        port = getattr(t, "current_port", None) or self.config.port
-        if self._wrong_system.at and now - self._wrong_system.at < PROBLEM_FRESH_S:
-            return (f"ポート {port} のハブは別のシステムのもの（{self._wrong_system.detail}）。"
+        port = d["port"] or self.config.port
+        fresh = lambda age: age is not None and age < PROBLEM_FRESH_S  # noqa: E731
+        if fresh(d["wrong_system_age_s"]):
+            return (f"ポート {port} のハブは別のシステムのもの（{d['wrong_system']}）。"
                     f"設定のシステム番号は {self.config.system_id}（設定画面の「実機」で合わせて、起動し直す）")
-        open_error = str(getattr(t, "last_open_error", "") or "")
-        if open_error == "none":
+        kind, open_error = d["open_error_kind"], d["open_error"]
+        if kind == "no_port":
             return "ハブの USB シリアルポートが見つからない（ハブを USB でつなぐ。ロボットのポートは試さない）"
+        if kind == "excluded":
+            return f"ポート {self.config.port} はロボット（Core2）のポートで、ハブのものではない（設定の devicehub.port を直す）"
         if open_error:
             return f"ハブのポートを開けない（{open_error}）。ほかのプログラム（試験画面 pc.web_console など）が使っていないか"
-        if getattr(t, "rejected_at", 0.0) and now - t.rejected_at < PROBLEM_FRESH_S:
-            return (f"ポート {t.rejected_port} は開けたが、ハブとして応答しない"
+        if fresh(d["rejected_age_s"]):
+            return (f"ポート {d['rejected_port']} は開けたが、ハブとして応答しない"
                     "（ハブ以外の機器か、ハブのファームウェアが動いていない）")
         return f"ハブの応答を待っている（ポート {port}）"
 
@@ -207,7 +159,6 @@ class DeviceHubService:
             self._unsubscribe()
             self._unsubscribe = None
         self.gw.disconnect()
-        _gateway_module.log.removeHandler(self._wrong_system)
         if self.trace is not None:
             self.trace.close()
 

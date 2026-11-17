@@ -46,6 +46,18 @@
 - カメラ実機・YOLO・MediaPipe の実行（オプション依存のため環境に入れていない。インターフェースと単体テストのみ）。
 - Godot の実機モードでの長時間安定性、Godot エディタからのエクスポート。
 
+## UFO-DeviceHub をパッケージの依存にする（2026-11-17、Issue #159 Phase 1）
+
+環境: macOS (Darwin 25.1), uv / CPython 3.13。**実機のハブ・M5Dial・イルミは接続していない（実機未検証）。** UFO-DeviceHub はコミット `a402c37`（PR #10、main にマージ済み。プロトコル版 1。`tools/devicehub.pin`）。
+
+- バックエンドの `devicehub/` にあった UFO-DeviceHub の `pc/` のコピー 5 ファイルをなくし、UFO-DeviceHub の Python パッケージ `ufo-devicehub`（`external/UFO-DeviceHub/` の clone、editable なパス依存）を使う。ゲーム側に残るのは `service.py` だけ。
+- Python 394 件 + skip 1（2 件追加、`backend/tests/test_devicehub.py` 13 件）。模擬ハブで: 接続、USB を抜いて戻す（抜けている間の命令は断られ、後に持ち越されない。新しいセッションになる）、ACK を 2 回失っても排出は 1 回（同じコマンド ID での再送）、二重の排出の拒否、`STOP_ALL`、別のシステムのハブの拒否、ロボットのポートを開かない（後から分かったポートを含む）、つながらない理由の表示。コピーが残っていないことも 1 件で確かめる。
+- UFO-DeviceHub 側は 145 件（7 件追加）。wheel に入るのは `pc/` と `ufo_devicehub/` だけ（ファームウェア・`config/` は入らない）ことを `uv build` で確認。
+- `external/UFO-DeviceHub/ufo_devicehub/__init__.py` を 1 行直すと、`uv sync` なしで次の Python の起動から見えることを確認（確認後に戻した）。
+- ネットワークなし: `uv run --offline pytest tests/test_devicehub.py` と `uv sync --locked --offline` が通る（1 回オンラインで準備した後）。
+- `tools/setup_devicehub.sh` の自己テスト 9 件（clone がない、確認済みのコミットで clone、すでにある clone は動かさない、未コミットの変更があれば切り替えない、など）、`start.sh` の自己テスト 54 件（5 件追加: clone がないときは手順を表示して何も起動しない、ゲームだけは起動できる）。
+- **未検証**: `start.ps1` と `tools/setup_devicehub.ps1` は手元に PowerShell がなく、CI（pwsh）でだけ実行。Windows の実機、ネットワークのない Windows PC、実機のハブ・M5Dial・イルミ・排出。
+
 ## 3. 既知の課題・今後
 
 - 移動中の XY は推定（線形 smoothstep）。実機の実際の加減速プロファイルと合わないと、停止タイミングで UFO の揺れが実物と少しずれる。ファームウェアが移動中に位置を返せるようになれば `measured` に置き換わる。
