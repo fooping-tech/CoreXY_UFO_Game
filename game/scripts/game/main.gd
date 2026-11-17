@@ -447,6 +447,8 @@ func title_active() -> bool:
 
 func _on_title_chosen(mode: String) -> void:
 	debug_log.emit("title: " + mode)
+	if game_mode != null:
+		game_mode.sounds.play_jingle()  # #181
 	debug_ui.layer = _debug_layer
 	_set_debug_visible(_debug_before_title or debug_ui.visible)
 	if mode == "study":
@@ -815,7 +817,11 @@ func _process(dt: float) -> void:
 	_capture_tick(dt)
 	if game_mode != null:
 		# the menu's music (#173): the title screen, and the score game's own title
-		game_mode.sounds.menu_on = title_active() or (game_mode.active() and game_mode.phase == "IDLE")
+		# #181: the title screen at start has its own (top), the practice too; none in the 校正 tab
+		game_mode.sounds.top_on = title_active()
+		game_mode.sounds.menu_on = game_mode.active() and game_mode.phase == "IDLE"
+		game_mode.sounds.tutorial_on = game_mode.active() and game_mode.phase == "TUTORIAL"
+		game_mode.sounds.silent = calibrating()
 	if title_active():
 		title.set_status(_title_status())
 	_update_origin()
