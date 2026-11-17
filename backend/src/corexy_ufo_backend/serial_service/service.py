@@ -21,9 +21,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from . import protocol as P
-from .transport import SerialTransport, guess_port
+from .transport import SILENT_PREFIX, SerialTransport, guess_port
 
 log = logging.getLogger(__name__)
+
+# #161: the start of the error when a link is dropped for silence (link_report and the
+# game's 校正 tab look for it)
+SERIAL_SILENT_MSG = SILENT_PREFIX + " (serial link silent: USB cable / hub?)"
 
 
 class SerialError(Exception):
@@ -71,6 +75,10 @@ class SerialService:
         self._pump_task: asyncio.Task | None = None
         self._waiters: list[tuple[Callable[[str], bool], asyncio.Future]] = []
         self.last_pos: P.PosReport | None = None
+        # #161: when the first command sent since the last line read went out (None: none
+        # waiting). A USB hiccup can stop the reading side alone: the port stays open,
+        # writes go through, nothing comes back.
+        self._unanswered_since: float | None = None
 
     # ------------------------------------------------------------- lifecycle
     def add_listener(self, cb: Callable[[str], None]) -> None:
@@ -80,6 +88,8 @@ class SerialService:
         self._disconnect_cb = cb
 
     async def connect(self, *, startup_delay: float = 0.3, drain_s: float = 0.5) -> None:
+        if self.transport is not None or self._pump_task is not None:
+            await self.disconnect()  # a lost link's leftovers (#161: reopened while running)
         port = self.port or guess_port()
         if not port and self._transport_factory is SerialTransport:
             raise SerialError("no serial port found")
@@ -89,6 +99,8 @@ class SerialService:
         await t.open()
         self.transport = t
         self.connected = True
+        self.last_error = ""
+        self._unanswered_since = None
         self._pump_task = asyncio.create_task(self._pump())
         # Drain whatever the firmware prints on open (boot banner etc).
         await asyncio.sleep(drain_s)
@@ -104,16 +116,14 @@ class SerialService:
         self._fail_waiters(SerialError("disconnected"))
 
     def _on_transport_lost(self, err: Exception | None) -> None:
-        self.last_error = f"serial lost: {err}"
         self.connected = False
-        self._fail_waiters(SerialError(self.last_error))
-        if self._disconnect_cb:
-            self._disconnect_cb()
+        self._on_transport_lost_reason(f"serial lost: {err}")
 
     def _fail_waiters(self, exc: Exception) -> None:
         for _, fut in self._waiters:
             if not fut.done():
                 fut.set_exception(exc)
+                fut.exception()  # a completion nobody waits for any more must not log "never retrieved"
         self._waiters.clear()
 
     def _log(self, line: str) -> None:
@@ -129,6 +139,7 @@ class SerialService:
         q = self.transport.lines
         while True:
             line = await q.get()
+            self._unanswered_since = None
             self._log("RX " + line)
             if line.startswith("POS "):
                 pos = P.parse_pos_line(line)
@@ -151,6 +162,35 @@ class SerialService:
                 except Exception as e:  # pragma: no cover
                     fut.set_exception(e)
                     self._waiters.remove(item)
+
+    def _wrote(self) -> None:
+        if self._unanswered_since is None:
+            self._unanswered_since = time.monotonic()
+
+    def rx_stalled_for(self, now: float | None = None) -> float:
+        """Seconds since a command was sent (send(): each one is answered at once with
+        ACK QUEUED or ERROR) with nothing at all read after it; 0 when answered (#161).
+        write_raw lines do not count: a zero JOG while not jogging gets no reply."""
+        if not self.connected or self._unanswered_since is None:
+            return 0.0
+        return max(0.0, (time.monotonic() if now is None else now) - self._unanswered_since)
+
+    async def drop_link(self, reason: str) -> None:
+        """Close a link that still looks open but no longer answers (#161), like a lost
+        one: the waiting commands fail and the disconnect callback runs."""
+        if not self.connected:
+            return
+        log.error("serial link dropped: %s", reason)
+        self.connected = False
+        self._fail_waiters(SerialError(reason))  # with the reason, before disconnect's "disconnected"
+        await self.disconnect()
+        self._on_transport_lost_reason(reason)
+
+    def _on_transport_lost_reason(self, reason: str) -> None:
+        self.last_error = reason
+        self._fail_waiters(SerialError(reason))
+        if self._disconnect_cb:
+            self._disconnect_cb()
 
     def _register(self, pred: Callable[[str], bool]) -> asyncio.Future:
         """Register a waiter BEFORE sending so a fast reply cannot be missed."""
@@ -202,6 +242,7 @@ class SerialService:
                     if completion is not None and done_fut is None:
                         done_fut = self._register(lambda l: bool(completion.match(l) or nack_re.match(l)))
                     self.transport.write_line(command)
+                    self._wrote()
                     line = await self._await(ack_fut, timeout=3.0)
                     if line == P.QUEUE_FULL:
                         await asyncio.sleep(0.1)

@@ -486,7 +486,9 @@
     "z_poll_hz": 3,
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
-    "_note": "serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
+    "serial_rx_stall_s": 5.0,
+    "serial_reopen_s": 3.0,
+    "_note": "serial_rx_stall_s / serial_reopen_s (#161): a command sent and nothing at all read for serial_rx_stall_s = the link is dead although the port looks open (a USB hub's transaction error can stop the reading side alone: jogs still move, every command times out); the backend sends JOG 0 / ABORT blind (best effort, unconfirmed), drops the link (motors disabled, Z points forgotten) and, like after an unplugged cable, reopens the port every serial_reopen_s (0 = never). serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
   },
   "study_mode": {
     "enabled": true,

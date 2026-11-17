@@ -41,6 +41,8 @@ class FakeFirmware(SerialTransport):
         self._xy_task: asyncio.Task | None = None
         self._open = False
         self._tasks: list[asyncio.Task] = []
+        # #161: the USB link's reading side died: writes still arrive, nothing comes back
+        self.rx_dead = False
 
     def cut_servo_power(self, sid: int = 1) -> None:
         """The servo alone lost power: back to one turn. The older firmware does not
@@ -84,7 +86,8 @@ class FakeFirmware(SerialTransport):
             t.cancel()
 
     def _emit(self, line: str) -> None:
-        self.lines.put_nowait(line)
+        if not self.rx_dead:
+            self.lines.put_nowait(line)
 
     def _later(self, delay: float, *lines: str, then=None) -> asyncio.Task:
         async def go() -> None:
