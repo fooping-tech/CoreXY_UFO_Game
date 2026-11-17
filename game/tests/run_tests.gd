@@ -88,9 +88,11 @@ func _ready() -> void:
 	_test_game_mode_reactions(rs)
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_more_steps()
-	_test_score_game_panel_and_spell_voice(rs)
 	_test_gesture_tutorial_game(rs)
 	await _test_game_mode_physics()
+	# (after the physics run: the field is chaotic, and a scene made and freed before it shifts
+	# which capsule takes longest; the run's own limit is kept as it is)
+	_test_score_game_panel_and_spell_voice(rs)
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
