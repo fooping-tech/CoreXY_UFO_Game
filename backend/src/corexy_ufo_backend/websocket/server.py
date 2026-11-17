@@ -70,6 +70,12 @@ study_cleanup_start (ACK = started; progress in robot_state.study_cleanup and
 saw the claw hold the jig), study_cleanup_status. Off on the real robot until
 study_mode.cleanup.enabled_real and its confirmed items are set.
 
+The 校正 tab's preparation (#167): calibration_prepare (ACK = started; progress in
+robot_state.calibration_prepare and {"type": "calibration_prepare"} messages; holds the motion
+lock): motors on, the drum's tracking, the last session's Z points, the arm to the top, the claw
+open / closed, home. Stops at the first refusal; stop / soft_stop / motors off abort it.
+calibration_prepare_status.
+
 Homework messages (type homework_*, never the robot): start / frame / advice / stop, and
 (#79) homework_locate {session_id, kind: stuck|next, image_jpeg_base64} ->
 homework_locate_result {problem, u, v, verified, usable, ...} / homework_locate_error
@@ -102,6 +108,7 @@ from ..homework.approach import ApproachParams, ApproachSequencer
 from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 from ..sequence.cleanup import CleanupProfile, CleanupSequencer
+from ..sequence.prepare import PrepareSequencer
 from ..study_mode.height import DRUM_RADIUS_MM, HeightCalibration, HeightError
 
 log = logging.getLogger(__name__)
@@ -121,6 +128,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
             "study_height_status", "study_height_set", "study_height_confirm",
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
+            "calibration_prepare", "calibration_prepare_status",
             *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
@@ -132,7 +140,7 @@ CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "devicehub_meta", "d
                         "devicehub_diag")
 PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
-                     "study_cleanup_confirm", "study_cleanup_status")
+                     "study_cleanup_confirm", "study_cleanup_status", "calibration_prepare_status")
 # Accepted while the auto catch runs (anything else is refused as busy).
 AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
                       "gesture_config", "homework_approach_status", "camera_map_status", "study_cleanup_status",
@@ -141,6 +149,10 @@ AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catc
 APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
                     "homework_approach", "homework_approach_release", "homework_approach_status",
                     "camera_map_status", "study_cleanup_status", "study_height_status")
+# Accepted while the 校正 tab's preparation runs (#167; anything else is refused as busy).
+PREPARE_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
+                   "homework_approach_status", "camera_map_status", "study_cleanup_status", "study_height_status",
+                   "calibration_prepare_status")
 # Accepted while the study mode tidies up (anything else is refused as busy).
 CLEANUP_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
                    "homework_approach_status", "camera_map_status", "study_cleanup_start", "study_cleanup_confirm",
@@ -235,6 +247,10 @@ class GameServer:
             is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: self.auto.active or self.approach.active,
             on_change=lambda status: self._on_sequence_change("study_cleanup", status))
+        # #167: the 校正 tab's one-button preparation
+        self.prepare = PrepareSequencer(
+            robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
         self.sequences = (
             RunningSequence("auto_catch", self.auto, "auto_catch", "auto catch",
                             "busy: auto catch running (stop to abort)", AUTO_CATCH_ALLOWED),
@@ -242,6 +258,8 @@ class GameServer:
                             "busy: the arm is approaching the homework (stop to abort)", APPROACH_ALLOWED),
             RunningSequence("study_cleanup", self.cleanup, "study_cleanup_start", "the tidy-up",
                             "busy: the study mode is tidying up (stop to abort)", CLEANUP_ALLOWED),
+            RunningSequence("calibration_prepare", self.prepare, "calibration_prepare", "the preparation",
+                            "busy: preparing the robot (stop to abort)", PREPARE_ALLOWED),
         )
         # Overview camera -> XY calibration (#78): calibration.json's camera_xy section (#96).
         self.camera_map = CameraXYMap.load(backend_cfg.camera_xy_path if backend_cfg is not None else None,
@@ -671,6 +689,13 @@ class GameServer:
                 return self._study_height_set(params)
             if name == "study_height_confirm":
                 return self._study_height_confirm(params)
+            if name == "calibration_prepare_status":
+                return self._ack(name, self.prepare.status())
+            if name == "calibration_prepare":
+                if any(q.seq.active for q in self.sequences):
+                    return self._nack(name, "busy: another sequence is running")
+                await self.prepare.start()
+                return self._ack(name, self.prepare.status())
             if name == "study_cleanup_status":
                 return self._ack(name, self.cleanup.status())
             if name == "study_cleanup_start":

@@ -62,6 +62,9 @@ var _cards := {}
 var _summary := {}
 var _next: Label
 var _summary_shown := ""
+## #167: the one-button preparation
+var _prepare: Button
+var _prepare_label: Label
 
 ## The sections in order (#120): key, title. The summary lists them; section_states() says how
 ## each one is.
@@ -79,7 +82,7 @@ const COMMANDS := {
 	"homework_spot_set": "宿題の位置の記録",
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
 	"camera_map_clear": "カメラの点を消す",
-	"study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
+	"calibration_prepare": "準備をまとめて実行", "study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
 }
 
 func setup(m: Node) -> void:
@@ -107,6 +110,20 @@ func setup(m: Node) -> void:
 	_next.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_next.custom_minimum_size = Vector2(WIDTH, 0)
 	tv.add_child(_next)
+	# #167: everything done by hand after a start, one press (never on opening the tab)
+	var pc := StudyHud.label("起動したら: アームの周りに物がなく、アームの高さが前回止めたときと同じなら押す。"
+		+ "モーター有効 → 前回の Z の上下を呼び出す → アームを一番上へ → 爪を開いて閉じる → 原点復帰。"
+		+ "Space でいつでも止まる。", 15, YELLOW, 2)
+	pc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pc.custom_minimum_size = Vector2(WIDTH, 0)
+	tv.add_child(pc)
+	var prow := HBoxContainer.new()
+	tv.add_child(prow)
+	_prepare = _ws_button(prow, "準備をまとめて実行", func(): main.ws.send_command("calibration_prepare"), "primary")
+	_prepare_label = StudyHud.label("", 15, MUTED, 2)
+	_prepare_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prepare_label.custom_minimum_size = Vector2(WIDTH, 0)
+	tv.add_child(_prepare_label)
 	var grid := VBoxContainer.new()
 	grid.add_theme_constant_override("separation", 0)
 	tv.add_child(grid)
@@ -652,6 +669,8 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	result_ok = ok
 	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
+	if cmd == "calibration_prepare" and ok:
+		result_text = "準備を始めた（進み具合は上の「準備のようす」に出る）"
 	if cmd == "z_restore":
 		var r: Dictionary = data.restore if ok and data.get("restore") is Dictionary else {}
 		restore_estimate = {} if r.is_empty() or bool(r.get("applied", false)) or bool(r.get("too_far", false)) else r
@@ -684,6 +703,28 @@ static func servo_power_cycle_text(z: bool, arm: bool) -> String:
 	else:
 		s += "入れ直したら爪の開き・閉じを確かめる"
 	return s
+
+## #167: the preparation's steps and, when it stopped, why ("" before the first run).
+static func prepare_text(st: Dictionary) -> String:
+	var steps: Array = st.get("steps", []) if st.get("steps") is Array else []
+	if steps.is_empty():
+		return ""
+	var marks := {"done": "✓", "skip": "－", "run": "…", "fail": "✗", "todo": "・"}
+	var lines: Array[String] = []
+	for s in steps:
+		if not s is Dictionary:
+			continue
+		var note := str(s.get("note", ""))
+		lines.append("%s %s%s" % [marks.get(str(s.get("state", "todo")), "・"), str(s.get("label", s.get("key", ""))),
+			("（%s）" % note) if note != "" else ""])
+	var text := "　".join(lines)
+	if bool(st.get("active", false)):
+		return "実行中: " + text
+	if str(st.get("last_result", "")) == "done":
+		return "準備できた: " + text
+	if str(st.get("last_result", "")) == "fault":
+		return "止まった: " + text + "\n理由: " + reason_text(str(st.get("error", "")))
+	return text
 
 ## A refusal's reason as what to do next (the backend's own words when it is not known).
 static func reason_text(reason: String) -> String:
@@ -770,6 +811,11 @@ func refresh() -> void:
 	_refresh_summary()
 	for b in _ws_buttons:
 		b.disabled = not ready
+	var prep := RobotState.calibration_prepare if RobotState.source == "websocket" else {}
+	_prepare.disabled = not ready or bool(prep.get("active", false))
+	_prepare_label.text = prepare_text(prep)
+	_prepare_label.add_theme_color_override("font_color", BAD if str(prep.get("last_result", "")) == "fault"
+		else (GOOD if str(prep.get("last_result", "")) == "done" else MUTED))
 	if ready and not _asked and is_visible_in_tree():
 		_ask_backend()
 	if RobotState.connected or not ready:

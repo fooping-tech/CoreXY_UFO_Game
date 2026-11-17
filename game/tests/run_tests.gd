@@ -1868,6 +1868,14 @@ func _test_auto_catch_controls(rs: Node) -> void:
 	game.request_auto_catch()  # no backend link in the test
 	_ok(game._auto_catch_rid == "" and str(game.auto_catch_hint).contains("バックエンド"),
 		"auto catch: without a backend the button explains instead of sending", game.auto_catch_hint)
+	# #167: the preparation's status reaches RobotState (message and robot_state)
+	game.ws._handle({"type": "calibration_prepare", "data": {"active": true, "step": "home", "steps": []}})
+	var prep_seen: bool = rs.calibration_prepare.get("step", "") == "home"
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "state": "IDLE",
+		"x": 0.0, "y": 0.0, "z": 100.0, "calibration_prepare": {"active": false, "last_result": "done", "steps": []}}})
+	_ok(prep_seen and rs.calibration_prepare.get("last_result", "") == "done",
+		"calibration prepare: its progress messages and robot_state reach RobotState", str(rs.calibration_prepare))
+	rs.calibration_prepare = {}
 	# #163: a servo the firmware refuses until its power is cut and restored: said in the panel
 	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": false, "motors_enabled": true,
 		"state": "IDLE", "x": 0.0, "y": 0.0, "z": 100.0, "z_servo_power_cycle": true}})
@@ -2627,6 +2635,18 @@ func _test_calibration_summary() -> void:
 		and CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("USB")
 		and CalibrationPanel.reason_text("timeout") == "バックエンドから返事がない",
 		"calibration link: a silent link and a refusal for a firmware timeout point at the USB hub / cable", z_refused)
+	# #167: the one-button preparation's progress, its end and why it stopped
+	var prep_steps := [{"key": "motors", "label": "モーター有効", "state": "done", "note": ""},
+		{"key": "z_restore", "label": "前回の Z の上下を呼び出す", "state": "fail", "note": ""},
+		{"key": "claw_open", "label": "爪を開く", "state": "todo", "note": ""}]
+	var prep_fault := CalibrationPanel.prepare_text({"active": false, "last_result": "fault", "steps": prep_steps,
+		"error": "前回から +25 単位ずれている（電源を切っている間に回った）: W で一番上まで巻き上げて「ここを上に記録」"})
+	var prep_skip := [{"key": "claw_open", "label": "爪を開く", "state": "skip", "note": "爪の開き・閉じが未記録"}]
+	_ok(CalibrationPanel.prepare_text({}) == "" and prep_fault.begins_with("止まった") and prep_fault.contains("✓ モーター有効")
+		and prep_fault.contains("✗ 前回の Z") and prep_fault.contains("ここを上に記録")
+		and CalibrationPanel.prepare_text({"active": true, "steps": prep_steps}).begins_with("実行中")
+		and CalibrationPanel.prepare_text({"last_result": "done", "steps": prep_skip}).contains("－ 爪を開く（爪の開き・閉じが未記録）"),
+		"calibration prepare: the steps, the end and the reason it stopped are shown", prep_fault)
 	# #163: a servo refused until its power is cut and restored: which one, not the USB, and what after
 	var pc_z := CalibrationPanel.servo_power_cycle_text(true, false)
 	var pc_arm := CalibrationPanel.servo_power_cycle_text(false, true)
