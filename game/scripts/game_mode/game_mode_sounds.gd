@@ -426,6 +426,8 @@ func silence() -> void:
 func set_bgm(on: bool, fast := false) -> void:
 	bgm_on = on
 	hurry = on and fast
+	if on and _jingle != null and _jingle.playing:
+		_jingle.stop()
 	if _bgm == null or not is_inside_tree():
 		return
 	_process(0.0)  # at once: no music fades (#181)
@@ -454,7 +456,9 @@ func _process(dt: float) -> void:
 	_duck = move_toward(_duck, DUCK_DB if AudioBuses.voice_active() else 0.0, dt * 40.0)
 	_fade(_bgm, _bgm_gain)
 	_fade(_bgm_fast, _fast_gain)
-	if _jingle != null and _jingle.playing and (silent or not enabled):
+	# the jingle is never over a music: silence ends it, and so does the round's or the result's
+	# music (those start on time; a long jingle is cut, not laid over them)
+	if _jingle != null and _jingle.playing and (silent or not enabled or bgm_on or ending_on):
 		_jingle.stop()
 
 func _fade(p: AudioStreamPlayer, gain: float, extra_db := 0.0) -> void:

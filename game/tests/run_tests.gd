@@ -4798,10 +4798,15 @@ func _test_game_mode_music_files(rs: Node) -> void:
 	var jingle = snd.jingles == j0 + 1 and snd.jingle_playing() and not (snd._jingle.stream as AudioStreamWAV).loop_mode == AudioStreamWAV.LOOP_FORWARD
 	tick.call(2.0 / 60.0)
 	var jingle_alone = snd.track_wanted() == "" and not snd._music["top"].playing and not snd._music["menu"].playing
+	# a jingle still sounding when the round's music starts is cut (the synthesised tune too)
+	snd.set_bgm(true)
+	var jingle_cut = not snd.jingle_playing()
+	snd.set_bgm(false)
+	snd.play_jingle()
 	snd._jingle.stop()
 	tick.call(0.2)
 	var on_game_title = snd.track_wanted() == "menu" and snd._music["menu"].playing and not snd._music["top"].playing
-	_ok(calib_quiet and calib_back and jingle and jingle_alone,
+	_ok(calib_quiet and calib_back and jingle and jingle_alone and jingle_cut,
 		"music (#181): none in the calibration tab; choosing a mode on the title plays the jingle once, alone, then the next music",
 		"%s %s %s %s" % [calib_quiet, calib_back, jingle, jingle_alone])
 	# the practice has its own music, the countdown after it none
