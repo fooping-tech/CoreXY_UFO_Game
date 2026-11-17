@@ -992,6 +992,7 @@ class RealRobot(RobotInterface):
         cap = max(self.cfg.jog_max_mm_s, 0.0)
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
+        vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s)
         new_press = now - self._last_jog_t > P.JOG_TIMEOUT_S  # firmware's notion of a press
         self._last_jog_t = now
         if new_press and self.error.startswith(("jog rejected", "jog ended")):
@@ -999,6 +1000,29 @@ class RealRobot(RobotInterface):
         self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s, z_send))
         self._z_rate = z_send
         self._jog_requested = True
+
+    def _jog_inside_edges(self, vx: float, vy: float) -> tuple[float, float]:
+        """#185: the jog's XY velocity kept jog_edge_margin_mm inside the soft limits: the part
+        that heads for an edge is slowed with the distance left to that line and is zero on
+        it (or beyond it: only the way back is allowed). The firmware's own soft limit stays
+        behind this one; the home corner's limit switches are never reached by a jog."""
+        margin = self.cfg.jog_edge_margin_mm
+        if margin <= 0:
+            return vx, vy
+        slow = self.cfg.jog_edge_slow_s
+        lim = self.limits
+        s = self.snapshot()
+
+        def one(v: float, at: float, lo: float, hi: float) -> float:
+            if v == 0:
+                return 0.0
+            left = (hi - margin - at) if v > 0 else (at - lo - margin)
+            if left <= 0:
+                return 0.0
+            cap = left / slow if slow > 0 else abs(v)
+            return math.copysign(min(abs(v), cap), v)
+
+        return one(vx, s.x, lim.x_min, lim.x_max), one(vy, s.y, lim.y_min, lim.y_max)
 
     async def soft_stop(self) -> None:
         if not self.serial.connected:

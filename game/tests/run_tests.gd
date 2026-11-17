@@ -3314,10 +3314,31 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	ctl.field.capsule_exited.emit(str(r.capsule.capsule_id), "right", Vector2(900, 660))
 	_gm_step(ctl, ctl.release_sync_s + MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S + 0.1)
 	var verifying: bool = r.state == "VERIFYING"
-	_gm_step(ctl, ctl.verify_retry_s * ctl.verify_tries + 1.0)
-	_ok(verifying and r.state == "FAULT" and r.fault.contains("BALL_DETECTED") and hub.count(GM_R, "RELEASE_BALL") == 2
-		and hub.dials[GM_R].state == "BALL_DETECTED",
-		"game mode: RELEASE_DONE is not proof: a Dial that is not ready afterwards is not armed again (FAULT)", "%s %s" % [r.state, r.fault])
+	var per_try: float = MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S + ctl.verify_retry_s * ctl.verify_tries + 1.0
+	_gm_step(ctl, per_try * (ctl.release_retries + 1))
+	# #185: the release is tried again, twice; a capsule that still does not leave is a FAULT
+	_ok(verifying and r.state == "FAULT" and r.fault.contains("出ていない") and hub.count(GM_R, "RELEASE_BALL") == 2 + ctl.release_retries
+		and ctl.release_retries == 2 and hub.dials[GM_R].state == "COMPLETE" and r.released == 1,
+		"game mode: RELEASE_DONE is not proof: a capsule still in the Dial gets the release twice more, then the Dial is not armed again (FAULT)", "%s %s %d" % [r.state, r.fault, hub.count(GM_R, "RELEASE_BALL")])
+	# ... one that leaves at the second try: the round goes on
+	hub.stuck_ball.clear()
+	ctl._halt("test")
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 1.0)
+	var n_rel := hub.count(GM_L, "RELEASE_BALL")
+	hub.stuck_ball[GM_L] = 1
+	_gm_play_capsule(ctl, "left", "center")
+	_gm_step(ctl, per_try * 2.0 + 2.0)
+	var second_try: bool = ctl.phase == "PLAYING" and l.state == "READY" and l.released == 1 and hub.count(GM_L, "RELEASE_BALL") == n_rel + 2 \
+		and l.re_releases == 0 and ctl.trace.rows.any(func(row): return str(row.get("release_status", "")).begins_with("again 1/"))
+	# ... and a Dial that does not know the second release (older firmware): FAULT, said so
+	hub.no_second_release = true
+	hub.stuck_ball[GM_R] = true
+	_gm_play_capsule(ctl, "right", "center")
+	_gm_step(ctl, per_try * 2.0 + 2.0)
+	_ok(second_try and r.state == "FAULT" and r.fault.contains("ファームウェア"),
+		"game mode (#185): a capsule that leaves at the second release lets the round go on; a Dial that refuses the second release is a FAULT that says so",
+		"%s %s %s %s" % [second_try, l.state, r.state, r.fault])
 	_gm_free(game, rs)
 
 ## The Dials' transfer LEDs (UFO-DeviceHub docs/game-mode-interface.md): decoration that
@@ -4821,6 +4842,19 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	_ok(only_easy and none_yet and closed and opened and once and stopped,
 		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the practice capsule's start opens it once; not after a stop; the hard mode's steps ask nothing",
 		"%s %s %s %s %s %s %s" % [only_easy, none_yet, closed, opened, once, stopped, asked])
+	# #185: the "touch the fingers" step moves nothing; the moving step does
+	ctl.open()
+	ctl.set_difficulty("easy")
+	ctl.start_tutorial()
+	var seen := {}
+	for i in 12:
+		seen[ctl.tutorial.kind()] = ctl.hand_holds_still()
+		ctl.tutorial.skip_step()
+		if not ctl.tutorial.active():
+			break
+	ctl._halt("test")
+	_ok(seen.get("pinch", false) == true and seen.get("move", true) == false and seen.get("pose", true) == false and not ctl.hand_holds_still(),
+		"tutorial (#185): the hand stick moves nothing in the practice's pinch step (only there)", str(seen))
 	# the hand camera's picture beside the hand: only in a judged hand step with a camera picture
 	var hud: GestureTutorialHud = ctl.tutorial_hud
 	var attached = hud._cam != null and hud._cam_overlay.gesture == game.gesture
