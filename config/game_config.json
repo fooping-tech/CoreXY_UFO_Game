@@ -415,7 +415,7 @@
       "command_timeout_s": 5.0,
       "arm_retry_s": 3.0,
       "verify_retry_s": 0.5,
-      "verify_tries": 4
+      "verify_tries": 12
     },
     "field": {
       "max_stay_s": 15.0,

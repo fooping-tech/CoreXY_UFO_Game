@@ -181,7 +181,7 @@ var release_timeout_s := 8.0
 var command_timeout_s := 5.0
 var arm_retry_s := 3.0
 var verify_retry_s := 0.5
-var verify_tries := 4
+var verify_tries := 12  # 6 s: a capsule that leaves the Dial slowly is not a fault (#185)
 var closing_wait_s := 1.5
 var lights := true
 ## the Dials' own transfer LEDs (SET_DIAL_EFFECT / SET_DIAL_COLOR, firmware 0.3)
@@ -1654,13 +1654,16 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 				return
 			var st: Dictionary = data.get("status", {}) if data.get("status") is Dictionary else {}
 			var ds := str(st.get("dial_state", st.get("state", "")))
+			var still_in := bool(st.get("switch_on", false))
+			_trace("verify", l, {"result": "%s switch_on=%s" % [ds if ok else result, still_in]})  # what the Dial said (#185)
 			if ok and ds in ["COMPLETE", "READY"] and not bool(st.get("switch_on", false)):
 				_released(l)
 			else:
 				l.verify_tries -= 1
 				if l.verify_tries <= 0:
 					_fault(l, ("RELEASE_DONE が来ない（排出できたか分からない。Dial: %s）" if l.release_timed_out
-						else "排出のあと、Dial が次の準備にならない（%s）") % (ds if ok else result))
+						else ("排出のあと、カプセルが Dial から出ていない（スイッチが ON のまま。Dial: %s）" if ok and still_in
+						else "排出のあと、Dial が次の準備にならない（%s）")) % (ds if ok else result))
 				else:
 					l.t = verify_retry_s
 		"led":
