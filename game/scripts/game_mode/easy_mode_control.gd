@@ -13,6 +13,9 @@ extends RefCounted
 ##       the top)--> MANUAL_XY. The easy mode cannot raise the arm by hand, so every game
 ##       starts from there (#177). A fist with the arm down needs nothing here: the backend's
 ##       `easy_grab` then closes the claw where it is and brings it up.
+##   WAIT_DESTINATION --an open hand kept up for cancel_hold_s--> CANCEL --(the backend
+##       opened the claw)--> MANUAL_XY (#179: the claw came up empty: let go and try again).
+##       The short open hand between the fist and the fingers is not that: it must be kept up.
 ##   anything wrong (a fault, a stop, the link, no answer, nobody chose in time) --> FAULT:
 ##   nothing starts again by itself; reset() (a new round, or staff) leaves it.
 ##
@@ -49,12 +52,15 @@ signal delivered(destination: int)
 ## For the sounds and UFOくん: "grab" / "caught" / "deliver" / "done" / "refused" / "fault"
 signal cue(name: String)
 
-const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "FAULT"]
+const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL", "FAULT"]
 const GRAB_POSES := ["fist", "thumb"]  # a fist with the thumb out is still a fist (as for the claw)
 const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1", "peace": "2"}
 
 ## how long a sign must be held, unbroken (config game_mode.easy.hold_s)
 var hold_s := 0.6
+## how long the open hand must be kept up, while waiting for the destination, to give the
+## catch up (config game_mode.easy.cancel_hold_s)
+var cancel_hold_s := 1.5
 ## how long the neutral shape must be seen before the next sign counts
 var neutral_s := 0.2
 ## no answer to a request for this long: FAULT (the request is never sent again)
@@ -80,6 +86,7 @@ var wait_s := 15.0
 ## how many requests went out (the tests count them)
 var resets_sent := 0
 var grabs_sent := 0
+var cancels_sent := 0
 var delivers_sent := 0
 
 var _hold := 0.0
@@ -93,6 +100,7 @@ var _stopped_rid := ""
 
 func configure(cfg: Dictionary) -> void:
 	hold_s = clampf(float(cfg.get("hold_s", hold_s)), 0.2, 5.0)
+	cancel_hold_s = clampf(float(cfg.get("cancel_hold_s", cancel_hold_s)), 0.5, 10.0)
 	neutral_s = clampf(float(cfg.get("neutral_s", neutral_s)), 0.05, 2.0)
 	request_timeout_s = clampf(float(cfg.get("request_timeout_s", request_timeout_s)), 0.5, 30.0)
 	wait_s = float(cfg.get("wait_destination_s", wait_s))
@@ -103,7 +111,7 @@ func enabled() -> bool:
 ## The backend's sequence is (or is about to be) running for this script: the hand and
 ## the keys do not move the crane meanwhile.
 func busy() -> bool:
-	return state in ["RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2"]
+	return state in ["RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL"]
 
 func faulted() -> bool:
 	return state == "FAULT"
@@ -227,6 +235,18 @@ func on_ack(rid: String, ok: bool, data: Dictionary) -> void:
 			note = refusal_text(reason)
 			_set_state("MANUAL_XY")
 			cue.emit("refused")
+	elif what == "cancel":
+		if state != "CANCEL":
+			return
+		if ok:
+			return  # the backend's report says the rest
+		if reason in ["timeout", "socket_closed"]:
+			_fault("やりなおしの へんじが こない（%s）" % reason)
+		else:
+			need_neutral = true
+			note = refusal_text(reason)
+			_set_state("WAIT_DESTINATION")
+			cue.emit("refused")
 	elif what == "deliver":
 		if not state.begins_with("DELIVER_DIAL_"):
 			return
@@ -273,7 +293,7 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 			var what := _rid_what
 			_rid = ""
 			_rid_what = ""
-			_fault("%sの へんじが こない" % {"grab": "キャッチ", "reset": "じゅんび"}.get(what, "はこぶ"))
+			_fault("%sの へんじが こない" % {"grab": "キャッチ", "reset": "じゅんび", "cancel": "やりなおし"}.get(what, "はこぶ"))
 			return
 	var status: Dictionary = world.get("status", {}) if world.get("status") is Dictionary else {}
 	var link := bool(world.get("link", false))
@@ -291,8 +311,8 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 			else:
 				_follow(status)
 				if state == "WAIT_DESTINATION":
-					_tick_wait(dt, sgn, world)
-		"DELIVER_DIAL_1", "DELIVER_DIAL_2":
+					_tick_wait(dt, sgn, hand, world)
+		"DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL":
 			if not link:
 				_fault("つうしんが きれた")
 			else:
@@ -363,7 +383,35 @@ func _tick_manual(dt: float, sgn: String, hand: Dictionary, world: Dictionary, s
 	_set_state("AUTO_GRAB")
 	cue.emit("grab")
 
-func _tick_wait(dt: float, sgn: String, world: Dictionary) -> void:
+func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> void:
+	# an open hand kept up (not the pinch, not the short one before the fingers): give it up
+	if sgn == "neutral" and str(hand.get("pose", "")) == "open" and not bool(hand.get("pinch", false)) and not need_neutral:
+		if str(world.get("gate", "")) != "":
+			_hold_reset()
+			note = str(world.get("gate", ""))
+			return
+		if holding != "cancel":
+			_hold_reset()
+		holding = "cancel"
+		_hold += dt
+		progress = clampf(_hold / maxf(cancel_hold_s, 0.01), 0.0, 1.0)
+		if _hold < cancel_hold_s:
+			return
+		_hold_reset()
+		need_neutral = true
+		_neutral = 0.0
+		var crid := str(send.call("easy_cancel", {"grab_id": grab_id})) if send.is_valid() else ""
+		if crid == "":
+			note = "バックエンドに おくれなかった"
+			cue.emit("refused")
+			return
+		cancels_sent += 1
+		note = ""
+		_rid = crid
+		_rid_what = "cancel"
+		_rid_left = request_timeout_s
+		_set_state("CANCEL")
+		return
 	if not sgn in ["1", "2"]:
 		_hold_reset()
 		return
@@ -418,6 +466,8 @@ func _follow(status: Dictionary) -> void:
 			_fault("とまったよ: %s" % fault_text(str(status.get("error", ""))))
 		"EXPIRED":
 			_fault("えらばなかったので とまったよ（つめは とじたまま）")
+		"STOPPED":  # the stop key while it only waited: no alarm (the next game's start opens the claw)
+			_fault("ストップした（つめは とじたまま）")
 		"WAIT_DESTINATION":
 			if state == "AUTO_GRAB":
 				note = ""
@@ -429,7 +479,12 @@ func _follow(status: Dictionary) -> void:
 				destination = int(status.get("destination", 0))
 				_set_state(bs)
 		"MANUAL_XY":
-			if state == "RESET" and str(status.get("last_result", "")) == "done" and not bool(status.get("active", false)):
+			if state == "CANCEL" and str(status.get("last_result", "")) == "cancelled" and not bool(status.get("active", false)):
+				_forget()
+				note = "つめを ひらいたよ。もういちど やってみよう"
+				_set_state("MANUAL_XY")
+				cue.emit("cancelled")
+			elif state == "RESET" and str(status.get("last_result", "")) == "done" and not bool(status.get("active", false)):
 				_forget()
 				note = ""
 				_set_state("MANUAL_XY")
@@ -484,6 +539,8 @@ func title_text() -> String:
 			return "ひだりの 1ごうきへ はこぶよ"
 		"DELIVER_DIAL_2":
 			return "みぎの 2ごうきへ はこぶよ"
+		"CANCEL":
+			return "やりなおすよ（つめを ひらく）"
 		"FAULT":
 			return "かかりの ひとを よんでね"
 	return ""

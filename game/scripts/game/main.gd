@@ -1301,10 +1301,41 @@ func _on_easy_cue(name: String) -> void:
 		"deliver":
 			sfx.play_cue("pinch")
 			gesture_hud.flash("はこぶよ！", 0.9)
-		"done":
+		"done", "cancelled":
 			sfx.play_cue("release")
 		"refused", "fault":
 			sfx.play_cue("lost")
+
+# ------------------------------------------------------------ recovery from the game's screen (#179)
+## The arm cannot be used as it is (the backend's robot): an alarm (a stop that had to cut a
+## moving servo with ABORT, an emergency stop), or homing lost. "" = it can.
+func arm_recovery_reason() -> String:
+	if RobotState.source != "websocket" or not bool(backend_link.call()) or not RobotState.connected:
+		return ""
+	if RobotState.machine_state in ["ALARM", "ESTOP"]:
+		return "アラームちゅう"
+	if not RobotState.homed and RobotState.machine_state != "HOMING":
+		return "げんてんふっきが いる"
+	return ""
+
+## The recovery is running (the 校正 tab's preparation, started from here or there).
+func arm_recovering() -> bool:
+	return RobotState.source == "websocket" and bool(RobotState.calibration_prepare.get("active", false))
+
+## Staff, from the game's screen (F10, or the button on the score game's screen): the alarm
+## cleared, then the preparation (#167: motors, Z, the arm to the top, homing, the middle, the
+## claw open). The same two commands as the debug panel's 「アラーム解除」 and the 校正 tab's
+## 「準備をまとめて実行」, in that order; the backend refuses whatever is not in order. The
+## arm moves: a person decided it. Returns false when there is nothing to recover or no link.
+func recover_arm() -> bool:
+	if arm_recovery_reason() == "" or arm_recovering():
+		return false
+	debug_log.emit("recover: clear_alarm, then calibration_prepare")
+	ws.send_command("clear_alarm")
+	ws.send_command("calibration_prepare")
+	if easy.faulted():
+		easy.reset()
+	return true
 
 ## A new round or practice: the easy mode leaves its FAULT (a person started it). The
 ## backend still refuses whatever is not in order.
@@ -1655,6 +1686,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
 			show_title()
+			return
+		# staff: the arm out of an alarm / without homing, from the game's own screen (#179)
+		if ev.keycode == KEY_F10 and game_mode != null and game_mode.active():
+			recover_arm()
 			return
 		# staff: the easy mode out of its stop (#169), after the crane was put right by hand
 		if ev.keycode == KEY_F9 and easy.faulted():

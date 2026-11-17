@@ -93,8 +93,10 @@ func sub_text() -> String:
 				return e.note
 			if e.need_neutral:
 				return "いちど パーに してね"
-			return "ゆび 1ぽん＝ひだり　2ほん＝みぎ\nあと %d びょう" % int(ceil(e.wait_left_s))
-		"DELIVER_DIAL_1", "DELIVER_DIAL_2":
+			if e.holding == "cancel":
+				return "パーを つづけると やりなおし（つめを ひらく）"
+			return "ゆび 1ぽん＝ひだり　2ほん＝みぎ\nつかめなかったら パーを つづける　あと %d びょう" % int(ceil(e.wait_left_s))
+		"DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL":
 			return (e.step_text() + "\n" if e.step_text() != "" else "") + "いまは そうさ できないよ"
 		"FAULT":
 			return e.note + "\nスタッフ: なおしてから F9（または つぎの ラウンド）"
@@ -166,6 +168,8 @@ func _draw() -> void:
 			_bar(Rect2(PANEL.position.x + 10.0, PANEL.position.y + 160.0, 100, 8), e.progress, lc)
 		elif e.holding == "2":
 			_bar(Rect2(PANEL.end.x - 110.0, PANEL.position.y + 160.0, 100, 8), e.progress, rc)
+		elif e.holding == "cancel":  # the open hand kept up: the catch is given up when it is full
+			_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 164.0, PANEL.size.x - 260.0, 8), e.progress, Color.WHITE)
 		# the time left to choose
 		_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 150.0, PANEL.size.x - 260.0, 8),
 			e.wait_left_s / maxf(e.wait_s, 0.1), YELLOW if e.wait_left_s > 5.0 else RED)

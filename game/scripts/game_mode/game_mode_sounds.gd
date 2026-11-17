@@ -65,6 +65,8 @@ var use_files := true
 var last_played := ""
 ## the pitch the last sound was really played at (tests)
 var last_pitch := 1.0
+## how many blips of the practice's gauge were asked for (tests)
+var gauge_blips := 0
 ## every sound asked for, newest last (tests)
 var log: Array[String] = []
 var bgm_on := false
@@ -143,6 +145,8 @@ func _ready() -> void:
 		"gem": StudySounds._tones([[1568.0, 0.04], [2093.0, 0.1]], 0.3),
 		# the practice before the round (#149): "ping-pong" for a step done, the spell's rise
 		"tutorial_ok": StudySounds._tones([[1318.5, 0.16], [1046.5, 0.42]], 0.4),
+		# the practice's gauge filling (#179): a short blip, played higher as it fills
+		"gauge": StudySounds._tones([[659.3, 0.05]], 0.22),
 		"summon": StudySounds._sweep(196.0, 1568.0, 0.9, 0.3),
 		# the result's show (#153): the thud of TIME UP, the counting blip (its pitch is set
 		# as it is played), the number stopping, a bonus called and landing, the last hit
@@ -320,9 +324,12 @@ func play(name: String, side := "", pitch := 0.0) -> void:
 	_last_ms[name] = now
 	last_played = name
 	last_pitch = pitch if pitch > 0.0 else 1.0
-	log.append(name)
-	if log.size() > 64:
-		log.remove_at(0)
+	if name == "gauge":
+		gauge_blips += 1  # many per second: counted, not listed (they would push the rest out of the log)
+	else:
+		log.append(name)
+		if log.size() > 64:
+			log.remove_at(0)
 	var src := source_of(name)
 	if not enabled or src == "" or not is_inside_tree():
 		return
