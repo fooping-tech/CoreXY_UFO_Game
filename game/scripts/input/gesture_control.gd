@@ -73,6 +73,15 @@ var velocity_z := 0.0
 var mode := "xy"
 ## How long a fist / peace sign must be held before the claw moves.
 var claw_hold_ms := 500.0
+## The score game's easy mode (#169): the steer is XY only (a palm-down pinch steers XY
+## too, never Z) and the hand shapes do not ask for the claw (`claw_requested` is not
+## emitted): there the shapes mean something else, read by EasyModeControl.
+var xy_only := false
+var claw_enabled := true:
+	set(v):
+		if v and not claw_enabled and scheme.claw_poses().has(pose):
+			_claw_fired = pose  # a shape held across the switch is not a claw request: a new one is
+		claw_enabled = v
 
 # latest accepted event
 var last_event: Dictionary = {}
@@ -223,6 +232,9 @@ func claw_progress(now_ms: float) -> float:
 
 ## Not steering, hand in view: a claw pose of the scheme held long enough asks for the claw.
 func _claw_tick(now_ms: float, gate: String) -> void:
+	if not claw_enabled:
+		claw_pose = ""
+		return
 	var poses := scheme.claw_poses()
 	if not poses.has(pose):
 		claw_pose = ""
@@ -347,7 +359,7 @@ func tick(now_ms: float, dt: float, gate: String) -> Vector2:
 			else:
 				var v := scheme.velocity(self, dt)
 				velocity = Vector2(v.x, v.y)
-				velocity_z = v.z
+				velocity_z = 0.0 if xy_only else v.z
 		State.WAITING_RELEASE:
 			if not sign_seen:
 				_set_state(State.HAND_DETECTED, reason)

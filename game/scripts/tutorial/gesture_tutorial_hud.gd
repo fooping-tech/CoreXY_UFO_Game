@@ -143,6 +143,8 @@ func sub_text() -> String:
 	if tut.kind() in ["move", "grab"] and tut.hand_only and tut.state == "judging":
 		sub = "ての れんしゅうだけ するよ（いま ロボットは うごかない）"
 	if tut.kind() == "practice":
+		if ctl.easy_on() and s.has("sub_easy"):
+			sub = str(s.sub_easy)
 		match ctl.practice:
 			"closing", "done":
 				sub = "かえしたよ。でてこなかったら かかりの ひとに いってね"
@@ -221,7 +223,9 @@ func _draw() -> void:
 		"easy_grab":
 			_draw_easy_grab()
 		"easy_one":
-			_draw_easy_one()
+			_draw_easy_number("point", "1", -1.0, CYAN)
+		"easy_two":
+			_draw_easy_number("peace", "2", 1.0, MAGENTA)
 		"rules":
 			_draw_rules()
 		"practice":
@@ -291,6 +295,12 @@ func _face() -> String:
 ## A hand in dots, fingers up, seen from the palm. `at` = the top-left of its 20 x 32 box,
 ## `d` = the size of one hand dot. pose: open / fist / peace / point / thumb / pinch.
 func draw_hand(at: Vector2, d: float, pose: String) -> void:
+	paint_hand(self, at, d, pose)
+	if pose == "pinch":  # the two fingertips meet: a spark
+		_spark(at + Vector2(3.0, 11.5) * d, d * 1.2, YELLOW)
+
+## The same hand on any canvas item (the easy mode's screen draws them too).
+static func paint_hand(ci: CanvasItem, at: Vector2, d: float, pose: String) -> void:
 	var up: Array = FINGERS_UP.get(pose, FINGERS_UP["open"])
 	var parts: Array = []  # [Rect2 in hand dots, colour]
 	parts.append([Rect2(6, 16, 11, 12), SKIN])  # the palm
@@ -320,12 +330,10 @@ func draw_hand(at: Vector2, d: float, pose: String) -> void:
 			parts.append([Rect2(7, 19, 8, 3), SKIN_SHADE])
 	for p in parts:  # the ink line first, then the skin: one outline round the whole hand
 		var o: Rect2 = p[0]
-		draw_rect(Rect2((at + (o.position - Vector2(1, 1)) * d).snapped(Vector2(DOT, DOT)), (o.size + Vector2(2, 2)) * d), INK)
+		ci.draw_rect(Rect2((at + (o.position - Vector2(1, 1)) * d).snapped(Vector2(DOT, DOT)), (o.size + Vector2(2, 2)) * d), INK)
 	for p in parts:
 		var q: Rect2 = p[0]
-		draw_rect(Rect2((at + q.position * d).snapped(Vector2(DOT, DOT)), q.size * d), p[1])
-	if pose == "pinch":  # the two fingertips meet: a spark
-		_spark(at + Vector2(3.0, 11.5) * d, d * 1.2, YELLOW)
+		ci.draw_rect(Rect2((at + q.position * d).snapped(Vector2(DOT, DOT)), q.size * d), p[1])
 
 func _spark(c: Vector2, sz: float, col: Color) -> void:
 	var k := 0.6 + 0.4 * sin(_t * 9.0)
@@ -403,7 +411,7 @@ func _draw_grab(s: Dictionary) -> void:
 		draw_hand(at, 1.75, "pinch" if art == "pinch_down" else (art if art in HAND_POSES else "open"))
 		_tag(i, str(hints[i][1]), at + Vector2(280, 28), Color("cfe0ff"), 460.0)
 
-## The easy mode's catch as three frames: down, catch, up. Not built yet: the screen says so.
+## The easy mode's catch as three frames: down, catch, up (what the round does by itself).
 func _draw_easy_grab() -> void:
 	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, "fist")
 	for i in 3:
@@ -416,11 +424,13 @@ func _draw_easy_grab() -> void:
 			_arrow(c + Vector2(52, -40.0 if i == 0 else 40.0), c + Vector2(52, 40.0 if i == 0 else -40.0), YELLOW, 4.0)
 		_tag(i, ["おりる", "つかむ", "あがる"][i], c + Vector2(0, 110), Color("cfe0ff"))
 
-func _draw_easy_one() -> void:
-	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, "point")
-	_arrow(Vector2(360, 610), Vector2(360, 664), YELLOW)
-	_draw_dial(Vector2(360, 740), CYAN, "1")
-	_tag(0, "1ごうき", Vector2(360, 820), CYAN)
+## The easy mode's carry: the fingers shown, and the Dial they mean (1 = left, 2 = right).
+func _draw_easy_number(pose: String, number: String, side: float, col: Color) -> void:
+	draw_hand(_hand_at(TOP_AT + Vector2(0, -10)), 8.0, pose)
+	var dial := Vector2(360.0 + side * 190.0, 740.0)
+	_arrow(Vector2(360, 610), dial + Vector2(-side * 40.0, -70.0), YELLOW)
+	_draw_dial(dial, col, number)
+	_tag(0, "%sの %sごうき" % ["ひだり" if side < 0.0 else "みぎ", number], dial + Vector2(0, 80), col)
 
 ## A Dial's port: a ring in its colour with its number.
 func _draw_dial(c: Vector2, col: Color, number: String) -> void:

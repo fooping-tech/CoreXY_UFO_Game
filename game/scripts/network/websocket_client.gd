@@ -179,6 +179,8 @@ func _handle(msg: Dictionary) -> void:
 				RobotState.auto_catch = data.auto_catch
 			if data.get("calibration_prepare") is Dictionary:
 				RobotState.calibration_prepare = data.calibration_prepare
+			if data.get("easy_mode") is Dictionary:
+				RobotState.easy_mode = data.easy_mode
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),
 				str(data.get("state", "UNKNOWN")), int(msg.get("timestamp", 0)), bool(data.get("measured", true)))
 			if not was and RobotState.connected:
@@ -212,6 +214,11 @@ func _handle(msg: Dictionary) -> void:
 				RobotState.calibration_prepare = data
 				if str(data.get("error", "")) != "" and not bool(data.get("active", false)):
 					log_line.emit("calibration_prepare: stopped at %s (%s)" % [str(data.get("step", "")), str(data.error)])
+		"easy_mode":
+			if not listen_only:
+				RobotState.easy_mode = data
+				log_line.emit("easy_mode: %s / %s%s" % [str(data.get("state", "")), str(data.get("step", "")),
+					(" (%s)" % str(data.error)) if str(data.get("error", "")) != "" else ""])
 		"auto_catch":
 			if not listen_only:
 				RobotState.auto_catch = data
