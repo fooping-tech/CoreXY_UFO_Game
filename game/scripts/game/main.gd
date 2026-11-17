@@ -936,6 +936,8 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if _on_recover_ack(rid, ok):
+		return
 	if rid != "" and rid == _auto_catch_rid:
 		_auto_catch_rid = ""
 		auto_catch_hint = "" if ok else auto_catch_hint_for(str(data.get("reason", "")))
@@ -1330,12 +1332,47 @@ func arm_recovering() -> bool:
 func recover_arm() -> bool:
 	if arm_recovery_reason() == "" or arm_recovering():
 		return false
+	if _recover_clear_rid != "" or _recover_prepare_rid != "":
+		return false  # already on its way
 	debug_log.emit("recover: clear_alarm, then calibration_prepare")
-	ws.send_command("clear_alarm")
-	ws.send_command("calibration_prepare")
+	# one after the other, not queued together: the preparation (which moves the arm) is only
+	# asked for when the alarm's clearing was answered, and not at all when the stop key came
+	# in between (review on #180)
+	_recover_clear_rid = ws.send_command("clear_alarm")
 	if easy.faulted():
 		easy.reset()
 	return true
+
+## the recovery's two requests still without an answer ("" = none), and the preparation's
+## request the stop key overtook (if it starts after all, it is stopped again)
+var _recover_clear_rid := ""
+var _recover_prepare_rid := ""
+var _recover_stopped_rid := ""
+
+func _on_recover_ack(rid: String, ok: bool) -> bool:
+	if rid == "":
+		return false
+	if rid == _recover_clear_rid:
+		_recover_clear_rid = ""
+		if ok and bool(backend_link.call()):
+			_recover_prepare_rid = ws.send_command("calibration_prepare")
+		return true
+	if rid == _recover_prepare_rid:
+		_recover_prepare_rid = ""
+		return true
+	if rid == _recover_stopped_rid:
+		_recover_stopped_rid = ""
+		if ok and bool(backend_link.call()):
+			ws.send_command("soft_stop")  # it started behind the stop: stopped again
+		return true
+	return false
+
+## The stop key: a recovery on its way goes no further.
+func _stop_recovery() -> void:
+	_recover_clear_rid = ""  # its answer no longer starts the preparation
+	if _recover_prepare_rid != "":
+		_recover_stopped_rid = _recover_prepare_rid
+		_recover_prepare_rid = ""
 
 ## A new round or practice: the easy mode leaves its FAULT (a person started it). The
 ## backend still refuses whatever is not in order.
@@ -1645,6 +1682,7 @@ func stop_key() -> void:
 	if game_mode != null:
 		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
 	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
+	_stop_recovery()  # a recovery asked for from the game's screen goes no further
 	_jog_latched = _jog_input() != Vector3.ZERO
 	gesture.stop("stop_key")
 	if homework != null:

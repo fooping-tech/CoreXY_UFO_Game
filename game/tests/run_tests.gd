@@ -4952,15 +4952,47 @@ func _test_arm_recovery(rs: Node) -> void:
 	var shown = game.arm_recovery_reason().contains("アラーム") and ctl.hud._recover.visible and ctl.hud._recover_button.visible \
 		and ctl.hud.recover_text().contains("ふっきする") and ctl.hud._recover_button.focus_mode == Control.FOCUS_NONE
 	game.ws._pending.clear()
+	var types := func() -> Array: return game.ws._pending.values().map(func(p): return str(p.type))
+	# the backend's answer to the request of that kind still open (taken off the open ones, as the link does)
+	var answer := func(type: String, ok: bool) -> String:
+		for r in game.ws._pending.keys():
+			if str(game.ws._pending[r].type) == type:
+				game.ws._pending.erase(r)
+				game.ws.ack.emit(str(r), ok, {"command": type})
+				return str(r)
+		return ""
+	# the stop key between the two steps: the preparation is never asked for
 	game._unhandled_input(_key(KEY_F10))
-	var sent: Array = game.ws._pending.values().map(func(p): return str(p.type))
-	var by_key = sent == ["clear_alarm", "calibration_prepare"]
+	var first_only = types.call() == ["clear_alarm"]
+	game.stop_key()
+	answer.call("clear_alarm", true)
+	var stop_between = first_only and types.call().is_empty()
+	# the stop key right after the preparation was asked for: if it starts after all, it is stopped again
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", true)
+	var asked_prepare = types.call() == ["calibration_prepare"]
+	game.stop_key()
+	answer.call("calibration_prepare", true)
+	var stopped_again = asked_prepare and types.call() == ["soft_stop"]
+	# a refused clearing: no preparation either
+	game.ws._pending.clear()
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", false)
+	var refused_stops = types.call().is_empty()
+	# the normal way: the alarm cleared, then the preparation; pressed twice = once
+	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F10))
+	var once = types.call() == ["clear_alarm"]
+	answer.call("clear_alarm", true)
+	var sent: Array = types.call()
+	var by_key = once and sent == ["calibration_prepare"] and stop_between and stopped_again and refused_stops
+	answer.call("calibration_prepare", true)
 	# while the recovery runs: its steps are shown, the button is away, a second press sends nothing
 	RobotState.calibration_prepare = {"active": true, "steps": [{"key": "home", "label": "原点復帰", "state": "run", "note": ""}]}
 	ctl.hud._process(0.016)
 	game._unhandled_input(_key(KEY_F10))
 	ctl.hud._recover_button.pressed.emit()
-	var running = game.ws._pending.size() == 2 and ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
+	var running = types.call().is_empty() and ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
 		and ctl.hud.recover_text().contains("原点復帰")
 	# it stopped: why is said, and the button is back; the button does the same as the key
 	RobotState.calibration_prepare = {"active": false, "last_result": "fault", "error": "robot not connected", "steps": []}
@@ -4968,14 +5000,17 @@ func _test_arm_recovery(rs: Node) -> void:
 	ctl.hud._process(0.016)
 	var stopped = game.arm_recovery_reason().contains("げんてんふっき") and ctl.hud.recover_text().contains("とまった") and ctl.hud._recover_button.visible
 	ctl.hud._recover_button.pressed.emit()
-	var by_button = game.ws._pending.size() == 4
+	answer.call("clear_alarm", true)
+	var by_button = types.call() == ["calibration_prepare"]
+	answer.call("calibration_prepare", true)
 	RobotState.homed = true
 	RobotState.calibration_prepare = {"active": false, "last_result": "done", "steps": []}
 	ctl.hud._process(0.016)
 	var recovered = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible
 	_ok(mock_nothing and fine and shown and by_key and running and stopped and by_button and recovered,
-		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F10 or the button sends clear_alarm, then the preparation, once; its steps and a stop's reason are shown; gone when the arm is ready",
-		"%s %s %s %s %s %s %s %s %s" % [mock_nothing, fine, shown, by_key, running, stopped, by_button, recovered, sent])
+		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F10 or the button sends clear_alarm and, when that is answered, the preparation, once (never after the stop key; a preparation that started behind the stop is stopped again); its steps and a stop's reason are shown; gone when the arm is ready",
+		"%s %s %s %s %s %s %s %s %s | %s %s %s %s %s %s" % [mock_nothing, fine, shown, by_key, running, stopped, by_button, recovered, sent,
+			first_only, stop_between, asked_prepare, stopped_again, refused_stops, once])
 	game.ws._pending.clear()
 	RobotState.calibration_prepare = {}
 	RobotState.source = "mock"
