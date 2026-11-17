@@ -40,8 +40,9 @@ async def test_the_mock_robot_is_prepared(tmp_path):
     assert st["last_result"] == "done" and not st["active"] and st["error"] == ""
     assert s.motors_enabled and s.homed
     assert states(seq) == {"motors": "done", "z_track": "skip", "z_restore": "skip", "z_top": "skip",
-                           "claw_open": "done", "claw_close": "done", "home": "done", "easy": "skip"}
-    assert robot.arm_deg == 40.0  # closed last
+                           "claw_open": "done", "claw_close": "done", "home": "done", "center": "skip",
+                           "claw_ready": "done", "easy": "skip"}
+    assert robot.arm_deg != 40.0 and robot.arm_deg == robot.arm_marks["open"]  # left open, ready to catch (#175)
     assert not seq.lock.locked()
 
 
@@ -72,7 +73,8 @@ async def test_the_real_robot_after_a_power_cycle(tmp_path):
         st = await run(seq)
         assert st["last_result"] == "done", st
         assert states(seq) == {"motors": "done", "z_track": "done", "z_restore": "done", "z_top": "done",
-                               "claw_open": "skip", "claw_close": "skip", "home": "done", "easy": "skip"}
+                               "claw_open": "skip", "claw_close": "skip", "home": "done", "center": "skip",
+                               "claw_ready": "skip", "easy": "skip"}
         sent = robot.serial.transport.sent
         assert any(l.startswith("JOG 0.0 0.0 ") and int(l.split()[3]) > 0 for l in sent)  # up, to start tracking
         s = robot.snapshot()
@@ -193,3 +195,77 @@ async def test_the_server_runs_it_and_reports_it():
             assert state["data"]["calibration_prepare"]["last_result"] == "done" and state["data"]["homed"]
     finally:
         await srv.stop()
+
+
+async def test_after_homing_the_arm_goes_to_the_middle_of_the_stage(tmp_path):
+    """#175: homed in the corner, then on to the centre of the soft limits (or the configured point)."""
+    from corexy_ufo_backend.config import BackendConfig
+    from corexy_ufo_backend.websocket.server import GameServer
+    cfg = BackendConfig()
+    assert cfg.home_center() == (195.0, 100.0)
+    cfg.home_center_mm = (120.0, 60.0)
+    assert cfg.home_center() == (120.0, 60.0)
+    cfg.home_center_mm = (999.0, 60.0)  # outside the soft limits: the middle instead
+    assert cfg.home_center() == (195.0, 100.0)
+    cfg.home_then_center = False
+    assert cfg.home_center() is None
+
+    async def settle(robot):
+        for _ in range(2000):
+            await robot.tick()
+            if robot.snapshot().state == "IDLE" and robot.vel[0] == 0.0 and robot.vel[1] == 0.0 and robot._homing_until < 1e12:
+                if abs(robot.pos[0] - robot.target[0]) < 1e-3 and abs(robot.pos[1] - robot.target[1]) < 1e-3:
+                    return
+            await asyncio.sleep(0.001)
+
+    # the home command
+    robot = MockRobot()
+    await robot.connect()
+    cfg = BackendConfig()
+    srv = GameServer(robot, "127.0.0.1", 0, backend_cfg=cfg)
+    robot.pos[0] = robot.target[0] = 30.0
+    assert (await srv.execute("home", {}))["type"] == "nack"  # motors off: no homing, no move
+    assert robot.target[0] == 30.0
+    await srv.execute("enable_motors", {"enable": True})
+    assert (await srv.execute("home", {}))["type"] == "ack"
+    robot._homing_until = 0.0
+    await settle(robot)
+    assert robot.snapshot().homed and robot.pos[0] == pytest.approx(195.0, abs=0.5) and robot.pos[1] == pytest.approx(100.0, abs=0.5)
+    # off: it stays in the home corner, as before
+    cfg.home_then_center = False
+    await srv.execute("move_xy", {"x": 50, "y": 50})
+    assert (await srv.execute("home", {}))["type"] == "ack"
+    assert (robot.target[0], robot.target[1]) == (0.0, 0.0)
+    # the middle cannot be reached (a move refused): the answer says the arm is homed but did not get there
+    cfg.home_then_center = True
+
+    async def refuse(x, y, feed=None):
+        from corexy_ufo_backend.robot import RobotCommandError
+        raise RobotCommandError("XY refused")
+    robot.move_xy = refuse
+    r = await srv.execute("home", {})
+    assert r["type"] == "nack" and "homed, but" in r["data"]["reason"] and robot.snapshot().homed
+
+    # the preparation: its own step after homing
+    robot2 = MockRobot()
+    await robot2.connect()
+    seq = PrepareSequencer(robot2, lock=asyncio.Lock(), settle_s=0.0, center=lambda: (195.0, 100.0))
+    st = await run(seq)
+    notes = {s["key"]: s["note"] for s in st["steps"]}
+    assert st["last_result"] == "done" and states(seq)["center"] == "done" and "X 195" in notes["center"]
+    assert (robot2.target[0], robot2.target[1]) == (195.0, 100.0)
+    order = [k for k, _ in STEPS]
+    assert order.index("home") < order.index("center") < order.index("claw_ready") < order.index("easy")
+    # homing refused: the preparation stops there, nothing moves to the middle
+    robot3 = MockRobot()
+    await robot3.connect()
+
+    async def no_home():
+        from corexy_ufo_backend.robot import RobotCommandError
+        raise RobotCommandError("home refused")
+    robot3.home = no_home
+    robot3.pos[0] = robot3.target[0] = 30.0
+    seq3 = PrepareSequencer(robot3, lock=asyncio.Lock(), settle_s=0.0, center=lambda: (195.0, 100.0))
+    st3 = await run(seq3)
+    assert st3["last_result"] == "fault" and states(seq3)["home"] == "fail" and states(seq3)["center"] == "todo"
+    assert robot3.target[0] == 30.0
