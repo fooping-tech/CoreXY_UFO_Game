@@ -18,11 +18,27 @@ CoreXY_UFO_Game/
 - Godot 4.4 以上（検証: 4.7.2）: `brew install --cask godot`
 - uv: `brew install uv`（Python 3.12+ は uv が自動取得）
 - 実機接続時のみ: M5Stack Core2 + USB ケーブル（CP210x/CH9102 ドライバ）
+- **UFO-DeviceHub の clone（最初に 1 回）**: `tools/setup_devicehub.sh`。バックエンドの起動に必要（下の「UFO-DeviceHub のコードを使う」）
+
+### UFO-DeviceHub のコードを使う
+
+周辺機器のハブ（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub)）と話す Python コードは、UFO-DeviceHub のリポジトリのものをそのまま使う（このリポジトリにコピーはない。#159）。`external/UFO-DeviceHub/` にふつうの `git clone` として置き、バックエンドの依存（editable）にしている。
+
+```bash
+tools/setup_devicehub.sh             # 最初に 1 回: clone して uv sync（ネットワークが必要）。Windows は .\tools\setup_devicehub.ps1
+tools/setup_devicehub.sh --status    # 今どのコミットか
+tools/setup_devicehub.sh --pinned    # このゲームで確認済みのコミット（tools/devicehub.pin）に合わせる
+```
+
+- これをしていないと `./start.sh` はバックエンドを起動できず、この手順を表示して止まる。`./start.sh --game-only` は clone がなくても動く。
+- `external/UFO-DeviceHub/` の Python を直したら、**バックエンドを起動し直すだけ**で反映される（`uv sync` もコピーも不要）。依存を足したときは `cd backend && uv lock && uv sync`、ファームウェアを変えたときは機器への書き込みが要る。
+- `external/` は Git に入らない。2 つのリポジトリにまたがる変更の出し方、CI が使うコミット、ネットワークのない PC での起動は [docs/devicehub_dependency.md](docs/devicehub_dependency.md)。
 
 ### Windows
 
 - Godot: `winget install GodotEngine.GodotEngine`（管理者権限なしだと `godot` コマンドは作られないが、`start.ps1` が winget のインストール先から探す。別の場所なら環境変数 `GODOT` に実行ファイルを指定）
 - uv: `winget install astral-sh.uv`
+- UFO-DeviceHub の clone（最初に 1 回。Git が必要: `winget install Git.Git`）: `.\tools\setup_devicehub.ps1`
 - 起動は `start.sh` の代わりに `start.ps1`。オプション・今までの書き方・`.env` の `CXUFO_START_*`・環境変数は下の「起動のしかた」と同じ（`./start.sh ...` を `.\start.ps1 ...` と読み替える）。
 - **`--` は `'--'` と引用符で囲む。** PowerShell は、プロンプトで打った引用符のない `--` を取り除く（取り除かれたと分かるときは start.ps1 がそう言って止まる）。
 
@@ -271,7 +287,7 @@ cd CoreXY_UFO_Game/game
 - **試験画面（`pc.web_console`）とは同時に使えない**（シリアルポートは 1 つのプログラムだけ。バックエンドは排他で開く）。先に試験画面を止める。
 - できること: 機器の一覧（状態・RTT・セッション・fw）と診断（GET_DIAG）／照明モード（明るさ・速さ・フェード・色）／ミスト（連続・BREATH・PUFF・OFF、時間）／演出（TRIGGER_EFFECT、時間・強さ）／蒸気リレー（パルス・OFF）／M5Dial ×2（GAME・STANDBY・受取待ち・解除・排出）／イベントのログ（ボール受取・排出・リレー完了など）。
 - **ミスト・リレー・サーボが実際に動く**。止めるときは STOP ALL か Space（テストタブを開いている間は、Space でハブにも STOP_ALL を送る）。クレーンには何も送らない。
-- 通信の中身（プロトコル・セッション・ACK・再送）は UFO-DeviceHub の `pc/` をコピーしたもの（`backend/src/corexy_ufo_backend/devicehub/`。元のコミットは `__init__.py`）。DeviceHub 側が変わったらコピーし直す。
+- 通信の中身（プロトコル・セッション・ACK・再送）は UFO-DeviceHub の Python パッケージ `ufo-devicehub` をそのまま使う（`external/UFO-DeviceHub/` の clone。コピーではない。上の「UFO-DeviceHub のコードを使う」）。このゲームだけのコードは `backend/src/corexy_ufo_backend/devicehub/service.py`。
 - **実機のハブ・イルミ・M5Dial では未検証**（UFO-DeviceHub の模擬ハブで確認）。
 
 ### 校正タブ（設定画面）

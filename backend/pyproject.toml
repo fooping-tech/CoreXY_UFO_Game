@@ -9,6 +9,8 @@ dependencies = [
     "numpy>=1.26",
     # the study mode finds the worksheet's corner marks in the overview frame (#116)
     "opencv-python>=4.9",
+    # the peripherals' hub (UFO-DeviceHub's PC client: gateway, protocol, mock hub), #159
+    "ufo-devicehub",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +23,13 @@ corexy-ufo-backend = "corexy_ufo_backend.main:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+# UFO-DeviceHub is its own repository, cloned to external/UFO-DeviceHub/ by
+# tools/setup_devicehub.sh (not a submodule, not a copy: #159). Editable: an edit there is seen
+# the next time the backend starts, without uv sync. The commit this game is verified with is
+# tools/devicehub.pin. Phase 2 of #159 replaces this path by a fixed version.
+[tool.uv.sources]
+ufo-devicehub = { path = "../external/UFO-DeviceHub", editable = true }
 
 [build-system]
 requires = ["hatchling"]

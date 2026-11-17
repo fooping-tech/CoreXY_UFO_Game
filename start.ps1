@@ -73,6 +73,25 @@ function Assert-Uv {
   }
 }
 
+# The backend depends on UFO-DeviceHub's Python package, an ordinary clone in external/ (#159).
+# Without it uv cannot resolve the backend at all: say what to do instead of uv's error.
+function Assert-DeviceHub {
+  $override = $env:START_SH_DEVICEHUB_DIR  # tests only
+  # the dry run starts nothing, so it does not need the clone (the tests name a directory to check)
+  if ($env:START_SH_DRY_RUN -eq '1' -and -not $override) { return }
+  $dir = if ($override) { $override } else { Join-Path (Join-Path $ROOT 'external') 'UFO-DeviceHub' }
+  if (Test-Path (Join-Path $dir 'pyproject.toml')) { return }
+  if (Test-Path $dir) {
+    Write-Err 'external\UFO-DeviceHub が古いか、clone が途中です（pyproject.toml がありません）。'
+    Write-Err '  確認済みのコミットにする: .\tools\setup_devicehub.ps1 -Pinned'
+  } else {
+    Write-Err 'UFO-DeviceHub（周辺機器のハブの Python コード）がまだありません。バックエンドの起動に必要です。'
+    Write-Err '  最初に 1 回だけ実行してください（ネットワークが必要）: .\tools\setup_devicehub.ps1'
+  }
+  Write-Err '  ゲームだけなら今のままで起動できます: .\start.ps1 --game-only'
+  Fail '  説明: README「UFO-DeviceHub のコードを使う」'
+}
+
 # Same rule as the backend (config.py::load_config, then --ws-host / --ws-port).
 function Resolve-WsEndpoint([string[]]$argv) {
   $url = ''
@@ -263,6 +282,7 @@ function Invoke-Game([string[]]$gameArgs) {
 }
 
 function Start-Backend([string[]]$argv) {
+  Assert-DeviceHub
   if ($DRY_RUN -eq '1') {
     Write-Output ("[START_SH_DRY_RUN] backend: corexy-ufo-backend " + ($argv -join ' '))
     return
@@ -297,6 +317,7 @@ function Start-Backend([string[]]$argv) {
 }
 
 function Invoke-BackendOnly([string[]]$argv) {  # in the foreground (no game)
+  Assert-DeviceHub
   if ($DRY_RUN -eq '1') {
     Write-Output ("[START_SH_DRY_RUN] backend: corexy-ufo-backend " + ($argv -join ' '))
     return

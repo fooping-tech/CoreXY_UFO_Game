@@ -182,5 +182,19 @@ check "VOICEVOX: off from the settings screen (local_settings.json)" $?
 run "START_SH_CONFIG=$TMP/vv_remote/game_config.json" -- --mock ; ! has "voicevox:"
 check "VOICEVOX: an engine on another machine is not started here" $?
 
+# UFO-DeviceHub's clone (#159): the backend cannot start without it, the game alone can
+mkdir -p "$TMP/hub_ok" "$TMP/hub_old" && : > "$TMP/hub_ok/pyproject.toml"
+run "START_SH_DEVICEHUB_DIR=$TMP/hub_none" -- --mock
+[[ $CODE -eq 1 ]] && has "tools/setup_devicehub.sh" && has "まだありません" && ! has "backend:" && ! has "voicevox:"
+check "UFO-DeviceHub: not cloned: says how to get it, starts nothing" $?
+run "START_SH_DEVICEHUB_DIR=$TMP/hub_none" -- --backend-only --mock
+[[ $CODE -eq 1 ]] && has "tools/setup_devicehub.sh"; check "UFO-DeviceHub: not cloned: the backend alone too" $?
+run "START_SH_DEVICEHUB_DIR=$TMP/hub_old" -- --mock
+[[ $CODE -eq 1 ]] && has "setup_devicehub.sh --pinned"; check "UFO-DeviceHub: a clone without the package: says how to update it" $?
+run "START_SH_DEVICEHUB_DIR=$TMP/hub_none" -- --game-only
+[[ $CODE -eq 0 ]] && has "game: godot" && ! has "setup_devicehub"; check "UFO-DeviceHub: the game alone does not need it" $?
+run "START_SH_DEVICEHUB_DIR=$TMP/hub_ok" -- --mock
+[[ $CODE -eq 0 ]] && has "backend: corexy-ufo-backend --mock"; check "UFO-DeviceHub: cloned: the backend starts" $?
+
 if [[ $fails -eq 0 ]]; then echo "start.sh: all passed"; else echo "start.sh: $fails failed"; fi
 exit $(( fails > 0 ))

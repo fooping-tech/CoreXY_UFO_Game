@@ -541,7 +541,7 @@ rank	score	timestamp	id
 | 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |
-| バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ）、`devicehub/` の UFO-DeviceHub `pc/` のコピー（`trace.py`・`game_mode.py` を含む） |
+| バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ）、UFO-DeviceHub の Python パッケージ `ufo-devicehub`（`external/UFO-DeviceHub/` の clone。コピーではない。`docs/devicehub_dependency.md`） |
 | 設定 | `config/game_config.json` の `game_mode` |
 | テスト | `game/tests/run_tests.gd` の `_test_game_mode_*`、`backend/tests/test_devicehub.py` |
 
@@ -621,3 +621,4 @@ rank	score	timestamp	id
 |---|---|---|---|---|
 | 2026-11-16 | v0.3（初版） | `f98999f`（`pc/` のコピー元。`__init__.py` に記録） | 1 | 既存のコマンド・イベントだけで実装。`pc/protocol.py` を `1302bac` → `f98999f` に更新（`DialState.SETTINGS` の追加だけ）。LED の契約（`docs/game-mode-interface.md`）は未作成 |
 | 2026-11-16 | v0.3（LED 契約の取り込み） | `e965cdf`（UFO-DeviceHub PR #9。`pc/` 一式をコピーし直し: `protocol.py` `device_gateway.py` `mock_hub.py`、新規 `trace.py` `game_mode.py`） | 1（追加のみ。ファームウェア 0.3） | `SET_DIAL_COLOR` / `SET_DIAL_EFFECT` を §8 の表のとおり送る。号機色の初期値を DeviceHub の既定色に合わせた。`RELEASE_DONE` が来ないときは契約 §7 のとおり `GET_STATUS` で確かめる。既存コマンド・イベントの意味は変わっていない。Mock のみ・実機未検証 |
+| 2026-11-17 | v0.3（変更なし） | `a402c37`（UFO-DeviceHub のブランチ `feat/python-package`。マージ後は main のコミットに書き換える。`tools/devicehub.pin`） | 1（変更なし） | #159: `pc/` のコピーをやめ、UFO-DeviceHub の Python パッケージ `ufo-devicehub` を依存として使う。コマンド・イベント・LED の契約は同じ。UFO-DeviceHub 側の追加は PC 側だけ（開かないポートの指定、排他、つながらない理由の取得） |

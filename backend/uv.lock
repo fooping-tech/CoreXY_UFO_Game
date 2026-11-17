@@ -351,6 +351,7 @@ dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pyserial" },
+    { name = "ufo-devicehub" },
     { name = "websockets" },
 ]
 
@@ -378,6 +379,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.9" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4.9" },
     { name = "pyserial", specifier = ">=3.5" },
+    { name = "ufo-devicehub", editable = "../external/UFO-DeviceHub" },
     { name = "ultralytics", marker = "extra == 'yolo'", specifier = ">=8.2" },
     { name = "websockets", specifier = ">=13.0" },
 ]
@@ -1656,6 +1658,20 @@ sdist = { url = "https://files.pythonhosted.org/packages/d9/68/f1b440335057bfce7
 wheels = [
     { url = "https://files.pythonhosted.org/packages/94/21/1e5995a1c920cce14e4bffae20c665ec10e7ed03ab25e006cd741092b718/tzdata-2026.5-py2.py3-none-any.whl", hash = "sha256:b683bd1b6659ddcd810ff02ad09ba821d4bf1065072805063eb35c49617905ac", size = 347996, upload-time = "2026-10-03T09:23:12.535Z" },
 ]
+
+[[package]]
+name = "ufo-devicehub"
+version = "0.3.0"
+source = { editable = "../external/UFO-DeviceHub" }
+dependencies = [
+    { name = "pyserial" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyserial", specifier = ">=3.5" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "ultralytics"
