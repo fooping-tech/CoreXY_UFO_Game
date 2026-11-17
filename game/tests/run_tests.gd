@@ -73,6 +73,7 @@ func _ready() -> void:
 	_test_game_mode_powerups()
 	_test_game_mode_ufo_and_mock_dials()
 	_test_game_mode_round(rs)
+	_test_game_mode_powerup_integration(rs)
 	_test_game_mode_duplicates_and_sessions(rs)
 	_test_game_mode_release_faults(rs)
 	_test_game_mode_dial_leds(rs)
@@ -3145,6 +3146,51 @@ func _test_game_mode_ufo_and_mock_dials() -> void:
 		"game mode mock Dial: as UFO-DeviceHub's (GAME, armed, one capsule, one release, DONE after the servo times)",
 		"%s %s %s" % [answers, mid, done])
 	hub.free()
+
+## An actual round with a mock Dial: three virtual balls must never cause three
+## RELEASE_BALL commands. Pickup SFX/LED/lighting are observable in the hub trace.
+func _test_game_mode_powerup_integration(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hub := ctl.mock_hub
+	var lane: GameModeController.Lane = ctl.lanes["left"]
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	var id := str(lane.capsule.capsule_id)
+	var pos := Vector2(350, 600)
+	ctl._on_powerup_collected(id, "speed", pos)
+	_ok(ctl.powerups.active("speed") and game.powerup_xy_speed(true) <= 60.0
+		and game.powerup_xy_speed(true) > 40.0 and ctl.sounds.log.has("power_speed"),
+		"pickup speed: XY only up to the configured backend cap, audible")
+	ctl._on_powerup_collected(id, "double", pos)
+	ctl.field.target_hit.emit(id, "bumper", "bumper_0", pos)
+	var light_changed := hub.executed.any(func(e): return e[0] == GameModeDevices.ILLUMINATION
+		and e[1] == "SET_LIGHT_MODE" and e[2].get("mode", "") == "CUSTOM")
+	_ok(ctl.score.score == 200 and ctl.powerups.active("double") and light_changed
+		and ctl.sounds.log.has("power_double"), "pickup x2: doubled scoring, gold illumination and cue")
+	ctl._on_powerup_collected(id, "multiball", pos)
+	var children := [id + "-mb1", id + "-mb2"]
+	var multi_led := hub.executed.any(func(e): return e[0] == GM_L and e[1] == "SET_DIAL_EFFECT"
+		and e[2].get("target", "") == "FRONT" and e[2].get("effect", "") == "COMET")
+	_ok(ctl.field.capsule_count() == 3 and int(ctl._multi_left[id]) == 3
+		and ctl.fx.power_portals.left and not ctl.fx.power_portals.right and multi_led
+		and ctl.sounds.log.has("power_multi"),
+		"pickup multi: three physics balls, same-side portal LED, distinct audio")
+	ctl.field.capsule_exited.emit(children[0], "left", pos)
+	ctl.field.capsule_exited.emit(id, "left", pos)
+	_ok(lane.state == "SIMULATING" and hub.count(GM_L, "RELEASE_BALL") == 0
+		and int(ctl._multi_left[id]) == 1,
+		"multiball: no physical release until last virtual ball")
+	ctl.field.capsule_exited.emit(children[1], "left", pos)
+	_ok(lane.state == "RETURNING" and not ctl.fx.power_portals.left and ctl._multi_left.is_empty(),
+		"multiball: last ball starts one return and restores portal")
+	_gm_step(ctl, 4.0)
+	_ok(hub.count(GM_L, "RELEASE_BALL") == 1 and lane.released == 1
+		and lane.state == "READY", "multiball: original Dial releases exactly once")
+	ctl._halt("test stop")
+	_ok(not ctl.powerups.active("speed") or game.powerup_xy_speed(true) == game.jog_speed_real_mm,
+		"speed upgrade cannot persist when the round stops")
+	_gm_free(game, rs)
 
 func _test_game_mode_round(rs: Node) -> void:
 	var game := _gm_game()
