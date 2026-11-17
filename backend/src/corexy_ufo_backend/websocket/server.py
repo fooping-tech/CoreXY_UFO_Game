@@ -840,20 +840,24 @@ class GameServer:
 
     @property
     def height(self) -> HeightCalibration:
-        saved = self._height_saved()
-        if saved is None:
+        """#165: on the real robot the heights come from the Z calibration with no ruler check:
+        the desk = the Z bottom record, cm per Z from the measured Z calibration and the drum
+        (15 mm unless the 校正 tab saved another radius), the claw tips 10 cm above it."""
+        if self.study_profile != "real":
             return self._height_base
-        if self._height_z_changed(saved):
-            saved = {**saved, "confirmed": False}
-            if saved.get("desk") != "bottom":
-                saved["desk"] = None  # a Z recorded in the old units: record the desk again
-        return self._height_base.with_measured(saved, self._z_counts_per_unit(), self.approach.limits)
+        saved = self._height_saved() or {"drum_radius_mm": DRUM_RADIUS_MM, "desk": "bottom"}
+        if self._height_z_changed(saved) and saved.get("desk") != "bottom":
+            saved = {**saved, "desk": None}  # a Z recorded in the old units: record the desk again
+        return self._height_base.with_measured({**saved, "confirmed": True}, self._z_counts_per_unit(),
+                                               self.approach.limits)
 
     def _height_status(self) -> dict:
         data = self.height.status(self.approach.limits)
         data["saved"] = self._height_saved()
         data["z_calibrated"] = self._z_counts_per_unit() is not None
-        data["z_changed"] = data["saved"] is not None and self._height_z_changed(data["saved"])
+        # only a desk recorded as a Z is stale after measuring Z again ("bottom" follows it, #165)
+        data["z_changed"] = (data["saved"] is not None and data["saved"].get("desk") != "bottom"
+                             and self._height_z_changed(data["saved"]))
         data["default_drum_radius_mm"] = DRUM_RADIUS_MM
         return data
 
