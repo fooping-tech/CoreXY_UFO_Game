@@ -91,6 +91,8 @@ def build_steps(p: AutoCatchParams) -> list[Step]:
 
 
 class AutoCatchSequencer:
+    label = "auto_catch"  # in the log lines (a subclass is another sequence)
+
     def __init__(self, robot: RobotInterface, params: AutoCatchParams, limits: RobotLimits,
                  backend: BackendConfig | None = None, *, lock: asyncio.Lock | None = None,
                  is_jogging: Callable[[], bool] = lambda: False,
@@ -142,7 +144,7 @@ class AutoCatchSequencer:
         self._t_phase = self.clock()
         self.history.append({"t_ms": int(time.time() * 1000), "from": str(prev), "to": str(phase), "note": note})
         del self.history[:-HISTORY_MAX]
-        log.info("auto_catch: %s -> %s%s", prev, phase, f" ({note})" if note else "")
+        log.info("%s: %s -> %s%s", self.label, prev, phase, f" ({note})" if note else "")
         self._changed()
 
     def _changed(self) -> None:
@@ -150,7 +152,7 @@ class AutoCatchSequencer:
             try:
                 self.on_change(self.status())
             except Exception:  # pragma: no cover - a UI hook must not break the sequence
-                log.exception("auto_catch on_change")
+                log.exception("%s on_change", self.label)
 
     # ------------------------------------------------------------ preconditions
     def _limit_fault(self, s: RobotSnapshot) -> str:
@@ -398,7 +400,7 @@ class AutoCatchSequencer:
         try:
             await self.robot.stop()
         except Exception as e:  # e.g. not connected: report it, nothing else to do here
-            log.error("auto_catch: emergency stop failed: %s", e)
+            log.error("%s: emergency stop failed: %s", self.label, e)
             self.error += f" (stop failed: {e})"
 
     async def _fault(self, reason: str) -> None:
@@ -407,7 +409,7 @@ class AutoCatchSequencer:
         self.last_result = "fault"
         await self._emergency_stop()
         self._set_phase(Phase.FAULT, self.error)
-        log.error("auto_catch: FAULT: %s", self.error)
+        log.error("%s: FAULT: %s", self.label, self.error)
         if action is not None and not action.done():
             # ABORT ends the firmware's move / servo command; give the action time to see it
             try:

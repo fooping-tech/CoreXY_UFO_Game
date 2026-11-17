@@ -192,8 +192,17 @@ var tutorial_hud: GestureTutorialHud
 var tutorial_speech: StudySpeech
 ## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
 var tutorial_auto := true
-## "hard" (the manual hand control) / "easy" (shown, but its automatic catch is not built)
+## what the practice shows: the round's own difficulty as it is played (set when it starts)
 var tutorial_mode := GestureTutorialSteps.DEFAULT_MODE
+## The round's difficulty (#169): "hard" = the manual hand control, "easy" = pinch for XY,
+## a fist = catch by itself, one / two fingers = carry to Dial 1 / 2. Its own state (config
+## game_mode.difficulty, D on the title); what the hand does with it is the main scene's
+## EasyModeControl. This controller still sends nothing to the crane.
+var difficulty := "hard"
+## why the easy mode cannot be used here ("" = it can): another hand scheme, no backend.
+## Set by the main scene. Then the round is played with the manual controls and says so.
+var easy_block := ""
+var easy_hud: EasyModeHud
 var _tutorial_cfg: Dictionary = {}
 ## the practice was gone through (or left out by staff) since the game mode opened
 var tutorial_seen := false
@@ -290,6 +299,12 @@ func setup(m: Node) -> void:
 	tutorial_hud.name = "GestureTutorialHud"
 	layer.add_child(tutorial_hud)
 	tutorial_hud.setup(self)
+	easy_hud = EasyModeHud.new()
+	easy_hud.name = "EasyModeHud"
+	layer.add_child(easy_hud)
+	easy_hud.setup(self)
+	if main != null and main.get("easy") != null:
+		main.easy.state_changed.connect(_on_easy_state)
 	result_screen = GameModeResultScreen.new()
 	result_screen.name = "GameModeResultScreen"
 	layer.add_child(result_screen)
@@ -379,7 +394,8 @@ func _configure(cfg: Dictionary) -> void:
 		result_show.configure(cfg.result_show)
 	_tutorial_cfg = cfg.get("tutorial", {}) if cfg.get("tutorial") is Dictionary else {}
 	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
-	tutorial_mode = str(_tutorial_cfg.get("mode", tutorial_mode))
+	# (an older config has only tutorial.mode)
+	set_difficulty(str(cfg.get("difficulty", _tutorial_cfg.get("mode", difficulty))))
 	tutorial.configure(_tutorial_cfg)
 	voice_link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", voice_link_wait_s)), 0.0, 10.0)
 	debug_panel = bool(cfg.get("debug_panel", debug_panel))
@@ -394,6 +410,50 @@ func running() -> bool:
 ## The Dials take a capsule now: the round, or the practice capsule.
 func _taking() -> bool:
 	return phase == "PLAYING" or (phase == "TUTORIAL" and practice == "open")
+
+## (for the easy mode: a new catch, a new carry, only while this is true)
+func taking() -> bool:
+	return _active and _taking()
+
+# ------------------------------------------------------------------ difficulty (#169)
+func set_difficulty(d: String) -> void:
+	difficulty = "easy" if d == "easy" else "hard"
+
+## The easy mode is what is played: asked for, and usable here.
+func easy_on() -> bool:
+	return difficulty == "easy" and easy_block == ""
+
+## D on the title (never in a round): the other difficulty.
+func toggle_difficulty() -> void:
+	if running():
+		return
+	set_difficulty("hard" if difficulty == "easy" else "easy")
+	sounds.play("count")
+
+## The line under START on the title: the difficulty, and why easy is not used when it is not.
+func difficulty_text() -> String:
+	var name := str(GestureTutorialSteps.MODE_NAMES.get(difficulty, difficulty))
+	var out := "D：モード きりかえ　［ %s ］" % name
+	if difficulty == "easy" and easy_block != "":
+		out += "\n" + easy_block + " → むずかしいモードの操作で遊ぶ"
+	return out
+
+## The easy mode's carry to this side's Dial ended: the claw opened over it (the backend's
+## report, passed on by the main scene). That is not a capsule in the Dial: the Dial's own
+## BALL_RECEIVED is, as ever. Only when both the crane and the Dials are simulated
+## (`simulated_crane`, mock Dials) nothing real can fall, so the mock Dial is given its
+## capsule here and the rehearsal runs to its end. Never with the real crane.
+func easy_delivered(side: String, simulated_crane: bool) -> void:
+	if not _active or not lanes.has(side):
+		return
+	var mock: bool = simulated_crane and running() and devices.can_mock_ball()
+	_trace("easy_delivered", lanes[side], {"result": "mock capsule" if mock else "waiting for the Dial's BALL_RECEIVED"})
+	if mock:
+		devices.mock_ball(lanes[side].device)
+
+func _on_easy_state(from: String, to: String) -> void:
+	if _active:
+		_trace("easy_state", null, {"result": "%s -> %s" % [from, to], "effect_id": str(main.easy.note)})
 
 ## Nothing new is played: what is in a Dial goes straight back out.
 func _closing() -> bool:
@@ -475,6 +535,7 @@ func start_tutorial() -> void:
 	var hw := _voice_client()
 	if hw != null and hw.has_method("_ensure_link"):
 		hw._ensure_link()  # the voice comes over the helper's link (it may be off until now)
+	tutorial_mode = "easy" if easy_on() else "hard"  # the practice shows what the round will be
 	tutorial.begin(GestureTutorialSteps.resolve(_tutorial_cfg, tutorial_mode, scheme_id, claw), hand_on or demo)
 	_trace("tutorial_start", null, {"result": tutorial_mode})
 
@@ -1648,6 +1709,11 @@ func handle_key(keycode: int) -> bool:
 		KEY_T:
 			if not running():
 				start_tutorial()
+				return true
+			return false
+		KEY_D:
+			if not running():
+				toggle_difficulty()
 				return true
 			return false
 		KEY_R:

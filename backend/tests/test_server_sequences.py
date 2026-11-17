@@ -25,7 +25,7 @@ class Recorder:
         return self.active
 
 
-def server_with_recorders(active: tuple[bool, ...] = (True, True, True, True)) -> tuple[GameServer, list[Recorder]]:
+def server_with_recorders(active: tuple[bool, ...] = (True, True, True, True, True)) -> tuple[GameServer, list[Recorder]]:
     srv = GameServer(MockRobot(), "127.0.0.1", 0)
     recorders = [Recorder(a) for a in active]
     for s, r in zip(srv.sequences, recorders, strict=True):
@@ -36,10 +36,11 @@ def server_with_recorders(active: tuple[bool, ...] = (True, True, True, True)) -
 def test_every_sequencer_of_the_server_is_in_the_list():
     srv = GameServer(MockRobot(), "127.0.0.1", 0)
     sequencers = [v for v in vars(srv).values() if hasattr(v, "request_abort") and hasattr(v, "abort")]
-    assert len(sequencers) == 4
+    assert len(sequencers) == 5
     listed = [s.seq for s in srv.sequences]
     assert all(any(q is listed_one for listed_one in listed) for q in sequencers)
-    assert [s.key for s in srv.sequences] == ["auto_catch", "homework_approach", "study_cleanup", "calibration_prepare"]
+    assert [s.key for s in srv.sequences] == ["auto_catch", "homework_approach", "study_cleanup", "calibration_prepare",
+                                              "easy_mode"]
 
 
 def test_stop_and_its_kin_are_accepted_while_any_sequence_runs():
@@ -53,7 +54,7 @@ async def test_stop_aborts_every_sequence_without_a_second_stop():
     srv, recorders = server_with_recorders()
     reply = await srv.execute("stop", {})
     assert reply["type"] == "ack"
-    assert [r.aborts for r in recorders] == [[("emergency stop (stop)", False)]] * 4
+    assert [r.aborts for r in recorders] == [[("emergency stop (stop)", False)]] * 5
     assert srv.robot.snapshot().alarm  # the robot's own stop went out once, after the flags
 
 
@@ -65,22 +66,24 @@ async def test_motors_off_aborts_every_sequence():
         [("motors disabled during the homework approach", True)],
         [("motors disabled during the tidy-up", True)],
         [("motors disabled during the preparation", True)],
+        [("motors disabled during the easy mode's catch and carry", True)],
     ]
 
 
 async def test_soft_stop_aborts_the_running_sequence():
-    srv, recorders = server_with_recorders((False, True, False, False))
+    srv, recorders = server_with_recorders((False, True, False, False, False))
     reply = await srv.execute("soft_stop", {})
     assert reply["type"] == "ack"
-    assert [r.aborts for r in recorders] == [[], [("stopped (soft_stop) during the homework approach", True)], [], []]
+    assert [r.aborts for r in recorders] == [[], [("stopped (soft_stop) during the homework approach", True)], [], [], []]
 
 
 async def test_a_running_sequence_refuses_other_commands_with_its_own_reason():
     for i, reason in enumerate(["busy: auto catch running (stop to abort)",
                                 "busy: the arm is approaching the homework (stop to abort)",
                                 "busy: the study mode is tidying up (stop to abort)",
-                                "busy: preparing the robot (stop to abort)"]):
-        srv, _ = server_with_recorders(tuple(j == i for j in range(4)))
+                                "busy: preparing the robot (stop to abort)",
+                                "busy: the easy mode is catching / carrying (stop to abort)"]):
+        srv, _ = server_with_recorders(tuple(j == i for j in range(5)))
         reply = await srv.execute("move_xy", {"x": 10, "y": 10})
         assert reply["type"] == "nack" and reply["data"]["reason"] == reason
         # a key release and motors off are never refused
@@ -88,11 +91,11 @@ async def test_a_running_sequence_refuses_other_commands_with_its_own_reason():
 
 
 async def test_get_state_carries_every_sequence_status():
-    srv, _ = server_with_recorders((True, False, False, False))
+    srv, _ = server_with_recorders((True, False, False, False, False))
     data = (await srv.execute("get_state", {}))["data"]
     assert data["auto_catch"] == {"active": True}
     assert data["homework_approach"] == {"active": False} and data["study_cleanup"] == {"active": False}
-    assert data["calibration_prepare"] == {"active": False}
+    assert data["calibration_prepare"] == {"active": False} and data["easy_mode"] == {"active": False}
 
 
 def test_the_interface_says_which_robot_is_real_and_its_limits():

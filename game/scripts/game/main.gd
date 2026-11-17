@@ -55,6 +55,16 @@ var _sim_seq := 0
 var gesture_allow_real := false
 ## Why the gesture may not move the robot now ("" = it may).
 var gesture_gate_reason := ""
+## The score game's easy mode (#169): what the hand's shapes mean there (a fist = catch by
+## itself, one / two fingers = carry to Dial 1 / 2). Its own state; it only asks the backend
+## for the sequence (`_easy_send`) and follows the backend's report.
+var easy := EasyModeControl.new()
+## The backend's link is open, as the hand control's gate and the easy mode see it (the
+## tests put a stand-in here; commands still go out through `ws` only).
+var backend_link: Callable = func() -> bool: return RobotState.source == "websocket" and ws.enabled and ws.is_open()
+const GATE_GESTURE_OFF := "ハンドジェスチャーが オフ（H で オン）"
+const GATE_EASY_BUSY := "かんたんモード: じどうで うごいているよ"
+const GATE_EASY_FAULT := "かんたんモード: とまっているよ（かかりの ひとを よんでね）"
 ## Who drove the crane on the last tick (ControlArbiter source).
 var control_source := "none"
 var _lost_since_ms := -1.0
@@ -228,6 +238,14 @@ func _ready() -> void:
 		homework.setup(cameras, ws)
 	gesture.state_changed.connect(_on_gesture_state)
 	gesture.claw_requested.connect(_on_gesture_claw)
+	var easy_cfg = GameConfig.value("game_mode.easy", {})
+	easy.configure(easy_cfg if easy_cfg is Dictionary else {})
+	easy.send = _easy_send
+	ws.ack.connect(easy.on_ack)
+	easy.delivered.connect(_on_easy_delivered)
+	easy.cue.connect(_on_easy_cue)
+	easy.state_changed.connect(func(from: String, to: String): debug_log.emit("easy mode: %s -> %s%s" % [from, to,
+		(" (%s)" % easy.note) if easy.note != "" else ""]))
 	var hud_layer := CanvasLayer.new()
 	hud_layer.name = "GestureHudLayer"
 	hud_layer.layer = 4
@@ -252,6 +270,7 @@ func _ready() -> void:
 		game_mode.name = "GameMode"
 		add_child(game_mode)
 		game_mode.setup(self)
+		game_mode.phase_changed.connect(_on_game_mode_phase)
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)
@@ -407,7 +426,7 @@ func apply_live_settings() -> void:
 		game_mode.sounds.enabled = sfx.enabled
 		game_mode.sounds.volume_db = sfx.volume_db
 		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
-		game_mode.tutorial_mode = str(GameConfig.value("game_mode.tutorial.mode", game_mode.tutorial_mode))
+		game_mode.set_difficulty(str(GameConfig.value("game_mode.difficulty", game_mode.difficulty)))
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
@@ -551,6 +570,10 @@ func _apply_cmdline() -> void:
 					game_mode.ranking.path = args[i + 1]
 					game_mode.ranking_force = true
 					game_mode.ranking.load_file()
+			"--game-mode-difficulty":
+				# hard / easy (#169; config game_mode.difficulty): for rehearsals and captures
+				if game_mode != null and i + 1 < args.size():
+					game_mode.set_difficulty(args[i + 1])
 			"--game-mode-seconds":
 				if game_mode != null and i + 1 < args.size():
 					game_mode.duration_s = maxf(float(args[i + 1]), 1.0)
@@ -1145,8 +1168,19 @@ func _handle_input(dt: float) -> void:
 		_sim_seq += 1
 		ev["sequence"] = _sim_seq
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
-	gesture_gate_reason = gesture_gate()
+	# the easy mode (#169): the hand steers XY only and its shapes are not the claw's
+	var easy_on := easy_wanted()
+	gesture.xy_only = easy_on
+	gesture.claw_enabled = not easy_on
+	var base_gate := gesture_gate()
+	gesture_gate_reason = base_gate
+	if base_gate == "" and easy_on:
+		if easy.busy() or RobotState.easy_mode_active():
+			gesture_gate_reason = GATE_EASY_BUSY
+		elif easy.faulted():
+			gesture_gate_reason = GATE_EASY_FAULT  # the keys stay, for the staff
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	_tick_easy(dt, easy_on, base_gate, kb != Vector3.ZERO)
 	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
 		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
@@ -1180,6 +1214,13 @@ func _handle_input(dt: float) -> void:
 			jog_hint = "自動キャッチ中は手動操作できない（Space で中断）"
 		if gesture.is_active():
 			gesture.stop("auto_catch")
+	# the easy mode's catch / wait / carry owns the crane (the backend holds the motion lock)
+	if easy.busy() or RobotState.easy_mode_active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "かんたんモードの自動の動きの間は手動操作できない（Space で中断）"
+		if gesture.is_active():
+			gesture.stop("easy_mode")
 	# gesture Z is "+ = arm up", like W: the same z_up_is_positive sign as the keys
 	var gz := gesture.velocity_z * (1.0 if GameConfig.robot().z_up_is_positive else -1.0)
 	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
@@ -1192,6 +1233,73 @@ func _handle_input(dt: float) -> void:
 		mock.set_target(mock.target + v * dt)
 		if debug_ui != null:
 			debug_ui.sync_targets_from_mock()
+
+# ------------------------------------------------------------ easy mode (#169)
+## Why the easy mode cannot be used at all here ("" = it can): then the score game stays
+## in its manual controls and says so. Not the link's state (that only holds a catch back).
+func easy_problem() -> String:
+	if gesture.scheme.id() != PinchJoystickScheme.ID:
+		return "かんたんモードは「つまんで動かす」だけ（手の形で方向を決める方式は未対応）"
+	if RobotState.source != "websocket":
+		return "かんたんモードはバックエンド接続時だけ（実機なしなら ./start.sh --mock）"
+	return ""
+
+## The easy mode is on: the score game is open with difficulty easy and it is usable.
+func easy_wanted() -> bool:
+	if game_mode == null:
+		return false
+	game_mode.easy_block = easy_problem()
+	return game_mode.active() and game_mode.easy_on()
+
+func _tick_easy(dt: float, on: bool, gate: String, keys_held: bool) -> void:
+	var now := float(Time.get_ticks_msec())
+	var age := gesture.age_ms(now)
+	# the hand control switched off (H, --no-gesture): the camera's events still come in, but
+	# no shape of the hand asks for anything (review on #170)
+	if not gesture.enabled and gate == "":
+		gate = GATE_GESTURE_OFF
+	var hand := {"fresh": age >= 0.0 and age <= gesture.stale_ms, "camera_ok": gesture.camera_ok, "detected": gesture.detected,
+		"pose": gesture.pose, "pinch": gesture.pinch or gesture.sign_seen,
+		# a catch never starts on top of a steer: the pinch let go, the stick at rest, the zero jog out
+		"steering": gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE] or _jog_active or keys_held}
+	easy.tick(dt, hand, {"enabled": on, "taking": game_mode != null and game_mode.taking(),
+		"link": bool(backend_link.call()), "gate": gate,
+		"status": RobotState.easy_mode})
+
+## The easy mode's one way to the backend. "" = not sent. Never repeated by itself.
+func _easy_send(name: String, params: Dictionary) -> String:
+	if not bool(backend_link.call()):
+		return ""
+	if name == "soft_stop":
+		_jog_active = false
+	return ws.send_command(name, params)
+
+## The backend's carry ended over a Dial. The Dial's own BALL_RECEIVED is what counts; with
+## a simulated crane and simulated Dials the score game gives the mock Dial its capsule.
+func _on_easy_delivered(destination: int) -> void:
+	if game_mode != null:
+		game_mode.easy_delivered("left" if destination == 1 else "right", ws.server_robot != "real")
+
+func _on_easy_cue(name: String) -> void:
+	match name:
+		"grab":
+			sfx.play_cue("pinch")
+			gesture_hud.flash("じどうキャッチ！", 0.9)
+		"caught":
+			sfx.play_cue("hand")
+		"deliver":
+			sfx.play_cue("pinch")
+			gesture_hud.flash("はこぶよ！", 0.9)
+		"done":
+			sfx.play_cue("release")
+		"refused", "fault":
+			sfx.play_cue("lost")
+
+## A new round or practice: the easy mode leaves its FAULT (a person started it). The
+## backend still refuses whatever is not in order.
+func _on_game_mode_phase(p: String) -> void:
+	if p in ["COUNTDOWN", "TUTORIAL"] and easy.faulted():
+		easy.reset()
 
 # ------------------------------------------------------------ hand joystick
 func set_gesture_enabled(on: bool) -> void:
@@ -1317,7 +1425,7 @@ static func gesture_pose_demo_event(t: float) -> Dictionary:
 ## gets `arm_step` (SERVO_TURN 2; one step at a time, refused while another
 ## move runs); the game's own MockRobot just changes its angle.
 func arm_step(deg: float) -> void:
-	if RobotState.auto_catch_active():
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
 		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
@@ -1346,7 +1454,7 @@ func arm_set(which: String) -> void:
 
 ## Turn the claw to its recorded "closed" or "open" position.
 func arm_goto(which: String) -> void:
-	if RobotState.auto_catch_active():
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
 		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
@@ -1400,7 +1508,7 @@ func gesture_gate() -> String:
 		return "アラーム中:「clear_alarm」→「home」"
 	if RobotState.source == "mock":
 		return "" if mock.enabled and RobotState.connected else "ロボットに未接続"
-	return real_gesture_gate(ws.is_open(), RobotState.connected, ws.server_robot, gesture_allow_real,
+	return real_gesture_gate(bool(backend_link.call()), RobotState.connected, ws.server_robot, gesture_allow_real,
 		RobotState.motors_enabled, RobotState.homed, RobotState.machine_state == "HOMING" or ws.has_pending_motion())
 
 ## The real (backend) robot checks, in the order they must be fixed.
@@ -1450,7 +1558,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 					_hand_cue_ms = now
 					sfx.play_cue("hand")
 	# control was cut (not a plain release, not a stop asked for by hand)
-	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled", "auto_catch"]:
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled", "auto_catch", "easy_mode"]:
 		sfx.play_cue("lost")
 	# lost track / stale / camera gone while driving the real robot: besides the
 	# zero jog, a decelerating STOP (no alarm)
@@ -1490,6 +1598,7 @@ func stop_key() -> void:
 		study_mode.on_stop_key()
 	if game_mode != null:
 		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
+	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
 	_jog_latched = _jog_input() != Vector3.ZERO
 	gesture.stop("stop_key")
 	if homework != null:
@@ -1531,6 +1640,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
 			show_title()
+			return
+		# staff: the easy mode out of its stop (#169), after the crane was put right by hand
+		if ev.keycode == KEY_F9 and easy.faulted():
+			easy.reset()
 			return
 		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
 		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
