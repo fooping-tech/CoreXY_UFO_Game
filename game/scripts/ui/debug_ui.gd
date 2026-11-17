@@ -1096,7 +1096,9 @@ func _process(_dt: float) -> void:
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if main.z_end_hint != "":
 		hint += ("\n" if hint != "" else "") + main.z_end_hint
-	if RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset and RobotState.z_servo_jog_recovers:
+	if RobotState.source == "websocket" and RobotState.connected and (RobotState.z_servo_power_cycle or RobotState.arm_servo_power_cycle):
+		hint += ("\n" if hint != "" else "") + CalibrationPanel.servo_power_cycle_text(RobotState.z_servo_power_cycle, RobotState.arm_servo_power_cycle)
+	elif RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset and RobotState.z_servo_jog_recovers:
 		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。▲ / ▼ を押せば動く。上下の点を記録し直す"
 	elif RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset:
 		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。「実機」タブの「巻き上げサーボを復帰」を押す"

@@ -676,6 +676,20 @@ static func restore_text(r: Dictionary) -> String:
 		return s + "。ずれが大きすぎる（電源を切っている間に回った）: 一番上まで巻き上げて「上を記録」"
 	return s + "。アームの高さが合っていれば「これを使う」"
 
+## #163: what to do when the firmware refuses a servo's jogs until its power is cut and
+## restored ("" when none is refused).
+static func servo_power_cycle_text(z: bool, arm: bool) -> String:
+	if not z and not arm:
+		return ""
+	var which := "巻き上げサーボと爪のサーボ" if z and arm else ("巻き上げサーボ" if z else "爪のサーボ")
+	var s := ("⚠ %sが動かない: Core2 だけが再起動して、サーボの回転数が分からなくなった（ファームウェアが拒否している）。"
+		+ "サーボの電源（Core2 の USB ではない）を一度切って入れ直す。") % which
+	if z:
+		s += "トルクが切れているので、アームが重みで下がることがある（下に物がないか確かめる）。入れ直したら Z の上と下を記録し直す"
+	else:
+		s += "入れ直したら爪の開き・閉じを確かめる"
+	return s
+
 ## A refusal's reason as what to do next (the backend's own words when it is not known).
 static func reason_text(reason: String) -> String:
 	var r := reason.to_lower()
@@ -801,7 +815,11 @@ func refresh() -> void:
 	_z.text = "上: %s　下: %s　換算: %s" % ["記録済" if RobotState.z_top_set or RobotState.z_reference_set else "まだ",
 		"記録済" if RobotState.z_bottom_set else "まだ",
 		"測った値（calibration.json）" if RobotState.z_calibrated else "設定ファイルの仮の値（まだ測っていない）"]
-	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated else BAD)
+	var power_cycle := servo_power_cycle_text(RobotState.z_servo_power_cycle, RobotState.arm_servo_power_cycle) \
+		if RobotState.source == "websocket" and RobotState.connected else ""
+	if power_cycle != "":
+		_z.text += "\n" + power_cycle
+	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated and power_cycle == "" else BAD)
 	_z_use.disabled = not ready or restore_estimate.is_empty()
 	_z_up.disabled = not ready or not z_range_recorded()
 	_z_down.disabled = _z_up.disabled

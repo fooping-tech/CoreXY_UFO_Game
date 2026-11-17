@@ -167,6 +167,8 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.z_calibrated = bool(data.get("z_calibrated", false))
 			RobotState.z_servo_reset = bool(data.get("z_servo_reset", false))
 			RobotState.z_servo_jog_recovers = bool(data.get("z_servo_jog_recovers", false))
+			RobotState.z_servo_power_cycle = bool(data.get("z_servo_power_cycle", false))
+			RobotState.arm_servo_power_cycle = bool(data.get("arm_servo_power_cycle", false))
 			RobotState.arm_deg = float(data.arm_deg) if data.get("arm_deg") != null else NAN
 			RobotState.arm_reference_set = bool(data.get("arm_reference_set", false))
 			for k in ["arm_closed_deg", "arm_open_deg", "arm_span_deg"]:
