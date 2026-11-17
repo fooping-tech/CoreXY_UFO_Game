@@ -2605,6 +2605,17 @@ func _test_calibration_summary() -> void:
 		and busy.contains("usbserial-AAAA") and busy.contains("Resource busy") and busy.contains("ほかのプログラム")
 		and CalibrationPanel.link_problem_text({}).contains("確かめています"),
 		"calibration link: unplugged, no port at all, a port that does not open and no answer yet have their own words", busy)
+	# #161: the link went silent while running (a USB hub's error): said so, with the reopen and the hub
+	var silent_info := {"kind": "real", "connected": false, "problem": "silent", "port": "/dev/cu.usbserial-AAAA",
+		"error": "no reply from the robot (serial link silent: USB cable / hub?) (5 s without a reply)"}
+	var silent := CalibrationPanel.link_problem_text(silent_info)
+	var z_refused := CalibrationPanel.reason_text("internal error: timeout after 3.0s")
+	_ok(str(CalibrationPanel.link_state("websocket", true, false, false, "real", silent_info).text).contains("返事が来ない")
+		and silent.contains("usbserial-AAAA") and silent.contains("つなぎ直") and silent.contains("ハブ")
+		and z_refused.contains("実機から返事がない") and z_refused.contains("timeout after 3.0s")
+		and CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("USB")
+		and CalibrationPanel.reason_text("timeout") == "バックエンドから返事がない",
+		"calibration link: a silent link and a refusal for a firmware timeout point at the USB hub / cable", z_refused)
 	var up: Dictionary = CalibrationPanel.link_state("websocket", true, true, true, "real", {})
 	var motors_off: Dictionary = CalibrationPanel.link_state("websocket", true, true, false, "mock", {})
 	_ok(up.state == "ok" and up.text == "実機" and motors_off.state == "todo" and str(motors_off.text).contains("モーターが無効")

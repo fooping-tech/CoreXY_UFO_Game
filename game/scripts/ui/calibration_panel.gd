@@ -608,6 +608,12 @@ static func link_problem_text(info: Dictionary, short := false) -> String:
 			if short:
 				return "実機に未接続: シリアルポートが見つからない"
 			return "実機に未接続: シリアルポートが 1 つも見つからない。USB ケーブルと基板の電源を確かめる。" + again
+		"silent":  # #161: the link stopped answering while running; the backend reopens it
+			if short:
+				return "実機から返事が来ない: つなぎ直しています"
+			return ("実機から返事が来なくなった（ポート %s）。USB ハブかケーブルの不調で、実機からの受信だけが止まることがある。"
+				+ "バックエンドが数秒おきに自動でつなぎ直している。続くなら Core2 の USB をカメラと同じハブから外し、Mac に直接挿す。"
+				+ "つながったら「モーター有効」からやり直す（Z の上下の記録も消えている）") % str(info.get("port", ""))
 		"open_failed":
 			if short:
 				return "実機に未接続: ポートを開けない・返事がない"
@@ -677,6 +683,10 @@ static func reason_text(reason: String) -> String:
 		return "先に W でアームを一番上まで巻き上げる（Z の上を記録してから原点復帰）。" + reason
 	if r == "timeout":
 		return "バックエンドから返事がない"
+	if r.contains("no reply from the robot") or r.begins_with("timeout after") \
+			or r.begins_with("internal error: timeout after"):
+		# #161: the firmware did not answer (a USB hub / cable trouble can stop the replies alone)
+		return "実機から返事がない（USB ケーブル・ハブを確認。止まったままならバックエンドが数秒でつなぎ直す）。" + reason
 	if r == "socket_closed":
 		return "バックエンドとの接続が切れた"
 	if r.contains("not connected"):
