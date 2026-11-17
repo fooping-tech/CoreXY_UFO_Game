@@ -83,9 +83,11 @@ closed, up to the safe height; ACK = started; progress in robot_state.easy_mode 
 Dial 1 / Dial 2 at the safe height, lower, open, up), easy_status. Nothing chosen within
 game_mode.easy.wait_destination_s: the run ends EXPIRED with the claw still closed (nothing
 moved, nothing released, no ABORT). The Dials' drop points of the real crane: easy_dial_set
-{which: dial_1 | dial_2 (the arm's XY now) | release_z (its Z now) | clear} saves them
-unconfirmed in calibration.json#easy_dials, easy_dial_confirm {confirmed} after a person
-watched a test; unrecorded or unconfirmed = easy_grab refused on the real robot.
+{which: dial_1 | dial_2 (the arm's XY now) | release_z | catch_z (its Z now) | clear} saves
+them unconfirmed in calibration.json#easy_dials, easy_dial_confirm {confirmed} after a person
+watched a test; unrecorded or unconfirmed = easy_grab refused on the real robot. The saved
+values are the next session's too (no recording again), unless Z was measured again since.
+The preparation (calibration_prepare) ends with a step that says whether they are in use.
 
 Homework messages (type homework_*, never the robot): start / frame / advice / stop, and
 (#79) homework_locate {session_id, kind: stuck|next, image_jpeg_base64} ->
@@ -119,7 +121,7 @@ from ..homework.approach import ApproachParams, ApproachSequencer
 from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 from ..sequence.cleanup import CleanupProfile, CleanupSequencer
-from ..sequence.easy import EasyParams, EasySequencer
+from ..sequence.easy import EasyParams, EasySequencer, real_catch_params
 from ..sequence.prepare import PrepareSequencer
 from ..study_mode.height import DRUM_RADIUS_MM, HeightCalibration, HeightError
 
@@ -268,14 +270,18 @@ class GameServer:
         # #167: the 校正 tab's one-button preparation
         self.prepare = PrepareSequencer(
             robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            easy_check=lambda: self._easy_prepare_note(),
             on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
         # #169: the score game's easy mode (catch here, wait for the destination, carry to a Dial).
         # The catch uses the auto catch's profile; the Dials' drop points are the real crane's own
         # measurements (calibration.json#easy_dials) or the dry run's made-up ones.
         self._easy_path = getattr(backend_cfg, "easy_dials_path", None) if backend_cfg is not None else None
         self._easy_fixed = easy  # the tests' own values
+        self._easy_limits = limits
+        self._easy_dry = ac.dry_run
+        first = self._easy_params()
         self.easy = EasySequencer(
-            robot, ac.real if robot.is_real else ac.dry_run, limits, backend_cfg, easy=self._easy_params(),
+            robot, self._easy_catch(first), limits, backend_cfg, easy=first,
             lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: any(q.seq.active for q in self.sequences if q.seq is not self.easy),
             on_change=lambda status: self._on_sequence_change("easy_mode", status))
@@ -729,6 +735,7 @@ class GameServer:
             if name == "easy_status":
                 return self._ack(name, self._easy_status())
             if name == "easy_grab":
+                self._easy_refresh()  # the Z calibration may have been measured again since
                 await self.easy.start_grab()
                 return self._ack(name, self.easy.status())
             if name == "easy_deliver":
@@ -1010,15 +1017,50 @@ class GameServer:
             return self._easy_fixed
         profile = "real" if self.robot.is_real else "dry_run"
         raw = self.backend_cfg.raw if self.backend_cfg is not None else {}
-        return EasyParams.from_raw(raw, profile, self._easy_saved() if profile == "real" else None)
+        saved = self._easy_saved() if profile == "real" else None
+        easy = EasyParams.from_raw(raw, profile, saved)
+        if profile == "real" and saved is not None and (easy.catch_z is not None or easy.release_z is not None):
+            # the recorded heights are in the Z units of the calibration they were recorded with
+            import dataclasses
+            easy = dataclasses.replace(easy, stale_z=self._height_z_changed(saved))
+        return easy
+
+    def _easy_catch(self, easy: EasyParams):
+        """The catch's profile: the real crane's from what the 校正 tab measured, else the dry run's."""
+        if not self.robot.is_real or self._easy_fixed is not None:
+            return self._easy_dry
+        raw = self.backend_cfg.raw if self.backend_cfg is not None else {}
+        return real_catch_params(raw, easy, self._easy_limits, self.backend_cfg)
+
+    def _easy_refresh(self) -> None:
+        """The saved values (and the Z calibration they depend on) as they are now."""
+        if not self.easy.active:
+            easy = self._easy_params()
+            self.easy.set_easy(easy, self._easy_catch(easy))
 
     def _easy_status(self) -> dict:
+        self._easy_refresh()
         return {**self.easy.status(), "dials": self.easy.easy.as_dict(), "problems": self.easy.problems()}
+
+    def _easy_prepare_note(self) -> str:
+        """The preparation's last step (#167 / #169): the last session's drop points are in use,
+        or why not. Never a failure: the easy mode is a choice."""
+        if not self.robot.is_real:
+            return "skip: 仮想クレーン（模擬の値を使う）"
+        if self._easy_saved() is None:
+            return "skip: まだ記録していない（かんたんモードを使うときだけ、校正タブの 8 で）"
+        self._easy_refresh()
+        problems = self.easy.problems()
+        if problems:
+            return "skip: まだ使えない: " + problems[0]
+        e = self.easy.easy
+        return "前回の値を使う（Dial 1 X %.0f / Y %.0f、Dial 2 X %.0f / Y %.0f、キャッチ Z %.1f、投入 Z %.1f）" % (
+            *e.dials[1], *e.dials[2], e.catch_z, e.release_z)
 
     def _easy_write(self, name: str, saved: dict) -> dict:
         try:
             self._easy_path.write_text(json.dumps(saved))
-            self.easy.set_easy(self._easy_params())
+            self._easy_refresh()
         except (OSError, ValueError) as e:
             return self._nack(name, f"保存できません: {e}")
         return self._ack(name, self._easy_status())
@@ -1046,16 +1088,26 @@ class GameServer:
             if not (math.isfinite(s.x) and math.isfinite(s.y) and self.easy.limits.xy_inside(s.x, s.y)):
                 return self._nack(name, f"XY ({s.x:.1f},{s.y:.1f}) outside the soft limits")
             saved[which] = {"x": round(float(s.x), 2), "y": round(float(s.y), 2)}
-        elif which == "release_z":
+        elif which in ("release_z", "catch_z"):
             if not s.connected:
                 return self._nack(name, "robot not connected")
             if not s.z_reference_set:
                 return self._nack(name, "Z の基準がない: W で一番上まで巻き上げて「上を記録」してから")
             if s.state != MachineState.IDLE or self._jog_owner is not None or self._motion_lock.locked():
                 return self._nack(name, f"the arm is moving ({s.state}): wait until it stops")
-            saved["release_z"] = round(float(s.z), 2)
+            if self._z_counts_per_unit() is None:
+                return self._nack(name, "Z の上と下を両方記録してから（Z の 1 単位が何 cm か分からない）")
+            if saved and self._height_z_changed(saved) and (saved.get("release_z") is not None
+                                                             or saved.get("catch_z") is not None):
+                # the other height was recorded in the old Z units: it is recorded again too
+                saved.pop("release_z", None)
+                saved.pop("catch_z", None)
+            saved[which] = round(float(s.z), 2)
+            saved["z_counts_per_unit"] = self._z_counts_per_unit()  # what these Z values mean
         else:
-            return self._nack(name, "which must be dial_1, dial_2, release_z or clear")
+            return self._nack(name, "which must be dial_1, dial_2, release_z, catch_z or clear")
+        if which != "clear":
+            saved["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         saved["confirmed"] = False
         log.info("easy mode's drop points saved (not confirmed yet): %s", saved)
         return self._easy_write(name, saved)
@@ -1072,10 +1124,9 @@ class GameServer:
             return self._nack(name, "まだ記録していない（Dial 1・Dial 2 の位置と投入の高さ）")
         on = params.get("confirmed") is not False
         if on:
-            raw = self.backend_cfg.raw if self.backend_cfg is not None else {}
-            # everything but the confirmation itself, and but the catch's own profile (shown apart)
-            errs = EasyParams.from_raw(raw, "real", saved).problems(self.easy.params, self.easy.limits,
-                                                                     need_confirmed=False)
+            self._easy_refresh()
+            # everything but the confirmation itself
+            errs = self.easy.easy.problems(self.easy.params, self.easy.limits, need_confirmed=False)
             if errs:
                 return self._nack(name, "このままでは使えない: " + "; ".join(errs))
         log.info("easy mode's drop points %s", "confirmed" if on else "unconfirmed")

@@ -40,7 +40,7 @@ async def test_the_mock_robot_is_prepared(tmp_path):
     assert st["last_result"] == "done" and not st["active"] and st["error"] == ""
     assert s.motors_enabled and s.homed
     assert states(seq) == {"motors": "done", "z_track": "skip", "z_restore": "skip", "z_top": "skip",
-                           "claw_open": "done", "claw_close": "done", "home": "done"}
+                           "claw_open": "done", "claw_close": "done", "home": "done", "easy": "skip"}
     assert robot.arm_deg == 40.0  # closed last
     assert not seq.lock.locked()
 
@@ -72,7 +72,7 @@ async def test_the_real_robot_after_a_power_cycle(tmp_path):
         st = await run(seq)
         assert st["last_result"] == "done", st
         assert states(seq) == {"motors": "done", "z_track": "done", "z_restore": "done", "z_top": "done",
-                               "claw_open": "skip", "claw_close": "skip", "home": "done"}
+                               "claw_open": "skip", "claw_close": "skip", "home": "done", "easy": "skip"}
         sent = robot.serial.transport.sent
         assert any(l.startswith("JOG 0.0 0.0 ") and int(l.split()[3]) > 0 for l in sent)  # up, to start tracking
         s = robot.snapshot()

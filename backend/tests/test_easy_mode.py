@@ -62,7 +62,7 @@ def test_repo_dry_run_values_are_usable_and_the_real_ones_are_refused():
     errs = real.problems(ac.real, cfg.limits)
     assert any("Dial 1" in e for e in errs) and any("Dial 2" in e for e in errs) and any("release height" in e for e in errs)
     # measured but not confirmed is still refused; confirmed is taken
-    saved = {"dial_1": {"x": 10, "y": 50}, "dial_2": {"x": 380, "y": 50}, "release_z": 60}
+    saved = {"dial_1": {"x": 10, "y": 50}, "dial_2": {"x": 380, "y": 50}, "release_z": 60, "catch_z": 30}
     assert any("not confirmed" in e for e in EasyParams.from_raw(cfg.raw, "real", saved).problems(ac.dry_run, cfg.limits))
     assert EasyParams.from_raw(cfg.raw, "real", {**saved, "confirmed": True}).problems(ac.dry_run, cfg.limits) == []
 
@@ -367,51 +367,144 @@ async def test_easy_grab_is_refused_while_another_sequence_runs(server):
         await srv.auto.wait()
 
 
-async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
-    class FakeReal(MockRobot):
-        name = "real"
+class FakeReal(MockRobot):
+    name = "real"
 
+    class _Cal:
+        counts_per_unit = 90.0
+
+        def complete(self) -> bool:
+            return True
+
+    z_cal = _Cal()
+
+
+async def _real_server(tmp_path, saved: dict | None = None):
     robot = FakeReal()
     await robot.connect()
     cfg = load_config()
     cfg.easy_dials_path = tmp_path / "easy_dials.json"
+    if saved is not None:
+        cfg.easy_dials_path.write_text(json.dumps(saved))
     srv = GameServer(robot, "127.0.0.1", 0, backend_cfg=cfg, auto_catch=AutoCatchConfig.from_raw(cfg.raw))
     await robot.enable_motors(True)
     await robot.home()
     robot._homing_until = 0.0
+    return srv, robot, cfg
+
+
+def _at(robot, x=None, y=None, z=None) -> None:
+    for i, v in enumerate((x, y, z)):
+        if v is not None:
+            robot.pos[i] = robot.target[i] = v
+
+
+async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
+    srv, robot, cfg = await _real_server(tmp_path)
     r = await srv.execute("easy_grab", {})
     assert r["type"] == "nack" and "Dial 1 drop point is not recorded" in r["data"]["reason"]
-    assert "not confirmed on the real machine" in r["data"]["reason"] or "is not set" in r["data"]["reason"]
-    # recording: where the arm is now, saved unconfirmed; confirming needs all three
+    assert "the catch height is not recorded" in r["data"]["reason"]
+    # recording: where the arm is now, saved unconfirmed; confirming needs all four
     assert (await srv.execute("easy_dial_set", {"which": "nowhere"}))["type"] == "nack"
-    robot.pos[0], robot.pos[1] = 15.0, 90.0
-    robot.target[0], robot.target[1] = 15.0, 90.0
+    _at(robot, 15.0, 90.0)
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and r["data"]["dials"]["dial_1"] == [15.0, 90.0] and not r["data"]["dials"]["confirmed"]
+    assert (await srv.execute("easy_dial_set", {"which": "dial_2"}))["type"] == "ack"  # the same place again
     r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "nack" and "Dial 2" in r["data"]["reason"]
-    robot.pos[0] = robot.target[0] = 375.0
+    assert r["type"] == "nack" and "same place" in r["data"]["reason"]
+    _at(robot, 375.0)
     assert (await srv.execute("easy_dial_set", {"which": "dial_2"}))["type"] == "ack"
     robot.z_reference_set = False
     r = await srv.execute("easy_dial_set", {"which": "release_z"})
     assert r["type"] == "nack"  # no Z reference: the reading means nothing
-    saved = json.loads(cfg.easy_dials_path.read_text())
-    assert saved["dial_2"] == {"x": 375.0, "y": 90.0} and saved["confirmed"] is False and "release_z" not in saved
     robot.z_reference_set = True
-    robot.pos[2] = robot.target[2] = 60.0
+    _at(robot, z=60.0)
     r = await srv.execute("easy_dial_set", {"which": "release_z"})
     assert r["type"] == "ack" and r["data"]["dials"]["release_z"] == 60.0
-    # the catch's own profile is unmeasured (auto_catch.real): its heights cannot be checked
-    # against, so the drop points are confirmed on their own and the catch stays refused
     r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "ack" and r["data"]["dials"]["confirmed"] and r["data"]["problems"]
-    assert json.loads(cfg.easy_dials_path.read_text())["confirmed"] is True
+    assert r["type"] == "nack" and "catch height" in r["data"]["reason"]
+    _at(robot, z=25.0)
+    assert (await srv.execute("easy_dial_set", {"which": "catch_z"}))["type"] == "ack"
+    saved = json.loads(cfg.easy_dials_path.read_text())
+    assert saved["dial_2"] == {"x": 375.0, "y": 90.0} and saved["confirmed"] is False and saved["catch_z"] == 25.0
+    assert saved["z_counts_per_unit"] == 90.0 and saved["saved_at"]
     r = await srv.execute("easy_grab", {})
-    assert r["type"] == "nack" and "easy catch refused" in r["data"]["reason"]
+    assert r["type"] == "nack" and "not confirmed" in r["data"]["reason"]  # recorded is not yet watched
+    r = await srv.execute("easy_dial_confirm", {})
+    assert r["type"] == "ack" and r["data"]["dials"]["confirmed"] and r["data"]["problems"] == []
+    # the catch's profile is built from the measurements: the top as the travel height, the
+    # recorded heights, the descent bounded by exactly what was recorded
+    p = srv.easy.params
+    assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
+    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == cfg.xy_feed_mm_min
     # a change after the confirmation takes it back
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
     assert (await srv.execute("easy_dial_set", {"which": "clear"}))["data"]["dials"]["dial_1"] is None
+
+
+SAVED = {"dial_1": {"x": 15.0, "y": 90.0}, "dial_2": {"x": 375.0, "y": 90.0}, "release_z": 60.0, "catch_z": 25.0,
+         "z_counts_per_unit": 90.0, "confirmed": True, "saved_at": "2026-11-17T10:00:00"}
+
+
+async def test_the_last_sessions_values_are_used_without_recording_again(tmp_path):
+    srv, robot, cfg = await _real_server(tmp_path, SAVED)  # a new start: the file is all there is
+    st = (await srv.execute("easy_status", {}))["data"]
+    assert st["problems"] == [] and st["dials"]["confirmed"] and st["dials"]["saved_at"] == "2026-11-17T10:00:00"
+    note = srv._easy_prepare_note()
+    assert note.startswith("前回の値を使う") and "X 375" in note and "キャッチ Z 25.0" in note
+    # and the real profile really runs with them (the mock stands in for the crane)
+    robot.arm_marks = {"closed": 0.0, "open": -120.0}
+    _at(robot, 120.0, 100.0, 100.0)
+    tick = asyncio.get_running_loop().create_task(_tick_forever(robot))
+    try:
+        r = await srv.execute("easy_grab", {})
+        assert r["type"] == "ack", r
+        for _ in range(3000):
+            if srv.easy.state == "WAIT_DESTINATION":
+                break
+            await asyncio.sleep(0.01)
+        assert srv.easy.state == "WAIT_DESTINATION", (srv.easy.state, srv.easy.error)
+        assert (await srv.execute("easy_deliver", {"destination": 2, "grab_id": srv.easy.grab_id}))["type"] == "ack"
+        await asyncio.wait_for(srv.easy.wait(), 60)
+        assert srv.easy.status()["last_result"] == "done" and abs(robot.pos[0] - 375.0) < 1.0
+    finally:
+        tick.cancel()
+
+
+async def _tick_forever(robot) -> None:
+    while True:
+        await robot.tick()
+        await asyncio.sleep(0.002)
+
+
+async def test_heights_recorded_before_z_was_measured_again_are_stale(tmp_path):
+    srv, robot, cfg = await _real_server(tmp_path, {**SAVED, "z_counts_per_unit": 120.0})
+    st = (await srv.execute("easy_status", {}))["data"]
+    assert st["dials"]["stale_z"] and any("measured again" in p for p in st["problems"])
+    assert srv._easy_prepare_note().startswith("skip: まだ使えない")
+    r = await srv.execute("easy_grab", {})
+    assert r["type"] == "nack" and "measured again" in r["data"]["reason"]
+    # (a file from before the scale was saved with it is stale too)
+    older = {k: v for k, v in SAVED.items() if k != "z_counts_per_unit"}
+    srv2, _, _ = await _real_server(tmp_path, older)
+    assert (await srv2.execute("easy_status", {}))["data"]["dials"]["stale_z"]
+    # recording one height again drops the other old one; both again, then confirmed: usable
+    _at(robot, z=30.0)
+    r = await srv.execute("easy_dial_set", {"which": "catch_z"})
+    assert r["type"] == "ack" and r["data"]["dials"]["release_z"] is None and not r["data"]["dials"]["stale_z"]
+    _at(robot, z=65.0)
+    assert (await srv.execute("easy_dial_set", {"which": "release_z"}))["type"] == "ack"
+    r = await srv.execute("easy_dial_confirm", {})
+    assert r["type"] == "ack" and r["data"]["problems"] == []
+
+
+async def test_the_preparation_says_whether_the_easy_values_are_in_use(tmp_path):
+    srv, robot, cfg = await _real_server(tmp_path)
+    assert srv._easy_prepare_note().startswith("skip: まだ記録していない")
+    mock_srv = GameServer(MockRobot(), "127.0.0.1", 0)
+    assert mock_srv._easy_prepare_note().startswith("skip: 仮想クレーン")
+    assert [k for k, _ in __import__("corexy_ufo_backend.sequence.prepare", fromlist=["STEPS"]).STEPS][-1] == "easy"
 
 
 async def test_the_dry_run_crane_does_not_record_drop_points(server):

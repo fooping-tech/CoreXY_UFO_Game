@@ -25,9 +25,18 @@ What it never does:
 
 Where the Dials are (`EasyParams`): the real crane's are measured on the machine and saved
 in calibration.json#easy_dials (the 校正 tab), and count only once confirmed there; the
-dry run's are made up in game_config.json game_mode.easy.dry_run. The catch itself uses
-the auto catch's profile (safe_z, catch_z, the claw, speeds, timeouts, tolerances): on the
-real crane that is refused until measured and confirmed, and so is this.
+dry run's are made up in game_config.json game_mode.easy.dry_run.
+
+The catch's profile (an AutoCatchParams: heights, claw, speeds, timeouts, tolerances):
+  dry run   the auto catch's dry_run profile.
+  real      `real_catch_params`: every hardware fact is one the 校正 tab measured on this
+            machine: the catch and release heights recorded there (easy_dials), the travel
+            height = the Z top record, the Z scale and direction from the Z calibration, the
+            claw's recorded positions, the Dials' XY. What is not a fact of the machine (the
+            timeouts, the tolerances, the XY feed = the backend's usual one) comes from
+            game_mode.easy.real. It counts as confirmed only when the easy_dials are; a Z
+            measured again since makes the recorded heights stale (record them again).
+            It does not use auto_catch.real (the one-button catch's own, with its rescue box).
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ from .params import AutoCatchParams, height
 
 log = logging.getLogger(__name__)
 
+MIN_DIAL_GAP_MM = 20.0  # two Dials recorded closer than this are the same place recorded twice
 DESTINATIONS = (1, 2)  # Dial 1 = the left of the screen, Dial 2 = the right (#138)
 WAIT_KEY = "wait_destination"
 WAIT_MARGIN_S = 5.0  # the monitoring's own timeout of the wait: never reached before the expiry
@@ -96,6 +106,9 @@ class EasyParams:
     release_z: float | None = None
     wait_destination_s: float = 15.0
     confirmed: bool = False  # real only: a person watched a test run over both Dials
+    catch_z: float | None = None  # real only: where the claw closes (the dry run: auto_catch.dry_run)
+    stale_z: bool = False  # real only: Z was measured again since the heights were recorded
+    saved_at: str = ""  # when the values were last recorded (shown: "the last session's values")
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None, profile: str, saved: dict[str, Any] | None = None) -> "EasyParams":
@@ -109,7 +122,9 @@ class EasyParams:
             d = {}
         return cls(profile=profile, dials={n: _xy(d.get(f"dial_{n}")) for n in DESTINATIONS},
                    release_z=_num(d.get("release_z")), wait_destination_s=wait if wait is not None else 15.0,
-                   confirmed=d.get("confirmed") is True if profile == "real" else True)
+                   confirmed=d.get("confirmed") is True if profile == "real" else True,
+                   catch_z=_num(d.get("catch_z")) if profile == "real" else None,
+                   saved_at=str(d.get("saved_at", "")) if profile == "real" else "")
 
     def problems(self, catch: AutoCatchParams, limits: RobotLimits, *, need_confirmed: bool = True) -> list[str]:
         """Why a delivery may not run with these values ([] = it may)."""
@@ -120,6 +135,14 @@ class EasyParams:
                 errs.append(f"Dial {n} drop point is not recorded")
             elif not limits.xy_inside(*xy):
                 errs.append(f"Dial {n} drop point ({xy[0]:g},{xy[1]:g}) outside the XY soft limits")
+        a, b = self.dials.get(1), self.dials.get(2)
+        if a is not None and b is not None and math.hypot(a[0] - b[0], a[1] - b[1]) < MIN_DIAL_GAP_MM:
+            errs.append(f"Dial 1 and Dial 2 are recorded at the same place ({a[0]:g},{a[1]:g}): "
+                        "move the arm over each Dial and record it there")
+        if self.profile == "real" and self.catch_z is None:
+            errs.append("the catch height is not recorded")
+        if self.profile == "real" and self.stale_z:
+            errs.append("Z was measured again since the heights were recorded: record the catch and release heights again")
         if self.release_z is None:
             errs.append("the Dials' release height is not recorded")
         elif not limits.z_min <= self.release_z <= limits.z_max:
@@ -142,7 +165,51 @@ class EasyParams:
     def as_dict(self) -> dict:
         return {"profile": self.profile, "dial_1": list(self.dials[1]) if self.dials.get(1) else None,
                 "dial_2": list(self.dials[2]) if self.dials.get(2) else None, "release_z": self.release_z,
-                "wait_destination_s": self.wait_destination_s, "confirmed": self.confirmed}
+                "wait_destination_s": self.wait_destination_s, "confirmed": self.confirmed,
+                "catch_z": self.catch_z, "stale_z": self.stale_z, "saved_at": self.saved_at}
+
+
+# What is not a fact of the machine, when game_mode.easy.real leaves it out.
+REAL_DEFAULTS = {"xy_tolerance_mm": 1.0, "z_tolerance": 1.0, "claw_settle_s": 0.5, "claw_span_min_deg": 5.0,
+                 "claw_span_max_deg": 355.0, "limit_home_zone_mm": 5.0, "total_timeout_s": 120.0}
+REAL_TIMEOUTS = {"open_claw": 6.0, "lower_to_catch": 20.0, "close_claw": 6.0, "raise_with_item": 20.0,
+                 "move_to_box": 45.0, "lower_to_release": 20.0, "release": 6.0, "raise_empty": 20.0, "claw_standby": 6.0}
+
+
+def real_catch_params(raw: dict[str, Any] | None, easy: EasyParams, limits: RobotLimits,
+                      backend: BackendConfig | None) -> AutoCatchParams:
+    """The real crane's catch profile for the easy mode, from what the 校正 tab measured.
+    Missing measurements stay None (validate() then refuses it): nothing is guessed."""
+    gm = (raw or {}).get("game_mode")
+    e = gm.get("easy") if isinstance(gm, dict) and isinstance(gm.get("easy"), dict) else {}
+    r = e.get("real") if isinstance(e.get("real"), dict) else {}
+    p = AutoCatchParams(profile="real")
+    for k, v in REAL_DEFAULTS.items():
+        n = _num(r.get(k))
+        setattr(p, k, n if n is not None else v)
+    t = r.get("timeouts_s") if isinstance(r.get("timeouts_s"), dict) else {}
+    p.timeouts_s = {k: (_num(t.get(k)) or v) for k, v in REAL_TIMEOUTS.items()}
+    feed = _num(r.get("xy_feed_mm_min")) or (backend.xy_feed_mm_min if backend is not None else None)
+    p.xy_feed_mm_min = p.xy_feed_max_mm_min = feed
+    p.button_debounce_ms = 0.0
+    p.claw_standby = None
+    # the travel height: the Z top record (the arm wound all the way up)
+    p.safe_z = limits.z_max if limits.z_up_is_positive else limits.z_min
+    p.catch_z = easy.catch_z
+    p.release_z = easy.release_z
+    if easy.catch_z is not None and easy.release_z is not None:
+        h = lambda z: height(z, limits)  # noqa: E731
+        p.z_floor = min((easy.catch_z, easy.release_z), key=h)  # never below the lower of the two
+        drop = h(p.safe_z) - h(p.z_floor)
+        p.max_drop_units = drop + p.z_tolerance  # exactly the recorded descent, no more
+        cpu = backend.z_counts_per_unit if backend is not None else 0.0
+        p.max_drum_turns = p.max_drop_units * cpu / 4096 * 1.05 + 0.05
+    if easy.dials.get(1) is not None:
+        p.box_x_mm, p.box_y_mm = easy.dials[1]  # (the auto catch's box: not used here, must be valid)
+    # every confirm item is covered by a measurement of the 校正 tab, watched by a person there
+    from .params import CONFIRM_KEYS
+    p.confirmed = {k: easy.confirmed and not easy.stale_z for k in CONFIRM_KEYS}
+    return p
 
 
 def grab_steps(p: AutoCatchParams) -> list[Step]:
@@ -182,11 +249,14 @@ class EasySequencer(AutoCatchSequencer):
         self.easy = easy or EasyParams(profile=params.profile)
         self.set_easy(self.easy)
 
-    def set_easy(self, easy: EasyParams) -> None:
-        """New drop points (the 校正 tab recorded one). Never while a run uses the old ones."""
+    def set_easy(self, easy: EasyParams, params: AutoCatchParams | None = None) -> None:
+        """New drop points (the 校正 tab recorded one), and with them the catch's profile when it
+        is built from them (the real crane). Never while a run uses the old ones."""
         if self.active:
             raise RobotCommandError("busy: the easy mode's catch is running")
         self.easy = easy
+        if params is not None:
+            self.params = params
         # the wait's own entry in the timeouts the monitoring reads (see _wait_destination)
         self.params = dataclasses.replace(self.params, timeouts_s={
             **self.params.timeouts_s, WAIT_KEY: max(easy.wait_destination_s, 0.0) + WAIT_MARGIN_S})
@@ -195,7 +265,8 @@ class EasySequencer(AutoCatchSequencer):
     def problems(self) -> list[str]:
         """Why the easy mode cannot run with the values it has (the robot's state aside)."""
         from .params import validate
-        return list(validate(self.params, self.limits, self.backend)) + self.easy.problems(self.params, self.limits)
+        errs = self.easy.problems(self.params, self.limits)
+        return errs + [e for e in validate(self.params, self.limits, self.backend) if e not in errs]
 
     def status(self) -> dict:
         now = self.clock()
