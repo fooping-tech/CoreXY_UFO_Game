@@ -50,6 +50,10 @@ var z_calibrated: bool = false
 var z_servo_reset: bool = false
 ## with z_servo_reset: the firmware sets multi-turn again on the next Z jog (newer firmware, #64)
 var z_servo_jog_recovers: bool = false
+## #163: the firmware refuses this servo's jogs until its power is cut and restored
+## (Core2 restarted while the servo kept power; W / S or the claw keys do nothing)
+var z_servo_power_cycle: bool = false
+var arm_servo_power_cycle: bool = false
 ## Claw servo (ID 2): degrees from its arm_zero reference (the raw angle in its
 ## turn before one is set); NAN = not read yet.
 var arm_deg: float = NAN

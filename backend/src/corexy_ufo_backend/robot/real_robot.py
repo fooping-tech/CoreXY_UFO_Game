@@ -82,6 +82,9 @@ CLAW_SERVO_RESET_MSG = ("claw servo reset (its power was cut): its recorded coun
                         "press again (the firmware refused this one before moving)")
 # z_servo_recover: a SERVO_TURN this small (up), refused unmoved while the servo is reset
 Z_RECOVER_TURNS = 0.01
+# #163: `JOG servo id=N disabled reason=...` that only a power cycle of that servo clears
+# (CoreXY_UFO StsServoBus::enableTracking: the firmware cannot tell its turn count)
+POWER_CYCLE_REASONS = ("unknown_turn_count", "goal_mismatch")
 Z_RAMP_STEP_S = 0.04
 
 
@@ -137,6 +140,9 @@ class RealRobot(RobotInterface):
         self.z_servo_reset = False  # see Z_SERVO_RESET_MSG
         # the firmware said LOST: its next Z jog sets multi-turn again by itself
         self.z_servo_jog_recovers = False
+        # #163: servos whose jog the firmware refused until their power is cut and restored
+        # (`JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)`)
+        self.servo_power_cycle: set[int] = set()
         self._busy = False
         self._last_poll = 0.0
         self._last_z_poll = 0.0
@@ -191,6 +197,7 @@ class RealRobot(RobotInterface):
         # a jog of the lost link is over for the host (the next link starts afresh)
         self._cancel_z_ramp()
         self._jogging = self._jog_requested = False
+        self.servo_power_cycle.clear()  # unknown on the next link: its next jog tells again
         if self.cfg.serial_reopen_s > 0:
             self._reopen_wanted = True
             self._reopen_at = time.monotonic() + self.cfg.serial_reopen_s
@@ -240,6 +247,8 @@ class RealRobot(RobotInterface):
             self._on_jog_line(kind, line)
         elif kind == "jog_servo":
             self._on_jog_servo(line)
+        elif kind == "servo_status":
+            self._note_power_cycled(line)
         elif kind == "pos":
             pos = P.parse_pos_line(line)
             if pos:
@@ -488,6 +497,24 @@ class RealRobot(RobotInterface):
         elif js.event in ("disabled", "stopped"):
             # cleared by the next press, like the other "jog ended" errors
             self.error = "jog ended: " + line.removeprefix("JOG ")
+            if js.event == "disabled" and (js.reason in POWER_CYCLE_REASONS or "power-cycle" in line):
+                if js.servo_id not in self.servo_power_cycle:
+                    log.warning("servo %d refuses jogs until its power is cut and restored: %s", js.servo_id, line)
+                self.servo_power_cycle.add(js.servo_id)
+        if js.event == "begin":
+            self.servo_power_cycle.discard(js.servo_id)  # the firmware took it again
+
+    def _note_power_cycled(self, line: str) -> None:
+        """#163: a refused servo's SERVO_STATUS says it was powered again (back to one
+        turn: its limits are not 0/0 any more) or the firmware tracks it again."""
+        if not self.servo_power_cycle:
+            return
+        st = P.parse_servo_status(line)
+        if st is None or not st.ok or st.servo_id not in self.servo_power_cycle:
+            return
+        if (st.limits is not None and st.limits != (0, 0)) or (st.tracking and not st.tracking_lost):
+            log.info("servo %d can be jogged again (%s)", st.servo_id, st.raw)
+            self.servo_power_cycle.discard(st.servo_id)
 
     def _note_z_status(self, st: P.ServoStatus) -> None:
         """Notice a drum servo whose power was cut on its own (and its recovery)."""
@@ -1089,6 +1116,8 @@ class RealRobot(RobotInterface):
             z_top_set=self._z_top_counts is not None, z_bottom_set=self._z_bottom_counts is not None,
             z_calibrated=self.z_cal.complete(), z_servo_reset=self.z_servo_reset,
             z_servo_jog_recovers=self.z_servo_reset and self.z_servo_jog_recovers,
+            z_servo_power_cycle=Z_SERVO_ID in self.servo_power_cycle,
+            arm_servo_power_cycle=ARM_SERVO_ID in self.servo_power_cycle,
             arm_deg=self._arm_deg(), arm_reference_set=self._arm_zero_counts is not None,
             arm_closed_deg=self.claw.closed_deg, arm_open_deg=self.claw.open_deg, arm_span_deg=self.claw.span_deg,
             limit_x=self._limits_active[0] and self._limits_current(x, y, measured),

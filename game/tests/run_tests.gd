@@ -1868,6 +1868,17 @@ func _test_auto_catch_controls(rs: Node) -> void:
 	game.request_auto_catch()  # no backend link in the test
 	_ok(game._auto_catch_rid == "" and str(game.auto_catch_hint).contains("バックエンド"),
 		"auto catch: without a backend the button explains instead of sending", game.auto_catch_hint)
+	# #163: a servo the firmware refuses until its power is cut and restored: said in the panel
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": false, "motors_enabled": true,
+		"state": "IDLE", "x": 0.0, "y": 0.0, "z": 100.0, "z_servo_power_cycle": true}})
+	game.debug_ui._process(0.0)
+	var refused_chip := str(game.debug_ui._state_chip.text)
+	var refused_ok: bool = rs.z_servo_power_cycle and not rs.arm_servo_power_cycle and refused_chip.contains("電源")
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": false, "motors_enabled": true,
+		"state": "IDLE", "x": 0.0, "y": 0.0, "z": 100.0}})
+	game.debug_ui._process(0.0)
+	_ok(refused_ok and not rs.z_servo_power_cycle and not str(game.debug_ui._state_chip.text).contains("サーボの電源"),
+		"servo power cycle: robot_state's flag reaches RobotState and the panel's hint, and goes with it", refused_chip)
 	remove_child(game)
 	game.free()
 	rs.auto_catch = {}
@@ -2616,6 +2627,14 @@ func _test_calibration_summary() -> void:
 		and CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("USB")
 		and CalibrationPanel.reason_text("timeout") == "バックエンドから返事がない",
 		"calibration link: a silent link and a refusal for a firmware timeout point at the USB hub / cable", z_refused)
+	# #163: a servo refused until its power is cut and restored: which one, not the USB, and what after
+	var pc_z := CalibrationPanel.servo_power_cycle_text(true, false)
+	var pc_arm := CalibrationPanel.servo_power_cycle_text(false, true)
+	_ok(CalibrationPanel.servo_power_cycle_text(false, false) == "" and pc_z.contains("巻き上げサーボ")
+		and pc_z.contains("USB ではない") and pc_z.contains("記録し直す") and pc_z.contains("下がる")
+		and pc_arm.contains("爪のサーボ") and not pc_arm.contains("巻き上げ")
+		and CalibrationPanel.servo_power_cycle_text(true, true).contains("巻き上げサーボと爪のサーボ"),
+		"calibration: a servo refused until a power cycle says which one and what to do", pc_z)
 	var up: Dictionary = CalibrationPanel.link_state("websocket", true, true, true, "real", {})
 	var motors_off: Dictionary = CalibrationPanel.link_state("websocket", true, true, false, "mock", {})
 	_ok(up.state == "ok" and up.text == "実機" and motors_off.state == "todo" and str(motors_off.text).contains("モーターが無効")
