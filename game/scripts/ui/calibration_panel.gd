@@ -117,7 +117,7 @@ func setup(m: Node) -> void:
 	tv.add_child(_next)
 	# #167: everything done by hand after a start, one press (never on opening the tab)
 	var pc := StudyHud.label("起動したら: アームの周りに物がなく、アームの高さが前回止めたときと同じなら押す。"
-		+ "モーター有効 → 前回の Z の上下を呼び出す → アームを一番上へ → 爪を開いて閉じる → 原点復帰。"
+		+ "モーター有効 → 前回の Z の上下を呼び出す → アームを一番上へ → 爪を開いて閉じる → 原点復帰 → ステージの真ん中へ → 爪を開いておく。"
 		+ "Space でいつでも止まる。", 15, YELLOW, 2)
 	pc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	pc.custom_minimum_size = Vector2(WIDTH, 0)

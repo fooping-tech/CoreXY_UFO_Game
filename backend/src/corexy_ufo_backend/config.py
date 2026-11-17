@@ -83,6 +83,21 @@ class BackendConfig:
     # off for a bare BackendConfig (tests)
     home_requires_z_top: bool = False
     home_z_tolerance: float = 5.0
+    # #175: after XY homing the arm goes on to the middle of the stage (the soft limits'
+    # centre, or home_center_mm [x, y]) instead of staying in the home corner
+    home_then_center: bool = True
+    home_center_mm: tuple[float, float] | None = None
+
+    def home_center(self) -> tuple[float, float] | None:
+        """Where the arm goes after homing (None = it stays at home). A configured point
+        outside the soft limits is not used: the middle is."""
+        if not self.home_then_center:
+            return None
+        lim = self.limits
+        c = self.home_center_mm
+        if c is not None and lim.xy_inside(c[0], c[1]):
+            return c
+        return ((lim.x_min + lim.x_max) / 2.0, (lim.y_min + lim.y_max) / 2.0)
     # #161: a command sent and nothing at all read for this long = the link is dead even if
     # the port looks open (a USB hiccup can stop the reading side alone); 0 = never
     serial_rx_stall_s: float = 5.0
@@ -224,6 +239,11 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
     cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))
     cfg.home_z_tolerance = float(b.get("home_z_tolerance", 5.0))
+    cfg.home_then_center = bool(b.get("home_then_center", True))
+    hc = b.get("home_center_mm")
+    if (isinstance(hc, list) and len(hc) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in hc)):
+        cfg.home_center_mm = (float(hc[0]), float(hc[1]))
     cfg.serial_rx_stall_s = float(b.get("serial_rx_stall_s", 5.0))
     cfg.serial_reopen_s = float(b.get("serial_reopen_s", 3.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))

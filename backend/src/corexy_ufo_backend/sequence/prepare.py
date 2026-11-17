@@ -1,6 +1,7 @@
 """The 校正 tab's one-button preparation (#167): what is done by hand after every start.
 
-    IDLE --start()--> MOTORS -> Z_TRACK -> Z_RESTORE -> Z_TOP -> CLAW_OPEN -> CLAW_CLOSE -> HOME -> EASY -> IDLE
+    IDLE --start()--> MOTORS -> Z_TRACK -> Z_RESTORE -> Z_TOP -> CLAW_OPEN -> CLAW_CLOSE -> HOME -> CENTER -> CLAW_READY
+        -> EASY -> IDLE
     any step --refused / stop / timeout--> FAULT (stopped there, with the reason)
 
 - MOTORS: enable_motors (the backend's arming; a grown-up pressed the button)
@@ -14,6 +15,10 @@
 - CLAW_OPEN / CLAW_CLOSE: the claw's recorded positions, open then closed (skipped when
   not recorded)
 - HOME: XY homing
+- CENTER (#175): on to the middle of the stage (backend.home_then_center; skipped when off)
+- CLAW_READY (#175): the claw is left open, ready to catch (skipped when not recorded). The
+  open / closed pair before homing stays: it shows both recorded positions work, and the
+  arm travels with the claw closed
 - EASY (#169): nothing moves. Says whether the last session's drop points of the score game's
   easy mode are in use (they are kept in calibration.json), or why not. Never a failure.
 
@@ -42,6 +47,8 @@ STEPS = (
     ("claw_open", "爪を開く"),
     ("claw_close", "爪を閉じる"),
     ("home", "原点復帰"),
+    ("center", "ステージの真ん中へ"),
+    ("claw_ready", "爪を開いておく"),
     ("easy", "かんたんモードの投入位置（前回の値）"),
 )
 TRACK_JOG_UNITS_S = 5.0  # slow; upwards (the sign follows z_up_is_positive)
@@ -60,6 +67,7 @@ class PrepareSequencer:
                  is_jogging: Callable[[], bool] = lambda: False,
                  on_change: Callable[[dict], None] | None = None,
                  easy_check: Callable[[], str] | None = None,
+                 center: Callable[[], tuple[float, float] | None] | None = None,
                  step_timeout_s: float = 60.0, settle_s: float = TRACK_SETTLE_S,
                  clock: Callable[[], float] = time.monotonic) -> None:
         self.robot = robot
@@ -67,6 +75,7 @@ class PrepareSequencer:
         self.is_jogging = is_jogging
         self.on_change = on_change
         self.easy_check = easy_check
+        self.center = center
         self.step_timeout_s = step_timeout_s
         self.settle_s = settle_s
         self.clock = clock
@@ -258,6 +267,19 @@ class PrepareSequencer:
 
     async def _do_home(self) -> str:
         await self.robot.home()
+        return ""
+
+    async def _do_center(self) -> str:
+        to = self.center() if self.center is not None else None
+        if to is None:
+            return "skip: 使っていない（backend.home_then_center）"
+        await self.robot.move_xy(*to)
+        return f"X {to[0]:.0f} / Y {to[1]:.0f}"
+
+    async def _do_claw_ready(self) -> str:
+        if not self._claw_recorded():
+            return "skip: 爪の開き・閉じが未記録"
+        await self.robot.arm_goto("open")
         return ""
 
     async def _do_easy(self) -> str:
