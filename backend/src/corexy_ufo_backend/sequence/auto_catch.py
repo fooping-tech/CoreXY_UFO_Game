@@ -177,8 +177,9 @@ class AutoCatchSequencer:
                 errs.append(f"Z {z_from:.1f} -> {z_to:g}: drum turn {turns:.2f} > max_drum_turns {p.max_drum_turns:g}")
         return errs
 
-    def preconditions(self) -> list[str]:
-        """Why the sequence cannot start now (empty = it can)."""
+    def preconditions(self, *, any_height: bool = False) -> list[str]:
+        """Why the sequence cannot start now (empty = it can). any_height: a run that only
+        goes up from where the arm is (the easy mode's, #177) does not need it at safe_z."""
         errs = list(validate(self.params, self.limits, self.backend))
         s = self.robot.snapshot()
         if self.active:
@@ -212,13 +213,13 @@ class AutoCatchSequencer:
                 return errs
         if not self.limits.xy_inside(s.x, s.y):
             errs.append(f"XY ({s.x:.1f},{s.y:.1f}) outside the soft limits")
-        if self.params.safe_z is not None and self.params.z_tolerance is not None:
+        if not any_height and self.params.safe_z is not None and self.params.z_tolerance is not None:
             if height(s.z, self.limits) < height(self.params.safe_z, self.limits) - self.params.z_tolerance:
                 errs.append(f"Z {s.z:.1f} below safe_z {self.params.safe_z:g}: raise the claw first")
         lf = self._limit_fault(s)
         if lf:
             errs.append(lf)
-        if self.params.catch_z is not None:
+        if not any_height and self.params.catch_z is not None:
             errs += self.z_move_errors(s.z, self.params.catch_z)  # the first descent starts from here
         return errs
 

@@ -86,7 +86,7 @@ func view() -> String:
 func sub_text() -> String:
 	var e := easy()
 	match e.state:
-		"AUTO_GRAB":
+		"RESET", "AUTO_GRAB":
 			return (e.step_text() + "\n" if e.step_text() != "" else "") + "いまは そうさ できないよ"
 		"WAIT_DESTINATION":
 			if e.note != "":
