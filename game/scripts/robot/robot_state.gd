@@ -71,6 +71,10 @@ var position_is_measured: bool = true
 ## The sequence itself runs in the backend; the game only shows it and locks its
 ## manual controls while it is active. {} = no backend / not reported.
 var auto_catch: Dictionary = {}
+## #167: the 校正 tab's one-button preparation, as the backend reports it
+## (robot_state.calibration_prepare / {"type": "calibration_prepare"}): active, step,
+## steps [{key, label, state: todo|run|done|skip|fail, note}], error, last_result.
+var calibration_prepare: Dictionary = {}
 
 func auto_catch_active() -> bool:
 	return source == "websocket" and bool(auto_catch.get("active", false))
