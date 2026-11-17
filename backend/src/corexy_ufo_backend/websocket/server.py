@@ -6,7 +6,7 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
+  home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
   measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
   last session's top / bottom after a power cycle; apply false = the estimate only, true =
@@ -271,6 +271,7 @@ class GameServer:
         self.prepare = PrepareSequencer(
             robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             easy_check=lambda: self._easy_prepare_note(),
+            center=lambda: self.backend_cfg.home_center() if self.backend_cfg is not None else None,
             on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
         # #169: the score game's easy mode (catch here, wait for the destination, carry to a Dial).
         # The catch uses the auto catch's profile; the Dials' drop points are the real crane's own
@@ -829,6 +830,7 @@ class GameServer:
                 async with self._motion_lock:
                     if name == "home":
                         await self.robot.home()
+                        await self._center_after_home()
                     elif name == "move_xy":
                         await self.robot.move_xy(float(params["x"]), float(params["y"]), params.get("feed"))
                     elif name == "move_z":
@@ -849,6 +851,17 @@ class GameServer:
         except Exception as e:  # pragma: no cover
             log.exception("command %s failed", name)
             return self._nack(name, f"internal error: {e}")
+
+    async def _center_after_home(self) -> None:
+        """#175: homed (in the home corner): on to the middle of the stage, with the usual XY
+        move and all its checks, still inside the motion lock. A stop ends it like any move."""
+        center = self.backend_cfg.home_center() if self.backend_cfg is not None else None
+        if center is None:
+            return
+        try:
+            await self.robot.move_xy(*center)
+        except RobotCommandError as e:
+            raise RobotCommandError(f"homed, but the move to the middle of the stage did not finish: {e}") from e
 
     def _robot_link(self, available: list[str]) -> dict:
         """The robot's serial link for the 校正 tab (#124): connected, or why not. Read only."""
