@@ -16,7 +16,7 @@ extends Node
 ##   - "stop" silences everything else first
 ## The music is a short tune synthesised here (no CC0 loop could be fetched and checked;
 ## docs/audio_sources.md): one take for the game, a faster, fuller take for the last 30
-## seconds, crossfaded, faded in and out, and turned down while a voice speaks.
+## seconds, switched at once (no fades, #181) and turned down while a voice speaks.
 ##
 ## Pure presentation: nothing here is read by the score, the clock, the physics or the
 ## devices, and nothing waits for a sound to end.
@@ -39,12 +39,13 @@ const PLAYERS := 8
 ## the music under the effects, and how far it steps back for a voice
 const BGM_DB := -8.0
 const DUCK_DB := -10.0
-const FADE_S := 0.6
 ## The music files (#173): game/assets/audio/bgm/ is each machine's own (never in Git, #151).
 ## A track whose file is not there, or does not load, is as before: the synthesised tune for
 ## the round, silence for the menu and the result.
 const MUSIC_DIR := "res://assets/audio/bgm/"
-const TRACKS := ["menu", "game", "ending"]
+## top = the title screen at start (#181), menu = the score game's own title, tutorial = the
+## practice, game = the clock runs, ending = the result
+const TRACKS := ["top", "menu", "tutorial", "game", "ending"]
 ## false: no music file is read (the tests: this machine's files must not change them)
 static var load_music := true
 ## sounds of a Dial's side: the key -> the lane state that side has just entered
@@ -75,9 +76,18 @@ var hurry := false
 ## over and its result is shown: the score game's controller sets it.
 var menu_on := false
 var ending_on := false
+var top_on := false
+var tutorial_on := false
+## no music at all now (#181: the settings screen's 校正 tab; the machine is listened to)
+var silent := false
 ## track -> file name in MUSIC_DIR (config game_mode.sounds.bgm), and its own gain (dB)
-var music_names := {"menu": "intro.mp3", "game": "game.wav", "ending": "ending.mp3"}
-var music_gain_db := {"menu": 0.0, "game": 0.0, "ending": 0.0}
+var music_names := {"top": "top.wav", "menu": "intro.mp3", "tutorial": "tutorial.mp3", "game": "game.wav", "ending": "ending.mp3"}
+var music_gain_db := {"top": 0.0, "menu": 0.0, "tutorial": 0.0, "game": 0.0, "ending": 0.0}
+## #181: the jingle when a mode is chosen on the title screen (a file of MUSIC_DIR, played once)
+var jingle_name := "Intro Jingle.wav"
+var jingle_gain_db := 0.0
+var jingles := 0  # how many were started
+var _jingle: AudioStreamPlayer
 ## config game_mode.sounds.bgm.files: false = never the files
 var use_music := true
 var _music: Dictionary = {}  # track -> AudioStreamPlayer (only the tracks whose file loaded)
@@ -114,6 +124,10 @@ func _ready() -> void:
 			music_names[track] = str(music[track])
 		if music.get("gain_db") is Dictionary and music.gain_db.get(track) != null:
 			music_gain_db[track] = clampf(float(music.gain_db[track]), -40.0, 12.0)
+	if music.get("jingle") is String:
+		jingle_name = str(music.jingle)
+	if music.get("gain_db") is Dictionary and music.gain_db.get("jingle") != null:
+		jingle_gain_db = clampf(float(music.gain_db.jingle), -40.0, 24.0)
 	AudioBuses.ensure(clampf(float(cfg.get("pan", AudioBuses.DEFAULT_PAN)), 0.0, 1.0))
 	AudioBuses.apply(GameConfig.data.get("audio", {}) if GameConfig.data.get("audio") is Dictionary else {})
 	_rng.seed = 143
@@ -188,8 +202,19 @@ func load_music_files(dir := MUSIC_DIR) -> void:
 		_music[track].queue_free()
 	_music = {}
 	_music_gain = {}
+	if _jingle != null:
+		_jingle.queue_free()
+		_jingle = null
 	if not load_music or not use_music:
 		return
+	var once := load_music_stream(dir.path_join(jingle_name), false) if jingle_name != "" else null
+	if once != null:
+		_jingle = AudioStreamPlayer.new()
+		_jingle.name = "Jingle"
+		_jingle.bus = AudioBuses.SFX  # an effect: the effects' volume, heard with the music off too
+		_jingle.stream = once
+		print("[bgm] jingle: %s (%.1f s, once)" % [jingle_name, once.get_length()])
+		add_child(_jingle)
 	for track in TRACKS:
 		var file := str(music_names.get(track, ""))
 		var stream := load_music_stream(dir.path_join(file)) if file != "" else null
@@ -208,7 +233,7 @@ func load_music_files(dir := MUSIC_DIR) -> void:
 
 ## A music file as a looping stream (.mp3 / .ogg / .wav, read from the disk as it is: the
 ## folder's files are not imported resources of the project). null = not there / not readable.
-static func load_music_stream(path: String) -> AudioStream:
+static func load_music_stream(path: String, loop := true) -> AudioStream:
 	if not FileAccess.file_exists(path):
 		return null
 	var disk := ProjectSettings.globalize_path(path)
@@ -216,19 +241,19 @@ static func load_music_stream(path: String) -> AudioStream:
 		"mp3":
 			var mp3 := AudioStreamMP3.load_from_file(disk)
 			if mp3 != null:
-				mp3.loop = true
+				mp3.loop = loop
 			return mp3
 		"ogg":
 			var ogg := AudioStreamOggVorbis.load_from_file(disk)
 			if ogg != null:
-				ogg.loop = true
+				ogg.loop = loop
 			return ogg
 		"wav":
 			var wav := AudioStreamWAV.load_from_file(disk)
 			if wav == null or wav.data.is_empty():
 				return null
 			var frame := (2 if wav.format == AudioStreamWAV.FORMAT_16_BITS else 1) * (2 if wav.stereo else 1)
-			if wav.format in [AudioStreamWAV.FORMAT_8_BITS, AudioStreamWAV.FORMAT_16_BITS]:
+			if loop and wav.format in [AudioStreamWAV.FORMAT_8_BITS, AudioStreamWAV.FORMAT_16_BITS]:
 				wav.loop_begin = 0
 				wav.loop_end = wav.data.size() / frame
 				wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
@@ -238,15 +263,32 @@ static func load_music_stream(path: String) -> AudioStream:
 ## Which music should sound now: "game" (the clock runs) / "ending" (the result) / "menu"
 ## (a title screen) / "" (none: the practice, the countdown, the other modes).
 func track_wanted() -> String:
-	if not enabled:
+	if not enabled or silent:
 		return ""
 	if bgm_on:
 		return "game"
 	if ending_on:
 		return "ending"
+	if jingle_playing():
+		return ""  # the jingle is heard alone; the next music starts after it
+	if tutorial_on:
+		return "tutorial"
+	if top_on:
+		return "top"
 	if menu_on:
 		return "menu"
 	return ""
+
+## #181: a mode was chosen on the title screen: the jingle, once (nothing without its file).
+func play_jingle() -> void:
+	if _jingle == null or not enabled or silent:
+		return
+	_jingle.volume_db = volume_db + jingle_gain_db
+	_jingle.play()
+	jingles += 1
+
+func jingle_playing() -> bool:
+	return _jingle != null and _jingle.playing
 
 ## The track is played from its file (else: the synthesised tune for "game", nothing otherwise).
 func has_music(track: String) -> bool:
@@ -387,17 +429,15 @@ func silence() -> void:
 		_players[i].stop()
 		voices[i] = {}
 
-## The tune: on while the clock runs, the faster take for the last stretch. Both fade.
+## The tune: on while the clock runs, the faster take for the last stretch.
 func set_bgm(on: bool, fast := false) -> void:
 	bgm_on = on
 	hurry = on and fast
+	if on and _jingle != null and _jingle.playing:
+		_jingle.stop()
 	if _bgm == null or not is_inside_tree():
 		return
-	if on and enabled and not _music.has("game"):
-		for p in [_bgm, _bgm_fast]:
-			if not p.playing:
-				p.volume_db = -60.0
-				p.play()
+	_process(0.0)  # at once: no music fades (#181)
 
 func _process(dt: float) -> void:
 	if _bgm == null:
@@ -405,22 +445,28 @@ func _process(dt: float) -> void:
 	# the round's music from its file: one track to the end (the last stretch has its own
 	# sounds; the synthesised hurry take is another tune and is not laid over it)
 	var synth := not _music.has("game")
-	var want := 1.0 if bgm_on and enabled and not hurry and synth else 0.0
-	var want_fast := 1.0 if bgm_on and enabled and hurry and synth else 0.0
+	var want := 1.0 if bgm_on and enabled and not silent and not hurry and synth else 0.0
+	var want_fast := 1.0 if bgm_on and enabled and not silent and hurry and synth else 0.0
 	var track := track_wanted()
 	for t in _music.keys():
 		var p: AudioStreamPlayer = _music[t]
 		var on: bool = t == track
 		if on and not p.playing:
-			p.volume_db = -60.0
 			p.play()  # from its start, every time it comes back
-		_music_gain[t] = move_toward(float(_music_gain[t]), 1.0 if on else 0.0, dt / FADE_S)
+		_music_gain[t] = 1.0 if on else 0.0  # no fade (#181): on or off at once
 		_fade(p, float(_music_gain[t]), float(music_gain_db.get(t, 0.0)))
-	_bgm_gain = move_toward(_bgm_gain, want, dt / FADE_S)
-	_fast_gain = move_toward(_fast_gain, want_fast, dt / FADE_S)
+	_bgm_gain = want
+	_fast_gain = want_fast
+	for pair in [[_bgm, want], [_bgm_fast, want_fast]]:
+		if pair[1] > 0.0 and not pair[0].playing:
+			pair[0].play()
 	_duck = move_toward(_duck, DUCK_DB if AudioBuses.voice_active() else 0.0, dt * 40.0)
 	_fade(_bgm, _bgm_gain)
 	_fade(_bgm_fast, _fast_gain)
+	# the jingle is never over a music: silence ends it, and so does the round's or the result's
+	# music (those start on time; a long jingle is cut, not laid over them)
+	if _jingle != null and _jingle.playing and (silent or not enabled or bgm_on or ending_on):
+		_jingle.stop()
 
 func _fade(p: AudioStreamPlayer, gain: float, extra_db := 0.0) -> void:
 	if gain <= 0.0:
