@@ -254,6 +254,86 @@ async def test_refused_while_another_motion_holds_the_lock_and_start_is_not_the_
             await rig.seq.start()  # the auto catch's whole run is never run through this
 
 
+# ---------------------------------------------------------------- the arm left down (#177)
+async def _lower(rig, z: float) -> None:
+    await rig.robot.move_z(z)
+    for _ in range(1000):
+        if abs(rig.robot.pos[2] - z) < 1e-3 and rig.robot.snapshot().state == "IDLE":
+            break
+        await asyncio.sleep(0.005)
+    rig.robot.commands.clear()
+
+
+@pytest.mark.parametrize("z", [40.0, 5.0])  # above the catch height, and below it (lower than the usual floor)
+async def test_a_fist_with_the_arm_down_closes_where_it_is_and_comes_up(z):
+    async with EasyRig() as rig:
+        await _lower(rig, z)
+        await rig.seq.start_grab()
+        await rig.until_state("WAIT_DESTINATION")
+        # nothing went down, the claw was not opened first: closed where it was, then up
+        assert rig.robot.commands == ["CLAW -> closed", "Z -> 95.00"]
+        assert rig.phases() == ["IDLE", "CLOSE_CLAW", "RAISE_WITH_ITEM", "WAIT_DESTINATION"]
+        assert abs(rig.robot.pos[0] - 120.0) < 0.5 and abs(rig.robot.pos[2] - 95.0) < 1.0
+        # and from there it is the usual run
+        rig.seq.choose(1, rig.seq.grab_id)
+        await rig.seq.wait()
+        assert rig.seq.status()["last_result"] == "done" and "ABORT" not in rig.robot.commands
+        assert rig.seq.params.z_floor == 20.0 and rig.seq._strict is None  # the validated bounds are back
+
+
+@pytest.mark.parametrize("z", [95.0, 40.0, 5.0])
+async def test_reset_opens_the_claw_and_raises_the_arm_from_any_height(z):
+    async with EasyRig() as rig:
+        await _lower(rig, z)
+        await rig.seq.start_reset()
+        assert rig.seq.state == "RESET" and rig.lock.locked()
+        with pytest.raises(RobotCommandError, match="not waiting"):
+            rig.seq.choose(1, rig.seq.grab_id)  # a reset takes no destination
+        with pytest.raises(RobotCommandError, match="already running"):
+            await rig.seq.start_grab()
+        await rig.seq.wait()
+        st = rig.seq.status()
+        assert st["state"] == "MANUAL_XY" and st["last_result"] == "done" and not rig.lock.locked()
+        # opened where it was (not from the top), then up; no XY, no wait
+        assert rig.robot.commands == ["CLAW -> open", "Z -> 95.00"]
+        assert abs(rig.robot.pos[2] - 95.0) < 1.0 and abs(rig.robot.arm_deg - rig.robot.arm_marks["open"]) < 1e-6
+        assert abs(rig.robot.pos[0] - 120.0) < 0.5 and rig.seq._strict is None
+        # a catch is possible again
+        await rig.seq.start_grab()
+        await rig.seq.abort("test over")
+        await rig.seq.wait()
+
+
+async def test_reset_works_without_drop_points_and_is_refused_like_any_run():
+    async with EasyRig(easy=easy_params(dials={1: None, 2: None}, release_z=None)) as rig:
+        await _lower(rig, 40.0)
+        await rig.seq.start_reset()  # the way up needs no Dial
+        await rig.seq.wait()
+        assert rig.seq.status()["last_result"] == "done"
+    for setup, reason in [(lambda r: setattr(r.robot, "homed", False), "not homed"),
+                          (lambda r: setattr(r.robot, "motors_enabled", False), "motors not enabled"),
+                          (lambda r: setattr(r, "busy_elsewhere", True), "another sequence"),
+                          (lambda r: setattr(r, "jogging", True), "jog active")]:
+        async with EasyRig() as rig:
+            setup(rig)
+            with pytest.raises(RobotCommandError, match=reason):
+                await rig.seq.start_reset()
+            assert rig.robot.commands == [] and not rig.lock.locked()
+
+
+@pytest.mark.parametrize("run", ["reset", "low_grab"])
+async def test_stop_on_the_way_up_aborts(run):
+    async with EasyRig() as rig:
+        await _lower(rig, 25.0)
+        await (rig.seq.start_reset() if run == "reset" else rig.seq.start_grab())
+        await rig.until("RAISE_EMPTY" if run == "reset" else "RAISE_WITH_ITEM")  # type: ignore[arg-type]
+        n = len(rig.robot.commands)
+        assert await rig.seq.abort("emergency stop (stop)")
+        await rig.seq.wait()
+        assert rig.seq.state == "FAULT" and rig.robot.commands[n:] == ["ABORT"] and not rig.lock.locked()
+        assert rig.seq._strict is None and rig.seq.params.z_floor == 20.0
+
+
 # ---------------------------------------------------------------- through the WebSocket server
 @pytest.fixture
 async def server():
@@ -354,6 +434,47 @@ async def test_server_motors_off_while_waiting_aborts(server):
         assert (await _cmd(ws, "e0", "enable_motors", enable=False))["type"] == "ack"
         await srv.easy.wait()
         assert srv.easy.state == "FAULT" and "ABORT" in robot.commands
+
+
+async def test_server_reset_and_the_fist_with_the_arm_down(server):
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        assert (await _cmd(ws, "z1", "move_z", z=35))["type"] == "ack"
+        for _ in range(500):
+            if abs(robot.pos[2] - 35) < 1e-3 and robot.snapshot().state == "IDLE":
+                break
+            await asyncio.sleep(0.01)
+        r = await _cmd(ws, "r1", "easy_reset")
+        assert r["type"] == "ack" and r["data"]["state"] == "RESET" and r["data"]["grab_id"]
+        r2 = await _cmd(ws, "x1", "move_xy", x=10, y=10)
+        assert r2["type"] == "nack" and "busy" in r2["data"]["reason"]  # the lock, as for any run
+        await srv.easy.wait()
+        st = (await _cmd(ws, "s1", "easy_status"))["data"]
+        assert st["state"] == "MANUAL_XY" and st["last_result"] == "done" and abs(robot.pos[2] - 95) < 1.0
+        # down again, then a fist: closed there and raised, then the usual wait
+        assert (await _cmd(ws, "z2", "move_z", z=35))["type"] == "ack"
+        for _ in range(500):
+            if abs(robot.pos[2] - 35) < 1e-3 and robot.snapshot().state == "IDLE":
+                break
+            await asyncio.sleep(0.01)
+        n = len(robot.commands)
+        gid = (await _cmd(ws, "g1", "easy_grab"))["data"]["grab_id"]
+        await _until_state(ws, "WAIT_DESTINATION")
+        assert robot.commands[n:] == ["CLAW -> closed", "Z -> 95.00"]
+        assert (await _cmd(ws, "d1", "easy_deliver", destination=2, grab_id=gid))["type"] == "ack"
+        await srv.easy.wait()
+        assert srv.easy.status()["last_result"] == "done"
+
+
+async def test_server_aborts_a_reset_when_the_game_disconnects(server):
+    srv, robot, port = server
+    robot.claw_move_s = 0.5
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        assert (await _cmd(ws, "r1", "easy_reset"))["type"] == "ack"
+    await srv.easy.wait()
+    assert srv.easy.state == "FAULT" and "disconnected" in srv.easy.error
 
 
 async def test_easy_grab_is_refused_while_another_sequence_runs(server):

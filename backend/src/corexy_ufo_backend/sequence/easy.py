@@ -3,6 +3,11 @@
     MANUAL_XY --start_grab()--> AUTO_GRAB: OPEN_CLAW -> LOWER_TO_CATCH -> CLOSE_CLAW -> RAISE_WITH_ITEM
         -> WAIT_DESTINATION --choose(1 | 2)--> DELIVER_DIAL_n: (at the safe height?) MOVE_TO_DIAL
         -> LOWER_TO_RELEASE -> RELEASE -> RAISE_EMPTY -> MANUAL_XY
+    MANUAL_XY --start_grab() with the arm below the safe height--> AUTO_GRAB: CLOSE_CLAW -> RAISE_WITH_ITEM
+        -> WAIT_DESTINATION ... (#177: the easy mode has no way to raise the arm by hand, so a fist
+        with the arm down closes the claw where it is and brings it up)
+    MANUAL_XY --start_reset()--> RESET: OPEN_CLAW -> RAISE_EMPTY -> MANUAL_XY (#177: the start of a
+        game: the claw open, the arm at the top, from whatever height it was left at)
     WAIT_DESTINATION --nothing chosen in wait_destination_s--> EXPIRED
     any state --fault / stop / the operator gone--> FAULT (ABORT sent: alarm, homing lost)
 
@@ -219,6 +224,18 @@ def grab_steps(p: AutoCatchParams) -> list[Step]:
             Step(EasyPhase.RAISE_WITH_ITEM, "raise_with_item", "z", z=float(p.safe_z))]  # type: ignore[arg-type]
 
 
+def low_grab_steps(p: AutoCatchParams) -> list[Step]:
+    """The arm is already down: close where it is, and up. Nothing goes down."""
+    return [Step(EasyPhase.CLOSE_CLAW, "close_claw", "claw", claw=p.claw_close),  # type: ignore[arg-type]
+            Step(EasyPhase.RAISE_WITH_ITEM, "raise_with_item", "z", z=float(p.safe_z))]  # type: ignore[arg-type]
+
+
+def reset_steps(p: AutoCatchParams) -> list[Step]:
+    """To the start: the claw open (what it held is let go where it is, not from the top), and up."""
+    return [Step(EasyPhase.OPEN_CLAW, "open_claw", "claw", claw=p.claw_open),  # type: ignore[arg-type]
+            Step(EasyPhase.RAISE_EMPTY, "raise_empty", "z", z=float(p.safe_z))]  # type: ignore[arg-type]
+
+
 def deliver_steps(p: AutoCatchParams, e: EasyParams, destination: int) -> list[Step]:
     x, y = e.dials[destination]  # type: ignore[misc]
     return [Step(EasyPhase.MOVE_TO_DIAL, "move_to_box", "xy", x=x, y=y),  # type: ignore[arg-type]
@@ -246,6 +263,8 @@ class EasySequencer(AutoCatchSequencer):
         self._chosen = 0
         self._t_begin = 0.0
         self._t_wait = 0.0
+        self._reset_only = False
+        self._strict: AutoCatchParams | None = None  # the params as validated, while a run uses relaxed ones
         self.easy = easy or EasyParams(profile=params.profile)
         self.set_easy(self.easy)
 
@@ -295,19 +314,54 @@ class EasySequencer(AutoCatchSequencer):
     async def start(self) -> None:  # the auto catch's whole run is not this sequence's
         raise RobotCommandError("the easy mode starts with easy_grab")
 
+    def _is_low(self) -> bool:
+        """The arm is below the safe height now (it was left down: the easy mode cannot raise it by hand)."""
+        s = self.robot.snapshot()
+        if self.params.safe_z is None or self.params.z_tolerance is None or not math.isfinite(s.z):
+            return False
+        return height(s.z, self.limits) < height(self.params.safe_z, self.limits) - self.params.z_tolerance
+
+    def _relax_for_the_way_up(self) -> None:
+        """A run that starts below the safe height only goes up from there (and closes or opens
+        the claw where it is). The arm may be lower than the recorded catch height (it was left
+        there by hand), so for this run the floor is the bottom of the Z range and the bounds
+        on one move are the whole range: the way up must never be the thing that is refused.
+        The validated params are back when the run ends."""
+        lim = self.limits
+        bottom = lim.z_min if lim.z_up_is_positive else lim.z_max
+        span = abs(lim.z_max - lim.z_min)
+        cpu = self.backend.z_counts_per_unit if self.backend is not None else 0.0
+        self._strict = self.params
+        self.params = dataclasses.replace(self.params, z_floor=bottom, max_drop_units=span,
+                                          max_drum_turns=span * cpu / 4096 * 1.05 + 0.05)
+
+    async def start_reset(self) -> None:
+        """The start of a game (#177): the claw open and the arm at the top, from any height."""
+        await self._begin(reset=True)
+
     async def start_grab(self) -> None:
-        """Catch here. Raises RobotCommandError (with every reason) if not allowed."""
+        """Catch here; with the arm already down: close where it is and come up.
+        Raises RobotCommandError (with every reason) if not allowed."""
+        await self._begin(reset=False)
+
+    async def _begin(self, *, reset: bool) -> None:
         if self.active:
             raise RobotCommandError("busy: the easy mode's catch is already running")
         if self.other_active():
             raise RobotCommandError("busy: another sequence is running")
         await self.robot.refresh_status()  # fresh limits / alarm before deciding
-        errs = self.preconditions() + self.easy.problems(self.params, self.limits)
+        low = self._is_low()
+        errs = self.preconditions(any_height=low or reset)
+        if not reset:
+            errs += self.easy.problems(self.params, self.limits)
         if errs:
-            raise RobotCommandError("easy catch refused: " + "; ".join(errs))
+            raise RobotCommandError(("easy reset" if reset else "easy catch") + " refused: " + "; ".join(errs))
         if self.lock.locked():  # taken while refresh_status was waiting
             raise RobotCommandError("busy: another motion command is running")
         await self.lock.acquire()
+        if low:
+            self._relax_for_the_way_up()
+        self._reset_only = reset
         self.active = True
         self.error = ""
         self.last_result = ""
@@ -316,10 +370,10 @@ class EasySequencer(AutoCatchSequencer):
         self.destination = 0
         self._chosen = 0
         self.grab_id = uuid.uuid4().hex[:12]
-        self.steps = grab_steps(self.params)
+        self.steps = reset_steps(self.params) if reset else (low_grab_steps(self.params) if low else grab_steps(self.params))
         self.step_index = 0
         self._t_begin = self.clock()
-        self._set_state("AUTO_GRAB")
+        self._set_state("RESET" if reset else "AUTO_GRAB")
         self._task = asyncio.get_running_loop().create_task(self._run())
 
     def choose(self, destination: Any, grab_id: Any) -> None:
@@ -342,6 +396,11 @@ class EasySequencer(AutoCatchSequencer):
             for i, step in enumerate(self.steps):
                 self.step_index = i + 1
                 await self._do_step(step)
+            if self._reset_only:
+                self.state = "MANUAL_XY"
+                self.last_result = "done"
+                self._set_phase(EasyPhase.IDLE, "done (at the start)")  # type: ignore[arg-type]
+                return
             dest = await self._wait_destination()
             self.destination = dest
             self._set_state(f"DELIVER_DIAL_{dest}")
@@ -374,6 +433,9 @@ class EasySequencer(AutoCatchSequencer):
         finally:
             self._action = None
             self.active = False
+            if self._strict is not None:
+                self.params = self._strict
+                self._strict = None
             if self.lock.locked():
                 self.lock.release()
             self._changed()

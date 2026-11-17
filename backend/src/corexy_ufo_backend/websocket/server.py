@@ -80,7 +80,9 @@ The score game's easy mode (#169): easy_grab (catch where the arm is: claw open,
 closed, up to the safe height; ACK = started; progress in robot_state.easy_mode and
 {"type": "easy_mode"} messages; holds the motion lock until the delivery ended), easy_deliver
 {destination: 1 | 2, grab_id} (only while that catch waits for its destination, once: carry to
-Dial 1 / Dial 2 at the safe height, lower, open, up), easy_status. Nothing chosen within
+Dial 1 / Dial 2 at the safe height, lower, open, up), easy_status. #177: easy_grab with the arm
+below the safe height closes the claw where it is and raises it (nothing goes down); easy_reset
+(the start of a game) opens the claw and raises the arm to the top from any height. Nothing chosen within
 game_mode.easy.wait_destination_s: the run ends EXPIRED with the claw still closed (nothing
 moved, nothing released, no ABORT). The Dials' drop points of the real crane: easy_dial_set
 {which: dial_1 | dial_2 (the arm's XY now) | release_z | catch_z (its Z now) | clear} saves
@@ -143,7 +145,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_height_status", "study_height_set", "study_height_confirm",
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             "calibration_prepare", "calibration_prepare_status",
-            "easy_grab", "easy_deliver", "easy_status", "easy_dial_set", "easy_dial_confirm",
+            "easy_grab", "easy_reset", "easy_deliver", "easy_status", "easy_dial_set", "easy_dial_confirm",
             *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
 # Never queued behind another command of the same connection: a stop must reach
@@ -197,6 +199,7 @@ class RunningSequence:
     busy: str  # the refusal of other commands while it runs
     allowed: tuple[str, ...]  # the commands accepted while it runs
     owner: ServerConnection | None = None
+    also_starts: tuple[str, ...] = ()  # other commands that start it (their client owns it too)
 
     @property
     def the(self) -> str:
@@ -295,7 +298,8 @@ class GameServer:
             RunningSequence("calibration_prepare", self.prepare, "calibration_prepare", "the preparation",
                             "busy: preparing the robot (stop to abort)", PREPARE_ALLOWED),
             RunningSequence("easy_mode", self.easy, "easy_grab", "the easy mode's catch and carry",
-                            "busy: the easy mode is catching / carrying (stop to abort)", EASY_ALLOWED),
+                            "busy: the easy mode is catching / carrying (stop to abort)", EASY_ALLOWED,
+                            also_starts=("easy_reset",)),
         )
         # Overview camera -> XY calibration (#78): calibration.json's camera_xy section (#96).
         self.camera_map = CameraXYMap.load(backend_cfg.camera_xy_path if backend_cfg is not None else None,
@@ -653,7 +657,7 @@ class GameServer:
             return
         reply = await self.execute(name, params)
         for s in self.sequences:
-            if name == s.start_command and reply.get("type") == "ack":
+            if name in (s.start_command, *s.also_starts) and reply.get("type") == "ack":
                 s.owner = ws
         if name == "jog" and reply.get("type") == "ack":
             moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
@@ -737,6 +741,10 @@ class GameServer:
             if name == "easy_grab":
                 self._easy_refresh()  # the Z calibration may have been measured again since
                 await self.easy.start_grab()
+                return self._ack(name, self.easy.status())
+            if name == "easy_reset":
+                self._easy_refresh()
+                await self.easy.start_reset()
                 return self._ack(name, self.easy.status())
             if name == "easy_deliver":
                 self.easy.choose(params.get("destination"), params.get("grab_id"))
