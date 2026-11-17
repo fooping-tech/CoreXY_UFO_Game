@@ -7,12 +7,16 @@ extends RefCounted
 ## A step: {id, kind, title, sub, say, art, ...}
 ##   kind  summon    UFOくん's spell and greeting; goes on by itself
 ##         pose      a hand shape (`poses`) held for hold_s
-##         pinch     thumb and `finger` together, held for hold_s
-##         move      really steering: the hand stick ACTIVE and asking for speed for move_s.
-##                   When the robot may not be moved (`gate`), the hand alone: `by` = "hand"
-##                   (the pinch carried move_dist across the picture) or "pose" (the shape held)
-##         grab      the claw's "close" shape of the hand scheme: the claw request itself
-##                   when the robot may be moved, else the shape held
+##         pinch     thumb and `finger` together, held for hold_s; `palm` = "down": with the
+##                   back of the hand to the camera (the pinch joystick's up / down mode)
+##         move      really steering: the hand stick ACTIVE and asking for speed for move_s
+##                   (`axis` = "z": in its up / down mode). When the robot may not be moved
+##                   (`gate`), the hand alone: `by` = "hand" (the pinch carried move_dist
+##                   across the picture and kept there; `axis` "z": up or down) or "pose"
+##                   (the shape held)
+##         grab      a claw shape of the hand scheme (`claw` = "closed", or "open" for the
+##                   step that lets go): the claw request itself when the robot may be
+##                   moved, else the shape held
 ##         info      a picture and spoken lines; goes on by itself (said to be an explanation)
 ##         practice  one real capsule through a Dial and back (the game's own lane machine)
 ##   future  true = the step shows a way to play that is not built yet (the easy mode's
@@ -32,23 +36,23 @@ const STEPS := {
 		"title": "ベントラベントラスペースピープル！",
 		"sub": "昭和のオカルトを 令和の技術で 完全再現！",
 		"say": ["ベントラベントラスペースピープル！", "さあ、ぼくと ゲームを はじめよう！"]},
-	"open": {"kind": "pose", "art": "open", "poses": ["open"], "hold_s": 0.6,
+	"open": {"kind": "pose", "art": "open", "poses": ["open"], "hold_s": 3.0,
 		"title": "てを ひらいて パー！",
 		"sub": "カメラに てを みせてね（どちらの てでも いいよ）",
 		"say": ["てを ひらいて、パー！"]},
-	"pinch": {"kind": "pinch", "art": "pinch", "finger": "index", "hold_s": 0.5,
+	"pinch": {"kind": "pinch", "art": "pinch", "finger": "index", "hold_s": 3.0,
 		"title": "おやゆびと ひとさしゆびを くっつけよう！",
 		"sub": "UFOくんと シンクロ！",
 		"say": ["おやゆびと、ひとさしゆびを、くっつけよう！"]},
-	"move": {"kind": "move", "art": "move", "by": "hand", "move_s": 0.5, "move_dist": 0.12,
+	"move": {"kind": "move", "art": "move", "by": "hand", "move_s": 3.0, "move_dist": 0.12,
 		"title": "そのまま てを うごかそう！",
 		"sub": "つまんだまま うごかすと UFOくんも うごくよ。はなすと とまるよ",
 		"say": ["そのまま、てを、うごかそう！"]},
-	"point": {"kind": "pose", "art": "point", "poses": ["point"], "hold_s": 0.5,
+	"point": {"kind": "pose", "art": "point", "poses": ["point"], "hold_s": 3.0,
 		"title": "ひとさしゆびで ゆびさそう！",
 		"sub": "UFOくんと シンクロ！",
 		"say": ["ひとさしゆびで、ゆびさそう！"]},
-	"point_move": {"kind": "move", "art": "point_move", "by": "pose", "poses": ["point"], "move_s": 0.8,
+	"point_move": {"kind": "move", "art": "point_move", "by": "pose", "poses": ["point"], "move_s": 3.0,
 		"title": "ゆびを さした ほうへ うごかそう！",
 		"sub": "ゆびの むきに UFOくんが うごくよ。ゆびを まげると とまるよ",
 		"say": ["ゆびを さした ほうへ、うごかそう！"]},
@@ -56,6 +60,18 @@ const STEPS := {
 		"title": "{pose}で キャッチ！",
 		"sub": "アームの つめが とじるよ",
 		"say": ["{pose}で、キャッチ！"]},
+	"release": {"kind": "grab", "claw": "open", "art": "release", "hold_s": 0.5,
+		"title": "{pose}で はなす！",
+		"sub": "アームの つめが ひらいて、つかんだ ものを はなすよ",
+		"say": ["{pose}で、はなす！"]},
+	"z_pinch": {"kind": "pinch", "art": "z_pinch", "finger": "index", "palm": "down", "hold_s": 3.0,
+		"title": "てのこうを むけて ゆびを くっつけよう！",
+		"sub": "てのこうを カメラに むけて、おやゆびと ひとさしゆびを くっつけると じょうげ モード",
+		"say": ["てのこうを むけて、ゆびを、くっつけよう！"]},
+	"z_move": {"kind": "move", "art": "z_move", "axis": "z", "by": "hand", "move_s": 3.0, "move_dist": 0.1,
+		"title": "そのまま うえ・したに うごかそう！",
+		"sub": "つまんだまま てを うえに うごかすと アームが あがる、したで さがるよ。はなすと とまるよ",
+		"say": ["そのまま、うえ、したに、うごかそう！"]},
 	"easy_grab": {"kind": "pose", "art": "easy_grab", "poses": ["fist", "thumb"], "hold_s": 0.6, "future": true,
 		"title": "グーで キャッチ！",
 		"sub": "じどうで おりて つかむ きのうは じゅんびちゅう。いまは じどうでは うごかないよ",
@@ -82,8 +98,8 @@ const GRAB_HINTS := {
 
 const MODES := {
 	"hard": {
-		"pinch_joystick": ["summon", "open", "pinch", "move", "grab", "rules", "practice"],
-		"pose_direction": ["summon", "open", "point", "point_move", "grab", "rules", "practice"],
+		"pinch_joystick": ["summon", "open", "pinch", "move", "grab", "release", "z_pinch", "z_move", "rules", "practice"],
+		"pose_direction": ["summon", "open", "point", "point_move", "grab", "release", "rules", "practice"],
 	},
 	"easy": {
 		"pinch_joystick": ["summon", "open", "pinch", "move", "easy_grab", "easy_one", "rules", "practice"],
@@ -116,7 +132,7 @@ static func resolve(cfg: Dictionary, mode: String, scheme_id: String, claw_poses
 		if str(s.get("kind", "")) == "grab":
 			var poses: Array = []
 			for p in claw_poses.keys():
-				if str(claw_poses[p]) == "closed":
+				if str(claw_poses[p]) == str(s.get("claw", "closed")):
 					poses.append(str(p))
 			if not s.has("poses"):
 				s["poses"] = poses
@@ -127,7 +143,9 @@ static func resolve(cfg: Dictionary, mode: String, scheme_id: String, claw_poses
 			for line in s.get("say", []):
 				said.append(str(line).replace("{pose}", shown))
 			s["say"] = said
-			s["hints"] = GRAB_HINTS.get(scheme_id, [])
+			# the small extra shapes beside the catch: only those with no step of their own
+			s["hints"] = [] if str(s.get("claw", "closed")) == "open" else (GRAB_HINTS.get(scheme_id, []) as Array).filter(
+				func(h): return not ((ids.has("release") and str(h[1]).contains("ひらく")) or (ids.has("z_pinch") and str(h[1]).contains("じょうげ"))))
 			if not s.has("art_pose"):
 				s["art_pose"] = str(s.poses[0]) if not s.poses.is_empty() else "fist"
 		out.append(s)

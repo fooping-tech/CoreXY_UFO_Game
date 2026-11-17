@@ -329,6 +329,8 @@ static func title_on_start(args: PackedStringArray, enabled: bool, headless: boo
 
 var _debug_layer := 1
 var _debug_before_title := false
+## the score game closed the debug panel when it opened (#171: nobody wants it beside the game)
+var _score_hid_debug := false
 
 ## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
 ## the hand stick lets go, and main holds the manual controls while it shows. The debug
@@ -351,7 +353,9 @@ func show_title() -> void:
 		gesture.stop("title")
 	if not title.active():
 		_debug_layer = debug_ui.layer
-		_debug_before_title = debug_ui.visible
+		# (the score game closed it for itself: it was open before, and is again afterwards)
+		_debug_before_title = debug_ui.visible or _score_hid_debug
+		_score_hid_debug = false
 	debug_ui.layer = title.layer + 2  # above the title and the settings screen
 	_set_debug_visible(false)
 	title.open()
@@ -436,6 +440,9 @@ func _on_title_chosen(mode: String) -> void:
 	if game_mode != null:
 		if mode == "score":
 			debug_ui.layer = maxi(debug_ui.layer, GameModeController.LAYER + 1)  # F1 opens it above the field
+			if not game_mode.debug_panel and debug_ui.visible:
+				_score_hid_debug = true
+				_set_debug_visible(false)  # the score game has the whole screen; F1 / Tab opens the panel
 			game_mode.open()
 		elif game_mode.active():
 			game_mode.close()

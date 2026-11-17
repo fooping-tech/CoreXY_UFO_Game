@@ -16,7 +16,8 @@ extends RefCounted
 ## The hand snapshot (`hand`):
 ##   enabled   the hand control is on at all
 ##   fresh     an event came within the stale time (an old event never counts)
-##   camera_ok / detected / pose / pinch / pinch_finger
+##   camera_ok / detected / pose / pinch / pinch_finger / palm ("up" / "down" / "side")
+##   mode      what the hand stick steers now: "xy" or "z" (up / down)
 ##   pos       the palm, normalised picture coordinates
 ##   active    the hand stick is really steering (GestureControl ACTIVE)
 ##   speed     how fast it asks to go, 0..1 of the scheme's top speed
@@ -76,7 +77,7 @@ var _lost := 0.0
 var _stale := 0.0
 var _ok_left := 0.0
 var _anchor := Vector2(-1, -1)
-var _claws := 0
+var _claws := {"closed": 0, "open": 0}
 var _claws_at_start := 0
 var _was_pinching := false
 
@@ -112,7 +113,7 @@ func begin(with_steps: Array, hand_enabled: bool) -> void:
 	steps = with_steps
 	no_hand = not hand_enabled
 	oks = 0
-	_claws = 0
+	_claws = {"closed": 0, "open": 0}
 	if steps.is_empty():
 		state = "off"
 		finished.emit("done")
@@ -127,8 +128,8 @@ func cancel() -> void:
 
 ## The claw was asked for by the hand ("closed" / "open"): the real request, not the shape.
 func on_claw(which: String) -> void:
-	if which == "closed":
-		_claws += 1
+	if _claws.has(which):
+		_claws[which] += 1
 
 ## Staff: this step again from its start.
 func retry_step() -> void:
@@ -159,7 +160,7 @@ func _enter(i: int) -> void:
 	_lost = 0.0
 	_stale = 0.0
 	_anchor = Vector2(-1, -1)
-	_claws_at_start = _claws
+	_claws_at_start = int(_claws.get(str(step().get("claw", "closed")), 0))
 	_was_pinching = false
 	step_started.emit(index, step())
 	var lines: Array = step().get("say", [])
@@ -275,44 +276,56 @@ func _tick_hand(dt: float, s: Dictionary, k: String, hand: Dictionary) -> void:
 		"pinch":
 			var want := str(s.get("finger", "index"))
 			var pinching := bool(hand.get("pinch", false))
-			var right := pinching and (want == "" or str(hand.get("pinch_finger", "index")) == want)
+			var finger_ok := want == "" or str(hand.get("pinch_finger", "index")) == want
+			var want_palm := str(s.get("palm", ""))
+			var palm_ok := want_palm == "" or str(hand.get("palm", "")) == want_palm
+			var right := pinching and finger_ok and palm_ok
 			done = _held(right, dt, float(s.get("hold_s", 0.5)))
-			if pinching and not right:
+			if pinching and not finger_ok:
 				hint = "ひとさしゆびで つまんでみよう"
+			elif pinching and not palm_ok:
+				hint = "てのこうを カメラに むけてから つまんでみよう"
 		"move":
 			hand_only = gate != ""
 			gate_note = gate
+			var z := str(s.get("axis", "xy")) == "z"
 			if not hand_only:
 				# really steering: the hand stick is ACTIVE (a NEW sign after any stop) and asks for speed
-				done = _held(bool(hand.get("active", false)) and float(hand.get("speed", 0.0)) >= move_speed,
-					dt, float(s.get("move_s", 0.5)))
+				var steering := bool(hand.get("active", false)) and float(hand.get("speed", 0.0)) >= move_speed
+				if z:  # in its up / down mode (armed with the back of the hand to the camera)
+					steering = steering and str(hand.get("mode", "xy")) == "z"
+					if bool(hand.get("active", false)) and str(hand.get("mode", "xy")) != "z":
+						hint = "いちど はなして、てのこうを むけてから つまもう"
+				done = _held(steering, dt, float(s.get("move_s", 0.5)))
 			elif str(s.get("by", "hand")) == "pose":
 				done = _held(shape in poses, dt, float(s.get("move_s", 0.5)))
 			else:
 				# the hand alone: a pinch that began in this step, carried across the picture
-				var pinching := bool(hand.get("pinch", false))
+				# (up or down for the up / down mode, with the back of the hand to the camera)
+				# and kept away from where it began
+				var pinching := bool(hand.get("pinch", false)) and (not z or str(hand.get("palm", "")) == "down")
 				var pos: Vector2 = hand.get("pos", Vector2.ZERO)
 				if pinching and not _was_pinching:
 					_anchor = pos
 				if not pinching:
 					_anchor = Vector2(-1, -1)
 				_was_pinching = pinching
-				var far := pinching and _anchor.x >= 0.0 and pos.distance_to(_anchor) >= float(s.get("move_dist", 0.12))
-				done = _held(far, dt, 0.15)
-				if pinching and _anchor.x >= 0.0 and not far:
-					progress = maxf(progress, clampf(pos.distance_to(_anchor) / float(s.get("move_dist", 0.12)), 0.0, 0.9))
+				var dist := absf(pos.y - _anchor.y) if z else pos.distance_to(_anchor)
+				var far := pinching and _anchor.x >= 0.0 and dist >= float(s.get("move_dist", 0.12))
+				done = _held(far, dt, float(s.get("move_s", 0.5)))
 				if not pinching:
-					hint = "もういちど つまんでから うごかそう"
+					hint = "てのこうを むけて つまんでから うごかそう" if z else "もういちど つまんでから うごかそう"
 		"grab":
 			hand_only = gate != ""
 			gate_note = gate
 			if not hand_only:
 				# the claw's own request (the hand control asks once per shape, after its hold)
-				done = _claws > _claws_at_start
+				done = int(_claws.get(str(s.get("claw", "closed")), 0)) > _claws_at_start
 				progress = clampf(float(hand.get("claw_progress", 0.0)), 0.0, 1.0)
 				_held(shape in poses, dt, 1.5)
 				if not done and _hold >= 1.5:
-					hint = "いちど パーに もどしてから もういちど！"
+					hint = "いちど ての かたちを かえてから もういちど！" if str(s.get("claw", "closed")) == "open" \
+						else "いちど パーに もどしてから もういちど！"
 			else:
 				done = _held(shape in poses, dt, float(s.get("hold_s", 0.5)))
 	if done and t >= min_show_s:
@@ -332,7 +345,7 @@ static func demo_hand(s: Dictionary, ts: float) -> Dictionary:
 	var k := str(s.get("kind", ""))
 	var poses: Array = s.get("poses", [])
 	var h := {"enabled": true, "fresh": true, "camera_ok": true, "detected": ts >= 0.4, "pose": "other", "pinch": false,
-		"pinch_finger": "", "pos": Vector2(0.45, 0.55), "active": false, "speed": 0.0, "gate": "デモ", "claw_progress": 0.0, "demo": true}
+		"palm": "up", "mode": "xy", "pinch_finger": "", "pos": Vector2(0.45, 0.55), "active": false, "speed": 0.0, "gate": "デモ", "claw_progress": 0.0, "demo": true}
 	if ts < 1.2:
 		return h
 	match k:
@@ -341,11 +354,14 @@ static func demo_hand(s: Dictionary, ts: float) -> Dictionary:
 		"pinch":
 			h.pinch = true
 			h.pinch_finger = str(s.get("finger", "index"))
+			h.palm = str(s.get("palm", "up"))
 		"move":
 			if str(s.get("by", "hand")) == "pose":
 				h.pose = str(poses[0]) if not poses.is_empty() else "point"
 			else:
+				var z := str(s.get("axis", "xy")) == "z"
 				h.pinch = true
 				h.pinch_finger = "index"
-				h.pos = Vector2(0.45, 0.55) + Vector2(0.2, -0.08) * clampf((ts - 1.5) / 1.0, 0.0, 1.0)
+				h.palm = "down" if z else "up"
+				h.pos = Vector2(0.45, 0.55) + (Vector2(0.0, -0.2) if z else Vector2(0.2, -0.08)) * clampf((ts - 1.5) / 1.0, 0.0, 1.0)
 	return h

@@ -216,8 +216,13 @@ func _draw() -> void:
 			_draw_move("pinch")
 		"point_move":
 			_draw_move("point")
-		"grab":
+		"grab", "release":
 			_draw_grab(s)
+		"z_pinch":
+			_draw_hand_step("pinch")
+			_tag(0, "てのこうを カメラに むける", TOP_AT + Vector2(0, 122), YELLOW, 420.0)
+		"z_move":
+			_draw_z_move()
 		"easy_grab":
 			_draw_easy_grab()
 		"easy_one":
@@ -376,6 +381,18 @@ func _draw_move(pose: String) -> void:
 	var ufo := LOW_AT + Vector2(0, 30)
 	_draw_ufo(ufo + sway * Vector2(1.6, 1.6), 4.0, _face())
 	draw_rect(Rect2(ufo.x - 140.0, ufo.y + 92.0, 280, 4), Color(1, 1, 1, 0.25))
+
+## The up / down mode: the pinched hand goes up and down, and UFOくん with it.
+func _draw_z_move() -> void:
+	var sway := Vector2(0, sin(_t * 1.6) * 40.0).snapped(Vector2(DOT, DOT))
+	draw_hand(_hand_at(TOP_AT) + sway, 8.0, "pinch")
+	for d in [Vector2(0, -1), Vector2(0, 1)]:
+		var c: Vector2 = TOP_AT + Vector2(190, 0) + d * 70.0
+		_arrow(c - d * 34.0, c + d * 10.0, CYAN)
+	_tag(0, "うえ = あがる", TOP_AT + Vector2(-210, -60), CYAN, 220.0)
+	_tag(1, "した = さがる", TOP_AT + Vector2(-210, 60), CYAN, 220.0)
+	var ufo := LOW_AT + Vector2(0, 30)
+	_draw_ufo(ufo + sway * Vector2(0, 1.2), 4.0, _face())
 
 ## The claw of the arm, open (k = 0) to closed (k = 1), over a capsule.
 func _draw_claw(c: Vector2, k: float, col: Color) -> void:
