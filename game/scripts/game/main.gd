@@ -271,6 +271,7 @@ func _ready() -> void:
 		add_child(game_mode)
 		game_mode.setup(self)
 		game_mode.phase_changed.connect(_on_game_mode_phase)
+		game_mode.tutorial_claw.connect(_on_tutorial_claw)
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)
@@ -1409,6 +1410,15 @@ func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient
 	if gesture_sim or _gesture_demo_t >= 0.0 or (link == ws) != (RobotState.source == "websocket"):
 		return
 	gesture.on_event(data, recv_ms)
+
+## #183: the practice's fist step (easy mode): the claw closes as a show of what the fist
+## does, and opens again with the next step. The same request as the hand's own (arm_goto:
+## nothing while a sequence drives the claw, nothing while another motion is pending).
+func _on_tutorial_claw(which: String) -> void:
+	debug_log.emit("tutorial: claw %s" % which)
+	if which == "closed":
+		sfx.play_cue("pinch")
+	arm_goto(which)
 
 ## A held fist / peace sign: the claw to its recorded position (like A / Q).
 func _on_gesture_claw(which: String) -> void:

@@ -90,6 +90,7 @@ func _ready() -> void:
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_more_steps()
 	_test_gesture_tutorial_done_say()
+	_test_tutorial_claw_demo(rs)
 	_test_gesture_tutorial_game(rs)
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
@@ -4687,6 +4688,38 @@ func _test_gesture_tutorial_logic() -> void:
 		"%s %s %s" % [skipped_to, ends4, oks5])
 
 ## #171: the gauges take about 3 s; letting go and the up / down mode have steps of their own.
+## #183: the easy practice's fist step closes the claw as a show, the next step opens it again.
+func _test_tutorial_claw_demo(rs: Node) -> void:
+	var claw := PinchJoystickScheme.new().claw_poses()
+	var easy = GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw)
+	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)
+	var only_easy = easy.filter(func(s): return bool(s.get("claw_demo", false))).map(func(s): return s.id) == ["easy_grab"] \
+		and hard.filter(func(s): return bool(s.get("claw_demo", false))).is_empty()
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var asked = []
+	ctl.tutorial_claw.connect(func(w): asked.append(w))
+	game.mock.arm_marks = {"open": 10.0, "closed": 120.0}
+	game.mock.arm_deg = 10.0
+	var grab = easy.filter(func(s): return s.id == "easy_grab")[0]
+	ctl._on_tutorial_ok(0, {"id": "open", "kind": "pose"})
+	var none_yet = asked.is_empty()
+	ctl._on_tutorial_ok(1, grab)
+	var closed = asked == ["closed"] and is_equal_approx(game.mock.arm_deg, 120.0)
+	ctl._on_tutorial_step(2, {"id": "easy_one", "kind": "pose"})
+	var opened = asked == ["closed", "open"] and is_equal_approx(game.mock.arm_deg, 10.0)
+	ctl._on_tutorial_step(3, {"id": "easy_two", "kind": "pose"})
+	var once = asked.size() == 2
+	# a stop after the claw closed: nothing more is asked of it
+	ctl._on_tutorial_ok(1, grab)
+	ctl._halt("test")
+	ctl._on_tutorial_step(2, {"id": "easy_one", "kind": "pose"})
+	var stopped = asked == ["closed", "open", "closed"]
+	_ok(only_easy and none_yet and closed and opened and once and stopped,
+		"tutorial claw (#183): the easy fist step closes the claw (the main scene's own request), the next step opens it once; not after a stop; the hard mode's steps ask nothing",
+		"%s %s %s %s %s %s %s" % [only_easy, none_yet, closed, opened, once, stopped, asked])
+	_gm_free(game, rs)
+
 ## #179: the moving step says its own words when it is done, and the next step waits for them.
 func _test_gesture_tutorial_done_say() -> void:
 	var claw := PinchJoystickScheme.new().claw_poses()

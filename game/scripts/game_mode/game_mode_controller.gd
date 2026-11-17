@@ -24,6 +24,10 @@ extends Node
 signal phase_changed(phase: String)
 signal lane_changed(side: String, state: String)
 signal scored(points: int, kind: String, at: Vector2)
+## #183: the practice shows what the fist does: the main scene is asked for the claw
+## ("closed" when the easy mode's fist step is done, "open" when the next step starts). The
+## main scene sends it like the hand's own claw request, with all its checks; nothing is sent here.
+signal tutorial_claw(which: String)
 
 ## IDLE (not started) -> COUNTDOWN -> PLAYING -> SETTLING (time is up: capsules in play
 ## finish and go out) -> RESULT; STOPPED = the stop key
@@ -636,7 +640,12 @@ func _tick_say(dt: float) -> void:
 		_say_pending = []
 		tutorial_speech.say(lines)
 
+var _demo_claw_closed := false
+
 func _on_tutorial_step(_index: int, step: Dictionary) -> void:
+	if _demo_claw_closed:
+		_demo_claw_closed = false
+		tutorial_claw.emit("open")
 	match str(step.get("kind", "")):
 		"summon":
 			sounds.play("summon")
@@ -647,6 +656,9 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
+	if bool(step.get("claw_demo", false)):
+		_demo_claw_closed = true
+		tutorial_claw.emit("closed")
 	fx.react("big")
 	_trace("tutorial_ok", null, {"effect_id": str(step.get("id", ""))})
 
@@ -1686,6 +1698,7 @@ func on_stop_key() -> void:
 		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
+	_demo_claw_closed = false  # a stop: nothing more is asked of the claw
 	devices.stop_all()
 	_cmds.clear()
 	_end_tutorial()

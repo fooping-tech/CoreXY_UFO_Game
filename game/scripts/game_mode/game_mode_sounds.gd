@@ -160,7 +160,7 @@ func _ready() -> void:
 		# the practice before the round (#149): "ping-pong" for a step done, the spell's rise
 		"tutorial_ok": StudySounds._tones([[1318.5, 0.16], [1046.5, 0.42]], 0.4),
 		# the practice's gauge filling (#179): a short blip, played higher as it fills
-		"gauge": StudySounds._tones([[659.3, 0.05]], 0.22),
+		"gauge": StudySounds._tones([[659.3, 0.07]], 0.45),
 		"summon": StudySounds._sweep(196.0, 1568.0, 0.9, 0.3),
 		# the result's show (#153): the thud of TIME UP, the counting blip (its pitch is set
 		# as it is played), the number stopping, a bonus called and landing, the last hit
