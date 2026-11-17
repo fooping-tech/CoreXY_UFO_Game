@@ -663,6 +663,23 @@ func _on_tutorial_finished(how: String) -> void:
 	phase = "IDLE"
 	start(true)
 
+## The practice's gauge can be heard filling (#179): a blip every gauge_tick_s while the
+## step's hold really grows, higher as it fills. Nothing while it stands or falls, in a
+## step that is told, or after the OK.
+var gauge_tick_s := 0.14
+var _gauge_left := 0.0
+var _gauge_seen := 0.0
+
+func _tick_gauge_sound(dt: float) -> void:
+	var p := tutorial.progress
+	var growing: bool = tutorial.state == "judging" and not tutorial.telling() \
+		and GestureTutorialController.is_hand_kind(tutorial.kind()) and p > _gauge_seen + 1e-4 and p < 1.0
+	_gauge_seen = p
+	_gauge_left -= dt
+	if growing and _gauge_left <= 0.0:
+		_gauge_left = gauge_tick_s
+		sounds.play("gauge", "", 0.8 + 1.0 * p)
+
 ## UFOくん's voice for a line: asked of the backend (VOICEVOX / say) over the helper's link.
 ## "" = no voice now: the line is shown as words for its reading time.
 func _tutorial_voice(text: String) -> String:
@@ -878,6 +895,7 @@ func tick(dt: float) -> void:
 						and lanes["left"].state == "READY":
 					_mock_ball("left")  # the rehearsal puts the practice capsule in by itself
 			_tick_say(dt)
+			_tick_gauge_sound(dt)
 			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy() or not _say_pending.is_empty(), "practice": practice,
 				"devices_ok": devices.available(), "capsule": practice_busy()})
 		"COUNTDOWN":

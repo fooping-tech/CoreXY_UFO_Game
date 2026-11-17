@@ -160,6 +160,7 @@ async def run(args: argparse.Namespace) -> int:
         # the mock's own speeds (the game's manual controls stay as they were) plus the
         # dry run's virtual claw / inputs for the auto catch
         robot = make_dry_run_robot(auto_cfg.dry_run, cfg.limits, speed_model=False)
+        robot.jog_max_mm_s = cfg.jog_max_mm_s  # the same cap as the real robot's jog (#179)
     else:
         robot = RealRobot(cfg)
     vision = make_vision(args, cfg.raw.get("gesture", {}))

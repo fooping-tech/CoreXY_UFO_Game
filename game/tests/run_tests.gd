@@ -89,6 +89,7 @@ func _ready() -> void:
 	_test_game_mode_reactions(rs)
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_more_steps()
+	_test_gesture_tutorial_done_say()
 	_test_gesture_tutorial_game(rs)
 	_test_easy_mode_logic()
 	_test_easy_mode_game(rs)
@@ -97,6 +98,7 @@ func _ready() -> void:
 	# which capsule takes longest; the run's own limit is kept as it is)
 	_test_score_game_panel_and_spell_voice(rs)
 	_test_game_mode_music_files(rs)
+	_test_arm_recovery(rs)
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
 	get_tree().quit(0 if _fails == 0 else 1)
@@ -2936,6 +2938,7 @@ func _gm_game() -> Node:
 	ctl.sounds.enabled = false
 	ctl.devices_wanted = "mock"
 	ctl.tutorial_auto = false  # these tests are about the round; the practice (#149) has its own
+	ctl.set_difficulty("hard")  # the config's default is easy since #179; the easy mode has its own tests
 	ctl.ranking.path = ""  # never the real file of high scores
 	ctl.ranking_enabled = false  # the ranking (#155) has its own tests
 	return game
@@ -4228,6 +4231,57 @@ func _test_easy_mode_logic() -> void:
 	_ok(asked and not_twice and fist_waits and raising and ready and then_catch and refused and reset_fault and reset_stopped,
 		"easy mode: a game's start asks once for the arm's start position and the hand waits for it; a refusal is only said, a fault or a stop ends in FAULT",
 		"%s %s %s %s %s %s %s %s %s" % [asked, not_twice, fist_waits, raising, ready, then_catch, refused, reset_fault, reset_stopped])
+	# --- the claw came up empty: an open hand kept up gives the catch up (#179)
+	var p8 = _easy_new()
+	var e8: EasyModeControl = p8[0]
+	var be8: EasyBackend = p8[1]
+	var cues8 := []
+	e8.cue.connect(func(c): cues8.append(c))
+	_easy_run(e8, be8, 0.3, open)
+	_easy_run(e8, be8, 0.7, fist)
+	e8.on_ack(be8.last_rid(), true, {"grab_id": "k"})
+	be8.report("WAIT_DESTINATION", "k")
+	_easy_run(e8, be8, 0.2, fist)
+	_easy_run(e8, be8, 0.6, open)  # the short open hand before the fingers: not a cancel
+	var short_no = be8.sent.size() == 1 and e8.holding == "cancel" and e8.progress > 0.1 and e8.progress < 0.5
+	_easy_run(e8, be8, 0.7, one)
+	var still_chooses: bool = be8.names() == ["easy_grab", "easy_deliver"]
+	e8.on_ack(be8.last_rid(), true, {})
+	be8.report("MANUAL_XY", "k", {"destination": 1, "last_result": "done"})
+	_easy_run(e8, be8, 0.1, one)
+	# again, and this time the open hand is kept up
+	_easy_run(e8, be8, 0.3, open)
+	_easy_run(e8, be8, 0.7, fist)
+	e8.on_ack(be8.last_rid(), true, {"grab_id": "m"})
+	be8.report("WAIT_DESTINATION", "m")
+	_easy_run(e8, be8, 1.0, _easy_hand("open", {"pinch": true}))  # a pinch is not the open hand
+	_easy_run(e8, be8, 1.4, open)
+	_easy_run(e8, be8, 1.0 / 60.0, _easy_hand("other"))  # broken for a tick: starts over
+	_easy_run(e8, be8, 1.4, open)
+	var not_yet8 = not be8.names().has("easy_cancel")
+	_easy_run(e8, be8, 0.2, open)
+	var cancelled: bool = be8.names().count("easy_cancel") == 1 and be8.sent[-1][1] == {"grab_id": "m"} and e8.state == "CANCEL" and e8.busy()
+	_easy_run(e8, be8, 1.0, open)  # still held: asked once
+	e8.on_ack(be8.last_rid(), true, {})
+	be8.report("MANUAL_XY", "m", {"last_result": "cancelled"})
+	_easy_run(e8, be8, 0.1, open)
+	var back8 = e8.state == "MANUAL_XY" and be8.names().count("easy_cancel") == 1 and cues8.has("cancelled") and e8.note.contains("もういちど")
+	_easy_run(e8, be8, 0.3, open)
+	_easy_run(e8, be8, 0.7, fist)
+	var again8: bool = be8.names().count("easy_grab") == 3
+	# also after the time is up (a way out without the staff); not with the gate closed
+	e8.on_ack(be8.last_rid(), true, {"grab_id": "n"})
+	be8.report("WAIT_DESTINATION", "n")
+	_easy_run(e8, be8, 0.3, _easy_hand("other"))
+	_easy_run(e8, be8, 2.0, open, {"gate": "ハンドジェスチャーが オフ"})
+	var gate_no = be8.names().count("easy_cancel") == 1
+	_easy_run(e8, be8, 2.0, open, {"taking": false})
+	var after_time_up = be8.names().count("easy_cancel") == 2
+	e8.on_ack(be8.last_rid(), false, {"reason": "not waiting for a destination (state EXPIRED)"})
+	var refused8 = e8.state == "WAIT_DESTINATION"
+	_ok(short_no and still_chooses and not_yet8 and cancelled and back8 and again8 and gate_no and after_time_up and refused8,
+		"easy mode: while it waits for the destination an open hand kept up gives the catch up, once (the short open hand before the fingers does not, nor a pinch, nor with the gate closed); then a new fist catches again",
+		"%s %s %s %s %s %s %s %s %s" % [short_no, still_chooses, not_yet8, cancelled, back8, again8, gate_no, after_time_up, refused8])
 	_ok(EasyModeControl.sign_of(_easy_hand("thumb")) == "grab" and EasyModeControl.sign_of(_easy_hand("point")) == "1"
 		and EasyModeControl.sign_of(_easy_hand("peace")) == "2" and EasyModeControl.sign_of(_easy_hand("open")) == "neutral"
 		and EasyModeControl.sign_of(_easy_hand("other")) == "" and EasyModeControl.sign_of({}) == "",
@@ -4268,7 +4322,8 @@ func _test_easy_mode_game(rs: Node) -> void:
 		be.sent = be.sent.filter(func(x): return x[0] != "easy_reset")
 	game.show_title()
 	game._unhandled_input(_key(KEY_3))
-	var starts_hard = ctl.difficulty == "hard" and not ctl.easy_on() and ctl.hud.title_showing()
+	var starts_hard = ctl.difficulty == "hard" and not ctl.easy_on() and ctl.hud.title_showing() \
+		and str(GameConfig.value("game_mode.difficulty", "")) == "easy"  # (the exhibit's default, #179)
 	game._unhandled_input(_key(KEY_D))
 	feed.call("open", 2)
 	ctl.hud._process(0.016)
@@ -4334,6 +4389,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 	var locked: bool = game.control_source != "gesture" and game.gesture_gate_reason == game.GATE_EASY_BUSY
 	be.report("WAIT_DESTINATION", "a", {"step": "WAIT_DESTINATION"})
 	feed.call("open", 20)
+	feed.call("other", 2)
 	ctl.easy_hud._process(0.016)
 	var panel: bool = e.state == "WAIT_DESTINATION" and ctl.easy_hud.view() == "panel" and ctl.easy_hud._title.text == "どっちに いれる？" \
 		and ctl.easy_hud.sub_text().contains("ひだり") and ctl.easy_hud._stop.text.contains("Space")
@@ -4635,6 +4691,42 @@ func _test_gesture_tutorial_logic() -> void:
 		"%s %s %s" % [skipped_to, ends4, oks5])
 
 ## #171: the gauges take about 3 s; letting go and the up / down mode have steps of their own.
+## #179: the moving step says its own words when it is done, and the next step waits for them.
+func _test_gesture_tutorial_done_say() -> void:
+	var claw := PinchJoystickScheme.new().claw_poses()
+	var moving = {"pinch": true, "active": true, "speed": 0.6}
+	for mode in ["hard", "easy"]:
+		var all = GestureTutorialSteps.resolve({}, mode, "pinch_joystick", claw)
+		var steps = all.filter(func(s): return s.id in ["move", "rules"])
+		var said = []
+		var t = GestureTutorialController.new()
+		t.say.connect(func(lines): said.append(lines))
+		t.begin(steps, true)
+		_tut_run(t, 2.5, _tut_hand(moving))
+		var before = said.size() == 1 and t.state == "judging"
+		_tut_run(t, 0.7, _tut_hand(moving))
+		var done = t.state == "success" and said.size() == 2
+		var words = "".join(said[1]) if said.size() > 1 else ""
+		_ok(before and done and words.contains("こころが つながったよ") and words.contains("ベントラベントラスペースピープル") and words.contains("ハンドパワー"),
+			"tutorial done_say (%s): moving the hand says the heart is linked, the spell and the hand power" % mode, words)
+		# while the voice is busy the next step does not start (its line would cut this one off)...
+		_tut_run(t, 4.0, _tut_hand(moving), {"speech_busy": true})
+		var waits = t.state == "success" and t.index == 0
+		_tut_run(t, 0.1, _tut_hand(moving), {"speech_busy": false})
+		_ok(waits and t.index == 1, "tutorial done_say (%s): the next step waits for the words" % mode, "%s %d" % [t.state, t.index])
+	# ...but never for long: a voice that never ends does not hold the practice
+	var t2 = GestureTutorialController.new()
+	t2.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["move", "rules"]), true)
+	_tut_run(t2, 3.2, _tut_hand(moving))
+	_tut_run(t2, t2.ok_s + t2.tell_max_s + 0.5, _tut_hand(moving), {"speech_busy": true})
+	_ok(t2.index == 1, "tutorial done_say: a voice that never ends does not hold the practice", str(t2.index))
+	# a step without done_say goes on after the OK alone, as before
+	var t3 = GestureTutorialController.new()
+	t3.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["open", "rules"]), true)
+	_tut_run(t3, 3.2, _tut_hand({"pose": "open"}))
+	_tut_run(t3, t3.ok_s + 0.2, _tut_hand({"pose": "open"}), {"speech_busy": true})
+	_ok(t3.index == 1, "tutorial done_say: a step without it does not wait", str(t3.index))
+
 func _test_gesture_tutorial_more_steps() -> void:
 	var claw := PinchJoystickScheme.new().claw_poses()
 	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)
@@ -4656,6 +4748,32 @@ func _test_gesture_tutorial_more_steps() -> void:
 	_tut_run(t, 2.5, _tut_hand({"pinch": true, "active": true, "speed": 0.6}))
 	var move_half = oks == ["open", "pinch"]
 	_tut_run(t, 0.7, _tut_hand({"pinch": true, "active": true, "speed": 0.6}))
+	# the gauge is heard filling (#179): blips while it grows, higher as it fills, none while it stands
+	var gg := _gm_game()
+	var gc: GameModeController = gg.game_mode
+	gc.sounds.enabled = true
+	gc.tutorial.steps = pick.call(["open"])
+	gc.tutorial.index = 0
+	gc.tutorial.state = "judging"
+	gc.tutorial.progress = 0.0
+	gc._tick_gauge_sound(0.2)
+	var silent_at_rest = gc.sounds.gauge_blips == 0
+	var pitches := []
+	for i in 30:
+		gc.tutorial.progress = (i + 1) / 31.0
+		gc._tick_gauge_sound(1.0 / 60.0)
+		if gc.sounds.last_played == "gauge":
+			pitches.append(gc.sounds.last_pitch)
+	var blips = gc.sounds.gauge_blips
+	gc._tick_gauge_sound(0.5)  # the gauge stands
+	gc._tick_gauge_sound(0.5)
+	gc.tutorial.progress = 1.0
+	gc._tick_gauge_sound(0.5)  # full: the OK's chime, not a blip
+	var gauge_ok = silent_at_rest and blips >= 3 and blips <= 5 and gc.sounds.gauge_blips == blips \
+		and pitches[-1] > pitches[0] and not gc.sounds.log.has("gauge")
+	_gm_free(gg, RobotState)
+	_ok(gauge_ok, "tutorial gauge: it is heard filling (a blip every moment it grows, higher as it fills), silent while it stands and when it is full",
+		"%s %s %s" % [silent_at_rest, blips, pitches])
 	_ok(half and open_done and pinch_half and move_half and oks == ["open", "pinch", "move"],
 		"tutorial gauges: パー, the pinch and moving each take about 3 s of really doing it before the OK", "%s %s %s %s %s" % [half, open_done, pinch_half, move_half, oks])
 	# letting go: the claw's own request to open (not the one to close, not the shape alone)
@@ -4843,6 +4961,99 @@ func _test_game_mode_music_files(rs: Node) -> void:
 		"%s %s %s %s %s %s %s" % [result_wanted, ending_plays, off_silent, next_round, back_to_menu, other_mode, synth_kept])
 	for name in ["menu.wav", "round.wav", "broken.mp3"]:
 		DirAccess.remove_absolute(dir + name)
+	_gm_free(game, rs)
+
+## #179: the arm in an alarm (or without homing) can be recovered from the score game's screen.
+func _test_arm_recovery(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	ctl.hud._process(0.016)
+	# the game's own mock crane: nothing to recover, nothing shown
+	var mock_nothing = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
+		and not game.recover_arm()
+	game.mock.enabled = false
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.motors_enabled = true
+	RobotState.homed = true
+	RobotState.machine_state = "IDLE"
+	RobotState.calibration_prepare = {}
+	game.backend_link = func() -> bool: return true
+	ctl.hud._process(0.016)
+	var fine = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible
+	RobotState.machine_state = "ALARM"
+	RobotState.homed = false
+	ctl.hud._process(0.016)
+	var shown = game.arm_recovery_reason().contains("アラーム") and ctl.hud._recover.visible and ctl.hud._recover_button.visible \
+		and ctl.hud.recover_text().contains("ふっきする") and ctl.hud._recover_button.focus_mode == Control.FOCUS_NONE
+	game.ws._pending.clear()
+	var types := func() -> Array: return game.ws._pending.values().map(func(p): return str(p.type))
+	# the backend's answer to the request of that kind still open (taken off the open ones, as the link does)
+	var answer := func(type: String, ok: bool) -> String:
+		for r in game.ws._pending.keys():
+			if str(game.ws._pending[r].type) == type:
+				game.ws._pending.erase(r)
+				game.ws.ack.emit(str(r), ok, {"command": type})
+				return str(r)
+		return ""
+	# the stop key between the two steps: the preparation is never asked for
+	game._unhandled_input(_key(KEY_F10))
+	var first_only = types.call() == ["clear_alarm"]
+	game.stop_key()
+	answer.call("clear_alarm", true)
+	var stop_between = first_only and types.call().is_empty()
+	# the stop key right after the preparation was asked for: if it starts after all, it is stopped again
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", true)
+	var asked_prepare = types.call() == ["calibration_prepare"]
+	game.stop_key()
+	answer.call("calibration_prepare", true)
+	var stopped_again = asked_prepare and types.call() == ["soft_stop"]
+	# a refused clearing: no preparation either
+	game.ws._pending.clear()
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", false)
+	var refused_stops = types.call().is_empty()
+	# the normal way: the alarm cleared, then the preparation; pressed twice = once
+	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F10))
+	var once = types.call() == ["clear_alarm"]
+	answer.call("clear_alarm", true)
+	var sent: Array = types.call()
+	var by_key = once and sent == ["calibration_prepare"] and stop_between and stopped_again and refused_stops
+	answer.call("calibration_prepare", true)
+	# while the recovery runs: its steps are shown, the button is away, a second press sends nothing
+	RobotState.calibration_prepare = {"active": true, "steps": [{"key": "home", "label": "原点復帰", "state": "run", "note": ""}]}
+	ctl.hud._process(0.016)
+	game._unhandled_input(_key(KEY_F10))
+	ctl.hud._recover_button.pressed.emit()
+	var running = types.call().is_empty() and ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
+		and ctl.hud.recover_text().contains("原点復帰")
+	# it stopped: why is said, and the button is back; the button does the same as the key
+	RobotState.calibration_prepare = {"active": false, "last_result": "fault", "error": "robot not connected", "steps": []}
+	RobotState.machine_state = "IDLE"  # (the alarm is cleared, homing is still missing)
+	ctl.hud._process(0.016)
+	var stopped = game.arm_recovery_reason().contains("げんてんふっき") and ctl.hud.recover_text().contains("とまった") and ctl.hud._recover_button.visible
+	ctl.hud._recover_button.pressed.emit()
+	answer.call("clear_alarm", true)
+	var by_button = types.call() == ["calibration_prepare"]
+	answer.call("calibration_prepare", true)
+	RobotState.homed = true
+	RobotState.calibration_prepare = {"active": false, "last_result": "done", "steps": []}
+	ctl.hud._process(0.016)
+	var recovered = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible
+	_ok(mock_nothing and fine and shown and by_key and running and stopped and by_button and recovered,
+		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F10 or the button sends clear_alarm and, when that is answered, the preparation, once (never after the stop key; a preparation that started behind the stop is stopped again); its steps and a stop's reason are shown; gone when the arm is ready",
+		"%s %s %s %s %s %s %s %s %s | %s %s %s %s %s %s" % [mock_nothing, fine, shown, by_key, running, stopped, by_button, recovered, sent,
+			first_only, stop_between, asked_prepare, stopped_again, refused_stops, once])
+	game.ws._pending.clear()
+	RobotState.calibration_prepare = {}
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.motors_enabled = false
+	RobotState.homed = false
 	_gm_free(game, rs)
 
 ## #149 in the game: Enter goes through the practice, the practice capsule is a real

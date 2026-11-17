@@ -269,3 +269,35 @@ async def test_after_homing_the_arm_goes_to_the_middle_of_the_stage(tmp_path):
     st3 = await run(seq3)
     assert st3["last_result"] == "fault" and states(seq3)["home"] == "fail" and states(seq3)["center"] == "todo"
     assert robot3.target[0] == 30.0
+
+
+async def test_the_move_to_the_middle_after_homing_uses_the_quick_feed():
+    """#179: the move to the middle (the home command and the preparation) is sent with
+    backend.xy_fast_feed_mm_min; without one, the usual feed."""
+    from corexy_ufo_backend.config import BackendConfig, load_config
+    from corexy_ufo_backend.sequence.prepare import PrepareSequencer
+    from corexy_ufo_backend.websocket.server import GameServer
+    assert load_config().xy_fast_feed_mm_min == 15900.0  # the repository's value: just under the firmware's clamp
+    cfg = BackendConfig()
+    assert cfg.fast_feed() == cfg.xy_feed_mm_min  # none configured
+    cfg.xy_fast_feed_mm_min = 12000.0
+    robot = MockRobot()
+    await robot.connect()
+    feeds = []
+    plain = robot.move_xy
+
+    async def spy(x, y, feed=None):
+        feeds.append(feed)
+        await plain(x, y, feed)
+    robot.move_xy = spy
+    srv = GameServer(robot, "127.0.0.1", 0, backend_cfg=cfg)
+    await srv.execute("enable_motors", {"enable": True})
+    assert (await srv.execute("home", {}))["type"] == "ack"
+    assert feeds == [12000.0]
+    # an ordinary move_xy keeps the usual feed (none given: the robot's own)
+    await srv.execute("move_xy", {"x": 50, "y": 50})
+    assert feeds == [12000.0, None]
+    # the preparation's step
+    seq = PrepareSequencer(robot, lock=asyncio.Lock(), center=cfg.home_center, center_feed=cfg.fast_feed)
+    await seq._do_center()
+    assert feeds[-1] == 12000.0

@@ -114,7 +114,7 @@
       "radius": 0.15,
       "deadzone": 0.12,
       "full": 0.8,
-      "max_speed_mm_s": 30.0,
+      "max_speed_mm_s": 60.0,
       "curve": 1.5,
       "smoothing_ms": 80.0,
       "invert_x": true,
@@ -377,9 +377,10 @@
       "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
     },
     "debug_panel": false,
-    "difficulty": "hard",
+    "difficulty": "easy",
     "easy": {
       "hold_s": 0.6,
+      "cancel_hold_s": 1.5,
       "wait_destination_s": 15,
       "request_timeout_s": 3.0,
       "dry_run": {"dial_1": [20, 100], "dial_2": [370, 100], "release_z": 70},
@@ -388,7 +389,7 @@
         "limit_home_zone_mm": 5, "total_timeout_s": 120,
         "timeouts_s": {"open_claw": 6, "lower_to_catch": 20, "close_claw": 6, "raise_with_item": 20, "move_to_box": 45, "lower_to_release": 20, "release": 6, "raise_empty": 20}
       },
-      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). difficulty: hard (the manual hand control, as ever) / easy (pinch = XY only; a fist held hold_s = catch here by itself; then one finger = carry to Dial 1 on the left, two fingers = Dial 2 on the right). D on the score game's title switches it; the practice shows the same mode. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (the two Dials' XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
+      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). difficulty: the default is easy since #179 (hard on a machine where the easy mode cannot be used: no backend, another hand scheme); cancel_hold_s: while the backend waits for the destination, an open hand held this long gives the catch up (the claw opens, try again), longer than the short open hand that separates the fist from the fingers. difficulty: hard (the manual hand control, as ever) / easy (pinch = XY only; a fist held hold_s = catch here by itself; then one finger = carry to Dial 1 on the left, two fingers = Dial 2 on the right). D on the score game's title switches it; the practice shows the same mode. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (the two Dials' XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
     },
     "tutorial": {
       "voice_link_wait_s": 2.5,
@@ -500,14 +501,16 @@
     "z_sign": 1,
     "arm_open_turns": 0.5,
     "xy_feed_mm_min": 900,
-    "jog_max_mm_s": 50,
+    "xy_fast_feed_mm_min": 15900,
+    "_xy_fast_feed_note": "#179: the feed (mm/min) of the automatic XY moves that are to be as quick as the machine goes: to the middle of the stage after homing, and the easy mode's carry to a Dial (game_mode.easy.real.xy_feed_mm_min overrides it there). 15900 = just under the firmware's MAX_FEED_MM_MIN (15909.9 mm/min = 265 mm/s, 1000 mm/s2; a larger feed is clamped there). null = xy_feed_mm_min. NOT yet run at this feed on the real machine (lost steps, a carried capsule swinging): lower it here if it is too much.",
+    "jog_max_mm_s": 60,
     "jog_z_max_counts_s": 2400,
     "z_poll_hz": 3,
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
     "home_then_center": true,
     "home_center_mm": null,
-    "_home_center_note": "#175: after XY homing (the home command, and the 校正 tab's preparation) the arm goes on to the middle of the stage: the centre of robot.x_min..x_max / y_min..y_max, or home_center_mm [x, y] (mm; a point outside the soft limits is not used). An ordinary XY move at backend.xy_feed_mm_min, at the height homing already requires (the arm wound up). home_then_center false = it stays in the home corner as before.",
+    "_home_center_note": "#175: after XY homing (the home command, and the 校正 tab's preparation) the arm goes on to the middle of the stage: the centre of robot.x_min..x_max / y_min..y_max, or home_center_mm [x, y] (mm; a point outside the soft limits is not used). An ordinary XY move at backend.xy_fast_feed_mm_min (#179), at the height homing already requires (the arm wound up). home_then_center false = it stays in the home corner as before.",
     "serial_rx_stall_s": 5.0,
     "serial_reopen_s": 3.0,
     "_note": "serial_rx_stall_s / serial_reopen_s (#161): a command sent and nothing at all read for serial_rx_stall_s = the link is dead although the port looks open (a USB hub's transaction error can stop the reading side alone: jogs still move, every command times out); the backend sends JOG 0 / ABORT blind (best effort, unconfirmed), drops the link (motors disabled, Z points forgotten) and, like after an unplugged cable, reopens the port every serial_reopen_s (0 = never). serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."

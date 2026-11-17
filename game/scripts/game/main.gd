@@ -936,6 +936,8 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if _on_recover_ack(rid, ok):
+		return
 	if rid != "" and rid == _auto_catch_rid:
 		_auto_catch_rid = ""
 		auto_catch_hint = "" if ok else auto_catch_hint_for(str(data.get("reason", "")))
@@ -1301,10 +1303,76 @@ func _on_easy_cue(name: String) -> void:
 		"deliver":
 			sfx.play_cue("pinch")
 			gesture_hud.flash("はこぶよ！", 0.9)
-		"done":
+		"done", "cancelled":
 			sfx.play_cue("release")
 		"refused", "fault":
 			sfx.play_cue("lost")
+
+# ------------------------------------------------------------ recovery from the game's screen (#179)
+## The arm cannot be used as it is (the backend's robot): an alarm (a stop that had to cut a
+## moving servo with ABORT, an emergency stop), or homing lost. "" = it can.
+func arm_recovery_reason() -> String:
+	if RobotState.source != "websocket" or not bool(backend_link.call()) or not RobotState.connected:
+		return ""
+	if RobotState.machine_state in ["ALARM", "ESTOP"]:
+		return "アラームちゅう"
+	if not RobotState.homed and RobotState.machine_state != "HOMING":
+		return "げんてんふっきが いる"
+	return ""
+
+## The recovery is running (the 校正 tab's preparation, started from here or there).
+func arm_recovering() -> bool:
+	return RobotState.source == "websocket" and bool(RobotState.calibration_prepare.get("active", false))
+
+## Staff, from the game's screen (F10, or the button on the score game's screen): the alarm
+## cleared, then the preparation (#167: motors, Z, the arm to the top, homing, the middle, the
+## claw open). The same two commands as the debug panel's 「アラーム解除」 and the 校正 tab's
+## 「準備をまとめて実行」, in that order; the backend refuses whatever is not in order. The
+## arm moves: a person decided it. Returns false when there is nothing to recover or no link.
+func recover_arm() -> bool:
+	if arm_recovery_reason() == "" or arm_recovering():
+		return false
+	if _recover_clear_rid != "" or _recover_prepare_rid != "":
+		return false  # already on its way
+	debug_log.emit("recover: clear_alarm, then calibration_prepare")
+	# one after the other, not queued together: the preparation (which moves the arm) is only
+	# asked for when the alarm's clearing was answered, and not at all when the stop key came
+	# in between (review on #180)
+	_recover_clear_rid = ws.send_command("clear_alarm")
+	if easy.faulted():
+		easy.reset()
+	return true
+
+## the recovery's two requests still without an answer ("" = none), and the preparation's
+## request the stop key overtook (if it starts after all, it is stopped again)
+var _recover_clear_rid := ""
+var _recover_prepare_rid := ""
+var _recover_stopped_rid := ""
+
+func _on_recover_ack(rid: String, ok: bool) -> bool:
+	if rid == "":
+		return false
+	if rid == _recover_clear_rid:
+		_recover_clear_rid = ""
+		if ok and bool(backend_link.call()):
+			_recover_prepare_rid = ws.send_command("calibration_prepare")
+		return true
+	if rid == _recover_prepare_rid:
+		_recover_prepare_rid = ""
+		return true
+	if rid == _recover_stopped_rid:
+		_recover_stopped_rid = ""
+		if ok and bool(backend_link.call()):
+			ws.send_command("soft_stop")  # it started behind the stop: stopped again
+		return true
+	return false
+
+## The stop key: a recovery on its way goes no further.
+func _stop_recovery() -> void:
+	_recover_clear_rid = ""  # its answer no longer starts the preparation
+	if _recover_prepare_rid != "":
+		_recover_stopped_rid = _recover_prepare_rid
+		_recover_prepare_rid = ""
 
 ## A new round or practice: the easy mode leaves its FAULT (a person started it). The
 ## backend still refuses whatever is not in order.
@@ -1614,6 +1682,7 @@ func stop_key() -> void:
 	if game_mode != null:
 		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
 	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
+	_stop_recovery()  # a recovery asked for from the game's screen goes no further
 	_jog_latched = _jog_input() != Vector3.ZERO
 	gesture.stop("stop_key")
 	if homework != null:
@@ -1655,6 +1724,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
 			show_title()
+			return
+		# staff: the arm out of an alarm / without homing, from the game's own screen (#179)
+		if ev.keycode == KEY_F10 and game_mode != null and game_mode.active():
+			recover_arm()
 			return
 		# staff: the easy mode out of its stop (#169), after the crane was put right by hand
 		if ev.keycode == KEY_F9 and easy.faulted():

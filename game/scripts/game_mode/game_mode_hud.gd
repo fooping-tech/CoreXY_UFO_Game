@@ -44,6 +44,10 @@ var _problem: Label
 var _start: Label
 var _rank_hint: Label
 var _mode: Label
+## the arm needs a person (an alarm, no homing): what it is, and the button that recovers it (#179)
+var _recover: Label
+var _recover_button: Button
+const RECOVER_RECT := Rect2(60, 600, 600, 150)
 var _how: Array[Label] = []
 var _shown_score := 0.0
 var _ufo_tex: Texture2D
@@ -92,6 +96,19 @@ func setup(c: GameModeController) -> void:
 	# the title screen's words (Japanese: the game's normal font)
 	_rank_hint = _label("R：ランキング", 20, Color("b8f4ff"), Vector2(60, START_RECT.end.y + 12.0), Vector2(GameModeLayout.SCREEN.x - 120.0, 28))
 	_rank_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_recover = _label("", 20, Color("ffd24a"), RECOVER_RECT.position + Vector2(10, 8), Vector2(RECOVER_RECT.size.x - 20.0, 84))
+	_recover.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_recover.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_recover.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_recover_button = Button.new()
+	_recover_button.name = "RecoverButton"
+	_recover_button.text = "ふっきする（F10）"
+	_recover_button.focus_mode = Control.FOCUS_NONE  # Space / Enter never press it: the stop key stays the stop key
+	_recover_button.add_theme_font_size_override("font_size", 22)
+	_recover_button.position = Vector2(RECOVER_RECT.position.x + 170.0, RECOVER_RECT.end.y - 52.0)
+	_recover_button.size = Vector2(RECOVER_RECT.size.x - 340.0, 44)
+	_recover_button.pressed.connect(func(): if ctl.main != null and ctl.main.has_method("recover_arm"): ctl.main.recover_arm())
+	add_child(_recover_button)
 	_mode = _label("", 20, CYAN, MODE_RECT.position, MODE_RECT.size)
 	_mode.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_mode.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -127,6 +144,23 @@ func title_showing() -> bool:
 ## Where the three "how to play" cards sit on the title screen.
 static func title_card(i: int) -> Rect2:
 	return Rect2(Vector2((GameModeLayout.SCREEN.x - CARD_SIZE.x) * 0.5, CARDS_Y + CARD_STEP * i), CARD_SIZE)
+
+## The arm's trouble and what recovers it, for the screen ("" = nothing to say). While the
+## recovery runs: its steps; when it stopped: why.
+func recover_text() -> String:
+	var m: Node = ctl.main
+	if m == null or not m.has_method("arm_recovery_reason"):
+		return ""
+	var prep: Dictionary = RobotState.calibration_prepare if RobotState.source == "websocket" else {}
+	if m.arm_recovering():
+		return "ふっきちゅう…（アームが うごきます）\n" + CalibrationPanel.prepare_text(prep)
+	var why: String = m.arm_recovery_reason()
+	if why == "":
+		return ""
+	var out := "アームが とまっています（%s）\nスタッフ: まわりを たしかめてから「ふっきする」（アラーム解除 → 準備をまとめて実行。アームが うごきます）" % why
+	if str(prep.get("last_result", "")) == "fault":
+		out += "\nまえの ふっきは とまった: " + CalibrationPanel.reason_text(str(prep.get("error", "")))
+	return out
 
 ## What keeps the Dials away, said on the screen ("" when the hub answers).
 func problem_text() -> String:
@@ -196,6 +230,10 @@ func _process(dt: float) -> void:
 	_start.modulate.a = 0.8 + 0.2 * sin(_t * 5.0)  # START breathes
 	_start.scale = Vector2.ONE * (1.0 + 0.04 * sin(_t * 5.0))
 	_start.pivot_offset = _start.size * 0.5
+	var rec := recover_text()
+	_recover.visible = rec != ""
+	_recover.text = rec
+	_recover_button.visible = rec != "" and ctl.main != null and ctl.main.has_method("arm_recovering") and not ctl.main.arm_recovering()
 	_mode.visible = title
 	_mode.text = ctl.difficulty_text()
 	_mode.add_theme_color_override("font_color", CYAN if ctl.easy_on() else (Color("ffd24a") if ctl.difficulty == "easy" else MAGENTA))
@@ -229,6 +267,8 @@ func _draw_art() -> void:
 		return
 	if title_showing():
 		_draw_title()
+	if _recover != null and _recover.visible:
+		_panel(RECOVER_RECT, RED)
 	# the score (top left) and the clock (top right): half the screen each, big enough to read
 	# from a few steps back
 	var rising := ctl.display_score() - _shown_score > 0.5

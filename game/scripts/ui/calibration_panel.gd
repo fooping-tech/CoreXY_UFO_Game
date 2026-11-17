@@ -747,7 +747,8 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		if ok:
 			easy_status = data
 		return
-	if ok and cmd in ["z_set", "z_restore", "calibration_prepare"] and main != null and main.get("ws") != null:
+	if ok and cmd in ["z_set", "z_restore", "calibration_prepare"] and main != null and main.get("ws") != null \
+			and is_visible_in_tree():  # (only while the tab shows: it asks again when it opens)
 		main.ws.send_command("easy_status")  # the easy mode's heights follow the Z calibration
 	if ok and cmd in ["easy_dial_set", "easy_dial_confirm"]:
 		easy_status = data
