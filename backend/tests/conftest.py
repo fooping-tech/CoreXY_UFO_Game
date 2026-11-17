@@ -9,6 +9,8 @@ import re
 
 # this machine's config/local_settings.json (the settings screen, #93) must not change the tests
 os.environ["CXUFO_NO_LOCAL_SETTINGS"] = "1"
+# nor is this machine's cache of made voice lines read or written (#171)
+os.environ["CXUFO_NO_SPEECH_CACHE"] = "1"
 
 from corexy_ufo_backend.serial_service.transport import SerialTransport
 

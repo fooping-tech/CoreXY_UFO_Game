@@ -80,6 +80,8 @@ var _look_moving := false
 var _approach_rid := ""
 ## ---- helper (#79)
 var speech_available := false
+## the backend's hello came over this link (speech_available is known from then on)
+var hello_seen := false
 var voice_on := true
 var speech_status := ""
 ## "VOICEVOX:<character>" of the last VOICEVOX line (the VOICEVOX terms ask for it to be shown)
@@ -239,6 +241,7 @@ func _on_message(msg: Dictionary) -> void:
 	if t == "hello":
 		advice_available = bool(data.get("homework_advice", false))
 		speech_available = bool(data.get("homework_speech", false))
+		hello_seen = true
 		if state != "connecting" and state != "running":
 			return
 		if not bool(data.get("homework", false)):

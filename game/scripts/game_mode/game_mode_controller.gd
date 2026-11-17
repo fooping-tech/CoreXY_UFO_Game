@@ -206,6 +206,9 @@ var easy_hud: EasyModeHud
 var _tutorial_cfg: Dictionary = {}
 ## the practice was gone through (or left out by staff) since the game mode opened
 var tutorial_seen := false
+## config game_mode.debug_panel: the debug panel stays open beside the score game (false:
+## it is closed when the score game opens; F1 / Tab opens it as ever)
+var debug_panel := false
 ## The practice capsule (the tutorial's last step): the lane machine of the round, run
 ## without the clock. "" (none) / "open" (a Dial takes one) / "closing" (one came back;
 ## the rest closes) / "done" / "fault". Its score and its capsule never reach a result:
@@ -215,6 +218,10 @@ var practice_released := 0
 ## staff left the practice capsule out: the Dials are closed first, then the practice ends
 var _practice_skip := false
 var _voice_seq := 0
+## lines waiting for the voice's link, and for how long still (config game_mode.tutorial.voice_link_wait_s)
+var _say_pending: Array = []
+var _say_wait := 0.0
+var voice_link_wait_s := 2.5
 var _active := false
 var _cmds: Dictionary = {}  # rid -> {lane: Lane or null, what, left}
 var _seen: Dictionary = {}  # "session|source|event_id" -> true
@@ -312,6 +319,7 @@ func setup(m: Node) -> void:
 	tutorial_speech.name = "TutorialSpeech"
 	add_child(tutorial_speech)
 	tutorial_speech.voice_request = _tutorial_voice
+	tutorial_speech.voice_wait_s = 6.0  # a line VOICEVOX makes for the first time (after that: its cache, #171)
 	tutorial.say.connect(_on_tutorial_say)
 	tutorial.step_started.connect(_on_tutorial_step)
 	tutorial.step_succeeded.connect(_on_tutorial_ok)
@@ -389,6 +397,8 @@ func _configure(cfg: Dictionary) -> void:
 	# (an older config has only tutorial.mode)
 	set_difficulty(str(cfg.get("difficulty", _tutorial_cfg.get("mode", difficulty))))
 	tutorial.configure(_tutorial_cfg)
+	voice_link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", voice_link_wait_s)), 0.0, 10.0)
+	debug_panel = bool(cfg.get("debug_panel", debug_panel))
 
 # ------------------------------------------------------------------ on / off
 func active() -> bool:
@@ -531,6 +541,7 @@ func start_tutorial() -> void:
 
 func _end_tutorial() -> void:
 	tutorial.cancel()
+	_say_pending = []
 	tutorial_speech.clear()
 	practice = ""
 
@@ -590,12 +601,39 @@ func _hand_snapshot() -> Dictionary:
 	var age := g.age_ms(now)
 	return {"enabled": g.enabled, "fresh": age >= 0.0 and age <= g.stale_ms, "camera_ok": g.camera_ok, "detected": g.detected,
 		"pose": g.pose, "pinch": g.pinch, "pinch_finger": g.pinch_finger, "pos": g.hand_norm, "active": g.is_active(),
-		"speed": Vector2(g.velocity.length(), absf(g.velocity_z)).length() / maxf(g.scheme.max_speed(g), 1e-6) if g.is_active() else 0.0,
+		"palm": g.palm, "mode": g.mode,
+		# 0..1 of the top speed of what it steers (XY in mm/s, up / down in Z units/s)
+		"speed": maxf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), absf(g.velocity_z) / maxf(g.joystick.max_speed_z, 1e-6)) if g.is_active() else 0.0,
 		"gate": str(main.get("gesture_gate_reason")), "claw_progress": g.claw_progress(now)}
 
+## Lines for UFOくん. The voice comes over the helper's link, which may only just be
+## opening (the practice's first line, the spell): the lines wait for it a moment
+## (voice_link_wait_s) instead of being shown without a voice. Never longer: the voice is
+## decoration.
 func _on_tutorial_say(lines: Array) -> void:
 	tutorial_speech.clear()
+	_say_pending = []
+	if voice_link_wait_s > 0.0 and _voice_coming():
+		_say_pending = lines.duplicate()
+		_say_wait = voice_link_wait_s
+		return
 	tutorial_speech.say(lines)
+
+## A voice is possible but its link is not up yet (still connecting, or no hello yet).
+func _voice_coming() -> bool:
+	var hw := _voice_client()
+	if hw == null or not tutorial_speech.voice_on or hw.get("link") == null or not hw.link.enabled:
+		return false
+	return not hw.link.is_open() or not bool(hw.get("hello_seen"))
+
+func _tick_say(dt: float) -> void:
+	if _say_pending.is_empty():
+		return
+	_say_wait -= dt
+	if _say_wait <= 0.0 or not _voice_coming():
+		var lines := _say_pending
+		_say_pending = []
+		tutorial_speech.say(lines)
 
 func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 	match str(step.get("kind", "")):
@@ -837,7 +875,8 @@ func tick(dt: float) -> void:
 				if demo and practice == "open" and devices.can_mock_ball() and tutorial.t > 2.0 and not practice_busy() \
 						and lanes["left"].state == "READY":
 					_mock_ball("left")  # the rehearsal puts the practice capsule in by itself
-			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy(), "practice": practice,
+			_tick_say(dt)
+			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy() or not _say_pending.is_empty(), "practice": practice,
 				"devices_ok": devices.available(), "capsule": practice_busy()})
 		"COUNTDOWN":
 			clock += dt
