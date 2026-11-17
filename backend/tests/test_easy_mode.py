@@ -715,6 +715,16 @@ async def test_easy_goto_moves_xy_to_a_dial_and_nothing_else(server):
         r = await _cmd(ws, "g2", "easy_goto", destination=1)
         assert r["type"] == "nack" and "travel height" in r["data"]["reason"] and robot.commands[n:] == []
         robot.pos[2] = robot.target[2] = float(srv.easy.params.safe_z)
+        # #187: easy_goto ACK is command acceptance, not travel completion. The dry-run
+        # XY axis keeps moving after ACK; catching before it stops is correctly refused.
+        # Wait for position AND velocity, never use a fixed sleep or bypass safety checks.
+        for _ in range(400):
+            if (abs(robot.pos[0] - x) < 0.1 and abs(robot.pos[1] - y) < 0.1
+                    and max(abs(v) for v in robot.vel[:2]) < 0.01):
+                break
+            await asyncio.sleep(0.02)
+        else:
+            raise AssertionError(f"easy_goto never settled: pos={robot.pos}, vel={robot.vel}")
         # while the easy catch runs: busy
         assert (await _cmd(ws, "c", "easy_grab"))["type"] == "ack"
         r = await _cmd(ws, "g3", "easy_goto", destination=1)
