@@ -84,6 +84,8 @@ class Lane:
 	var led_ok := true
 	## the wait for RELEASE_DONE ran out: the status decides (COMPLETE = the event was lost)
 	var release_timed_out := false
+	## how many more RELEASE_BALL this capsule got because it did not leave the Dial (#185)
+	var re_releases := 0
 
 const PIXEL_SIZE := GameModeLayout.PIXEL_SIZE
 ## one dot of the pixel canvas on the 1280 x 720 screen
@@ -181,7 +183,13 @@ var release_timeout_s := 8.0
 var command_timeout_s := 5.0
 var arm_retry_s := 3.0
 var verify_retry_s := 0.5
-var verify_tries := 12  # 6 s: a capsule that leaves the Dial slowly is not a fault (#185)
+var verify_tries := 4
+## #185: after a release the capsule is still in the Dial (its switch stays on for the whole
+## check): RELEASE_BALL once more, at most this many times, then FAULT. The Dial accepts a
+## second release only while its switch is on (UFO-DeviceHub's Dial firmware from 0.4); an
+## older Dial refuses it, which is a FAULT as before. Never after a release whose end was
+## not reported (RELEASE_DONE lost): then nobody knows what the servo did.
+var release_retries := 2
 var closing_wait_s := 1.5
 var lights := true
 ## the Dials' own transfer LEDs (SET_DIAL_EFFECT / SET_DIAL_COLOR, firmware 0.3)
@@ -401,6 +409,7 @@ func _configure(cfg: Dictionary) -> void:
 	arm_retry_s = float(t.get("arm_retry_s", arm_retry_s))
 	verify_retry_s = float(t.get("verify_retry_s", verify_retry_s))
 	verify_tries = int(t.get("verify_tries", verify_tries))
+	release_retries = maxi(int(t.get("release_retries", release_retries)), 0)
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
 	_result_bonus_cfg = cfg.get("result_bonus", {}) if cfg.get("result_bonus") is Dictionary else {}
@@ -882,6 +891,7 @@ func _reset_round() -> void:
 		l.released = 0
 		l.led_ok = true
 		l.release_timed_out = false
+		l.re_releases = 0
 
 # ------------------------------------------------------------------ the tick
 func _physics_process(dt: float) -> void:
@@ -1539,6 +1549,7 @@ func _verify(l: Lane) -> void:
 	_send(l, "status", "")
 
 func _released(l: Lane) -> void:
+	l.re_releases = 0
 	capsules.finish(l.capsule.capsule_id, "done")
 	l.capsule = {}
 	l.released += 1
@@ -1647,6 +1658,8 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 		"release":
 			if ok:
 				l.release_cid = int(data.get("command_id", 0))
+			elif l.state == "RELEASING" and l.re_releases > 0 and result == "REJECTED_STATE":
+				_fault(l, "カプセルが Dial から出ていない。もういちどの排出を Dial が受け付けない（Dial のファームウェアが古い）")
 			elif l.state == "RELEASING":
 				_fault(l, "排出の命令が通らなかった（%s）" % result)
 		"status":
@@ -1660,7 +1673,14 @@ func _answer(rid: String, ok: bool, result: String, data: Dictionary) -> void:
 				_released(l)
 			else:
 				l.verify_tries -= 1
-				if l.verify_tries <= 0:
+				if l.verify_tries <= 0 and ok and still_in and not l.release_timed_out and l.re_releases < release_retries \
+						and not l.capsule.is_empty():
+					# the capsule is still in the Dial: the release once more (#185)
+					l.re_releases += 1
+					l.release_cid = 0
+					_trace("release", l, {"release_status": "again %d/%d" % [l.re_releases, release_retries]})
+					_release(l)
+				elif l.verify_tries <= 0:
 					_fault(l, ("RELEASE_DONE が来ない（排出できたか分からない。Dial: %s）" if l.release_timed_out
 						else ("排出のあと、カプセルが Dial から出ていない（スイッチが ON のまま。Dial: %s）" if ok and still_in
 						else "排出のあと、Dial が次の準備にならない（%s）")) % (ds if ok else result))

@@ -415,7 +415,9 @@
       "command_timeout_s": 5.0,
       "arm_retry_s": 3.0,
       "verify_retry_s": 0.5,
-      "verify_tries": 12
+      "verify_tries": 4,
+      "release_retries": 2,
+      "_release_retries_note": "#185: after RELEASE_DONE the Dial's switch is still on for the whole check (verify_retry_s x verify_tries = 2 s): the capsule did not leave, so RELEASE_BALL is sent once more, at most release_retries times, then FAULT. Needs the Dial firmware 0.4 (UFO-DeviceHub); an older Dial refuses the second release = FAULT as before. 0 = never again."
     },
     "field": {
       "max_stay_s": 15.0,

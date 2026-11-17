@@ -33,8 +33,11 @@ var refuse_next: Dictionary = {}
 var fail_release: Dictionary = {}
 ## RELEASE_DONE of these devices is never sent (a lost event)
 var lose_release_done: Dictionary = {}
-## after a release these devices still see a capsule (it did not leave: the switch stays on)
+## after a release these devices still see a capsule (it did not leave: the switch stays on).
+## true = every release, a number = that many releases (the next one gets it out)
 var stuck_ball: Dictionary = {}
+## Dial firmware before 0.4: RELEASE_BALL only with a capsule just detected (no second release)
+var no_second_release := false
 ## firmware 0.2: the Dials do not know SET_DIAL_EFFECT / SET_DIAL_COLOR (UNSUPPORTED)
 var old_firmware := false
 
@@ -49,7 +52,7 @@ func _init() -> void:
 ## led: the PC's effect now ({} = the Dial shows its own state): {effect, direction, color, priority, left}
 func _fresh(device: int) -> Dictionary:
 	return {"online": true, "op_mode": "STANDBY", "state": "DISABLED", "cycle": 0, "phase_left": 0.0,
-		"release_cmd": 0, "aborted": false, "releases": 0, "led": {}, "color": UNIT_COLORS[device].duplicate()}
+		"release_cmd": 0, "aborted": false, "releases": 0, "switch": false, "led": {}, "color": UNIT_COLORS[device].duplicate()}
 
 ## The PC's effect on a Dial now ("NONE" = its own display).
 func led_effect(device: int) -> String:
@@ -83,7 +86,7 @@ func status(device: int) -> String:
 	else:
 		var d: Dictionary = dials[device]
 		_answers.append([latency_s, rid, true, "ACCEPTED", {"status": {"dial_state": d.state, "op_mode": d.op_mode,
-			"cycle": d.cycle, "releases": d.releases, "switch_on": d.state == "BALL_DETECTED",
+			"cycle": d.cycle, "releases": d.releases, "switch_on": d.state == "BALL_DETECTED" or bool(d.switch),
 			"front_effect": led_effect(device), "unit_color": d.color}}])
 	return rid
 
@@ -99,6 +102,7 @@ func mock_ball(device: int) -> bool:
 	if d.state != "ARMED" or not d.online:
 		return false
 	d.state = "BALL_DETECTED"
+	d.switch = false
 	d.led = {}  # the Dial's own flash and chase come first: the PC's effect ends
 	_emit(device, "BALL_RECEIVED", {"cycle": d.cycle})
 	return true
@@ -164,7 +168,13 @@ func tick(dt: float) -> void:
 			_emit(id, "RELEASE_FAILED", {"command_id": d.release_cmd, "reason": 1})
 		else:
 			d.led = {}  # the release sequence ended: the Dial ends the PC's effect by itself
-			d.state = "BALL_DETECTED" if stuck_ball.has(id) else ("COMPLETE" if d.op_mode == "GAME" else "DISABLED")
+			# as the Dial: the sequence ends in COMPLETE whether the capsule left or not; only the switch tells
+			d.switch = stuck_ball.has(id)
+			if stuck_ball.has(id) and not (stuck_ball[id] is bool):
+				stuck_ball[id] = int(stuck_ball[id]) - 1
+				if int(stuck_ball[id]) <= 0:
+					stuck_ball.erase(id)
+			d.state = "COMPLETE" if d.op_mode == "GAME" else "DISABLED"
 			if lose_release_done.has(id):
 				lose_release_done.erase(id)
 			else:
@@ -261,7 +271,8 @@ func _execute(device: int, name: String, params: Dictionary, cid: int) -> String
 		"RELEASE_BALL":
 			if busy:
 				result = "BUSY"
-			elif d.op_mode != "GAME" or d.state != "BALL_DETECTED":
+			elif d.op_mode != "GAME" or not (d.state == "BALL_DETECTED" or (d.state == "COMPLETE" and d.switch and not no_second_release)):
+				# (a second release: only while the capsule is still on the switch, firmware 0.4)
 				result = "REJECTED_STATE"
 			else:
 				d.state = "RELEASING"
