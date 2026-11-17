@@ -2,7 +2,7 @@
 
 150 秒のスコアゲームの**ゲーム仕様の正本**（Issue #138）。ルール、画面の配置、時間の流れ、得点、状態遷移、例外、機器とのやり取りをここで決める。
 
-- 機器（M5Dial ×2・イルミ・ハブ）との**通信と LED の契約の正本**は UFO-DeviceHub の [`docs/game-mode-interface.md`](https://github.com/fooping-tech/UFO-DeviceHub/blob/main/docs/game-mode-interface.md)（[UFO-DeviceHub #8](https://github.com/fooping-tech/UFO-DeviceHub/issues/8)。プロトコル版 1、ファームウェア 0.3）。この文書はそれに合わせてある（§7・§8・§13）。
+- 機器（M5Dial ×2・イルミ・ハブ）との**通信と LED の契約の正本**は UFO-DeviceHub の [`docs/game-mode-interface.md`](https://github.com/fooping-tech/UFO-DeviceHub/blob/main/docs/game-mode-interface.md)（[UFO-DeviceHub #8](https://github.com/fooping-tech/UFO-DeviceHub/issues/8)。プロトコル版 1。LED演出にはファームウェア 0.3以上、#185の取り残し再排出には Dial 0.4以上が必要）。この文書はそれに合わせてある（§7・§8・§13）。
 - 仕様を変える PR は、この文書を直し、Issue #138 と DeviceHub #8 の両方にコメントする。
 - ここに書いた数値は**すべて調整値**（未確定）。プレイテストと実機の計測で決める。値は `config/game_config.json` の `game_mode` 節にある。
 
@@ -693,7 +693,7 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 2. `--game-mode-seconds 30` でスコアゲームを始め、左にカプセルを入れる。左下のポートから取り込まれ、落ちたあと**左の Dial から**排出されることを見る。右も同じ。
 3. 両方に続けて入れ、互いに邪魔しないことを見る。
 4. プレイ中に Space を押し、Dial が止まり、そのあと何も動かないことを見る。
-5. Dial の LED が画面のポートと同じ色で、取り込みは画面の方向へ、排出は Dial の方向へ流れることを見る（逆なら DeviceHub 側の `DIAL_LED_REVERSED`）。Hub と Dial はどちらもファームウェア 0.3 にする（片方だけ新しいと STATUS が読めない）。
+5. Dial の LED が画面のポートと同じ色で、取り込みは画面の方向へ、排出は Dial の方向へ流れることを見る（逆なら DeviceHub 側の `DIAL_LED_REVERSED`）。Hub と Dial の通信互換性を確認する（LED演出は両方0.3以上が前提。#185の取り残し再排出は Dial 0.4以上が必要。旧版は再排出を拒否して FAULT になる）。
 6. トレースから、スイッチ → 取り込み開始、`RELEASE_BALL` → `RELEASE_STARTED` → `RELEASE_DONE` の時間を読み、`game_mode.timing` を合わせる。
 
 ## 13. 相手リポジトリとの記録
