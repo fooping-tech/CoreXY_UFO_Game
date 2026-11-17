@@ -356,6 +356,14 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 ## Split a single *virtual* ball. All children share the one physical Dial/capsule,
 ## which is released only once by GameModeController after its last child exits.
 func split_capsule(id: String, ids: Array[String]) -> void:
+	# A power-up may be collected inside Area2D.body_entered, while the physics
+	# server is flushing queries: never add new RigidBody2D nodes in that callback.
+	if Engine.is_in_physics_frame():
+		call_deferred("_split_capsule_now", id, ids)
+	else:
+		_split_capsule_now(id, ids)
+
+func _split_capsule_now(id: String, ids: Array[String]) -> void:
 	if not _capsules.has(id):
 		return
 	var src: Dictionary = _capsules[id]
