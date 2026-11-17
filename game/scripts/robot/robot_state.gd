@@ -76,8 +76,17 @@ var auto_catch: Dictionary = {}
 ## steps [{key, label, state: todo|run|done|skip|fail, note}], error, last_result.
 var calibration_prepare: Dictionary = {}
 
+## #169: the score game's easy mode, as the backend reports it (robot_state.easy_mode /
+## {"type": "easy_mode"}): active, state (MANUAL_XY / AUTO_GRAB / WAIT_DESTINATION /
+## DELIVER_DIAL_1 / DELIVER_DIAL_2 / EXPIRED / FAULT), step, destination, grab_id,
+## elapsed_s, wait_left_s, last_result, error. The sequence runs in the backend.
+var easy_mode: Dictionary = {}
+
 func auto_catch_active() -> bool:
 	return source == "websocket" and bool(auto_catch.get("active", false))
+
+func easy_mode_active() -> bool:
+	return source == "websocket" and bool(easy_mode.get("active", false))
 
 ## Playback runs behind the newest sample by a delay that covers the longest
 ## recent gap between samples, so it always interpolates between two real

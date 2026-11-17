@@ -186,7 +186,8 @@
         {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum", "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"], ["pose_direction", "手の形で方向を決める"]]},
         {"key": "game_mode.tutorial.enabled", "apply": "now", "label": "スコアゲームの前に練習（UFO 召喚と手の練習）", "type": "bool",
          "note": "オフにすると、スコアゲームのタイトルで Enter を押すとすぐ始まる（T で練習から始められる）"},
-        {"key": "game_mode.tutorial.mode", "apply": "now", "label": "練習で見せる操作", "type": "enum", "options": [["hard", "むずかしいモード（今の手の操作）"], ["easy", "かんたんモード（説明だけ。自動でつかむ・運ぶ機能は未実装）"]]},
+        {"key": "game_mode.difficulty", "apply": "now", "label": "スコアゲームの操作（難易度）", "type": "enum", "options": [["hard", "むずかしいモード（手で全部操作する）"], ["easy", "かんたんモード（つまんで移動・グーで自動キャッチ・指 1 / 2 本で左右の Dial へ自動で運ぶ）"]],
+         "note": "スコアゲームのタイトルで D を押しても切り替わる。かんたんモードはバックエンド接続と「つまんで動かす」が必要。実機では投入位置を校正タブで記録・確認するまで自動では動かない"},
         {"key": "gesture.camera", "apply": "backend", "label": "手のカメラ（名前の一部か番号）", "type": "text", "max_length": 80},
         {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool", "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
       ]},
@@ -372,12 +373,25 @@
       "record_s": 3.2,
       "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
     },
+    "difficulty": "hard",
+    "easy": {
+      "hold_s": 0.6,
+      "wait_destination_s": 15,
+      "request_timeout_s": 3.0,
+      "dry_run": {"dial_1": [20, 100], "dial_2": [370, 100], "release_z": 70},
+      "real": {
+        "xy_tolerance_mm": 1.0, "z_tolerance": 1.0, "claw_settle_s": 0.5, "claw_span_min_deg": 5, "claw_span_max_deg": 355,
+        "limit_home_zone_mm": 5, "total_timeout_s": 120,
+        "timeouts_s": {"open_claw": 6, "lower_to_catch": 20, "close_claw": 6, "raise_with_item": 20, "move_to_box": 45, "lower_to_release": 20, "release": 6, "raise_empty": 20}
+      },
+      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). difficulty: hard (the manual hand control, as ever) / easy (pinch = XY only; a fist held hold_s = catch here by itself; then one finger = carry to Dial 1 on the left, two fingers = Dial 2 on the right). D on the score game's title switches it; the practice shows the same mode. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (the two Dials' XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
+    },
     "tutorial": {
       "enabled": true,
       "mode": "hard",
       "ok_s": 1.4,
       "retry_s": 8.0,
-      "_note": "The practice before the score game (#149): Enter on the score game's title goes through it once per visit (the spell, the hand shapes one by one, one real capsule through a Dial), then the round starts from a full reset. enabled: false = Enter starts the round at once (T still starts the practice). mode: hard = the manual hand control as it is; easy = the same with the easy mode's shapes shown (its automatic catch and carry are NOT built: nothing moves by itself). steps: {id: {title, sub, say, hold_s...}} overrides a step, modes: {mode: {hand scheme: [step ids]}} the order (game/scripts/tutorial/gesture_tutorial_steps.gd). Staff keys in the practice: F6 = the step again, F7 = the next step, F8 = leave the practice out."
+      "_note": "The practice before the score game (#149): Enter on the score game's title goes through it once per visit (the spell, the hand shapes one by one, one real capsule through a Dial), then the round starts from a full reset. enabled: false = Enter starts the round at once (T still starts the practice). mode: only read when game_mode.difficulty is missing (an older config); the practice shows the round's difficulty (#169). steps: {id: {title, sub, say, hold_s...}} overrides a step, modes: {mode: {hand scheme: [step ids]}} the order (game/scripts/tutorial/gesture_tutorial_steps.gd). Staff keys in the practice: F6 = the step again, F7 = the next step, F8 = leave the practice out."
     },
     "ufo": {
       "min": 0.1,

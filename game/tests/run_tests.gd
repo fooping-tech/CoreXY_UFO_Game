@@ -88,6 +88,8 @@ func _ready() -> void:
 	_test_game_mode_reactions(rs)
 	_test_gesture_tutorial_logic()
 	_test_gesture_tutorial_game(rs)
+	_test_easy_mode_logic()
+	_test_easy_mode_game(rs)
 	await _test_game_mode_physics()
 	_test_fonts()
 	print("\n%d passed, %d failed" % [_passes, _fails])
@@ -3959,6 +3961,444 @@ func _tut_run(t: GestureTutorialController, secs: float, hand: Dictionary, world
 	for i in int(round(secs * 60.0)):
 		t.tick(1.0 / 60.0, hand, world)
 
+# ------------------------------------------------------------------ easy mode (#169)
+## A stand-in for the backend: records what the easy mode asks for and holds the report.
+class EasyBackend:
+	var sent: Array = []  # [name, params, rid]
+	var status: Dictionary = {}
+	var n := 0
+	func send(name: String, params: Dictionary) -> String:
+		n += 1
+		sent.append([name, params, "e%d" % n])
+		return "e%d" % n
+	func names() -> Array:
+		return sent.map(func(s): return s[0])
+	func last_rid() -> String:
+		return str(sent[-1][2]) if not sent.is_empty() else ""
+	func report(state: String, gid: String, extra := {}) -> void:
+		status = {"active": state in ["AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2"], "state": state,
+			"grab_id": gid, "step": "", "destination": 0, "wait_left_s": 12.0, "wait_s": 15.0, "last_result": "", "error": ""}
+		status.merge(extra, true)
+
+static func _easy_hand(pose: String, extra := {}) -> Dictionary:
+	var h := {"fresh": true, "camera_ok": true, "detected": true, "pose": pose, "pinch": false, "steering": false}
+	h.merge(extra, true)
+	return h
+
+func _easy_run(e: EasyModeControl, be: EasyBackend, secs: float, hand: Dictionary, world_extra := {}) -> void:
+	var world := {"enabled": true, "taking": true, "link": true, "gate": "", "status": be.status}
+	world.merge(world_extra, true)
+	for i in int(round(secs * 60.0)):
+		world["status"] = be.status
+		e.tick(1.0 / 60.0, hand, world)
+
+func _easy_new() -> Array:
+	var e := EasyModeControl.new()
+	var be := EasyBackend.new()
+	e.send = be.send
+	_easy_run(e, be, 0.1, _easy_hand("other"))
+	return [e, be]
+
+## The easy mode's own state machine: one sign = one request, only in its context.
+func _test_easy_mode_logic() -> void:
+	var open = _easy_hand("open")
+	var fist = _easy_hand("fist")
+	var one = _easy_hand("point")
+	var two = _easy_hand("peace")
+	# --- both destinations, to the end
+	for dest in [1, 2]:
+		var p = _easy_new()
+		var e: EasyModeControl = p[0]
+		var be: EasyBackend = p[1]
+		var delivered = []
+		var cues = []
+		e.delivered.connect(func(d): delivered.append(d))
+		e.cue.connect(func(c): cues.append(c))
+		_easy_run(e, be, 1.0, fist)
+		var needs_neutral = be.sent.is_empty() and e.state == "MANUAL_XY"  # the fist was there before any neutral hand
+		_easy_run(e, be, 0.3, open)
+		_easy_run(e, be, 0.5, fist)
+		var not_yet = be.sent.is_empty() and e.holding == "grab" and e.progress > 0.5
+		_easy_run(e, be, 0.2, fist)
+		var asked = be.names() == ["easy_grab"] and e.state == "AUTO_GRAB" and e.busy()
+		_easy_run(e, be, 2.0, fist)  # the fist stays closed for the whole catch
+		e.on_ack(be.last_rid(), true, {"grab_id": "g%d" % dest})
+		be.report("AUTO_GRAB", "g%d" % dest, {"step": "LOWER_TO_CATCH"})
+		_easy_run(e, be, 0.5, fist)
+		var following = e.state == "AUTO_GRAB" and e.step_text() == "おりる"
+		be.report("WAIT_DESTINATION", "g%d" % dest, {"step": "WAIT_DESTINATION"})
+		_easy_run(e, be, 0.2, fist)
+		var waiting = e.state == "WAIT_DESTINATION" and be.sent.size() == 1
+		var sign = one if dest == 1 else two
+		_easy_run(e, be, 1.0, sign)  # straight from the fist to the fingers: not read yet
+		var neutral_first = be.sent.size() == 1 and e.note.contains("パー")
+		_easy_run(e, be, 0.3, open)
+		_easy_run(e, be, 0.7, sign)
+		var chose: bool = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": dest, "grab_id": "g%d" % dest} \
+			and e.state == "DELIVER_DIAL_%d" % dest
+		e.on_ack(be.last_rid(), true, {})
+		_easy_run(e, be, 0.3, sign)  # the backend's report still says "waiting" for a moment: nothing
+		be.report("DELIVER_DIAL_%d" % dest, "g%d" % dest, {"destination": dest, "step": "MOVE_TO_DIAL"})
+		_easy_run(e, be, 1.0, two if dest == 1 else one)  # the other sign while it carries: nothing
+		var carrying = be.sent.size() == 2 and delivered.is_empty() and e.state == "DELIVER_DIAL_%d" % dest
+		be.report("MANUAL_XY", "g%d" % dest, {"destination": dest, "last_result": "done"})
+		_easy_run(e, be, 0.1, sign)
+		var done = delivered == [dest] and e.state == "MANUAL_XY" and not e.busy()
+		_easy_run(e, be, 2.0, fist if dest == 1 else sign)  # a shape still held after the end: not a new request
+		_easy_run(e, be, 2.0, fist)
+		var no_repeat = be.sent.size() == 2
+		_ok(needs_neutral and not_yet and asked and following and waiting and neutral_first and chose and carrying and done and no_repeat
+			and cues == ["grab", "caught", "deliver", "done"],
+			"easy mode: fist -> catch -> %s -> carry to Dial %d -> back to the hand; each sign asks once, and only after a neutral hand" % [
+				"one finger" if dest == 1 else "two fingers", dest],
+			"%s %s %s %s %s %s %s %s %s %s %s" % [needs_neutral, not_yet, asked, following, waiting, neutral_first, chose, carrying, done, no_repeat, cues])
+	# --- a sign must be held, unbroken, by one fresh hand
+	var p2 = _easy_new()
+	var e2: EasyModeControl = p2[0]
+	var be2: EasyBackend = p2[1]
+	_easy_run(e2, be2, 0.3, open)
+	for breaker in [_easy_hand("other"), _easy_hand("fist", {"detected": false}), _easy_hand("fist", {"fresh": false}),
+			_easy_hand("fist", {"camera_ok": false}), _easy_hand("fist", {"pinch": true})]:
+		_easy_run(e2, be2, 0.5, fist)
+		_easy_run(e2, be2, 1.0 / 60.0, breaker)  # one tick of another shape / no hand / two hands / a stale event / no camera / a pinch
+		_easy_run(e2, be2, 0.5, fist)
+		_easy_run(e2, be2, 0.3, open)
+	var flicker_ok = be2.sent.is_empty()
+	# the fingers mean nothing before a catch; a fist means nothing while something blocks it
+	_easy_run(e2, be2, 1.0, one)
+	_easy_run(e2, be2, 1.0, two)
+	var fingers_nothing = be2.sent.is_empty() and e2.note.contains("グー")
+	_easy_run(e2, be2, 0.3, open)
+	var blocked = []
+	for w in [{"taking": false}, {"link": false}, {"gate": "モーターを有効にしてください"}, {"busy": true}]:
+		be2.status = {"active": true} if w.has("busy") else {}  # (another run of the backend is still going)
+		_easy_run(e2, be2, 1.0, fist, w)
+		blocked.append(be2.sent.is_empty() and e2.note != "" and e2.progress == 0.0)
+		_easy_run(e2, be2, 0.3, open)
+	be2.status = {}
+	_easy_run(e2, be2, 1.0, _easy_hand("fist", {"steering": true}))
+	blocked.append(be2.sent.is_empty() and e2.note.contains("とまってから"))
+	_ok(flicker_ok and fingers_nothing and not blocked.has(false),
+		"easy mode: a sign broken for one tick (another shape, no hand, a stale event, no camera, a pinch) starts over; fingers before a catch and a fist while steering / not playing / no link / not ready ask for nothing",
+		"%s %s %s" % [flicker_ok, fingers_nothing, blocked])
+	# --- one finger turning into two starts the hold over; an old report is not this catch's
+	var p3 = _easy_new()
+	var e3: EasyModeControl = p3[0]
+	var be3: EasyBackend = p3[1]
+	be3.report("MANUAL_XY", "old", {"last_result": "done", "destination": 2})  # the catch before this one
+	_easy_run(e3, be3, 0.3, open)
+	_easy_run(e3, be3, 0.7, fist)
+	_easy_run(e3, be3, 0.5, fist)  # no answer yet: the old "done" must not be read as this catch's
+	var old_ignored = e3.state == "AUTO_GRAB"
+	e3.on_ack("some-other-request", true, {"grab_id": "zz"})
+	var other_ack = e3.grab_id == ""
+	e3.on_ack(be3.last_rid(), true, {"grab_id": "g"})
+	be3.report("WAIT_DESTINATION", "g")
+	_easy_run(e3, be3, 0.3, open)
+	_easy_run(e3, be3, 0.4, one)
+	_easy_run(e3, be3, 0.4, two)
+	var switched = be3.sent.size() == 1 and e3.holding == "2"
+	_easy_run(e3, be3, 0.3, two)
+	var took_two: bool = be3.sent.size() == 2 and be3.sent[1][1].destination == 2
+	# the backend refuses the choice (it had just given up): back to waiting, then its report decides
+	e3.on_ack(be3.last_rid(), false, {"reason": "not waiting for a destination (state EXPIRED)"})
+	var back_waiting = e3.state == "WAIT_DESTINATION" and e3.note != "" and e3.destination == 0
+	be3.report("EXPIRED", "g", {"last_result": "expired", "error": "no destination chosen within 15 s"})
+	_easy_run(e3, be3, 0.1, two)
+	var expired = e3.state == "FAULT" and e3.note.contains("えらばなかった") and not e3.busy()
+	_easy_run(e3, be3, 0.3, open)
+	_easy_run(e3, be3, 2.0, fist)
+	var stays = e3.state == "FAULT" and be3.sent.size() == 2  # nothing starts again by itself
+	e3.reset()
+	_easy_run(e3, be3, 1.0, fist)
+	var reset_needs_neutral = e3.state == "MANUAL_XY" and be3.sent.size() == 2
+	_ok(old_ignored and other_ack and switched and took_two and back_waiting and expired and stays and reset_needs_neutral,
+		"easy mode: another catch's report and another request's answer are not read; one finger turned into two starts over; nobody choosing ends in FAULT, which only a reset leaves",
+		"%s %s %s %s %s %s %s %s" % [old_ignored, other_ack, switched, took_two, back_waiting, expired, stays, reset_needs_neutral])
+	# --- refusals, lost answers, faults, the link
+	var results = []
+	for case in ["nack", "timeout_ack", "no_answer", "fault", "link", "bad_ack"]:
+		var p4 = _easy_new()
+		var e4: EasyModeControl = p4[0]
+		var be4: EasyBackend = p4[1]
+		e4.request_timeout_s = 1.0
+		_easy_run(e4, be4, 0.3, open)
+		_easy_run(e4, be4, 0.7, fist)
+		match case:
+			"nack":
+				e4.on_ack(be4.last_rid(), false, {"reason": "easy catch refused: not homed"})
+				results.append(e4.state == "MANUAL_XY" and e4.note.contains("げんてんふっき"))
+			"timeout_ack":
+				e4.on_ack(be4.last_rid(), false, {"reason": "timeout"})
+				results.append(e4.state == "FAULT")
+			"no_answer":
+				_easy_run(e4, be4, 1.2, fist)
+				results.append(e4.state == "FAULT" and e4.note.contains("へんじ"))
+			"fault":
+				e4.on_ack(be4.last_rid(), true, {"grab_id": "g"})
+				be4.report("FAULT", "g", {"last_result": "fault", "error": "LOWER_TO_CATCH timeout (8 s, Z -> 30)"})
+				_easy_run(e4, be4, 0.1, fist)
+				results.append(e4.state == "FAULT" and e4.note.contains("うごかなかった"))
+			"link":
+				e4.on_ack(be4.last_rid(), true, {"grab_id": "g"})
+				_easy_run(e4, be4, 0.1, fist, {"link": false})
+				results.append(e4.state == "FAULT" and e4.note.contains("つうしん"))
+			"bad_ack":
+				e4.on_ack(be4.last_rid(), true, {})
+				results.append(e4.state == "FAULT")
+		_easy_run(e4, be4, 0.3, open)
+		_easy_run(e4, be4, 2.0, fist)
+		results.append(be4.sent.size() == (2 if case == "nack" else 1))  # a refusal lets a NEW fist ask again; nothing else does
+	_ok(not results.has(false),
+		"easy mode: a refusal goes back to the hand with its reason (a new fist may ask again); a lost answer, a fault, a lost link or a wrong answer stop in FAULT and nothing is asked again",
+		str(results))
+	# --- the stop key, leaving in the middle, the round's end
+	var p5 = _easy_new()
+	var e5: EasyModeControl = p5[0]
+	var be5: EasyBackend = p5[1]
+	_easy_run(e5, be5, 0.3, open)
+	_easy_run(e5, be5, 0.7, fist)
+	var grab_rid = be5.last_rid()
+	e5.on_stop()  # Space before the answer came
+	var stopped = e5.state == "FAULT" and e5.note.contains("ストップ")
+	e5.on_ack(grab_rid, true, {"grab_id": "late"})  # it had started after all: stopped again
+	var stop_again = be5.names() == ["easy_grab", "soft_stop"] and e5.state == "FAULT"
+	e5.reset()
+	_easy_run(e5, be5, 0.3, open)
+	_easy_run(e5, be5, 0.7, fist)
+	e5.on_ack(be5.last_rid(), true, {"grab_id": "h"})
+	be5.report("WAIT_DESTINATION", "h")
+	_easy_run(e5, be5, 0.3, open)
+	_easy_run(e5, be5, 1.5, one, {"taking": false})  # the time ran out while it waited
+	var time_up = e5.state == "WAIT_DESTINATION" and not be5.names().has("easy_deliver") and e5.note.contains("じかんぎれ")
+	_easy_run(e5, be5, 1.5, one, {"gate": "ゲームのウィンドウを選んでね"})  # the window lost its focus: no carry either
+	var gated = e5.state == "WAIT_DESTINATION" and not be5.names().has("easy_deliver") and e5.note.contains("ウィンドウ") and e5.progress == 0.0
+	time_up = time_up and gated
+	_easy_run(e5, be5, 0.1, open, {"enabled": false})  # back to the title in the middle
+	var left = e5.state == "OFF" and be5.names().count("soft_stop") == 2 and not e5.busy()
+	_easy_run(e5, be5, 0.1, open, {"enabled": false})
+	var once = be5.names().count("soft_stop") == 2
+	_ok(stopped and stop_again and time_up and left and once,
+		"easy mode: Space ends it at once (a catch that started behind the stop is stopped again); after the time is up nothing new is carried; leaving in the middle stops the backend's run, once",
+		"%s %s %s %s %s" % [stopped, stop_again, time_up, left, once])
+	_ok(EasyModeControl.sign_of(_easy_hand("thumb")) == "grab" and EasyModeControl.sign_of(_easy_hand("point")) == "1"
+		and EasyModeControl.sign_of(_easy_hand("peace")) == "2" and EasyModeControl.sign_of(_easy_hand("open")) == "neutral"
+		and EasyModeControl.sign_of(_easy_hand("other")) == "" and EasyModeControl.sign_of({}) == "",
+		"easy mode: fist (thumb out or not) = catch, one finger = Dial 1, two = Dial 2, パー = neutral, anything else = nothing")
+
+## The easy mode in the score game: the difficulty, the hand's meaning, the mock run, hard as before.
+func _test_easy_mode_game(rs: Node) -> void:
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var e: EasyModeControl = game.easy
+	var be = EasyBackend.new()
+	e.send = be.send
+	game.gesture_require_focus = false
+	game.set_gesture_enabled(true)
+	game.gesture.arm_delay_ms = 0.0
+	game.gesture.claw_hold_ms = 0.0
+	game.gesture.joystick.smoothing_ms = 0.0
+	var claws = []
+	game.gesture.claw_requested.connect(func(w): claws.append(w))
+	var dt = 1.0 / 60.0
+	var seq = [0]
+	var feed := func(pose: String, n: int, pinch := false, x := 0.5, extra := {}) -> void:
+		for i in n:
+			seq[0] += 1
+			var more = {"pose": pose}
+			more.merge(extra, true)
+			game.gesture.on_event(_hev(seq[0], true, pinch, x, 0.5, more), float(Time.get_ticks_msec()))
+			RobotState.easy_mode = be.status
+			game._handle_input(dt)
+			ctl.tick(dt)
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	var starts_hard = ctl.difficulty == "hard" and not ctl.easy_on() and ctl.hud.title_showing()
+	game._unhandled_input(_key(KEY_D))
+	feed.call("open", 2)
+	ctl.hud._process(0.016)
+	# the game drives its own mock crane: the easy mode is not usable, and says so; hard is played
+	var no_backend: bool = ctl.difficulty == "easy" and not ctl.easy_on() and ctl.hud._mode.text.contains("バックエンド") \
+		and game.gesture.claw_enabled and not game.gesture.xy_only and not e.enabled()
+	# with the backend (a stand-in link): usable
+	game.mock.enabled = false
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.motors_enabled = true
+	RobotState.homed = true
+	RobotState.machine_state = "IDLE"
+	game.ws.server_robot = "mock"
+	game.backend_link = func() -> bool: return true
+	feed.call("open", 2)
+	ctl.hud._process(0.016)
+	var usable: bool = ctl.easy_on() and e.state == "MANUAL_XY" and game.gesture.xy_only and not game.gesture.claw_enabled \
+		and ctl.hud._how[0].text.contains("グー") and not ctl.easy_hud.showing()
+	game.gesture.set_scheme(PoseDirectionScheme.ID)
+	feed.call("open", 2)
+	var other_scheme: bool = not ctl.easy_on() and ctl.easy_block.contains("つまんで動かす") and not e.enabled()
+	game.gesture.set_scheme(PinchJoystickScheme.ID)
+	feed.call("open", 20)
+	feed.call("fist", 60)
+	var not_before_the_round = be.sent.is_empty() and e.note.contains("ゲームちゅう")  # the title: no catch
+	game._unhandled_input(_key(KEY_ENTER))
+	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
+	game._unhandled_input(_key(KEY_D))  # D in a round: nothing
+	var playing = ctl.phase == "PLAYING" and ctl.difficulty == "easy" and ctl.lanes["left"].state == "READY"
+	ctl.easy_hud._process(0.016)
+	var strip = ctl.easy_hud.showing() and ctl.easy_hud.view() == "strip"
+	# pinch = XY, also with the back of the hand up (never Z); peace opens no claw
+	feed.call("open", 4, true, 0.5, {"palm": "down"})
+	feed.call("open", 20, true, 0.65, {"palm": "down"})
+	var xy: bool = game.control_source == "gesture" and game.gesture.mode == "xy" and is_zero_approx(game.gesture.velocity_z) \
+		and game.gesture.velocity.length() > 1.0
+	feed.call("open", 6)
+	feed.call("peace", 60)
+	feed.call("open", 6)
+	var no_claw = claws.is_empty() and be.sent.is_empty()
+	# the hand control switched off (H): the camera still sees the hand, but no shape asks for anything
+	game.set_gesture_enabled(false)
+	feed.call("open", 20)
+	feed.call("fist", 60)
+	var off_nothing = be.sent.is_empty() and e.state == "MANUAL_XY" and e.note.contains("オフ")
+	game.set_gesture_enabled(true)
+	feed.call("open", 20)
+	no_claw = no_claw and off_nothing
+	# --- left: fist -> catch -> one finger -> Dial 1 -> the mock Dial takes its capsule
+	feed.call("fist", 45)
+	var grabbed = be.names() == ["easy_grab"] and e.state == "AUTO_GRAB"
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "a"})
+	be.report("AUTO_GRAB", "a", {"step": "CLOSE_CLAW"})
+	feed.call("open", 4, true)
+	feed.call("open", 20, true, 0.7)  # a pinch while it catches: the crane is not the hand's
+	var locked: bool = game.control_source != "gesture" and game.gesture_gate_reason == game.GATE_EASY_BUSY
+	be.report("WAIT_DESTINATION", "a", {"step": "WAIT_DESTINATION"})
+	feed.call("open", 20)
+	ctl.easy_hud._process(0.016)
+	var panel: bool = e.state == "WAIT_DESTINATION" and ctl.easy_hud.view() == "panel" and ctl.easy_hud._title.text == "どっちに いれる？" \
+		and ctl.easy_hud.sub_text().contains("ひだり") and ctl.easy_hud._stop.text.contains("Space")
+	game.set_gesture_enabled(false)
+	feed.call("point", 60)  # switched off while it waits: the finger carries nothing
+	var off_no_carry = be.names() == ["easy_grab"] and e.state == "WAIT_DESTINATION"
+	game.set_gesture_enabled(true)
+	feed.call("open", 20)
+	panel = panel and off_no_carry
+	feed.call("point", 45)
+	var chose = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": 1, "grab_id": "a"}
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_deliver"})
+	be.report("DELIVER_DIAL_1", "a", {"destination": 1, "step": "MOVE_TO_DIAL"})
+	feed.call("point", 30)
+	var before = str(ctl.lanes["left"].state)
+	be.report("MANUAL_XY", "a", {"destination": 1, "last_result": "done"})
+	feed.call("point", 6)
+	var left_took: bool = before == "READY" and ctl.lanes["left"].state == "ABSORBING" and ctl.lanes["right"].state == "READY" \
+		and e.state == "MANUAL_XY"
+	# --- right: the same with two fingers
+	feed.call("open", 20)
+	feed.call("fist", 45)
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "b"})
+	be.report("WAIT_DESTINATION", "b")
+	feed.call("open", 20)
+	feed.call("peace", 45)
+	var chose_right: bool = be.sent.size() == 4 and be.sent[3][1] == {"destination": 2, "grab_id": "b"}
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_deliver"})
+	be.report("MANUAL_XY", "b", {"destination": 2, "last_result": "done"})
+	feed.call("peace", 6)
+	var right_took: bool = ctl.lanes["right"].state == "ABSORBING" and claws.is_empty()
+	_ok(starts_hard and no_backend and usable and other_scheme and not_before_the_round and playing and strip,
+		"easy mode in the game: hard at start, D on the title switches; without a backend or with another hand scheme it is not used and says why; no catch before the round",
+		"%s %s %s %s %s %s %s" % [starts_hard, no_backend, usable, other_scheme, not_before_the_round, playing, strip])
+	_ok(xy and no_claw and grabbed and locked and panel and chose and left_took and chose_right and right_took,
+		"easy mode in the game: pinch steers XY only, the shapes ask for no claw; fist -> one finger puts the mock capsule into the left Dial, fist -> two fingers into the right; the hand is locked out meanwhile and the screen says what happens",
+		"%s %s %s %s %s %s %s %s %s" % [xy, no_claw, grabbed, locked, panel, chose, left_took, chose_right, right_took])
+	# --- the real crane: the game never makes up the Dial's capsule
+	feed.call("open", 600)  # (both capsules through the field and back out)
+	for side in ["left", "right"]:
+		var l: GameModeController.Lane = ctl.lanes[side]
+		if not l.capsule.is_empty() and l.state == "SIMULATING":
+			ctl.field.capsule_exited.emit(l.capsule.capsule_id, "goal_left", Vector2(360, 1000))
+	feed.call("open", 600)
+	var ready_again: bool = ctl.lanes["left"].state == "READY"
+	ctl.easy_delivered("left", false)
+	feed.call("open", 6)
+	var real_waits: bool = ready_again and ctl.lanes["left"].state == "READY"
+	# --- the time runs out while it waits: nothing is carried; Space: FAULT, a new round resets
+	feed.call("fist", 45)
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "c"})
+	be.report("WAIT_DESTINATION", "c")
+	feed.call("open", 20)
+	ctl.time_left = 0.05
+	feed.call("open", 20)
+	var sent_before = be.sent.size()
+	feed.call("point", 60)
+	var settling: bool = ctl.phase in ["SETTLING", "RESULT"] and be.sent.size() == sent_before and e.state == "WAIT_DESTINATION"
+	game.stop_key()
+	var stop_fault: bool = e.state == "FAULT"
+	be.report("FAULT", "c", {"last_result": "fault", "error": "stopped (soft_stop) during the easy mode's catch and carry"})
+	feed.call("open", 20)
+	feed.call("fist", 60)
+	var no_restart = be.sent.size() == sent_before and e.state == "FAULT"
+	game._unhandled_input(_key(KEY_F9))
+	var staff_reset: bool = e.state == "MANUAL_XY"
+	_ok(real_waits and settling and stop_fault and no_restart and staff_reset,
+		"easy mode in the game: with the real crane the Dial's own report is waited for; after TIME UP nothing new is carried; Space stops it for good until staff (F9) or a new round",
+		"%s %s %s %s %s" % [real_waits, settling, stop_fault, no_restart, staff_reset])
+	# --- leaving for the title in the middle of a catch stops the backend's run
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
+	feed.call("fist", 45)
+	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "d"})
+	be.report("AUTO_GRAB", "d")
+	feed.call("fist", 6)
+	var mid: bool = e.state == "AUTO_GRAB"
+	var stops_before = be.names().count("soft_stop")
+	game.show_title()
+	feed.call("fist", 6)
+	var esc_stops: bool = mid and e.state == "OFF" and be.names().count("soft_stop") == stops_before + 1 \
+		and game.gesture.claw_enabled and not game.gesture.xy_only
+	# --- hard: as before (fist closes, peace opens, palm down steers Z), and nothing of the easy mode
+	be.report("MANUAL_XY", "d", {"last_result": "fault"})
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_D))
+	game._unhandled_input(_key(KEY_ENTER))
+	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
+	var n_sent = be.sent.size()
+	claws.clear()
+	feed.call("fist", 30)
+	feed.call("open", 6)
+	feed.call("peace", 30)
+	feed.call("open", 6)
+	feed.call("point", 60)
+	feed.call("open", 6)
+	feed.call("open", 4, true, 0.5, {"palm": "down"})
+	var z_mode: bool = game.gesture.mode == "z"
+	feed.call("open", 6)
+	ctl.easy_hud._process(0.016)
+	_ok(esc_stops and ctl.difficulty == "hard" and ctl.phase == "PLAYING" and claws == ["closed", "open"] and z_mode
+		and be.sent.size() == n_sent and not e.enabled() and not ctl.easy_hud.showing(),
+		"easy mode in the game: Esc in the middle of a catch stops the backend's run; hard is as it was (fist closes, peace opens, palm down = Z, the fingers carry nothing)",
+		"%s %s %s %s %s %s" % [esc_stops, ctl.difficulty, ctl.phase, claws, z_mode, be.sent.size() - n_sent])
+	# the practice shows the difficulty that is played
+	var easy_steps := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", PinchJoystickScheme.new().claw_poses()).map(func(s): return s.id)
+	_ok(easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": false}}).text.contains("確かめた")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true},
+			"problems": ["Dial 1 and Dial 2 are recorded at the same place (1,2): move the arm"]}).text.contains("同じ場所")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "stale_z": true}}).text.contains("測り直した")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true,
+			"saved_at": "2026-11-17T10:00:00"}, "problems": []}).contains("2026-11-17 10:00:00 に記録した値")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real"}}).state == "na",
+		"easy mode: the practice has both carries; the 校正 tab says what of the drop points is missing, unconfirmed or done", str(easy_steps))
+	RobotState.easy_mode = {}
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.motors_enabled = false
+	RobotState.homed = false
+	_gm_free(game, rs)
+
 ## #149: the practice's steps as data, and each step ended only by what the hand really did.
 func _test_gesture_tutorial_logic() -> void:
 	var pinch_claw := PinchJoystickScheme.new().claw_poses()
@@ -3978,11 +4418,11 @@ func _test_gesture_tutorial_logic() -> void:
 		and pose_grab.title == "チョキで キャッチ！" and pose_grab.poses == ["peace"],
 		"tutorial steps: the spell, パー, the pinch, moving, the catch, the rule, one capsule; the catch asks for the shape that closes the claw in the hand scheme in use",
 		"%s %s %s" % [ids, hard[4].poses, pose_grab.poses])
-	var easy_future := easy.filter(func(s): return bool(s.get("future", false)))
-	_ok(easy_future.map(func(s): return s.id) == ["easy_grab", "easy_one"] and str(easy_future[0].sub).contains("じゅんびちゅう")
-		and str(easy_future[1].sub).contains("じゅんびちゅう") and hard.filter(func(s): return bool(s.get("future", false))).is_empty()
+	var easy_own := easy.filter(func(s): return str(s.id).begins_with("easy_"))
+	_ok(easy_own.map(func(s): return s.id) == ["easy_grab", "easy_one", "easy_two"] and easy_own[1].poses == ["point"] and easy_own[2].poses == ["peace"]
+		and easy.filter(func(s): return bool(s.get("future", false))).is_empty() and hard.filter(func(s): return bool(s.get("future", false))).is_empty()
 		and changed.map(func(s): return s.id) == ["open", "practice"] and changed[0].title == "X" and is_equal_approx(float(changed[0].hold_s), 2.0),
-		"tutorial steps: the easy mode's catch and carry are shown as not built yet; config overrides a step and the order",
+		"tutorial steps: the easy mode teaches the fist, one finger (left) and two fingers (right), none marked as not built; config overrides a step and the order",
 		str(easy.map(func(s): return s.id)))
 	# --- the steps, one by one
 	var t := GestureTutorialController.new()
