@@ -1508,7 +1508,7 @@ func _on_powerup_collected(capsule_id: String, kind: String, pos: Vector2) -> vo
 			# FRONT is the visual upgrade; TRANSFER retains its intake/release role.
 			if dial_leds and l.led_ok and devices.available():
 				_send(l, "led", "SET_DIAL_EFFECT", {"effect": "COMET", "direction": "TO_DIAL",
-					"duration_ms": 0, "priority": "BACKGROUND", "target": "FRONT"})
+					"duration_ms": 0, "priority": "NORMAL", "target": "FRONT"})
 		"double":
 			_light("SET_LIGHT_MODE", {"mode": "CUSTOM", "color": [255, 174, 32],
 				"brightness": 190, "speed": 190, "transition_ms": 250})
