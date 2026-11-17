@@ -15,8 +15,10 @@ extends Node
 ## the usual manual controls. The devices are reached only through GameModeDevices.
 ##
 ## What it never does:
-##  - release twice: one RELEASE_BALL per capsule, never repeated by itself (a refusal, a
-##    lost answer, a link that came back: the lane stops in FAULT for a person to look);
+##  - blindly retry a release: a rejected command, a missing RELEASE_DONE, or a new session
+##    never triggers an automatic resend. Only after RELEASE_DONE and a verified switch-on
+##    (capsule still inside) may the lane send a NEW release command, at most
+##    game_mode.timing.release_retries times (#185, Dial firmware >= 0.4).
 ##  - trust an old event: events are matched by hub session, Dial and cycle;
 ##  - wait for the lights: the Illumination / LED commands are best effort;
 ##  - claim the capsule left: RELEASE_DONE means the servo sequence ended, nothing more.
@@ -1526,7 +1528,8 @@ func _present_score(r: Dictionary, pos: Vector2, l: Lane) -> void:
 		_light("TRIGGER_EFFECT", {"effect": "SCORE", "duration_ms": 1200, "intensity": 255})
 	scored.emit(int(r.points), kind, pos)
 
-## The one RELEASE_BALL of this capsule. Not sent when the hub's session changed since the
+## The initial RELEASE_BALL for this capsule. A later release is permitted only after
+## RELEASE_DONE and a positive switch-on verification (#185). Not sent when the hub's session changed since the
 ## Dial reported it (the Dial no longer knows it holds one): a person has to look.
 func _release(l: Lane) -> void:
 	if l.capsule.is_empty():
