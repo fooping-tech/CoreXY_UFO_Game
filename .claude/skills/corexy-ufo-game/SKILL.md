@@ -124,6 +124,7 @@ description: >
 | 表情が変わらない | `manual_expression` 固定、mood の優先順位（panic > mood）、`_last_expr_shown` | デバッグパネル Character を `(auto)` に戻す |
 | 実機モードで ERROR から戻らない（驚き顔のまま、望遠鏡が出ない） | `GameState` は実機が正常な状態を報告したときか `error_cleared` で ERROR を抜ける。実機の状態が変わらないと残る | デバッグパネルの game= を見る。[robot-protocol.md](references/robot-protocol.md) §5 |
 | ▲ / ▼ を押しても巻き上げが動かない・途中で止まる（エラーなし） | 巻き上げサーボだけ電源が切れて 1 回転モードに戻った（`SERVO_STATUS` が `tracking=YES limits=0/4095`）。ファームウェアの `beginJog` はこれを見ない | `robot_state.z_servo_reset`。新ファームウェア（CoreXY_UFO #11、`tracking=LOST`）なら `z_servo_jog_recovers` が立ち、▲ / ▼ を押せば `JOG servo ... tracking=RESET` で戻る。旧ファームウェアはデバッグパネル「巻き上げサーボを復帰」（`z_servo_recover`）。どちらも点を記録し直す。`docs/HANDOFF_FIRMWARE_Z_SERVO.md` |
+| W / S（や爪のキー）が無反応、ログに `JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)` | Core2 だけが再起動（USB の挿し直しなど）して、サーボは電源が入ったまま多回転・トルク OFF。重みでドラムが最後の goal から 5 カウント超ずれると、ファームウェアが回転数を決められず拒否する（CoreXY_UFO `StsServoBus::enableTracking`） | `robot_state.z_servo_power_cycle` / `arm_servo_power_cycle`（#163）。そのサーボの電源を入れ直す（`SERVO_STATUS` が `limits=0/4095` に戻れば解除）。Z の点を記録し直す |
 | `move_z` が NACK になる | Z の点（`z_set top` / `bottom`、`z_zero`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
