@@ -1169,12 +1169,27 @@ func _send_jog(v: Vector3, dt: float) -> void:
 
 ## Every physics tick: keyboard and hand joystick -> ControlArbiter -> the one
 ## jog path (real robot) or the MockRobot target.
+## The boost never raises the firmware/backend's absolute jog cap (#188).
+## During the 150 s round normal movement is deliberately 40 mm/s, and a pickup
+## temporarily grants up to 60 mm/s. This applies to both keyboard and hand XY only.
+## The boost is derived from the game phase each tick: stopping/closing cannot latch it.
+func powerup_xy_speed(real: bool) -> float:
+	var default_speed := jog_speed_real_mm if real else jog_speed_mm
+	if game_mode == null or not game_mode.active() or game_mode.phase != "PLAYING":
+		return default_speed
+	var cfg = GameConfig.value("game_mode.powerups.speed", {})
+	var opts: Dictionary = cfg if cfg is Dictionary else {}
+	var wanted := float(opts.get("max_mm_s", 60.0)) if game_mode.powerups.active("speed") else float(opts.get("normal_mm_s", 40.0))
+	var limit := float(GameConfig.value("backend.jog_max_mm_s", 60.0))
+	return clampf(wanted, 1.0, maxf(1.0, limit)) if real else clampf(wanted, 1.0, 200.0)
+
 func _handle_input(dt: float) -> void:
 	var real := RobotState.source == "websocket"
+	var xy_speed := powerup_xy_speed(real)
 	var keys := _latched_jog_input()
 	var kb := Vector3.ZERO
 	if keys != Vector3.ZERO:
-		var xy := jog_velocity(Vector2(keys.x, keys.y), jog_speed_real_mm if real else jog_speed_mm)
+		var xy := jog_velocity(Vector2(keys.x, keys.y), xy_speed)
 		kb = Vector3(xy.x, xy.y, keys.z * (jog_speed_real_z if real else jog_speed_z))
 	if kb != _kb_logged:
 		if kb == Vector3.ZERO:
@@ -1205,6 +1220,9 @@ func _handle_input(dt: float) -> void:
 		elif easy.faulted():
 			gesture_gate_reason = GATE_EASY_FAULT  # the keys stay, for the staff
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	if game_mode != null and game_mode.active() and game_mode.phase == "PLAYING":
+		# Keep the shape/dead zone; scale only the XY velocity, never Z.
+		gv *= xy_speed / maxf(gesture.joystick.max_speed, 1.0)
 	_tick_easy(dt, easy_on, base_gate, kb != Vector3.ZERO)
 	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
