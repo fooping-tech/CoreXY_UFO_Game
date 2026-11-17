@@ -7,13 +7,22 @@ Engines are tried in the configured order (`homework.speech.engines`):
   it. Each character has its own terms: check them before using a voice.
 - "say": the macOS `say` command (a system voice such as Kyoko), as a fallback.
 Standard library only. Nothing here touches the robot.
+
+The cache (#171, `homework.speech.cache`): a line that was made once is kept as a file
+(<dir>/<key>.wav + .json; the key is the engine, its voice settings and the text) and the
+same line is answered from it, without asking the engine again. The fixed lines (the
+practice's, the study mode's) are so made once per machine. The files stay when the
+backend stops; the directory is not in Git. A file that cannot be read is made again;
+a cache that cannot be written is only logged (the voice still comes).
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
 import shutil
 import tempfile
 import urllib.error
@@ -38,6 +47,9 @@ class SpeechConfig:
     say_voice: str = "Kyoko"
     timeout_s: float = 15.0
     max_chars: int = 120
+    cache_enabled: bool = True
+    cache_dir: str = "cache/speech"  # relative to the repository root
+    cache_max_files: int = 500
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "SpeechConfig":
@@ -56,7 +68,15 @@ class SpeechConfig:
                    voicevox_sampling_rate=min(max(int(d.get("voicevox_sampling_rate", 24000)), 8000), 48000),
                    say_voice=str(d.get("say_voice", "Kyoko")),
                    timeout_s=max(float(d.get("timeout_s", 15.0)), 1.0),
-                   max_chars=min(max(int(d.get("max_chars", 120)), 1), 400))
+                   max_chars=min(max(int(d.get("max_chars", 120)), 1), 400),
+                   **cls._cache_from(d.get("cache")))
+
+    @staticmethod
+    def _cache_from(c: Any) -> dict[str, Any]:
+        c = c if isinstance(c, dict) else {}
+        return {"cache_enabled": bool(c.get("enabled", True)),
+                "cache_dir": str(c.get("dir", "cache/speech")) or "cache/speech",
+                "cache_max_files": min(max(int(c.get("max_files", 500)), 1), 100000)}
 
 
 class SpeechError(Exception):
@@ -157,12 +177,74 @@ class SayEngine:
         return Speech(wav=wav, engine="say", credit="")
 
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+class SpeechCache:
+    """Made lines as files. Every method swallows its I/O errors: the cache is a saving, not a need."""
+
+    def __init__(self, cfg: SpeechConfig, root: Path | None = None) -> None:
+        self.cfg = cfg
+        d = Path(cfg.cache_dir)
+        self.dir = d if d.is_absolute() else (root or REPO_ROOT) / d
+        # CXUFO_NO_SPEECH_CACHE=1 (the tests): this machine's cache is neither read nor written,
+        # unless the test gives a directory of its own (root)
+        self.enabled = cfg.cache_enabled and (root is not None or os.environ.get("CXUFO_NO_SPEECH_CACHE") != "1")
+        self.hits = 0
+        self.misses = 0
+
+    def key(self, engine: str, text: str) -> str:
+        """Whatever changes the sound is in the key: another voice or rate is another file."""
+        voice: list[Any] = ([self.cfg.voicevox_url, self.cfg.voicevox_speaker, self.cfg.voicevox_sampling_rate]
+                            if engine == "voicevox" else [self.cfg.say_voice])
+        return hashlib.sha256(json.dumps([engine, voice, text], ensure_ascii=False).encode()).hexdigest()[:40]
+
+    def get(self, engine: str, text: str) -> Speech | None:
+        if not self.enabled:
+            return None
+        base = self.dir / self.key(engine, text)
+        try:
+            meta = json.loads(base.with_suffix(".json").read_text(encoding="utf-8"))
+            wav = base.with_suffix(".wav").read_bytes()
+        except (OSError, ValueError):
+            return None
+        if not isinstance(meta, dict) or meta.get("text") != text or not _is_wav(wav):
+            return None  # damaged, or (never seen) another text with the same key: made again
+        try:
+            os.utime(base.with_suffix(".wav"))  # used now: the oldest go first when it is full
+        except OSError:
+            pass
+        return Speech(wav=wav, engine=engine, credit=str(meta.get("credit", "")))
+
+    def put(self, text: str, speech: Speech) -> None:
+        if not self.enabled:
+            return
+        base = self.dir / self.key(speech.engine, text)
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            for suffix, data in ((".wav", speech.wav), (".json", json.dumps(
+                    {"text": text, "engine": speech.engine, "credit": speech.credit}, ensure_ascii=False).encode())):
+                tmp = base.with_suffix(suffix + ".tmp")
+                tmp.write_bytes(data)
+                os.replace(tmp, base.with_suffix(suffix))
+            self._prune()
+        except OSError as e:
+            log.warning("speech cache not written (%s): %s", self.dir, e)
+
+    def _prune(self) -> None:
+        wavs = sorted(self.dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+        for old in wavs[:max(len(wavs) - self.cfg.cache_max_files, 0)]:
+            old.unlink(missing_ok=True)
+            old.with_suffix(".json").unlink(missing_ok=True)
+
+
 class SpeechService:
     def __init__(self, cfg: SpeechConfig, *, voicevox: VoicevoxEngine | None = None,
-                 say: SayEngine | None = None) -> None:
+                 say: SayEngine | None = None, cache: SpeechCache | None = None) -> None:
         self.cfg = cfg
         self.voicevox = voicevox or VoicevoxEngine(cfg)
         self.say = say or SayEngine(cfg)
+        self.cache = cache or SpeechCache(cfg)
 
     @property
     def available(self) -> bool:
@@ -176,12 +258,23 @@ class SpeechService:
             raise SpeechError("invalid_request", f"読み上げる文が長すぎます（{self.cfg.max_chars} 文字まで）")
         if not self.available:
             raise SpeechError("disabled", "音声は無効です（config の homework.speech）")
+        # each engine in order: the line it made before (its file), else it makes it now.
+        # So a line VOICEVOX made is its voice even while VOICEVOX is not running, and a line
+        # only `say` made is made by VOICEVOX once that is back.
         errors: list[str] = []
         for name in self.cfg.engines:
+            hit = await asyncio.to_thread(self.cache.get, name, text)
+            if hit is not None:
+                self.cache.hits += 1
+                return hit
             try:
                 if name == "voicevox":
-                    return await asyncio.to_thread(self.voicevox.synthesize, text)
-                return await self.say.synthesize(text)
+                    speech = await asyncio.to_thread(self.voicevox.synthesize, text)
+                else:
+                    speech = await self.say.synthesize(text)
+                self.cache.misses += 1
+                await asyncio.to_thread(self.cache.put, text, speech)
+                return speech
             except SpeechError as e:
                 errors.append(str(e))
         raise SpeechError("unavailable", "音声を作れませんでした: " + " / ".join(errors))

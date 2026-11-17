@@ -39,3 +39,7 @@ config/calibration.json.tmp
 # UFO-DeviceHub as an ordinary clone (#159: tools/setup_devicehub.sh). Its own repository,
 # never committed here (no submodule, no copy)
 /external/
+
+# UFOくん's made voice lines (#171: homework.speech.cache). Made again when missing;
+# VOICEVOX audio is not committed
+/cache/
