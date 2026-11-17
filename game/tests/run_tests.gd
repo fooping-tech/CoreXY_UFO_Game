@@ -4187,6 +4187,47 @@ func _test_easy_mode_logic() -> void:
 	_ok(stopped and stop_again and time_up and left and once,
 		"easy mode: Space ends it at once (a catch that started behind the stop is stopped again); after the time is up nothing new is carried; leaving in the middle stops the backend's run, once",
 		"%s %s %s %s %s" % [stopped, stop_again, time_up, left, once])
+	# --- a game's start: the arm to its start position (#177)
+	var p6 = _easy_new()
+	var e6: EasyModeControl = p6[0]
+	var be6: EasyBackend = p6[1]
+	var asked = e6.request_reset() and be6.names() == ["easy_reset"] and e6.state == "RESET" and e6.busy()
+	var not_twice = not e6.request_reset() and be6.sent.size() == 1
+	_easy_run(e6, be6, 0.3, open)
+	_easy_run(e6, be6, 1.0, fist)  # a fist meanwhile: nothing
+	var fist_waits = be6.sent.size() == 1
+	e6.on_ack(be6.last_rid(), true, {"grab_id": "r"})
+	be6.report("RESET", "r", {"step": "RAISE_EMPTY"})
+	_easy_run(e6, be6, 0.5, open)
+	var raising = e6.state == "RESET" and e6.title_text().contains("じゅんび")
+	be6.report("MANUAL_XY", "r", {"last_result": "done"})
+	_easy_run(e6, be6, 0.1, open)
+	var ready = e6.state == "MANUAL_XY" and not e6.busy()
+	_easy_run(e6, be6, 0.7, fist)  # (the fist held through the reset is not a new sign)
+	ready = ready and be6.sent.size() == 1
+	_easy_run(e6, be6, 0.3, open)
+	_easy_run(e6, be6, 0.7, fist)
+	var then_catch = be6.names() == ["easy_reset", "easy_grab"]
+	# refused (not calibrated, an alarm): said, and the hand has the crane; a fault: FAULT
+	var p7 = _easy_new()
+	var e7: EasyModeControl = p7[0]
+	var be7: EasyBackend = p7[1]
+	e7.request_reset()
+	e7.on_ack(be7.last_rid(), false, {"reason": "easy reset refused: not homed"})
+	var refused = e7.state == "MANUAL_XY" and e7.note.contains("げんてんふっき")
+	e7.request_reset()
+	e7.on_ack(be7.last_rid(), true, {"grab_id": "q"})
+	be7.report("FAULT", "q", {"last_result": "fault", "error": "RAISE_EMPTY timeout (6 s, Z -> 95)"})
+	_easy_run(e7, be7, 0.1, open)
+	var reset_fault = e7.state == "FAULT" and not e7.request_reset()
+	e7.reset()
+	e7.request_reset()
+	e7.on_stop()  # Space before its answer
+	e7.on_ack(be7.last_rid(), true, {"grab_id": "late"})
+	var reset_stopped = e7.state == "FAULT" and be7.names().has("soft_stop")
+	_ok(asked and not_twice and fist_waits and raising and ready and then_catch and refused and reset_fault and reset_stopped,
+		"easy mode: a game's start asks once for the arm's start position and the hand waits for it; a refusal is only said, a fault or a stop ends in FAULT",
+		"%s %s %s %s %s %s %s %s %s" % [asked, not_twice, fist_waits, raising, ready, then_catch, refused, reset_fault, reset_stopped])
 	_ok(EasyModeControl.sign_of(_easy_hand("thumb")) == "grab" and EasyModeControl.sign_of(_easy_hand("point")) == "1"
 		and EasyModeControl.sign_of(_easy_hand("peace")) == "2" and EasyModeControl.sign_of(_easy_hand("open")) == "neutral"
 		and EasyModeControl.sign_of(_easy_hand("other")) == "" and EasyModeControl.sign_of({}) == "",
@@ -4217,6 +4258,14 @@ func _test_easy_mode_game(rs: Node) -> void:
 			RobotState.easy_mode = be.status
 			game._handle_input(dt)
 			ctl.tick(dt)
+	# a game's start asks the backend for the arm's start position (#177): the stand-in answers
+	var reset_done := func() -> void:
+		feed.call("open", 2)
+		if e.state == "RESET":
+			game.ws.ack.emit(be.last_rid(), true, {"command": "easy_reset", "grab_id": "r%d" % be.n})
+			be.report("MANUAL_XY", "r%d" % be.n, {"last_result": "done"})
+			feed.call("open", 2)
+		be.sent = be.sent.filter(func(x): return x[0] != "easy_reset")
 	game.show_title()
 	game._unhandled_input(_key(KEY_3))
 	var starts_hard = ctl.difficulty == "hard" and not ctl.easy_on() and ctl.hud.title_showing()
@@ -4247,6 +4296,12 @@ func _test_easy_mode_game(rs: Node) -> void:
 	feed.call("fist", 60)
 	var not_before_the_round = be.sent.is_empty() and e.note.contains("ゲームちゅう")  # the title: no catch
 	game._unhandled_input(_key(KEY_ENTER))
+	feed.call("open", 2)
+	# the round starts: the arm is brought to its start, and the hand waits meanwhile
+	var start_reset = be.names() == ["easy_reset"] and e.state == "RESET" and e.resets_sent == 1 \
+		and game.gesture_gate_reason == game.GATE_EASY_BUSY
+	reset_done.call()
+	start_reset = start_reset and e.state == "MANUAL_XY" and be.sent.is_empty()
 	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
 	game._unhandled_input(_key(KEY_D))  # D in a round: nothing
 	var playing = ctl.phase == "PLAYING" and ctl.difficulty == "easy" and ctl.lanes["left"].state == "READY"
@@ -4310,7 +4365,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 	be.report("MANUAL_XY", "b", {"destination": 2, "last_result": "done"})
 	feed.call("peace", 6)
 	var right_took: bool = ctl.lanes["right"].state == "ABSORBING" and claws.is_empty()
-	_ok(starts_hard and no_backend and usable and other_scheme and not_before_the_round and playing and strip,
+	_ok(starts_hard and no_backend and usable and other_scheme and not_before_the_round and playing and strip and start_reset,
 		"easy mode in the game: hard at start, D on the title switches; without a backend or with another hand scheme it is not used and says why; no catch before the round",
 		"%s %s %s %s %s %s %s" % [starts_hard, no_backend, usable, other_scheme, not_before_the_round, playing, strip])
 	_ok(xy and no_claw and grabbed and locked and panel and chose and left_took and chose_right and right_took,
@@ -4352,6 +4407,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 	game.show_title()
 	game._unhandled_input(_key(KEY_3))
 	game._unhandled_input(_key(KEY_ENTER))
+	reset_done.call()
 	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
 	feed.call("fist", 45)
 	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "d"})

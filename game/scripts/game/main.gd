@@ -1254,6 +1254,9 @@ func easy_wanted() -> bool:
 	game_mode.easy_block = easy_problem()
 	return game_mode.active() and game_mode.easy_on()
 
+## a game just started: the easy mode asks the backend for the arm's start position (once)
+var _easy_start_reset := false
+
 func _tick_easy(dt: float, on: bool, gate: String, keys_held: bool) -> void:
 	var now := float(Time.get_ticks_msec())
 	var age := gesture.age_ms(now)
@@ -1268,6 +1271,11 @@ func _tick_easy(dt: float, on: bool, gate: String, keys_held: bool) -> void:
 	easy.tick(dt, hand, {"enabled": on, "taking": game_mode != null and game_mode.taking(),
 		"link": bool(backend_link.call()), "gate": gate,
 		"status": RobotState.easy_mode})
+	if _easy_start_reset:
+		# only at the start itself: not later in the round (a run in the way, no link: not asked)
+		_easy_start_reset = false
+		if on and easy.state == "MANUAL_XY" and bool(backend_link.call()) and not keys_held:
+			easy.request_reset()
 
 ## The easy mode's one way to the backend. "" = not sent. Never repeated by itself.
 func _easy_send(name: String, params: Dictionary) -> String:
@@ -1301,8 +1309,12 @@ func _on_easy_cue(name: String) -> void:
 ## A new round or practice: the easy mode leaves its FAULT (a person started it). The
 ## backend still refuses whatever is not in order.
 func _on_game_mode_phase(p: String) -> void:
-	if p in ["COUNTDOWN", "TUTORIAL"] and easy.faulted():
-		easy.reset()
+	if p in ["COUNTDOWN", "TUTORIAL"]:
+		if easy.faulted():
+			easy.reset()
+		# #177: a game starts with the arm at its start (the claw open, the arm at the top):
+		# the easy mode has no way to raise it by hand. Asked on the next tick, when it is on.
+		_easy_start_reset = true
 
 # ------------------------------------------------------------ hand joystick
 func set_gesture_enabled(on: bool) -> void:

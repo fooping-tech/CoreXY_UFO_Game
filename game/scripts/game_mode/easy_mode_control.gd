@@ -9,6 +9,10 @@ extends RefCounted
 ##
 ##   OFF -> MANUAL_XY --fist--> AUTO_GRAB --(the backend caught)--> WAIT_DESTINATION
 ##       --one / two fingers--> DELIVER_DIAL_1 / 2 --(the backend delivered)--> MANUAL_XY
+##   MANUAL_XY --request_reset() (a game starts)--> RESET --(the backend: claw open, arm at
+##       the top)--> MANUAL_XY. The easy mode cannot raise the arm by hand, so every game
+##       starts from there (#177). A fist with the arm down needs nothing here: the backend's
+##       `easy_grab` then closes the claw where it is and brings it up.
 ##   anything wrong (a fault, a stop, the link, no answer, nobody chose in time) --> FAULT:
 ##   nothing starts again by itself; reset() (a new round, or staff) leaves it.
 ##
@@ -45,7 +49,7 @@ signal delivered(destination: int)
 ## For the sounds and UFOくん: "grab" / "caught" / "deliver" / "done" / "refused" / "fault"
 signal cue(name: String)
 
-const STATES := ["OFF", "MANUAL_XY", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "FAULT"]
+const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "FAULT"]
 const GRAB_POSES := ["fist", "thumb"]  # a fist with the thumb out is still a fist (as for the claw)
 const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1", "peace": "2"}
 
@@ -74,6 +78,7 @@ var step := ""
 var wait_left_s := 0.0
 var wait_s := 15.0
 ## how many requests went out (the tests count them)
+var resets_sent := 0
 var grabs_sent := 0
 var delivers_sent := 0
 
@@ -98,7 +103,7 @@ func enabled() -> bool:
 ## The backend's sequence is (or is about to be) running for this script: the hand and
 ## the keys do not move the crane meanwhile.
 func busy() -> bool:
-	return state in ["AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2"]
+	return state in ["RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2"]
 
 func faulted() -> bool:
 	return state == "FAULT"
@@ -108,9 +113,28 @@ func faulted() -> bool:
 func on_stop() -> void:
 	if not busy():
 		return
-	var pending := _rid if _rid_what == "grab" else ""
+	var pending := _rid if _rid_what in ["grab", "reset"] else ""
 	_fault("ストップした")
 	_stopped_rid = pending
+
+## A game starts (the practice, the countdown): the backend is asked to bring the arm to
+## its start (the claw open, the arm at the top), whatever height it was left at. Only from
+## MANUAL_XY, once per call; a refusal (not calibrated, an alarm, ...) is only said. Returns
+## true when the request went out.
+func request_reset() -> bool:
+	if state != "MANUAL_XY" or not send.is_valid():
+		return false
+	var rid := str(send.call("easy_reset", {}))
+	if rid == "":
+		return false
+	resets_sent += 1
+	_forget()
+	note = ""
+	_rid = rid
+	_rid_what = "reset"
+	_rid_left = request_timeout_s
+	_set_state("RESET")
+	return true
 
 ## A new round, or staff: out of FAULT. Nothing is sent; the backend still refuses
 ## whatever is not in order (an alarm, no homing, ...), and the hand starts from neutral.
@@ -175,7 +199,19 @@ func on_ack(rid: String, ok: bool, data: Dictionary) -> void:
 	_rid = ""
 	_rid_what = ""
 	var reason := str(data.get("reason", ""))
-	if what == "grab":
+	if what == "reset":
+		if state != "RESET":
+			return
+		if ok and str(data.get("grab_id", "")) != "":
+			grab_id = str(data.grab_id)  # this run's id: its report is followed like a catch's
+		elif ok or reason in ["timeout", "socket_closed"]:
+			_fault("じゅんびの へんじが こない（%s）" % (reason if reason != "" else "?"))
+		else:
+			# refused before anything moved: the hand has the crane; why is said
+			_forget()
+			note = refusal_text(reason)
+			_set_state("MANUAL_XY")
+	elif what == "grab":
 		if state != "AUTO_GRAB":
 			return
 		if ok and str(data.get("grab_id", "")) != "":
@@ -213,7 +249,7 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 			# left in the middle (the title, the mode switched off): the crane must not go on
 			# alone. soft_stop ends the backend's sequence in its safe state (ABORT).
 			send.call("soft_stop", {})
-			if _rid_what == "grab":
+			if _rid_what in ["grab", "reset"]:
 				_stopped_rid = _rid
 		if state != "OFF":
 			_forget()
@@ -237,14 +273,14 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 			var what := _rid_what
 			_rid = ""
 			_rid_what = ""
-			_fault("%sの へんじが こない" % ("キャッチ" if what == "grab" else "はこぶ"))
+			_fault("%sの へんじが こない" % {"grab": "キャッチ", "reset": "じゅんび"}.get(what, "はこぶ"))
 			return
 	var status: Dictionary = world.get("status", {}) if world.get("status") is Dictionary else {}
 	var link := bool(world.get("link", false))
 	match state:
 		"MANUAL_XY":
 			_tick_manual(dt, sgn, hand, world, status)
-		"AUTO_GRAB":
+		"RESET", "AUTO_GRAB":
 			if not link:
 				_fault("つうしんが きれた")
 			elif grab_id != "":
@@ -393,7 +429,11 @@ func _follow(status: Dictionary) -> void:
 				destination = int(status.get("destination", 0))
 				_set_state(bs)
 		"MANUAL_XY":
-			if state.begins_with("DELIVER_DIAL_") and str(status.get("last_result", "")) == "done" \
+			if state == "RESET" and str(status.get("last_result", "")) == "done" and not bool(status.get("active", false)):
+				_forget()
+				note = ""
+				_set_state("MANUAL_XY")
+			elif state.begins_with("DELIVER_DIAL_") and str(status.get("last_result", "")) == "done" \
 					and not bool(status.get("active", false)):
 				var dest := int(status.get("destination", destination))
 				_forget()
@@ -434,6 +474,8 @@ static func fault_text(error: String) -> String:
 ## The big line for the screen.
 func title_text() -> String:
 	match state:
+		"RESET":
+			return "じゅんびちゅう…（アームを うえへ）"
 		"AUTO_GRAB":
 			return "じどうで キャッチちゅう…"
 		"WAIT_DESTINATION":
