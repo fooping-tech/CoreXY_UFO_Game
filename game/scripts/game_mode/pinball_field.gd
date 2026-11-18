@@ -149,8 +149,12 @@ var powerup_life_s := 8.0
 var powerup_first_s := 5.0
 var _powerup_wait := 5.0
 var _powerup_left := 0.0
-var _powerup_index := 0
 var _powerup_area: Area2D
+## which item comes: its share of the weights (0 = never); and how likely one comes at all
+## when its time is up (else the wait starts again)
+var powerup_weights := {"speed": 1.0, "multiball": 1.0, "double": 1.0}
+var powerup_chance := 1.0
+var _power_rng := RandomNumberGenerator.new()
 var _rng := RandomNumberGenerator.new()
 var _t := 0.0
 
@@ -158,7 +162,27 @@ func configure_powerups(cfg: Dictionary) -> void:
 	powerup_spawn_s = clampf(float(cfg.get("spawn_interval_s", powerup_spawn_s)), 2.0, 120.0)
 	powerup_life_s = clampf(float(cfg.get("item_life_s", powerup_life_s)), 1.0, 30.0)
 	powerup_first_s = clampf(float(cfg.get("first_spawn_s", powerup_first_s)), 0.1, 120.0)
+	powerup_chance = clampf(float(cfg.get("spawn_chance", powerup_chance)), 0.0, 1.0)
+	var w: Dictionary = cfg.get("weights", {}) if cfg.get("weights") is Dictionary else {}
+	for kind in POWERUP_KINDS:
+		var v = w.get(kind, powerup_weights[kind])
+		powerup_weights[kind] = maxf(float(v), 0.0) if (v is float or v is int) else 1.0
+	_power_rng.seed = int(cfg.get("seed", 188))
 	_powerup_wait = powerup_first_s
+
+## One of the kinds by its weight ("" = every weight is 0: nothing comes).
+func pick_powerup() -> String:
+	var total := 0.0
+	for kind in POWERUP_KINDS:
+		total += float(powerup_weights[kind])
+	if total <= 0.0:
+		return ""
+	var x := _power_rng.randf() * total
+	for kind in POWERUP_KINDS:
+		x -= float(powerup_weights[kind])
+		if x < 0.0:
+			return kind
+	return POWERUP_KINDS[-1]
 
 func set_powerups_enabled(on: bool) -> void:
 	if not on and powerup_enabled:
@@ -183,10 +207,12 @@ func _advance_powerup(dt: float) -> void:
 	_powerup_wait -= dt
 	if _powerup_wait > 0.0:
 		return
-	var index := _powerup_index
-	_powerup_index += 1
-	powerup_kind = POWERUP_KINDS[index % POWERUP_KINDS.size()]
-	powerup_pos = POWERUP_SPOTS[index % POWERUP_SPOTS.size()]
+	var kind := pick_powerup() if _power_rng.randf() < powerup_chance else ""
+	if kind == "":
+		_powerup_wait = powerup_spawn_s  # not this time
+		return
+	powerup_kind = kind
+	powerup_pos = POWERUP_SPOTS[_power_rng.randi() % POWERUP_SPOTS.size()]
 	_powerup_area.position = powerup_pos
 	_powerup_left = powerup_life_s
 
@@ -355,28 +381,28 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 
 ## Split a single *virtual* ball. All children share the one physical Dial/capsule,
 ## which is released only once by GameModeController after its last child exits.
-func split_capsule(id: String, ids: Array[String]) -> void:
-	# A power-up may be collected inside Area2D.body_entered, while the physics
-	# server is flushing queries: never add new RigidBody2D nodes in that callback.
-	if Engine.is_in_physics_frame():
-		call_deferred("_split_capsule_now", id, ids)
-	else:
-		_split_capsule_now(id, ids)
-
-func _split_capsule_now(id: String, ids: Array[String]) -> void:
+## Returns the ids of the balls that were really made. Never called from a physics callback
+## (Area2D.body_entered: the physics server is flushing its queries, and no RigidBody2D may
+## be added there): GameModeController calls it from its tick.
+func split_capsule(id: String, ids: Array[String]) -> Array[String]:
+	var made: Array[String] = []
 	if not _capsules.has(id):
-		return
+		return made
 	var src: Dictionary = _capsules[id]
 	var original: RigidBody2D = src.body
 	for i in ids.size():
 		var child_id := ids[i]
+		if _capsules.has(child_id):
+			continue
 		spawn_capsule(child_id, original.position.x, src.color)
 		if not _capsules.has(child_id):
 			continue
+		made.append(child_id)
 		var child: RigidBody2D = _capsules[child_id].body
 		child.position = original.position + Vector2(-26.0 if i == 0 else 26.0, -10.0)
 		child.linear_velocity = original.linear_velocity.rotated(-0.45 if i == 0 else 0.45) + Vector2(-120.0 if i == 0 else 120.0, -90.0)
 		_capsules[child_id].age = src.age
+	return made
 
 func remove_capsule(id: String) -> void:
 	if not _capsules.has(id):
@@ -392,7 +418,6 @@ func clear() -> void:
 	set_powerups_enabled(false)
 	_powerup_wait = powerup_first_s
 	_powerup_left = 0.0
-	_powerup_index = 0
 	switch_lit = [false, false, false]
 	jackpot_on = false
 	star_left = 0.0

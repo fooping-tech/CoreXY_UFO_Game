@@ -705,27 +705,66 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | 2026-11-16 | v0.3（初版） | `f98999f`（`pc/` のコピー元。`__init__.py` に記録） | 1 | 既存のコマンド・イベントだけで実装。`pc/protocol.py` を `1302bac` → `f98999f` に更新（`DialState.SETTINGS` の追加だけ）。LED の契約（`docs/game-mode-interface.md`）は未作成 |
 | 2026-11-16 | v0.3（LED 契約の取り込み） | `e965cdf`（UFO-DeviceHub PR #9。`pc/` 一式をコピーし直し: `protocol.py` `device_gateway.py` `mock_hub.py`、新規 `trace.py` `game_mode.py`） | 1（追加のみ。ファームウェア 0.3） | `SET_DIAL_COLOR` / `SET_DIAL_EFFECT` を §8 の表のとおり送る。号機色の初期値を DeviceHub の既定色に合わせた。`RELEASE_DONE` が来ないときは契約 §7 のとおり `GET_STATUS` で確かめる。既存コマンド・イベントの意味は変わっていない。Mock のみ・実機未検証 |
 | 2026-11-17 | v0.3（変更なし） | `a402c37`（UFO-DeviceHub PR #10、main にマージ済み。`tools/devicehub.pin`） | 1（変更なし） | #159: `pc/` のコピーをやめ、UFO-DeviceHub の Python パッケージ `ufo-devicehub` を依存として使う。コマンド・イベント・LED の契約は同じ。UFO-DeviceHub 側の追加は PC 側だけ（開かないポートの指定、排他、つながらない理由の取得） |
+| 2026-11-18 | v0.4（Dial の再排出） | `6983f64`（UFO-DeviceHub PR #11、main にマージ済み。`tools/devicehub.pin`） | 1（変更なし。Dial ファームウェア 0.4） | #185 の再排出（COMPLETE でスイッチ ON のままなら `RELEASE_BALL` を受ける）の模擬を含むコミットへ更新。#188 のパワーアップは既存のコマンドだけを使う（MULTI BALL = `SET_DIAL_EFFECT` COMET / FRONT / NORMAL、DOUBLE SCORE = `SET_LIGHT_MODE` CUSTOM 金色）。契約への追記は UFO-DeviceHub の `docs/game-mode-interface.md` §6.3（別 PR。ゲームの動作には不要）。Mock のみ・実機未検証 |
 
 
 ## 14. パワーアップ（#188、展示用初期値）
 
-### アイテム出現と効果
-- PLAYING中のみ: 最初5秒後、その後12秒間隔。フィールド中に最大1個。出現後8秒で消える。出現順は SPEED UP → MULTI BALL → DOUBLE SCORE を循環。判定は `PinballField` の `Area2D`（物理衝突なし）。リセット・停止でアイテムは消える。
-- **SPEED UP!**: 10秒。Gameの入力処理がキーボード・手のXY速度を通常40 mm/sから最大60 mm/sへ変更。実機は `backend.jog_max_mm_s` を超えず、ジョグの端5 mm減速、Z、安全停止、Easyの自動搬送は変えない。実機で速度確認するまで60 mm/sより高く設定しない。ゲームフェーズから毎フレーム算出するため、タイムアップ・停止・タイトル復帰でブーストは必ず解除される。
-- **MULTI BALL!**: 実物Dialに入った1カプセルに対し、Godotの仮想ボールを3個に分裂させる。3個の得点を集計するが、同じ物理カプセルの `cycle` / `command_id` は共有し、**最後の仮想ボールが出るまで実物を排出しない**。最後に元のDialへ1回の論理排出を依頼。#185の限定再試行は排出センサー確認後に限る。
-- **DOUBLE SCORE!**: 15秒、盤面のヒットとゴール得点が2倍（コンボ倍率と乗算）。リザルト時に別計算するカプセル・コンボ等のボーナスは2倍にしない。再取得は15秒へ更新（乗算しない）。
-- MULTI BALLとDOUBLE SCORE、SPEED UPは同時発動可能。タイマーは別々。パワーアップ取得自体に点数は付かない。
-- 数値と出現間隔は `config/game_config.json#game_mode.powerups` から変更可能。展示テストで調整する。
+値はすべて `config/game_config.json` の `game_mode.powerups`（調整値）。
+
+### アイテムの出現
+- `PLAYING` の間だけ出る。GO の `first_spawn_s`（5 秒）後に最初の 1 個、そのあとは取られるか消えてから `spawn_interval_s`（12 秒）ごと。盤面には一度に 1 個で、`item_life_s`（8 秒）で消える。
+- 時間が来たとき `spawn_chance`（0〜1、既定 1）の確率で出る。出なければ次の間隔を待つ。
+- 種類は `weights`（`speed` / `multiball` / `double`、既定 1 : 1 : 1）の割合で決まる。0 の種類は出ない。全部 0 なら何も出ない。場所は 3 か所のどれか。乱数の種は固定（`seed`、既定 188）なので、同じ設定なら同じ順番になる。
+- 判定は `PinballField` の `Area2D`（ボールを止めない）。1 個のアイテムは 1 回だけ取れる。リセット・停止でアイテムは消える。
+
+### 効果
+- **SPEED UP!**: `duration_s.speed`（10 秒）。手のスティックと矢印キーの XY 速度が `speed.boost_mm_s`（100 mm/s）まで上がる。取っていないときはゲームの外と同じ（手は `gesture.joystick.max_speed_mm_s` = 60 mm/s、キーはいつもの速さ）。Z、かんたんモードの自動搬送は変わらない。
+  - 実機では、速度を許すのはバックエンド。ゲームは取った瞬間に `jog_boost {seconds}` を送り、バックエンドはその秒数だけ JOG の上限を `backend.jog_max_mm_s`（60）から `backend.jog_boost_mm_s`（100）へ上げる。**期限はバックエンドが持ち、自分で元へ戻す**（1 回の依頼は `backend.jog_boost_max_s` = 30 秒まで）。`stop`（緊急停止）、モーター無効、最後のクライアントの切断ですぐ終わる。`soft_stop` は動きを止めるだけで上限は戻さない（手を見失ったとき・ウィンドウが外れたときにゲームが送る。手が戻れば同じ効果の続きなので、ここで戻すと画面は SPEED UP のまま実機だけ遅くなる）。ゲームは効果が早く終わったとき（Space での停止、タイムアップ、タイトル）に `jog_boost {seconds: 0}` を送る。
+  - 端 5 mm のマージンと減速（`jog_edge_margin_mm` / `jog_edge_slow_s`）、デッドマン、ファームウェアのソフトリミットはそのまま。`backend.jog_boost_mm_s` がない（または `jog_max_mm_s` 以下の）バックエンドは `jog_boost` を断り、実機は 60 mm/s のまま動く。
+  - **100 mm/s は実機未検証**（ファームウェアの JOG の上限はそれより上）。
+- **MULTI BALL!**: 実物の 1 カプセルに対して、画面のボールを 3 個にする。3 個の得点を合計するが、実物の `cycle` / `command_id` は 1 つのままで、**最後のボールが盤面を出るまで排出しない**。最後に元の Dial へ 1 回だけ排出を頼む（#185 の再排出の条件は同じ）。1 カプセルにつき 1 回。
+  - 分裂は取った次の tick で行う（物理のコールバックの中では物体を足せない）。そのときボールがもう盤面にいなければ分裂しない。
+  - コントローラは「実際に盤面に置いたボール」の一覧を持ち、毎 tick 盤面と照らす。出たという知らせなしにボールが盤面から消えても、一覧が空になった時点でカプセルは Dial へ戻る（戻らないまま待つことはない）。Dial が FAULT になったら、そのカプセルのボールは全部消える。
+- **DOUBLE SCORE!**: `duration_s.double`（15 秒）。盤面のヒットとゴールの得点が 2 倍（コンボ倍率と掛け算）。リザルトのボーナスは 2 倍にしない。取り直すと 15 秒に戻る（重ねない）。`SETTLING` に入っても残り時間のぶんは続く。
+- 3 種類は同時に効く。タイマーは別々。アイテムを取ること自体に点数はない。
 
 ### 大きな告知・効果音
-- 取得時に画面中央付近へ `SPEED UP!` / `MULTI BALL!` / `DOUBLE SCORE!` を大きなドット文字で約1.35秒表示し、短い画面シェイク、火花と専用シンセSFXを同じ取得イベントから開始する。通知が重なった場合はキューに順に表示（最大3つ）。
-- 効果中はフィールド上部に残り時間、マルチボールでは残球数を表示。描画・SE・照明の失敗は得点や物理シミュレーションを止めない。
+- 取った瞬間、盤面の中ほど（かんたんモードのパネルの下）に `SPEED UP!` / `MULTI BALL!` / `DOUBLE SCORE!` を大きなドット文字で約 1.35 秒出し、短い画面シェイク、火花、専用の合成音を同じイベントから始める。重なったら順番に出す（待ちは 3 つまで）。
+- 取った音の間、BGM を `duck_db`（-8 dB）だけ `duck_s`（0.7 秒）下げる。フェードはしない（#181。段で下げて段で戻す）。声のための下げ幅のほうが大きければそちらが効く。
+- 効果中は盤面の上に残り時間（MULTI BALL は残りの球数）を小さく出す。かんたんモードの帯・パネルが出ているときはその下に出す。
 
-### 物理LEDとの連動
-- MULTI BALL: 対応Dialの**前面**LEDに `SET_DIAL_EFFECT COMET` (`target=FRONT`, `priority=BACKGROUND`) を送り、Godot側の対応ポータルを3重回転表示。転送用LED、受取・排出・STOP_ALL・FAULTの既存優先順位を侵害しない。点灯中もカプセルは1個だけ。
-- DOUBLE SCORE: Illumination ATOMへ `SET_LIGHT_MODE CUSTOM`、金色RGB(255,174,32)と呼吸アニメを指示。15秒経過後は `GAME_PLAY`（通常の虹）へ戻す。異常時はERROR側の優先順位を尊重し、リレー／ミスト制御は変えない。
-- LED実機の消費電流・明るさ・向き・同時サーボ動作は未検証。展示前に確認する。
+### 展示スペースの照明（状態から決める）
+イルミの基本モード（`SET_LIGHT_MODE`）は、**ゲームの状態だけから決まる**（`GameModeController.light_mode_for`）。「どこへ戻すか」は覚えない。送るのは 1 か所（`_sync_light`）で、状態が求めるモードが最後に送ったものと違うときだけ送る。
 
-### 受け入れテストと未検証事項
-- Godot headless: タイマーの独立性・再取得・リセット・得点2倍・同時取得防止・仮想3球・通知キューを検証。
-- 実機での確認が必要: XYブースト中の脱調・原点付近の余裕・緊急停止、左右Dialの3球排出待ち、前面LED・照明の電流と同期、長時間耐久、異常時の復帰。
+| 状態 | モード |
+|---|---|
+| `COUNTDOWN` | `GAME_READY` |
+| `PLAYING` / `SETTLING`、DOUBLE SCORE 中 | `CUSTOM` 金色 (255,174,32)、呼吸 |
+| `PLAYING` / `SETTLING`、残り `hurry_s`（30 秒）以下 | `GAME_PLAY` 速い虹（明るさ 220、速さ 230） |
+| `PLAYING` / `SETTLING`、それ以外 | `GAME_PLAY` 虹（明るさ 180、速さ 128） |
+| `RESULT` | `RESULT` |
+| それ以外（タイトル、練習、停止） | ゲームからは送らない |
+
+上の行が優先。だから、残り 30 秒の途中で DOUBLE SCORE が切れたら**速い虹**に戻り、金色の途中で残り 30 秒になっても金色のまま。一瞬の演出（`TRIGGER_EFFECT`）は今までどおり別に送る。
+
+### Dial の LED
+- MULTI BALL: そのカプセルの Dial の**前面** LED に `SET_DIAL_EFFECT COMET`（`direction=TO_DIAL`、`target=FRONT`、`priority=NORMAL`、`duration_ms=0`）。画面の同じ側のポータルは 3 重の輪になる。受け取りの演出（NORMAL）を置き換えられるよう NORMAL で送る。最後のボールが出たときの `RETURN_FLOW`（`BOTH`）が置き換えて終わる。FAULT（HIGH）、`STOP_ALL` はいつもどおり勝つ。契約は UFO-DeviceHub の `docs/game-mode-interface.md` §6.3。
+
+### 切り替え・確認用のキー
+| 設定 | false にすると |
+|---|---|
+| `enabled` | アイテムが出ない |
+| `notice` | 大きな告知・火花・シェイクが出ない（小さな残り時間は出る） |
+| `sounds` | 取った音が鳴らない。BGM も下げない |
+| `lights` | Dial の前面 LED と金色の照明を送らない（照明は虹のまま） |
+| `debug_keys` | 下のキーが効かない |
+
+どれを切っても、効果そのもの（速度・3 球・2 倍）は働く。機器への命令が失敗しても得点と物理は止まらない。
+
+プレイ中のキー（スタッフ・開発用）: **F2** = SPEED UP、**F3** = MULTI BALL（盤面にボールが必要）、**F4** = DOUBLE SCORE を今すぐ取る。アイテムに触れたときと同じ経路を通る。
+
+### テストと未検証事項
+- Godot headless: タイマー、取り直し、リセット、2 倍、1 個は 1 回、重み・確率、3 球と排出 1 回、消えたボール・分裂前に出たボール・FAULT、照明の状態表、切り替え設定、キー、BGM の下げ。
+- backend: `jog_boost`（上限、期限切れ、stop / モーター無効 / 切断で終了、soft_stop では続く、端のマージン、設定の読み込み）。
+- **実機未検証**: 100 mm/s での脱調・揺れ・端での止まり方、緊急停止、左右 Dial の 3 球待ち、前面 LED と照明の明るさ・電流・サーボとの同時動作、長時間の動作。

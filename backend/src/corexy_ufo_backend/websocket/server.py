@@ -148,7 +148,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_
             "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
             "calibration_prepare", "calibration_prepare_status",
             "easy_grab", "easy_reset", "easy_deliver", "easy_cancel", "easy_status", "easy_dial_set", "easy_dial_confirm",
-            "easy_goto",
+            "easy_goto", "jog_boost",
             *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover", "easy_goto")
 # Never queued behind another command of the same connection: a stop must reach
@@ -158,7 +158,7 @@ MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", 
 # 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
 CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "devicehub_meta", "devicehub_devices", "devicehub_status",
                         "devicehub_diag")
-PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "jog_boost", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status", "calibration_prepare_status",
                      "easy_deliver", "easy_cancel", "easy_status")
@@ -522,6 +522,8 @@ class GameServer:
                 if self.homework is not None:
                     await self.homework.stop(session_id)
             log.info("client disconnected (%d)", len(self.clients))
+            if not self.clients:
+                self.robot.jog_boost(0)  # #188: nobody left who asked for the SPEED UP
             if self._jog_owner is ws:
                 log.warning("the jogging client disconnected: stopping the jog")
                 await self._end_jog()
@@ -801,15 +803,23 @@ class GameServer:
                 if not bool(params.get("enable", False)):
                     for s in self.sequences:
                         await s.seq.abort(f"motors disabled during {s.during}")
+                if not bool(params.get("enable", False)):
+                    self.robot.jog_boost(0)
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
+                self.robot.jog_boost(0)  # #188: a stop ends the SPEED UP too
                 # flag first (no new step can start), then ABORT without any wait in between
                 for s in self.sequences:
                     await s.seq.abort("emergency stop (stop)", send_stop=False)
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
+                # #188: the SPEED UP's cap is NOT ended here. The game sends soft_stop whenever
+                # the hand is lost or the window loses focus, and goes on with the same power
+                # when the hand is back: ending it here left the screen saying SPEED UP while
+                # the crane was at its usual cap. Its deadline still ends it; so do the
+                # emergency stop, motors off, the game's jog_boost 0 and the last client leaving.
                 for s in self.sequences:
                     if s.seq.active:
                         if s.seq is self.easy and self.easy.stop_waiting("stopped (soft_stop)"):
@@ -830,6 +840,24 @@ class GameServer:
                     return self._nack(name, "busy: another motion command is running")
                 # z_free: the game's 校正 tab measuring Z again (#102), past the measured range
                 await self.robot.jog(vx, vy, vz, z_free=params.get("z_free") is True)
+            elif name == "jog_boost":
+                # #188 (SPEED UP): the jog's XY cap is backend.jog_boost_mm_s for `seconds`
+                # (at most backend.jog_boost_max_s), then the usual one again by itself: the
+                # deadline is kept here, so a game that dies cannot leave it raised. It moves
+                # nothing; the edge margin, the dead-man and the stops are as always. Ended at
+                # once by stop (the emergency stop), motors off, seconds 0 and the last client
+                # leaving; a soft_stop only stops the motion (the game sends 0 when the power ends).
+                try:
+                    seconds = float(params.get("seconds", 0.0))
+                except (TypeError, ValueError):
+                    return self._nack(name, "bad params: seconds must be a number")
+                if not math.isfinite(seconds):
+                    return self._nack(name, "bad params: seconds must be a number")
+                if seconds > 0 and self.robot.jog_boost_mm_s <= 0:
+                    return self._nack(name, "no jog boost is configured (backend.jog_boost_mm_s)")
+                lasts = self.robot.jog_boost(seconds)
+                return self._ack(name, {"seconds": round(lasts, 2),
+                                        "cap_mm_s": self.robot.jog_boost_mm_s if lasts > 0 else 0.0})
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
             elif name == "z_zero":
@@ -1246,6 +1274,8 @@ class GameServer:
             return not any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
         if name == "enable_motors":
             return not bool(params.get("enable", False))
+        if name == "jog_boost":  # #188: only a cap for the next jogs; it moves nothing
+            return True
         return False
 
     @staticmethod

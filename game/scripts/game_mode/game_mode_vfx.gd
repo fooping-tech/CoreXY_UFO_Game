@@ -82,6 +82,9 @@ var _banner := {"text": "", "t": 9.0, "level": 0}
 var _power_notice := {"text": "", "kind": "", "t": 9.0}
 var _power_queue: Array[Dictionary] = []
 var power_status: Array[String] = []
+## where the small timers start, from the field's top (lower while the easy mode's strip or
+## panel is there)
+var power_top := 12.0
 var power_portals := {"left": false, "right": false}
 ## false: the pop-ups do not jump or blink (a debug switch)
 var effects := true
@@ -455,7 +458,8 @@ func _draw_top() -> void:
 		var size := minf(7.5, 660.0 / maxf(PixelText.width(word, 1.0), 1.0))
 		if effects:
 			size *= 1.12 if t < 0.12 else 1.0 + 0.025 * sin(t * 28.0)
-		var centre := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 235.0)
+		# under the easy mode's panel (#169, down to FIELD_TOP + 200)
+		var centre := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 330.0)
 		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 170)), Color(0.015, 0.025, 0.09, 0.87))
 		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 5)), col)
 		PixelText.draw_centered(top, word, centre + Vector2(4, 4), size, Color("050818"))
@@ -471,7 +475,7 @@ func _draw_top() -> void:
 	for i in power_status.size():
 		var s: String = power_status[i]
 		if PixelText.supports(s):
-			PixelText.draw_centered(top, s, Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 12.0 + 26.0 * i), 2.3, Color("ffe03c"), Color("050818"))
+			PixelText.draw_centered(top, s, Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + power_top + 26.0 * i), 2.3, Color("ffe03c"), Color("050818"))
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)

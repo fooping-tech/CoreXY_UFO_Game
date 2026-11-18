@@ -397,3 +397,118 @@ async def test_jog_stays_inside_the_edges_and_slows_towards_them(robot):
     await robot.jog(0, -40)
     assert jogs()[-1] == (0.0, -40.0)
     await robot.jog(0, 0)
+
+
+# ------------------------------------------------------------------ #188: the SPEED UP's jog boost
+async def test_jog_boost_raises_the_cap_for_a_while_and_ends_by_itself(robot):
+    robot.jog_boost_mm_s, robot.jog_boost_max_s = 100.0, 0.2
+    await robot.enable_motors(True)
+    await robot.home()
+    await robot.jog(300, 400)
+    assert fw(robot).sent[-1] == "JOG 30.0 40.0"  # no boost asked for: the usual 50 mm/s
+    assert robot.jog_boost(5.0) == pytest.approx(0.2)  # never longer than jog_boost_max_s
+    await robot.jog(300, 400)
+    assert fw(robot).sent[-1] == "JOG 60.0 80.0"  # 100 mm/s, the same direction
+    await asyncio.sleep(0.25)  # nobody ended it: the deadline did
+    await robot.jog(300, 400)
+    assert fw(robot).sent[-1] == "JOG 30.0 40.0"
+    robot.jog_boost_max_s = 30.0
+    robot.jog_boost(10.0)
+    assert robot.jog_boost(0) == 0.0 and robot.jog_boost_left() == 0.0  # ended on request
+    await robot.jog(300, 400)
+    assert fw(robot).sent[-1] == "JOG 30.0 40.0"
+
+
+async def test_jog_boost_keeps_the_edge_margin(robot):
+    robot.jog_boost_mm_s = 100.0
+    await robot.enable_motors(True)
+    await robot.home()
+    robot.jog_boost(10.0)
+    await robot.move_xy(100, 50)
+    await robot.jog(-100, 0)
+    assert fw(robot).sent[-1].split()[1:3] == ["-100.0", "0.0"]  # far from the edges: 100 mm/s
+    await robot.jog(0, 0)
+    await settle()
+    await robot.move_xy(100, 7)  # 2 mm before the line (margin 5): slowed, boost or not
+    await robot.jog(0, -100)
+    vy = float(fw(robot).sent[-1].split()[2])
+    assert -100.0 < vy < 0.0 and abs(vy) <= 2.0 / robot.cfg.jog_edge_slow_s + 1e-6
+    await robot.jog(0, 0)
+    await settle()
+    await robot.move_xy(100, 5)
+    await robot.jog(0, -100)
+    assert float(fw(robot).sent[-1].split()[2]) == 0.0
+
+
+def test_a_robot_without_a_boost_stays_at_its_cap():
+    r = MockRobot()
+    assert r.jog_boost(10.0) == 0.0 and r.jog_cap(50.0) == 50.0
+
+
+def test_jog_boost_config(tmp_path):
+    from corexy_ufo_backend.config import load_config
+    import json as _json
+
+    def cfg(backend):
+        p = tmp_path / "c.json"
+        p.write_text(_json.dumps({"backend": backend}))
+        return load_config(p)
+
+    c = cfg({"jog_max_mm_s": 60, "jog_boost_mm_s": 100, "jog_boost_max_s": 500})
+    assert c.jog_boost_mm_s == 100.0 and c.jog_boost_max_s == 60.0
+    assert cfg({"jog_max_mm_s": 60, "jog_boost_mm_s": 60}).jog_boost_mm_s is None  # not above the cap
+    assert cfg({"jog_max_mm_s": 60, "jog_boost_mm_s": "fast"}).jog_boost_mm_s is None
+    assert cfg({"jog_max_mm_s": 60}).jog_boost_mm_s is None
+
+
+async def test_server_jog_boost(server):
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        r = await _cmd(ws, "b0", "jog_boost", seconds=10)
+        assert r["type"] == "nack" and "no jog boost" in r["data"]["reason"]
+        robot.jog_boost_mm_s = 100.0
+        assert (await _cmd(ws, "b1", "jog_boost", seconds="x"))["type"] == "nack"
+        assert (await _cmd(ws, "b2", "jog_boost", seconds=float("nan")))["type"] == "nack"
+        assert robot.jog_boost_left() == 0.0
+        r = await _cmd(ws, "b3", "jog_boost", seconds=500)
+        assert r["type"] == "ack" and r["data"]["seconds"] == 30.0 and r["data"]["cap_mm_s"] == 100.0
+        assert robot.jog_cap(50.0) == 100.0
+        # it is only a cap: nothing moved, and the robot still has to be armed and homed to jog
+        assert (await _cmd(ws, "j", "jog", vx=90, vy=0))["type"] == "nack"
+        # a soft_stop (the hand was lost, the window lost the focus) stops the motion only: the
+        # game goes on with the same power, so the cap stays until its deadline
+        assert (await _cmd(ws, "s", "soft_stop"))["type"] == "ack" and robot.jog_boost_left() > 0.0
+        # the emergency stop ends it
+        assert (await _cmd(ws, "s2", "stop"))["type"] == "ack" and robot.jog_boost_left() == 0.0
+        # asked to end
+        await _cmd(ws, "b5", "jog_boost", seconds=10)
+        r = await _cmd(ws, "b6", "jog_boost", seconds=0)
+        assert r["type"] == "ack" and r["data"]["seconds"] == 0.0 and robot.jog_boost_left() == 0.0
+        # motors off ends it
+        await _cmd(ws, "b7", "jog_boost", seconds=10)
+        await _cmd(ws, "m", "enable_motors", enable=False)
+        assert robot.jog_boost_left() == 0.0
+        await _cmd(ws, "b8", "jog_boost", seconds=10)
+        assert robot.jog_boost_left() > 0.0
+    # the last client left: nobody could end it, so the server did
+    for _ in range(100):
+        if robot.jog_boost_left() == 0.0:
+            break
+        await asyncio.sleep(0.02)
+    assert robot.jog_boost_left() == 0.0
+
+
+async def test_server_jog_at_the_boosted_speed(server):
+    srv, robot, port = server
+    robot.jog_boost_mm_s = 100.0
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _cmd(ws, "e", "enable_motors", enable=True)
+        await _cmd(ws, "h", "home")
+        await _cmd(ws, "j1", "jog", vx=90, vy=0)
+        assert robot._jog_cap[0] == pytest.approx(50.0)
+        await _cmd(ws, "b", "jog_boost", seconds=5)
+        await _cmd(ws, "j2", "jog", vx=90, vy=0)
+        assert robot._jog_cap[0] == pytest.approx(90.0)
+        await _cmd(ws, "j3", "jog", vx=300, vy=0)
+        assert robot._jog_cap[0] == pytest.approx(100.0)
+        await _cmd(ws, "j4", "jog", vx=0, vy=0)

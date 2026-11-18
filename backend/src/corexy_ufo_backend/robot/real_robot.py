@@ -989,7 +989,7 @@ class RealRobot(RobotInterface):
         # connected, motors enabled, no alarm, no move running; XY also needs homing
         self._require(homed=bool(vx_mm_s or vy_mm_s))
         speed = math.hypot(vx_mm_s, vy_mm_s)
-        cap = max(self.cfg.jog_max_mm_s, 0.0)
+        cap = self.jog_cap(max(self.cfg.jog_max_mm_s, 0.0))
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
         vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s)
