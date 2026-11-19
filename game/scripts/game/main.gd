@@ -1355,8 +1355,8 @@ func _easy_send(name: String, params: Dictionary) -> String:
 ## The backend's carry ended over a Dial. The Dial's own BALL_RECEIVED is what counts; with
 ## a simulated crane and simulated Dials the score game gives the mock Dial its capsule.
 func _on_easy_delivered(destination: int) -> void:
-	if game_mode != null:
-		game_mode.easy_delivered("left" if destination == 1 else "right", ws.server_robot != "real")
+	if game_mode != null and destination == 1:
+		game_mode.easy_delivered("left", ws.server_robot != "real")  # Dial 1 is the only one (#200)
 
 func _on_easy_cue(name: String) -> void:
 	match name:

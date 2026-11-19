@@ -57,8 +57,8 @@ const BANNER_COLORS := [Color("3ff0ff"), Color("3ff0ff"), Color("ffe03c"), Color
 ## the light to the Dial during a release ends with the port; this only bounds it
 const RELEASE_STREAM_MAX_S := 12.0
 
-## UFO-DeviceHub's default unit colours (the Dials' LEDs): cyan and magenta
-var colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
+## UFO-DeviceHub's default unit colour of Dial 1 (its LEDs): cyan
+var colors := {"left": Color("00ffff")}
 var ufo_pos := Vector2(GameModeLayout.CX, GameModeLayout.UFO_Y)
 var ufo_visible := true
 ## normal / hurry / over / happy / sad / stopped (the controller sets it from the round)
@@ -71,9 +71,9 @@ var _faces_tex: Texture2D
 ## "moment:side", newest last (tests, the debug view)
 var played: Array[String] = []
 ## side -> the port's looping sheet while it is open (freed ones are checked for)
-var _port_fx := {"left": null, "right": null}
-var _port_open := {"left": 0.0, "right": 0.0}
-var _port_want := {"left": 0.0, "right": 0.0}
+var _port_fx := {"left": null}
+var _port_open := {"left": 0.0}
+var _port_want := {"left": 0.0}
 var _flights: Array[Dictionary] = []
 var _streams: Array[Dictionary] = []
 var _popups: Array[Dictionary] = []
@@ -85,7 +85,7 @@ var power_status: Array[String] = []
 ## where the small timers start, from the field's top (lower while the easy mode's strip or
 ## panel is there)
 var power_top := 12.0
-var power_portals := {"left": false, "right": false}
+var power_portals := {"left": false}
 ## false: the pop-ups do not jump or blink (a debug switch)
 var effects := true
 var _marks: Array[Dictionary] = []
@@ -106,8 +106,8 @@ func _ready() -> void:
 		_faces_tex = load(UFO_FACES_SHEET)
 
 func reset() -> void:
-	_port_open = {"left": 0.0, "right": 0.0}
-	_port_want = {"left": 0.0, "right": 0.0}
+	_port_open = {"left": 0.0}
+	_port_want = {"left": 0.0}
 	_flights.clear()
 	_streams.clear()
 	_popups.clear()
@@ -115,13 +115,13 @@ func reset() -> void:
 	_power_notice = {"text": "", "kind": "", "t": 9.0}
 	_power_queue.clear()
 	power_status.clear()
-	power_portals = {"left": false, "right": false}
+	power_portals = {"left": false}
 	_react = ""
 	reactions.clear()
 	ufo_mood = "normal"
 	_marks.clear()
 	played.clear()
-	_port_fx = {"left": null, "right": null}
+	_port_fx = {"left": null}
 	for c in get_children():
 		if c.is_in_group("vfx"):
 			VFXManager.stop_fx(c)

@@ -4,11 +4,11 @@ extends RefCounted
 ##
 ##   pinch and move        XY (the hand stick, as ever; nothing of this script)
 ##   a fist held hold_s    catch here by itself          -> the backend's `easy_grab`
-##   one finger held       carry to Dial 1 (the left)    -> `easy_deliver {destination: 1}`
-##   two fingers held      carry to Dial 2 (the right)   -> `easy_deliver {destination: 2}`
+##   one finger held       carry to the portal (Dial 1, on the left) -> `easy_deliver {destination: 1}`
+##   (#200: the portal is on the left only. Two fingers mean nothing any more.)
 ##
 ##   OFF -> MANUAL_XY --fist--> AUTO_GRAB --(the backend caught)--> WAIT_DESTINATION
-##       --one / two fingers--> DELIVER_DIAL_1 / 2 --(the backend delivered)--> MANUAL_XY
+##       --one finger--> DELIVER_DIAL_1 --(the backend delivered)--> MANUAL_XY
 ##   MANUAL_XY --request_reset() (a game starts)--> RESET --(the backend: claw open, arm at
 ##       the top)--> MANUAL_XY. The easy mode cannot raise the arm by hand, so every game
 ##       starts from there (#177). A fist with the arm down needs nothing here: the backend's
@@ -47,14 +47,14 @@ extends RefCounted
 ##   status    the backend's report (RobotState.easy_mode)
 
 signal state_changed(from: String, to: String)
-## The backend said the delivery to Dial `destination` (1 / 2) ended. Not "a capsule landed".
+## The backend said the delivery to Dial `destination` (1, the only one) ended. Not "a capsule landed".
 signal delivered(destination: int)
 ## For the sounds and UFOくん: "grab" / "caught" / "deliver" / "done" / "refused" / "fault"
 signal cue(name: String)
 
-const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL", "FAULT"]
+const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL", "FAULT"]
 const GRAB_POSES := ["fist", "thumb"]  # a fist with the thumb out is still a fist (as for the claw)
-const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1", "peace": "2"}
+const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1"}
 
 ## how long a sign must be held, unbroken (config game_mode.easy.hold_s)
 var hold_s := 0.6
@@ -72,7 +72,7 @@ var send: Callable
 var state := "OFF"
 ## why the last sign was not taken, or why it stopped (for the screen; "" = nothing)
 var note := ""
-## the sign building up now ("" / "grab" / "1" / "2") and its hold, 0..1
+## the sign building up now ("" / "grab" / "1" / "cancel") and its hold, 0..1
 var holding := ""
 var progress := 0.0
 ## the hand must show the neutral shape before a sign counts
@@ -111,7 +111,7 @@ func enabled() -> bool:
 ## The backend's sequence is (or is about to be) running for this script: the hand and
 ## the keys do not move the crane meanwhile.
 func busy() -> bool:
-	return state in ["RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL"]
+	return state in ["RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL"]
 
 func faulted() -> bool:
 	return state == "FAULT"
@@ -181,7 +181,7 @@ func _fault(why: String) -> void:
 		_set_state("FAULT")
 		cue.emit("fault")
 
-## What the hand shows, for this script: "grab" / "1" / "2" / "neutral" / "" (nothing that
+## What the hand shows, for this script: "grab" / "1" / "neutral" / "" (nothing that
 ## can be judged: no hand, a stale event, the camera gone, another shape).
 static func sign_of(hand: Dictionary) -> String:
 	if not bool(hand.get("fresh", false)) or not bool(hand.get("camera_ok", false)) or not bool(hand.get("detected", false)):
@@ -312,7 +312,7 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 				_follow(status)
 				if state == "WAIT_DESTINATION":
 					_tick_wait(dt, sgn, hand, world)
-		"DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL":
+		"DELIVER_DIAL_1", "CANCEL":
 			if not link:
 				_fault("つうしんが きれた")
 			else:
@@ -339,7 +339,7 @@ func _held(want: String, sgn: String, dt: float) -> bool:
 func _tick_manual(dt: float, sgn: String, hand: Dictionary, world: Dictionary, status: Dictionary) -> void:
 	if sgn != "grab":
 		_hold_reset()
-		if sgn in ["1", "2"] and not need_neutral:
+		if sgn == "1" and not need_neutral:
 			note = "さきに グーで キャッチしてね"
 		elif sgn == "neutral" and note == "さきに グーで キャッチしてね":
 			note = ""
@@ -412,7 +412,7 @@ func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> 
 		_rid_left = request_timeout_s
 		_set_state("CANCEL")
 		return
-	if not sgn in ["1", "2"]:
+	if sgn != "1":
 		_hold_reset()
 		return
 	if need_neutral:
@@ -431,7 +431,7 @@ func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> 
 		note = str(world.get("gate", ""))
 		return
 	if holding != "" and holding != sgn:
-		_hold_reset()  # one finger turned into two (or back): the hold starts over
+		_hold_reset()  # another hold was building up: this one starts over
 	if not _held(sgn, sgn, dt):
 		return
 	var dest := int(sgn)
@@ -473,7 +473,7 @@ func _follow(status: Dictionary) -> void:
 				note = ""
 				_set_state("WAIT_DESTINATION")
 				cue.emit("caught")
-		"DELIVER_DIAL_1", "DELIVER_DIAL_2":
+		"DELIVER_DIAL_1":
 			if state == "WAIT_DESTINATION" and _rid == "":
 				# the backend carries though this script did not ask (it cannot: one owner). Follow it.
 				destination = int(status.get("destination", 0))
@@ -534,11 +534,9 @@ func title_text() -> String:
 		"AUTO_GRAB":
 			return "じどうで キャッチちゅう…"
 		"WAIT_DESTINATION":
-			return "どっちに いれる？"
+			return "ゆび 1ぽんで ポータルへ！"
 		"DELIVER_DIAL_1":
-			return "ひだりの 1ごうきへ はこぶよ"
-		"DELIVER_DIAL_2":
-			return "みぎの 2ごうきへ はこぶよ"
+			return "ひだりの ポータルへ はこぶよ"
 		"CANCEL":
 			return "やりなおすよ（つめを ひらく）"
 		"FAULT":

@@ -279,8 +279,6 @@ func _draw() -> void:
 			_draw_easy_grab()
 		"easy_one":
 			_draw_easy_number("point", "1", -1.0, CYAN)
-		"easy_two":
-			_draw_easy_number("peace", "2", 1.0, MAGENTA)
 		"rules":
 			_draw_rules()
 		"practice":
@@ -505,7 +503,7 @@ func _draw_easy_number(pose: String, number: String, side: float, col: Color) ->
 	var dial := Vector2(360.0 + side * 190.0, 740.0)
 	_arrow(Vector2(360, 610), dial + Vector2(-side * 40.0, -70.0), YELLOW)
 	_draw_dial(dial, col, number)
-	_tag(0, "%sの %sごうき" % ["ひだり" if side < 0.0 else "みぎ", number], dial + Vector2(0, 80), col)
+	_tag(0, "ひだりの ポータル", dial + Vector2(0, 80), col)
 
 ## A Dial's port: a ring in its colour with its number.
 func _draw_dial(c: Vector2, col: Color, number: String) -> void:
@@ -581,15 +579,14 @@ func _draw_rules() -> void:
 		if i < 4 and is_equal_approx(cs[i].y, cs[i + 1].y):
 			_arrow(Vector2(cs[i].x + 88.0, c.y), Vector2(cs[i + 1].x - 92.0, c.y), Color.WHITE, 4.0)
 
-## The practice capsule: the field stays in view; arrows show the two ports.
+## The practice capsule: the field stays in view; an arrow shows the port.
 func _draw_practice() -> void:
 	var waiting := ctl.practice == "open" and not ctl.practice_busy()
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		var port: Vector2 = GameModeVFX.PORTS[side]
 		var x: float = port.x
-		# over each port (Dial 1 bottom left, Dial 2 bottom right): its name, and an arrow down into it
-		# (the port carries its own name, DIAL 1 / DIAL 2, and its lane's words say "put it in here")
+		# over the port (bottom left): an arrow down into it (its lane's words say "put it in here")
 		if waiting and l.state == "READY":
 			var bounce := snappedf(absf(sin(_t * 4.0)) * 16.0, DOT)
 			_arrow(Vector2(x, port.y - 160.0 + bounce), Vector2(x, port.y - 90.0 + bounce), l.color, 8.0)

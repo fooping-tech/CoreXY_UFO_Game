@@ -19,9 +19,9 @@ const LOGO := "SUMMON THE UFO"
 const SCREEN := GameModeLayout.SCREEN
 const SCORE_RECT := GameModeLayout.SCORE_RECT
 const TIME_RECT := GameModeLayout.TIME_RECT
-const HOW_TO := ["クレーンで カプセルをつかむ", "左か右の Dial に 入れる", "ピンボールで 高得点をねらおう！"]
+const HOW_TO := ["クレーンで カプセルをつかむ", "左の ポータル（Dial）に 入れる", "ピンボールで 高得点をねらおう！"]
 ## the easy mode's three cards (#169): what the hand does there, each with its hand
-const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "ゆび 1ぽん＝ひだり　2ほん＝みぎ へ じどうで はこぶ", "ピンボールで 高得点をねらおう！"]
+const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "ゆび 1ぽんで ひだりの ポータルへ じどうで はこぶ", "ピンボールで 高得点をねらおう！"]
 ## the difficulty's line on the title, over START
 const MODE_RECT := Rect2(40, 712, 640, 82)
 ## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards
@@ -80,7 +80,7 @@ func setup(c: GameModeController) -> void:
 	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_message.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	for side in GameModeController.SIDES:
-		# what each Dial is doing: over its port (Dial 1 bottom left, Dial 2 bottom right)
+		# what the Dial is doing: over its port (bottom left)
 		var left: bool = side == "left"
 		var l := _label("", 20, Color.WHITE, Vector2(8.0 if left else GameModeLayout.SCREEN.x - 8.0 - 344.0, GameModeLayout.LANE_LABEL_Y - 56.0), Vector2(344, 100))
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if left else HORIZONTAL_ALIGNMENT_RIGHT
@@ -184,7 +184,7 @@ func result_lines() -> String:
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		if l.state == "FAULT":
-			lines.append("%s の Dial: %s" % ["左" if side == "left" else "右", l.fault])
+			lines.append("Dial: %s" % l.fault)
 	return "\n".join(lines)
 
 ## The colour of the clock: white, yellow for the last stretch, blinking red at the end.
@@ -251,11 +251,11 @@ func _process(dt: float) -> void:
 		_lane[side].add_theme_color_override("font_color", RED if l.state == "FAULT" else l.color)
 	var hint := "Space: 止める   Esc: タイトル"
 	if ctl.devices != null and ctl.devices.can_mock_ball():
-		hint += "   Mock: Z = 左 / M = 右に入れる"
+		hint += "   Mock: Z = Dial に入れる"
 	if ctl.phase == "TUTORIAL":
 		hint = "Space: 止める　Esc: タイトル　F6 やりなおし / F7 つぎへ / F8 とばす"
 		if ctl.practice != "" and ctl.devices != null and ctl.devices.can_mock_ball():
-			hint += "   Mock: Z / M"
+			hint += "   Mock: Z"
 	_hint.text = hint
 	_problem.text = problem_text() if ctl.phase != "TUTORIAL" or ctl.practice != "" else ""
 	_problem.position.y = (MODE_RECT.position.y - 96.0) if title else (GameModeLayout.FIELD_TOP + 70.0)
@@ -373,9 +373,9 @@ func _draw_title() -> void:
 		PixelText.draw_centered(art, str(i + 1), badge.get_center(), 2.0, DARK)
 		var ic := r.position + Vector2(70, r.size.y * 0.5 + 6.0)
 		if ctl.easy_on() and i < 2:
-			# the easy mode: the hands that do it (pinch + fist; one finger + two fingers)
-			var hands: Array = [["pinch", "fist"], ["point", "peace"]][i]
-			for j in 2:
+			# the easy mode: the hands that do it (pinch + fist; one finger)
+			var hands: Array = [["pinch", "fist"], ["point"]][i]
+			for j in hands.size():
 				GestureTutorialHud.paint_hand(art, ic + Vector2(-34.0 + 34.0 * j, -30.0), 1.5, str(hands[j]))
 		match (-1 if ctl.easy_on() and i < 2 else i):
 			0:  # a claw over a capsule

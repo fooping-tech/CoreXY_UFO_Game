@@ -3,14 +3,15 @@ extends Node
 ## SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md).
 ##
 ## The player grabs real capsules with the crane and drops them into the M5Dial on the
-## left (Dial 1, 0x20) or the right (Dial 2, 0x21) of the screen. A capsule a Dial reports
-## (BALL_RECEIVED) appears to come into the screen through that side's port, flies to
+## left of the screen (Dial 1, 0x20): the only portal (#200; there was a second one on the
+## right, Dial 2, 0x21: nothing is sent to it and nothing of it is read any more). A capsule
+## the Dial reports (BALL_RECEIVED) appears to come into the screen through its port, flies to
 ## UFOくん and is dropped from where the UFO was at that moment into the pinball field.
 ## When it leaves the field it goes back out through its own side's port, and the same
 ## Dial is told to let the real one go (RELEASE_BALL).
 ##
-## This controller owns the experience: the clock, the two lanes (one per Dial, each with
-## its own state machine), the score. It is separate from RobotState and from the crane:
+## This controller owns the experience: the clock, the lanes (one per Dial, each with its
+## own state machine; since #200 the left one only), the score. It is separate from RobotState and from the crane:
 ## it never sends a robot command and never reads the arm's position; the player keeps
 ## the usual manual controls. The devices are reached only through GameModeDevices.
 ##
@@ -38,7 +39,7 @@ func hand_holds_still() -> bool:
 	return _active and phase == "TUTORIAL" and tutorial.active() and tutorial.kind() == "pinch"
 
 ## #183: the practice's finger steps show the carry: the main scene is asked to move the arm
-## over that Dial (1 / 2). The backend moves XY only, with its own checks.
+## over the Dial (1). The backend moves XY only, with its own checks.
 signal tutorial_goto(destination: int)
 
 ## IDLE (not started) -> COUNTDOWN -> PLAYING -> SETTLING (time is up: capsules in play
@@ -65,7 +66,8 @@ const LED_ANIMATIONS := {
 }
 ## answers that mean "this firmware has no such command" (Dial 0.2: UNSUPPORTED, Hub 0.2: BAD_REQUEST)
 const LED_UNKNOWN := ["UNSUPPORTED", "BAD_REQUEST"]
-const SIDES := ["left", "right"]
+## #200: the portal is on the left only (Dial 1). The lanes stay keyed by their side.
+const SIDES := ["left"]
 
 class Lane:
 	var side := ""
@@ -232,7 +234,6 @@ var devices_wanted := "auto"
 var demo := false
 var demo_gap_s := 2.5
 var _demo_left := 1.0
-var _demo_side := 0
 
 ## The practice before the round (#149): the steps (its own state, not the round's and not
 ## the robot's), its screen and UFOくん's voice. While it runs the phase is TUTORIAL: the
@@ -405,13 +406,13 @@ func setup(m: Node) -> void:
 		var l := Lane.new()
 		l.side = side
 		var d: Dictionary = dials.get(side, {}) if dials.get(side) is Dictionary else {}
-		l.device = int(d.get("device", GameModeDevices.DIAL_1 if side == "left" else GameModeDevices.DIAL_2))
+		l.device = int(d.get("device", GameModeDevices.DIAL_1))
 		var c = d.get("color")
 		l.color = Color8(int(c[0]), int(c[1]), int(c[2])) if c is Array and c.size() == 3 else fx.colors[side]
 		fx.colors[side] = l.color
 		backdrop.side_colors[side] = l.color
 		backdrop.ports[side] = fx.port(side)
-		field.wall_colors[0 if side == "left" else 1] = l.color
+		field.wall_colors[0] = l.color  # the wall on the portal's side; the right one keeps its own neon
 		lanes[side] = l
 
 func _configure(cfg: Dictionary) -> void:
@@ -666,7 +667,7 @@ func _end_tutorial() -> void:
 	tutorial_speech.clear()
 	practice = ""
 
-## The practice capsule: both Dials are prepared and armed as in a round; the clock stays.
+## The practice capsule: the Dial is prepared and armed as in a round; the clock stays.
 func practice_begin() -> void:
 	if phase != "TUTORIAL":
 		return
@@ -774,7 +775,7 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
-	if int(step.get("goto_demo", 0)) in [1, 2]:
+	if int(step.get("goto_demo", 0)) == 1:
 		tutorial_goto.emit(int(step.goto_demo))
 	if bool(step.get("claw_demo", false)):
 		_demo_claw_closed = true
@@ -1108,8 +1109,7 @@ func _demo_tick(dt: float) -> void:
 	_demo_left -= dt
 	if _demo_left <= 0.0:
 		_demo_left = demo_gap_s
-		_demo_side = 1 - _demo_side
-		devices.mock_ball(lanes[SIDES[_demo_side]].device)
+		devices.mock_ball(lanes["left"].device)
 
 func _clock_cues() -> void:
 	if not _hurry_done and time_left <= hurry_s:
@@ -1615,8 +1615,8 @@ func _clear_powerups() -> void:
 	score.power_multiplier = 1.0
 	if fx != null:
 		fx.power_status.clear()
-		fx.set_power_portal("left", false)
-		fx.set_power_portal("right", false)
+		for side in SIDES:
+			fx.set_power_portal(side, false)
 
 func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vector2) -> void:
 	var root_id := str(_virtual_root.get(capsule_id, capsule_id))
@@ -2076,8 +2076,6 @@ func handle_key(keycode: int) -> bool:
 			return true
 		KEY_Z:
 			return _mock_ball("left")
-		KEY_M:
-			return _mock_ball("right")
 	return false
 
 ## Staff keys of the practice (function keys: not hit by accident). F6 = this step again,

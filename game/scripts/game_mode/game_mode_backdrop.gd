@@ -26,7 +26,7 @@ const MOOD_LIGHT := [Color("3ff0ff"), Color("ff4fd8"), Color("ff5a4a")]
 const GALAXY_DOTS := 160
 const BEAMS := 7
 const CONDUIT_TOP := 420.0
-## in the dark between the two ports, under the field
+## in the dark beside the port, under the field
 const PLANET := Vector2(440, 1200)
 const MOON := Vector2(286, 1190)
 ## [count, pixel size, speed px/s, alpha]
@@ -49,7 +49,7 @@ var _mood := 0.0  # urgency, eased
 var _energy := 0.0  # energy, eased
 var _galaxy: Array = []  # [pos, size, colour index]
 ## the colour of each side's conduit (the Dial's colour)
-var side_colors := {"left": Color("00ffff"), "right": Color("ff00ff")}
+var side_colors := {"left": Color("00ffff")}
 ## where each conduit starts (the port) and the field's edges
 var ports: Dictionary = GameModeLayout.PORTS.duplicate()
 var _stars: Array = []  # per layer: Array of [x, y, phase]
@@ -59,7 +59,7 @@ var _shoot := {"t": -1.0, "from": Vector2.ZERO, "dir": Vector2.ZERO}
 var _shoot_left := 3.0
 var _flash := 0.0
 var _flash_color := Color.WHITE
-var _side_glow := {"left": 0.0, "right": 0.0}
+var _side_glow := {"left": 0.0}
 var _t := 0.0
 var _rng := RandomNumberGenerator.new()
 

@@ -153,7 +153,7 @@ func faults_text() -> String:
 	for side in GameModeController.SIDES:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		if l.state == "FAULT":
-			lines.append("%s の Dial: %s" % ["左" if side == "left" else "右", l.fault])
+			lines.append("Dial: %s" % l.fault)
 	return "\n".join(lines)
 
 func keys_text() -> String:
