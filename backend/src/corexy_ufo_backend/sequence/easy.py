@@ -174,7 +174,8 @@ class EasyParams:
         return errs
 
     def as_dict(self) -> dict:
-        return {"profile": self.profile, "dial_1": list(self.dials[1]) if self.dials.get(1) else None,
+        return {"profile": self.profile,
+                **{f"dial_{n}": list(self.dials[n]) if self.dials.get(n) else None for n in DESTINATIONS},
                 "release_z": self.release_z,
                 "wait_destination_s": self.wait_destination_s, "confirmed": self.confirmed,
                 "catch_z": self.catch_z, "stale_z": self.stale_z, "saved_at": self.saved_at}

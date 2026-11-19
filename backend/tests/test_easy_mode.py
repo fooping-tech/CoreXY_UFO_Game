@@ -389,8 +389,10 @@ async def test_server_runs_catch_and_delivery_and_locks_manual_control(server, d
         # the same request again (a resend) is answered from the cache, not run again
         await ws.send(json.dumps({"type": "command", "request_id": "d1",
                                   "data": {"name": "easy_deliver", "params": {"destination": dest, "grab_id": gid}}}))
-        r = await _cmd(ws, "d2", "easy_deliver", destination=3 - dest, grab_id=gid)
-        assert r["type"] == "nack"  # a Dial that does not exist (and after the choice): refused
+        r = await _cmd(ws, "d2", "easy_deliver", destination=dest, grab_id=gid)
+        assert r["type"] == "nack"  # a second sign after the choice: refused, nothing carried twice
+        r = await _cmd(ws, "d3", "easy_deliver", destination=2, grab_id=gid)
+        assert r["type"] == "nack" and "destination must be 1" in r["data"]["reason"]  # #200: no Dial 2
         await srv.easy.wait()
         st = (await _cmd(ws, "s1", "easy_status"))["data"]
         assert st["last_result"] == "done" and st["destination"] == dest and st["state"] == "MANUAL_XY"
@@ -618,9 +620,11 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     p = srv.easy.params
     assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
     assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == 9000.0  # #194
-    # a change after the confirmation takes it back
+    # a change after the confirmation takes it back; an older version's Dial 2 leaves the file with it
+    cfg.easy_dials_path.write_text(json.dumps({**json.loads(cfg.easy_dials_path.read_text()), "dial_2": {"x": 375.0, "y": 90.0}}))
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
+    assert "dial_2" not in json.loads(cfg.easy_dials_path.read_text())
     assert (await srv.execute("easy_dial_set", {"which": "clear"}))["data"]["dials"]["dial_1"] is None
 
 

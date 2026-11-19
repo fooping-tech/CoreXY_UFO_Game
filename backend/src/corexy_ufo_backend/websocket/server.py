@@ -1163,6 +1163,7 @@ class GameServer:
             return self._nack(name, "busy: the easy mode is catching / carrying")
         which = str(params.get("which", ""))
         saved = dict(self._easy_saved() or {})
+        saved.pop("dial_2", None)  # #200: an older version's Dial 2 is not kept in the file
         s = self.robot.snapshot()
         if which == "clear":
             saved = {}
