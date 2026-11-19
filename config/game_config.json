@@ -524,6 +524,8 @@
     "z_counts_per_unit": 122.88,
     "z_sign": 1,
     "arm_open_turns": 0.5,
+    "claw_grip_tolerance_deg": 3.0,
+    "_claw_grip_note": "#192: a claw closing to its recorded closed angle (閉じる / grab / the sequences' CLOSE_CLAW) grips the capsule a little before that angle; the firmware then answers SERVO_TURN ... result=TIMEOUT ... torque=ON. When it stopped within this many degrees of the target with the torque still on, the backend takes it as a grip (not a failure). Seen on the machine: 0.6 and 0.9 deg short (7 and 10 counts). 0 = every TIMEOUT is a failure, as before; at most 15. A tuning value: a thicker object stops farther away.",
     "xy_feed_mm_min": 900,
     "xy_fast_feed_mm_min": 15900,
     "_xy_fast_feed_note": "#179: the feed (mm/min) of the automatic XY moves that are to be as quick as the machine goes: to the middle of the stage after homing, and the easy mode's carry to a Dial (game_mode.easy.real.xy_feed_mm_min overrides it there). 15900 = just under the firmware's MAX_FEED_MM_MIN (15909.9 mm/min = 265 mm/s, 1000 mm/s2; a larger feed is clamped there). null = xy_feed_mm_min. NOT yet run at this feed on the real machine (lost steps, a carried capsule swinging): lower it here if it is too much.",

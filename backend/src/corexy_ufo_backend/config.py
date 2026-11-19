@@ -53,6 +53,9 @@ class BackendConfig:
     z_counts_per_unit: float = 122.88
     z_sign: int = 1
     arm_open_turns: float = 0.5
+    # #192: a claw closing to its recorded closed angle that stops this near it (deg) with the
+    # torque still on has gripped something: not a failure. 0 = any TIMEOUT is a failure.
+    claw_grip_tolerance_deg: float = 3.0
     xy_feed_mm_min: float = 900.0
     # serial JOG speed cap (firmware recommends <= 50 mm/s = 3000 mm/min, see REPLY_FIRMWARE_JOG.md)
     jog_max_mm_s: float = 50.0
@@ -251,6 +254,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_counts_per_unit = float(b.get("z_counts_per_unit", 122.88))
     cfg.z_sign = int(b.get("z_sign", 1))
     cfg.arm_open_turns = float(b.get("arm_open_turns", 0.5))
+    cfg.claw_grip_tolerance_deg = min(max(float(b.get("claw_grip_tolerance_deg", 3.0)), 0.0), 15.0)
     cfg.xy_feed_mm_min = float(b.get("xy_feed_mm_min", 900.0))
     ff = b.get("xy_fast_feed_mm_min")
     cfg.xy_fast_feed_mm_min = float(ff) if isinstance(ff, (int, float)) and not isinstance(ff, bool) and ff > 0 else None
