@@ -350,8 +350,7 @@ class AutoCatchSequencer:
         elif step.kind == "z":
             await self.robot.move_z(step.z)
         else:
-            # the carry, at the travel height: not along one motor's line (#196)
-            await self.robot.move_xy_legs(step.x, step.y, self.params.xy_feed_mm_min)
+            await self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
 
     def _start_action(self, step: Step) -> asyncio.Task:
         return asyncio.get_running_loop().create_task(self._action_body(step))
