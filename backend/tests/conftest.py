@@ -28,6 +28,7 @@ class FakeFirmware(SerialTransport):
         self.alarm_reason = "none"
         self.test_mode = False
         self.servo_abs = {1: 1000, 2: 0}
+        self.servo_stop_short: dict[int, tuple[int, str]] = {}  # sid -> (counts short, "ON" / "OFF")
         # multi-turn tracking per servo: the firmware's flag and the servo's limits
         self.servo_tracking = {1: True, 2: True}
         self.servo_limits = {1: "0/0", 2: "0/0"}
@@ -218,6 +219,16 @@ class FakeFirmware(SerialTransport):
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over")
             else:
                 target = self.servo_abs[sid] + int(turns * 4096)
+                short = self.servo_stop_short.get(sid)
+                if short:
+                    # #192: something in the way: it stops `counts` short of the target and the
+                    # firmware gives up waiting (TIMEOUT), the torque as told (ON = still pressing)
+                    counts, torque = short
+                    actual = target - counts if turns > 0 else target + counts
+                    self.servo_abs[sid] = actual
+                    self._later(self.move_delay, f"SERVO_TURN id={sid} value={turns:.2f} result=TIMEOUT "
+                                                 f"target={target} actual={actual} ms=2233 torque={torque}")
+                    return
                 self.servo_abs[sid] = target
                 self._later(self.move_delay, f"SERVO_TURN id={sid} value={turns:.2f} result=PASS target={target} actual={target} error=+0 ms=120")
         elif name == "SERVO_STATUS":

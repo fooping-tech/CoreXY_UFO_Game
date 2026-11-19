@@ -464,9 +464,26 @@ class RealRobot(RobotInterface):
         self._arm_counts = None
         self._arm_zero_counts = None
 
-    def _claw_turn_result(self, r) -> None:
-        """Check a SERVO_TURN 2 reply; raise RobotCommandError when it failed."""
+    def _claw_gripped(self, res) -> bool:
+        """#192: a claw closing on something stops just short of the recorded closed angle and
+        keeps pressing: the firmware then answers TIMEOUT with the torque still on. That is a
+        grip, not a failure, when it stopped within backend.claw_grip_tolerance_deg of the
+        target (0 = never). Farther away, or with the torque off, it stays a failure."""
+        tol = max(getattr(self.cfg, "claw_grip_tolerance_deg", 0.0), 0.0)
+        if tol <= 0 or res.result != "TIMEOUT" or res.target is None or res.actual is None:
+            return False
+        if "torque=ON" not in res.raw:
+            return False
+        return abs(res.target - res.actual) * 360.0 / COUNTS_PER_TURN <= tol
+
+    def _claw_turn_result(self, r, closing: bool = False) -> None:
+        """Check a SERVO_TURN 2 reply; raise RobotCommandError when it failed. closing: the
+        turn goes to the recorded closed angle (a grip that stops just short of it is fine)."""
         res = P.parse_servo_result(r.completion or "")
+        if closing and res is not None and self._claw_gripped(res):
+            log.info("claw closed on something %d counts short of its closed angle: a grip (%s)",
+                     abs(res.target - res.actual), res.raw)
+            return
         if res is not None and "multi_turn_lost" in res.raw:
             # the servo's power was cut: refused unmoved; the next turn goes through
             # but its counts restart from the angle in the turn
@@ -800,7 +817,7 @@ class RealRobot(RobotInterface):
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
-            self._claw_turn_result(r)
+            self._claw_turn_result(r, closing=close and self.claw.complete())
             await self._refresh_arm()  # the same servo as arm_step: keep its angle current
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -872,7 +889,7 @@ class RealRobot(RobotInterface):
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
-            self._claw_turn_result(r)
+            self._claw_turn_result(r, closing=which == "closed")
             await self._refresh_arm()
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
