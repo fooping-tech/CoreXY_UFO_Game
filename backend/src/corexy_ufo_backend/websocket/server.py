@@ -1117,7 +1117,7 @@ class GameServer:
             return self._nack(name, f"the arm is not at the travel height (Z {z:.1f}, travel {p.safe_z}): raise it first")
         x, y = self.easy.easy.dials[dest]
         async with self._motion_lock:
-            await self.robot.move_xy(float(x), float(y), p.xy_feed_mm_min)
+            await self.robot.move_xy_legs(float(x), float(y), p.xy_feed_mm_min)  # #196
         return self._ack(name, {"destination": dest, **self.robot.snapshot().to_message()["data"]})
 
     def _easy_refresh(self) -> None:
