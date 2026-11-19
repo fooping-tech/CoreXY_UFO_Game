@@ -68,6 +68,27 @@ class RobotInterface(ABC):
     @abstractmethod
     async def move_xy(self, x: float, y: float, feed: float | None = None) -> None: ...
 
+    # #196: the firmware's timed XY move ends in its alarm ("timed segment queue lost position
+    # confidence") when one CoreXY motor (A = X+Y, B = X-Y) turns less than about 5 % of the
+    # other: a move along a 45-degree line. Below this ratio move_xy_legs goes X first, then
+    # Y (on each leg both motors turn the same). 0 = never split.
+    xy_one_motor_ratio: float = 0.0
+
+    def xy_one_motor(self, x: float, y: float) -> bool:
+        """Whether a straight move from here to (x, y) is nearly one motor's alone (#196)."""
+        s = self.snapshot()
+        a, b = abs((x - s.x) + (y - s.y)), abs((x - s.x) - (y - s.y))
+        return self.xy_one_motor_ratio > 0 and max(a, b) > 1e-6 and min(a, b) < self.xy_one_motor_ratio * max(a, b)
+
+    async def move_xy_legs(self, x: float, y: float, feed: float | None = None) -> None:
+        """move_xy, but a move that is nearly one motor's alone goes X first, then Y (#196).
+        For moves at the travel height only: the path is not the straight line. Both legs are
+        ordinary move_xy calls (the same soft limits, stops and errors); the corner has this
+        Y and the target's X, so it is inside the soft limits whenever both ends are."""
+        if self.xy_one_motor(x, y):
+            await self.move_xy(x, self.snapshot().y, feed)
+        await self.move_xy(x, y, feed)
+
     @abstractmethod
     async def move_z(self, z: float) -> None: ...
 
