@@ -63,9 +63,6 @@ class BackendConfig:
     # and the longest one request may last. None / not above jog_max_mm_s = no boost.
     jog_boost_mm_s: float | None = None
     jog_boost_max_s: float = 30.0
-    # #196: an automatic carry whose one motor would turn less than this share of the other
-    # goes X first, then Y (the firmware's timed move fails on such a line). 0 = never.
-    xy_one_motor_ratio: float = 0.1
     # #185: a jog (keys, the hand stick) stays this far inside the XY soft limits, and slows
     # down towards that line (speed towards an edge <= distance / jog_edge_slow_s). The home
     # corner's limit switches are pressed within about 1 mm of 0: a jog that reaches them is
@@ -266,7 +263,6 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.jog_boost_mm_s = (float(jb) if isinstance(jb, (int, float)) and not isinstance(jb, bool)
                           and jb > cfg.jog_max_mm_s else None)
     cfg.jog_boost_max_s = min(max(float(b.get("jog_boost_max_s", 30.0)), 0.0), 60.0)
-    cfg.xy_one_motor_ratio = min(max(float(b.get("xy_one_motor_ratio", 0.1)), 0.0), 0.5)
     cfg.jog_edge_margin_mm = max(float(b.get("jog_edge_margin_mm", 5.0)), 0.0)
     cfg.jog_edge_slow_s = max(float(b.get("jog_edge_slow_s", 0.25)), 0.0)
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
