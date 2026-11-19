@@ -430,7 +430,6 @@ func apply_live_settings() -> void:
 		game_mode.sounds.enabled = sfx.enabled
 		game_mode.sounds.volume_db = sfx.volume_db
 		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
-		game_mode.set_difficulty(str(GameConfig.value("game_mode.difficulty", game_mode.difficulty)))
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
@@ -584,10 +583,6 @@ func _apply_cmdline() -> void:
 					game_mode.ranking.path = args[i + 1]
 					game_mode.ranking_force = true
 					game_mode.ranking.load_file()
-			"--game-mode-difficulty":
-				# hard / easy (#169; config game_mode.difficulty): for rehearsals and captures
-				if game_mode != null and i + 1 < args.size():
-					game_mode.set_difficulty(args[i + 1])
 			"--game-mode-seconds":
 				if game_mode != null and i + 1 < args.size():
 					game_mode.duration_s = maxf(float(args[i + 1]), 1.0)

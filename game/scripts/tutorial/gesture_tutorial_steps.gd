@@ -30,7 +30,9 @@ extends RefCounted
 ## `mode` picks the mode, `steps` overrides a step's values by id, `modes` the orders.
 
 const DEFAULT_MODE := "hard"
-const MODE_NAMES := {"hard": "むずかしい モード", "easy": "かんたん モード"}
+# #198: nobody chooses a mode any more, so the practice names none ("hard" = the manual
+# control, played only where the easy mode cannot be used)
+const MODE_NAMES := {"hard": "", "easy": ""}
 ## what the hand shapes are called on the screen
 const POSE_NAMES := {"open": "パー", "fist": "グー", "peace": "チョキ", "point": "ゆびさし", "thumb": "グー"}
 

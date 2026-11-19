@@ -4508,8 +4508,10 @@ func _test_easy_mode_game(rs: Node) -> void:
 	game.show_title()
 	game._unhandled_input(_key(KEY_3))
 	var starts_hard = ctl.difficulty == "hard" and not ctl.easy_on() and ctl.hud.title_showing() \
-		and str(GameConfig.value("game_mode.difficulty", "")) == "easy"  # (the exhibit's default, #179)
-	game._unhandled_input(_key(KEY_D))
+		and str(GameConfig.value("game_mode.difficulty", "")) == ""  # (#198: not a setting any more)
+	game._unhandled_input(_key(KEY_D))  # #198: D switches nothing
+	starts_hard = starts_hard and ctl.difficulty == "hard"
+	ctl.set_difficulty("easy")  # what a game not made by _gm_game() always plays
 	feed.call("open", 2)
 	ctl.hud._process(0.016)
 	# the game drives its own mock crane: the easy mode is not usable, and says so; hard is played
@@ -4663,7 +4665,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 	# --- hard: as before (fist closes, peace opens, palm down steers Z), and nothing of the easy mode
 	be.report("MANUAL_XY", "d", {"last_result": "fault"})
 	game._unhandled_input(_key(KEY_3))
-	game._unhandled_input(_key(KEY_D))
+	ctl.set_difficulty("hard")
 	game._unhandled_input(_key(KEY_ENTER))
 	feed.call("open", int((ctl.countdown_s + 0.3) * 60.0))
 	var n_sent = be.sent.size()
@@ -4893,10 +4895,16 @@ func _test_game_title_hand(rs: Node) -> void:
 	ctl.tick_title_hand(1.0 / 60.0, hand.call("fist"))
 	for i in 60:
 		ctl.tick_title_hand(1.0 / 60.0, hand.call("peace"))
-	var to_hard = ctl.difficulty == "hard"
+	var to_hard = ctl.difficulty == "easy" and ctl.title_hand == ""  # #198: two fingers choose nothing
 	for i in 60:
 		ctl.tick_title_hand(1.0 / 60.0, hand.call("point"))
-	var to_easy = ctl.difficulty == "easy"
+	var to_easy = ctl.difficulty == "easy" and ctl.title_hand == ""
+	ctl.set_difficulty("hard")
+	for i in 60:
+		ctl.tick_title_hand(1.0 / 60.0, hand.call("point"))  # nor does one finger
+	game._unhandled_input(_key(KEY_D))  # nor the D key
+	to_easy = to_easy and ctl.difficulty == "hard"
+	ctl.set_difficulty("easy")
 	# the open hand: 3 s, shown filling; let go before that = nothing
 	for i in 120:
 		ctl.tick_title_hand(1.0 / 60.0, hand.call("open"))
@@ -4910,7 +4918,7 @@ func _test_game_title_hand(rs: Node) -> void:
 		ctl.tick_title_hand(1.0 / 60.0, hand.call("point"))  # not on the title: the hand changes nothing
 	var only_title = ctl.difficulty == "easy" and ctl.title_hand == ""
 	_ok(opened and carried_over and to_hard and to_easy and filling and let_go and started and only_title,
-		"game title (#183): an open hand held 3 s starts (as Enter), one finger = easy, two = hard; the shape that chose the mode does not switch; nothing outside the title",
+		"game title (#183, #198): an open hand held 3 s starts (as Enter); one / two fingers and D choose no difficulty; nothing outside the title",
 		"%s %s %s %s %s %s %s %s" % [opened, carried_over, to_hard, to_easy, filling, let_go, started, only_title])
 	# left on the title and chosen again with two fingers: that shape does not switch it either
 	ctl._halt("test")
