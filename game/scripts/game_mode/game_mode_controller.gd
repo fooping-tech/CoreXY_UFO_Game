@@ -1931,7 +1931,12 @@ func _on_device_event(ev: Dictionary, hub: GameModeDevices) -> void:
 			if l != null and l.state == "OFFLINE":
 				l.retry_left = 0.0
 			return
-	if l == null or not name in ["BALL_RECEIVED", "RELEASE_STARTED", "RELEASE_DONE", "RELEASE_FAILED"]:
+	if not name in ["BALL_RECEIVED", "RELEASE_STARTED", "RELEASE_DONE", "RELEASE_FAILED"]:
+		return
+	if l == null:
+		# not a Dial of the game (#200: Dial 2 may still be plugged in). Nothing is played and
+		# nothing is sent to it; the trace says so, so that a capsule left in it can be found.
+		_trace("event_ignored", null, {"effect_id": name, "result": "not_a_game_dial", "source_dial": ev.get("source")})
 		return
 	var data: Dictionary = ev.get("data", {}) if ev.get("data") is Dictionary else {}
 	# an event of another session is history

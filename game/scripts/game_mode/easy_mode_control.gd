@@ -55,6 +55,8 @@ signal cue(name: String)
 const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL", "FAULT"]
 const GRAB_POSES := ["fist", "thumb"]  # a fist with the thumb out is still a fist (as for the claw)
 const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1"}
+## said while the catch waits for its one finger and two are shown
+const TWO_FINGERS_NOTE := "ゆびは 1ぽん だけ だしてね"
 
 ## how long a sign must be held, unbroken (config game_mode.easy.hold_s)
 var hold_s := 0.6
@@ -414,7 +416,11 @@ func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> 
 		return
 	if sgn != "1":
 		_hold_reset()
+		if sgn == "" and str(hand.get("pose", "")) == "peace" and bool(hand.get("detected", false)) and bool(hand.get("fresh", false)):
+			note = TWO_FINGERS_NOTE  # #200: two fingers carried to the right portal once
 		return
+	if note == TWO_FINGERS_NOTE:
+		note = ""
 	if need_neutral:
 		_hold_reset()
 		note = "いちど パーに してから ゆびを だしてね"

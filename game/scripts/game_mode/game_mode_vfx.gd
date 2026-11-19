@@ -1,11 +1,11 @@
 class_name GameModeVFX
 extends Node2D
-## What the game mode (#138) shows around the field: UFOくん on its rail, the two transfer
-## ports (bottom-left = Dial 1, bottom-right = Dial 2), the capsule flying from a port to
+## What the game mode (#138) shows around the field: UFOくん on its rail, the transfer
+## port (bottom-left = Dial 1; #200: the only one), the capsule flying from the port to
 ## the UFO and back, the light running between a port and its Dial's side of the screen,
 ## and the score pop-ups. The sheets are the project's pixelfx ones through VFXManager
 ## (no second VFX system): the six capsule_* sheets are baked in grey and multiplied by the
-## Dial's colour here, so the same sheets serve both sides. The port's frame and the light
+## Dial's colour here, so the sheets serve any Dial colour. The port's frame and the light
 ## to the Dial are drawn here in that colour. Left and right are independent: both, and opposite directions, at once.
 ##
 ## Presentation only: it is told what happened (play(moment, side)) and never decides

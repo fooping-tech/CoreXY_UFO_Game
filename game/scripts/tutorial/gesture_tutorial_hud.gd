@@ -278,7 +278,7 @@ func _draw() -> void:
 		"easy_grab":
 			_draw_easy_grab()
 		"easy_one":
-			_draw_easy_number("point", "1", -1.0, CYAN)
+			_draw_easy_number("point", "1", CYAN)
 		"rules":
 			_draw_rules()
 		"practice":
@@ -497,8 +497,9 @@ func _draw_easy_grab() -> void:
 			_arrow(c + Vector2(52, -40.0 if i == 0 else 40.0), c + Vector2(52, 40.0 if i == 0 else -40.0), YELLOW, 4.0)
 		_tag(i, ["おりる", "つかむ", "あがる"][i], c + Vector2(0, 110), Color("cfe0ff"))
 
-## The easy mode's carry: the fingers shown, and the Dial they mean (1 = left, 2 = right).
-func _draw_easy_number(pose: String, number: String, side: float, col: Color) -> void:
+## The easy mode's carry: the finger shown, and the portal it means (Dial 1, on the left).
+func _draw_easy_number(pose: String, number: String, col: Color) -> void:
+	var side := -1.0
 	draw_hand(_hand_at(top_at + Vector2(0, -10)), 8.0, pose)
 	var dial := Vector2(360.0 + side * 190.0, 740.0)
 	_arrow(Vector2(360, 610), dial + Vector2(-side * 40.0, -70.0), YELLOW)

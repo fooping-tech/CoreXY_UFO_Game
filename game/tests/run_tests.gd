@@ -3300,7 +3300,8 @@ func _test_game_mode_round(rs: Node) -> void:
 	hub.mock_ball(GM_R)
 	_gm_step(ctl, 0.2)
 	var one: bool = ctl.capsules.active.size() == 1 and ctl.field.capsule_count() == 1 and _gm_sent(hub, GM_R) == 0 \
-		and not ctl.fx.played.has("capsule_portal_open:right")
+		and not ctl.fx.played.has("capsule_portal_open:right") \
+		and ctl.trace.rows.any(func(row): return row.event == "event_ignored" and row.result == "not_a_game_dial" and row.source_dial == GM_R)
 	ctl.field.target_hit.emit(c.capsule_id, "bumper", "bumper_0", Vector2(395, 430))
 	ctl.field.target_hit.emit(c.capsule_id, "pin", "pin_2", Vector2(395, 230))
 	ctl.field.target_hit.emit("nobody", "star", "star", Vector2(640, 505))  # not a capsule of this round
@@ -4268,7 +4269,7 @@ func _test_easy_mode_logic() -> void:
 		var neutral_first = be.sent.size() == 1 and e.note.contains("パー")
 		_easy_run(e, be, 0.3, open)
 		_easy_run(e, be, 1.5, two)  # #200: two fingers mean nothing (there is no right portal)
-		var two_nothing = be.sent.size() == 1 and e.state == "WAIT_DESTINATION" and e.holding == ""
+		var two_nothing = be.sent.size() == 1 and e.state == "WAIT_DESTINATION" and e.holding == "" and e.note == EasyModeControl.TWO_FINGERS_NOTE
 		_easy_run(e, be, 0.3, open)
 		_easy_run(e, be, 0.7, sign)
 		var chose: bool = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": dest, "grab_id": "g%d" % dest} \
@@ -4286,7 +4287,7 @@ func _test_easy_mode_logic() -> void:
 		var no_repeat = be.sent.size() == 2
 		_ok(needs_neutral and not_yet and asked and following and waiting and neutral_first and two_nothing and chose and carrying and done and no_repeat
 			and cues == ["grab", "caught", "deliver", "done"] and not EasyModeControl.STATES.has("DELIVER_DIAL_2"),
-			"easy mode: fist -> catch -> one finger -> carry to Dial %d -> back to the hand; each sign asks once, and only after a neutral hand; two fingers ask for nothing (#200)" % dest,
+			"easy mode: fist -> catch -> one finger -> carry to Dial %d -> back to the hand; each sign asks once, and only after a neutral hand; two fingers ask for nothing and the screen says to show one (#200)" % dest,
 			"%s %s %s %s %s %s %s %s %s %s %s" % [needs_neutral, not_yet, asked, following, waiting, neutral_first, chose, carrying, done, no_repeat, cues])
 	# --- a sign must be held, unbroken, by one fresh hand
 	var p2 = _easy_new()

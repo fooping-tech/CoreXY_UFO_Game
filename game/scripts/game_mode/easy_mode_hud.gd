@@ -23,9 +23,9 @@ const RED := Color("ff6b6b")
 const DARK := Color("050818")
 const GLASS := Color(0.02, 0.03, 0.13, 0.9)
 const DIM := Color(0.55, 0.6, 0.75)
-## the strip's three signs: [hand picture, words, the sign it is in EasyModeControl]
 ## the width of one sign of the strip
 const SLOT_W := 213.0
+## the strip's three signs: [hand picture, words, the sign it is in EasyModeControl]
 const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["point", "1ぽんで ポータルへ", "1"]]
 
 var ctl: GameModeController
