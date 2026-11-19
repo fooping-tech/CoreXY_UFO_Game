@@ -3,7 +3,6 @@ extends RefCounted
 ## Time-limited powers in the 150-second score game (#188).
 ## This never controls the robot or any device. The controller interprets the effects.
 const KINDS := ["speed", "multiball", "double"]
-const LABELS := {"speed": "SPEED UP!", "multiball": "MULTI BALL!", "double": "DOUBLE SCORE!"}
 
 var duration := {"speed": 10.0, "double": 15.0}
 var left := {"speed": 0.0, "double": 0.0}

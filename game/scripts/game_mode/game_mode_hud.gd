@@ -14,7 +14,6 @@ const RED := Color("ff6b6b")
 const DARK := Color("050818")
 const PANEL := Color(0.03, 0.05, 0.16, 0.92)
 const UFO_SHEET := "res://assets/ufo/ufo_idle.png"
-const LOGO := "SUMMON THE UFO"
 ## the portrait layout (#157): every position of the HUD comes from GameModeLayout
 const SCREEN := GameModeLayout.SCREEN
 const SCORE_RECT := GameModeLayout.SCORE_RECT

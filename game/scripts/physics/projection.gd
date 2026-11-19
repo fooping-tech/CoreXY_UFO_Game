@@ -44,6 +44,3 @@ func project(world: Vector3) -> Result:
 	r.depth = vd
 	r.screen = origin_px + Vector2(x, -vy) * pixels_per_unit * r.scale
 	return r
-
-func project_point(world: Vector3) -> Vector2:
-	return project(world).screen

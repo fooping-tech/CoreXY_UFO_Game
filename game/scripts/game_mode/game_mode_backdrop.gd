@@ -19,13 +19,11 @@ extends Node2D
 const SIZE := GameModeLayout.SCREEN
 const BANDS := 12
 const TOP_COLOR := Color("02041a")
-const BOTTOM_COLOR := Color("0d0a33")
 ## the sky's bottom colour and the light's colour, by urgency
 const MOOD_BOTTOM := [Color("0d0a33"), Color("2a0a4a"), Color("4a0818")]
 const MOOD_LIGHT := [Color("3ff0ff"), Color("ff4fd8"), Color("ff5a4a")]
 const GALAXY_DOTS := 160
 const BEAMS := 7
-const CONDUIT_TOP := 420.0
 ## in the dark beside the port, under the field
 const PLANET := Vector2(440, 1200)
 const MOON := Vector2(286, 1190)

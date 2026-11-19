@@ -75,7 +75,6 @@ var _tilt := 0.0
 var _depth_scale := 1.0
 var _lateral_vel := 0.0
 var _depth_vel := 0.0
-var _bob_phase := 0.0
 var _last_expr_shown := ""
 var _flash_face := ""
 var _flash_left := 0.0
