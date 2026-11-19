@@ -163,6 +163,7 @@ async def run(args: argparse.Namespace) -> int:
         robot.jog_max_mm_s = cfg.jog_max_mm_s  # the same cap as the real robot's jog (#179)
     else:
         robot = RealRobot(cfg)
+        robot.xy_one_motor_ratio = cfg.xy_one_motor_ratio  # #196: the firmware's, not the mock's
     robot.jog_boost_mm_s = cfg.jog_boost_mm_s or 0.0  # #188: the SPEED UP's cap, for a while
     robot.jog_boost_max_s = cfg.jog_boost_max_s
     vision = make_vision(args, cfg.raw.get("gesture", {}))

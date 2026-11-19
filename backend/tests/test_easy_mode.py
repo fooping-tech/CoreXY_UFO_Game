@@ -6,6 +6,7 @@ expiry that moves nothing, every stop, and the server's commands and lock."""
 import asyncio
 import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 import websockets
@@ -742,3 +743,74 @@ def test_the_repo_config_carries_to_a_dial_slower_than_the_fast_feed():
     assert p.xy_feed_mm_min == p.xy_feed_max_mm_min == 9000.0 < cfg.fast_feed()
     # one motor's step rate on a diagonal at this feed is under an axis move's at the fast feed
     assert p.xy_feed_mm_min * 2 ** 0.5 < cfg.fast_feed()
+
+
+def _at_xy(robot, x, y):
+    _at(robot, x=x, y=y)
+
+
+@pytest.mark.parametrize("start,to,split", [
+    ((46.325, 101.338), (105.49, 166.26), True),   # the machine's failure: A=9927 B=-461 (0.046)
+    ((207.684, 3.791), (384.84, 174.66), True),    # the other one: A=27842 B=503 (0.018)
+    ((100.0, 100.0), (150.0, 150.0), True),        # exactly 45 degrees: one motor does not turn
+    ((100.0, 100.0), (150.0, 50.0), True),         # the other motor's line
+    ((14.79, 174.67), (384.84, 174.66), False),    # along X: both motors the same
+    ((100.0, 20.0), (100.0, 150.0), False),        # along Y
+    ((150.319, 81.131), (14.79, 174.67), False),   # ran on the machine: 0.183
+])
+async def test_a_move_along_one_motors_line_goes_x_then_y(start, to, split):
+    # #196: the firmware's timed move fails when one CoreXY motor hardly turns
+    robot = MockRobot()
+    await robot.connect()
+    await robot.enable_motors(True)
+    await robot.home()
+    sent = []
+    real_move = robot.move_xy
+
+    async def spy(x, y, feed=None):
+        s = robot.snapshot()
+        a, b = abs((x - s.x) + (y - s.y)), abs((x - s.x) - (y - s.y))
+        sent.append((round(x, 3), round(y, 3), feed, min(a, b) / max(a, b)))
+        _at_xy(robot, x, y)  # there at once: the legs' geometry is what is tested
+
+    robot.move_xy = spy
+    _at_xy(robot, *start)
+    assert not robot.xy_one_motor(*to)  # 0 = never split (the mock, a robot not told)
+    await robot.move_xy_legs(*to, 9000.0)
+    assert [m[:3] for m in sent] == [(*to, 9000.0)]
+    sent.clear()
+    _at_xy(robot, *start)
+    robot.xy_one_motor_ratio = 0.1
+    await robot.move_xy_legs(*to, 9000.0)
+    if split:
+        assert [m[:3] for m in sent] == [(to[0], round(start[1], 3), 9000.0), (*to, 9000.0)]
+        assert all(m[3] == pytest.approx(1.0) for m in sent)  # on each leg both motors turn the same
+    else:
+        assert [m[:3] for m in sent] == [(*to, 9000.0)]
+    robot.move_xy = real_move
+    await robot.disconnect()
+
+
+def test_one_motor_ratio_is_loaded_and_bounded(tmp_path):
+    from corexy_ufo_backend.config import load_config
+    base = json.loads((Path(__file__).resolve().parents[2] / "config" / "game_config.json").read_text())
+    assert base["backend"]["xy_one_motor_ratio"] == 0.1
+    for given, want in ((0.2, 0.2), (-1, 0.0), (3, 0.5)):
+        base["backend"]["xy_one_motor_ratio"] = given
+        p = tmp_path / "game_config.json"
+        p.write_text(json.dumps(base))
+        assert load_config(p, local=False).xy_one_motor_ratio == want
+
+
+async def test_easy_goto_along_one_motors_line_goes_in_two_legs(server):
+    srv, robot, port = server
+    async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+        await _ready(ws, robot)
+        robot.xy_one_motor_ratio = 0.1  # as main.py tells the real robot
+        x, y = srv.easy.easy.dials[2]
+        _at(robot, x=x - 60.0, y=y - 62.0)
+        n = len(robot.commands)
+        r = await _cmd(ws, "g1", "easy_goto", destination=2)
+        assert r["type"] == "ack", r
+        f = srv.easy.params.xy_feed_mm_min
+        assert robot.commands[n:] == [f"XY {x:.3f} {y - 62.0:.3f} F{f:.0f}", f"XY {x:.3f} {y:.3f} F{f:.0f}"]
