@@ -78,7 +78,7 @@ var calibration_prepare: Dictionary = {}
 
 ## #169: the score game's easy mode, as the backend reports it (robot_state.easy_mode /
 ## {"type": "easy_mode"}): active, state (MANUAL_XY / AUTO_GRAB / WAIT_DESTINATION /
-## DELIVER_DIAL_1 / DELIVER_DIAL_2 / EXPIRED / FAULT), step, destination, grab_id,
+## DELIVER_DIAL_1 / EXPIRED / FAULT), step, destination, grab_id,
 ## elapsed_s, wait_left_s, last_result, error. The sequence runs in the backend.
 var easy_mode: Dictionary = {}
 

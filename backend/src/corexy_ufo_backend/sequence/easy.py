@@ -1,7 +1,7 @@
 """The score game's easy mode (#169): catch on the spot, wait for the destination, carry.
 
     MANUAL_XY --start_grab()--> AUTO_GRAB: OPEN_CLAW -> LOWER_TO_CATCH -> CLOSE_CLAW -> RAISE_WITH_ITEM
-        -> WAIT_DESTINATION --choose(1 | 2)--> DELIVER_DIAL_n: (at the safe height?) MOVE_TO_DIAL
+        -> WAIT_DESTINATION --choose(1)--> DELIVER_DIAL_1: (at the safe height?) MOVE_TO_DIAL
         -> LOWER_TO_RELEASE -> RELEASE -> RAISE_EMPTY -> MANUAL_XY
     MANUAL_XY --start_grab() with the arm below the safe height--> AUTO_GRAB: CLOSE_CLAW -> RAISE_WITH_ITEM
         -> WAIT_DESTINATION ... (#177: the easy mode has no way to raise the arm by hand, so a fist
@@ -71,10 +71,11 @@ from .params import AutoCatchParams, height
 
 log = logging.getLogger(__name__)
 
-MIN_DIAL_GAP_MM = 20.0  # two Dials recorded closer than this are the same place recorded twice
 CANCELLED = -1  # the "destination" of a catch given up (cancel())
 STOPPED = -2  # the wait ended by the stop key (stop_waiting())
-DESTINATIONS = (1, 2)  # Dial 1 = the left of the screen, Dial 2 = the right (#138)
+# #200: the only portal is Dial 1, on the left of the screen. (Dial 2, the right, is gone: a
+# dial_2 still saved in an older calibration.json#easy_dials is not read.)
+DESTINATIONS = (1,)
 WAIT_KEY = "wait_destination"
 WAIT_MARGIN_S = 5.0  # the monitoring's own timeout of the wait: never reached before the expiry
 
@@ -114,12 +115,12 @@ def _num(v: Any) -> float | None:
 
 @dataclass(frozen=True)
 class EasyParams:
-    """Where a capsule is let go, per Dial, and how long a choice is waited for."""
+    """Where a capsule is let go (over the Dial), and how long a choice is waited for."""
     profile: str = "dry_run"
-    dials: dict[int, tuple[float, float] | None] = field(default_factory=lambda: {1: None, 2: None})
+    dials: dict[int, tuple[float, float] | None] = field(default_factory=lambda: {n: None for n in DESTINATIONS})
     release_z: float | None = None
     wait_destination_s: float = 15.0
-    confirmed: bool = False  # real only: a person watched a test run over both Dials
+    confirmed: bool = False  # real only: a person watched a test run over the Dial
     catch_z: float | None = None  # real only: where the claw closes (the dry run: auto_catch.dry_run)
     stale_z: bool = False  # real only: Z was measured again since the heights were recorded
     saved_at: str = ""  # when the values were last recorded (shown: "the last session's values")
@@ -149,16 +150,12 @@ class EasyParams:
                 errs.append(f"Dial {n} drop point is not recorded")
             elif not limits.xy_inside(*xy):
                 errs.append(f"Dial {n} drop point ({xy[0]:g},{xy[1]:g}) outside the XY soft limits")
-        a, b = self.dials.get(1), self.dials.get(2)
-        if a is not None and b is not None and math.hypot(a[0] - b[0], a[1] - b[1]) < MIN_DIAL_GAP_MM:
-            errs.append(f"Dial 1 and Dial 2 are recorded at the same place ({a[0]:g},{a[1]:g}): "
-                        "move the arm over each Dial and record it there")
         if self.profile == "real" and self.catch_z is None:
             errs.append("the catch height is not recorded")
         if self.profile == "real" and self.stale_z:
             errs.append("Z was measured again since the heights were recorded: record the catch and release heights again")
         if self.release_z is None:
-            errs.append("the Dials' release height is not recorded")
+            errs.append("the Dial's release height is not recorded")
         elif not limits.z_min <= self.release_z <= limits.z_max:
             errs.append(f"release height {self.release_z:g} outside Z range {limits.z_min:g}..{limits.z_max:g}")
         elif catch.safe_z is not None and catch.z_floor is not None:
@@ -173,12 +170,13 @@ class EasyParams:
         if not (math.isfinite(self.wait_destination_s) and self.wait_destination_s > 0):
             errs.append("wait_destination_s must be > 0")
         if self.profile == "real" and need_confirmed and not self.confirmed:
-            errs.append("the Dials' drop points are not confirmed on the real machine (校正 tab)")
+            errs.append("the Dial's drop point is not confirmed on the real machine (校正 tab)")
         return errs
 
     def as_dict(self) -> dict:
-        return {"profile": self.profile, "dial_1": list(self.dials[1]) if self.dials.get(1) else None,
-                "dial_2": list(self.dials[2]) if self.dials.get(2) else None, "release_z": self.release_z,
+        return {"profile": self.profile,
+                **{f"dial_{n}": list(self.dials[n]) if self.dials.get(n) else None for n in DESTINATIONS},
+                "release_z": self.release_z,
                 "wait_destination_s": self.wait_destination_s, "confirmed": self.confirmed,
                 "catch_z": self.catch_z, "stale_z": self.stale_z, "saved_at": self.saved_at}
 
@@ -393,9 +391,9 @@ class EasySequencer(AutoCatchSequencer):
         self._task = asyncio.get_running_loop().create_task(self._run())
 
     def choose(self, destination: Any, grab_id: Any) -> None:
-        """The player's choice for the catch `grab_id`: Dial 1 or 2. Once, and only while waiting."""
+        """The player's sign for the catch `grab_id`: carry it to Dial 1. Once, and only while waiting."""
         if isinstance(destination, bool) or destination not in DESTINATIONS:
-            raise RobotCommandError("destination must be 1 (Dial 1, left) or 2 (Dial 2, right)")
+            raise RobotCommandError("destination must be 1 (Dial 1, the only portal)")
         if not self.active or self.state != "WAIT_DESTINATION":
             raise RobotCommandError(f"not waiting for a destination (state {self.state})")
         if not grab_id or str(grab_id) != self.grab_id:

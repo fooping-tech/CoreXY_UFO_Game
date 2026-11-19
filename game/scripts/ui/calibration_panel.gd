@@ -264,21 +264,20 @@ func setup(m: Node) -> void:
 	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
 
 	# --- 8. the easy mode's drop points (#169)
-	_card("easy", "スコアゲームのかんたんモードで自動で動く場所。左の Dial 1 と右の Dial 2 の真上（XY）、"
+	_card("easy", "スコアゲームのかんたんモードで自動で動く場所。ポータル（左の Dial 1）の真上（XY）、"
 		+ "カプセルをつかむ高さと、Dial の上で爪を開く高さ（Z）。実機でだけ記録する。2 の Z の上下と原点復帰のあとで。"
 		+ "一度記録して確かめた値は次の起動でもそのまま使う（記録し直すのは、置き場所を変えたときと Z を測り直したとき）。")
 	_easy = _value()
 	_easy.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_easy.custom_minimum_size = Vector2(WIDTH, 0)
-	_step("①", "矢印キーでアームを Dial 1（左）の受け口の真上へ動かして「Dial 1 に記録」。Dial 2（右）も、その真上へ動かしてから")
+	_step("①", "矢印キーでアームを Dial 1（左）の受け口の真上へ動かして「Dial 1 に記録」")
 	_step("②", "カプセルの上で Q で爪を開き、S でつかめる高さまで下ろして「キャッチの高さに記録」")
 	_step("③", "Dial の受け口の上で、爪を開けばカプセルが入る高さまで S で下ろして「投入の高さに記録」")
-	_step("④", "カプセルなしで両方の位置と 2 つの高さへ手で動かし、何にも当たらないことを見てから「確かめた」")
+	_step("④", "カプセルなしで Dial の位置と 2 つの高さへ手で動かし、何にも当たらないことを見てから「確かめた」")
 	_caution("アームが届かない所に Dial があるときは記録しない（置き場所を直す）。値を変えると「確かめた」は取り消される。"
 		+ "移動の高さは Z の一番上。自動の動きは一番上まで巻き上げてある状態から始まる。")
 	row = _row()
 	_ws_button(row, "Dial 1（左）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_1"}), "primary")
-	_ws_button(row, "Dial 2（右）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_2"}), "primary")
 	row = _row()
 	_ws_button(row, "キャッチの高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "catch_z"}), "primary")
 	_ws_button(row, "投入の高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "release_z"}), "primary")
@@ -392,9 +391,6 @@ static func easy_state(st: Dictionary) -> Dictionary:
 	if not missing.is_empty():
 		return {"state": "todo", "text": "まだ: " + "、".join(missing)}
 	var problems: Array = st.problems if st.get("problems") is Array else []
-	for p in problems:
-		if str(p).contains("same place"):
-			return {"state": "todo", "text": "Dial 1 と Dial 2 が同じ場所: それぞれの真上へ動かして記録し直す"}
 	if not bool(d.get("confirmed", false)):
 		# anything else wrong with the values is said before asking for the confirmation
 		for p in problems:
@@ -405,8 +401,8 @@ static func easy_state(st: Dictionary) -> Dictionary:
 		return {"state": "todo", "text": "まだ動かせない: " + str(problems[0])}
 	return {"state": "ok", "text": "記録・確認済み（次の起動でもこの値を使う）"}
 
-## the easy mode's four recorded values: key in easy_status.dials, its name
-const EASY_VALUES := [["dial_1", "Dial 1"], ["dial_2", "Dial 2"], ["catch_z", "キャッチの高さ"], ["release_z", "投入の高さ"]]
+## the easy mode's three recorded values (#200: Dial 1 only): key in easy_status.dials, its name
+const EASY_VALUES := [["dial_1", "Dial 1"], ["catch_z", "キャッチの高さ"], ["release_z", "投入の高さ"]]
 
 static func easy_text(st: Dictionary) -> String:
 	var d: Dictionary = st.dials if st.get("dials") is Dictionary else {}
@@ -414,12 +410,12 @@ static func easy_text(st: Dictionary) -> String:
 		return "（バックエンドに問い合わせ中）"
 	var xy := func(v) -> String: return "X %.0f / Y %.0f" % [float(v[0]), float(v[1])] if v is Array and v.size() == 2 else "まだ"
 	if str(d.get("profile", "")) != "real":
-		return "仮想クレーン: 模擬の値を使う（Dial 1 %s　Dial 2 %s　投入 Z %.0f）" % [xy.call(d.get("dial_1")), xy.call(d.get("dial_2")),
+		return "仮想クレーン: 模擬の値を使う（Dial 1 %s　投入 Z %.0f）" % [xy.call(d.get("dial_1")),
 			float(d.release_z) if d.get("release_z") != null else 0.0]
 	var z := func(v) -> String: return ("Z %.1f" % float(v)) if v != null else "まだ"
 	var when := str(d.get("saved_at", "")).replace("T", " ")
-	return "Dial 1（左）: %s　Dial 2（右）: %s\nキャッチの高さ: %s　投入の高さ: %s\n%s%s\n→ %s" % [
-		xy.call(d.get("dial_1")), xy.call(d.get("dial_2")), z.call(d.get("catch_z")), z.call(d.get("release_z")),
+	return "Dial 1（左）: %s\nキャッチの高さ: %s　投入の高さ: %s\n%s%s\n→ %s" % [
+		xy.call(d.get("dial_1")), z.call(d.get("catch_z")), z.call(d.get("release_z")),
 		"確認済み" if bool(d.get("confirmed", false)) else "未確認", ("（%s に記録した値）" % when) if when != "" else "",
 		str(easy_state(st).text)]
 

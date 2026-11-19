@@ -44,9 +44,9 @@ const FIELD_RIGHT := 690.0
 const FIELD_TOP := 352.0
 const FIELD_FLOOR := 1066.0
 
-# ---- the Dials' ports
+# ---- the Dial's port (#200: the left one only; the right of this band is empty sky)
 const DIALS_Y := 1100.0
-const PORTS := {"left": Vector2(92, 1192), "right": Vector2(628, 1192)}
+const PORTS := {"left": Vector2(92, 1192)}
 ## each port's line of words (what that Dial is doing)
 const LANE_LABEL_SIZE := Vector2(200, 56)
 const LANE_LABEL_Y := 1112.0

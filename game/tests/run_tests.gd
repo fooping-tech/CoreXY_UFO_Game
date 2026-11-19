@@ -2960,7 +2960,12 @@ func _test_title_screen(rs: Node) -> void:
 
 # ---------------------------------------------------------------- game mode (#138)
 const GM_L := GameModeDevices.DIAL_1
+## Dial 2 was the right portal until #200: the game must never talk to it.
 const GM_R := GameModeDevices.DIAL_2
+
+## How many commands the game sent to `device` (the stop key's STOP_ALL goes to everything).
+func _gm_sent(hub: MockDialHub, device: int) -> int:
+	return hub.executed.filter(func(e): return e[0] == device and e[1] != "STOP_ALL").size()
 
 func _gm_game() -> Node:
 	var game: Node = load("res://scenes/main.tscn").instantiate()
@@ -2982,7 +2987,7 @@ func _gm_step(ctl: GameModeController, secs: float) -> void:
 	for i in n:
 		ctl.tick(1.0 / 60.0)
 
-## The title's third card, then Enter, then the countdown: both lanes armed.
+## The title's third card, then Enter, then the countdown: the lane armed.
 func _gm_playing(game: Node) -> GameModeController:
 	var ctl: GameModeController = game.game_mode
 	game.show_title()
@@ -3072,7 +3077,7 @@ func _test_game_mode_powerups() -> void:
 	fx.advance(1.4)
 	_ok(fx._power_notice.text == "DOUBLE SCORE!", "next pickup notice appears")
 	fx.set_power_portal("left", true)
-	_ok(fx.power_portals.left and not fx.power_portals.right, "multi-ball portal effect stays on the owning side")
+	_ok(fx.power_portals.left and fx.power_portals.keys() == ["left"], "multi-ball portal effect is on the portal's side (the left, the only one)")
 	fx.reset()
 	_ok(not fx.power_portals.left, "portal effect clears on reset")
 	fx.queue_free()
@@ -3208,11 +3213,11 @@ func _test_game_mode_powerup_integration(rs: Node) -> void:
 	var children := [id + "-mb1", id + "-mb2"]
 	var multi_led := hub.executed.any(func(e): return e[0] == GM_L and e[1] == "SET_DIAL_EFFECT" and e[2].get("target", "") == "FRONT" and e[2].get("effect", "") == "COMET")
 	_ok(ctl.field.capsule_count() == 3 and (ctl._multi_balls[id] as Array).size() == 3
-		and ctl.fx.power_portals.left and not ctl.fx.power_portals.right and multi_led
+		and ctl.fx.power_portals.left and multi_led and _gm_sent(hub, GM_R) == 0
 		and ctl.sounds.log.has("power_multi"),
 		"pickup multi: three physics balls, same-side portal LED, distinct audio",
-		"balls=%d left=%s right=%s LED=%s audio=%s" % [ctl.field.capsule_count(), str(ctl.fx.power_portals.left),
-			str(ctl.fx.power_portals.right), str(multi_led), str(ctl.sounds.log.has("power_multi"))])
+		"balls=%d left=%s LED=%s audio=%s" % [ctl.field.capsule_count(), str(ctl.fx.power_portals.left),
+			str(multi_led), str(ctl.sounds.log.has("power_multi"))])
 	ctl.field.capsule_exited.emit(children[0], "left", pos)
 	ctl.field.capsule_exited.emit(id, "left", pos)
 	_ok(lane.state == "SIMULATING" and hub.count(GM_L, "RELEASE_BALL") == 0
@@ -3250,20 +3255,24 @@ func _test_game_mode_round(rs: Node) -> void:
 	var counting: bool = ctl.phase == "COUNTDOWN" and hub.dials[GM_L].state != "ARMED"
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
-	_ok(counting and ctl.phase == "PLAYING" and l.state == "READY" and r.state == "READY" and hub.dials[GM_L].state == "ARMED"
-		and hub.dials[GM_R].state == "ARMED" and hub.dials[GM_L].op_mode == "GAME" and absf(ctl.time_left - (ctl.duration_s - 0.2)) < 0.05
+	_ok(counting and ctl.phase == "PLAYING" and l.state == "READY" and hub.dials[GM_L].state == "ARMED"
+		and hub.dials[GM_L].op_mode == "GAME" and absf(ctl.time_left - (ctl.duration_s - 0.2)) < 0.05
 		and ctl.duration_s == 150.0 and hub.count(GameModeDevices.ILLUMINATION, "SET_LIGHT_MODE") == 2,
-		"game mode: Enter, 3 s countdown, then 150 s; both Dials in GAME mode and armed only at GO",
-		"%s %s %s %.2f" % [ctl.phase, l.state, r.state, ctl.time_left])
+		"game mode: Enter, 3 s countdown, then 150 s; the Dial in GAME mode and armed only at GO",
+		"%s %s %.2f" % [ctl.phase, l.state, ctl.time_left])
+	_ok(GameModeController.SIDES == ["left"] and ctl.lanes.keys() == ["left"] and l.device == GM_L and GameModeLayout.PORTS.keys() == ["left"]
+		and ctl.fx.colors.keys() == ["left"] and ctl.backdrop.ports.keys() == ["left"] and _gm_sent(hub, GM_R) == 0
+		and hub.dials[GM_R].state != "ARMED" and hub.dials[GM_R].op_mode == "STANDBY",
+		"game mode (#200): the portal is on the left only: one lane (Dial 1), one port; nothing is sent to Dial 2",
+		"%s %d %s" % [ctl.lanes.keys(), _gm_sent(hub, GM_R), hub.dials[GM_R].state])
 	# Dial 1 (left): the drop point is where the UFO is when the switch closes
 	var x_at_switch := ctl.ufo.x()
 	game._unhandled_input(_key(KEY_Z))
-	var absorbing: bool = l.state == "ABSORBING" and r.state == "READY" and ctl.capsules.active.size() == 1
+	var absorbing: bool = l.state == "ABSORBING" and ctl.capsules.active.size() == 1
 	var c: Dictionary = l.capsule
 	var left_fx: bool = ctl.fx.played.has("capsule_portal_open:left") and ctl.fx.played.has("capsule_transfer_trail:left") \
-		and ctl.fx.streaming("left", true) and not ctl.fx.streaming("right", true) and ctl.fx.flights() == 1
-	var sheets_in: bool = ctl.fx.port_sheet_running("left") and not ctl.fx.port_sheet_running("right") \
+		and ctl.fx.streaming("left", true) and ctl.fx.flights() == 1
+	var sheets_in: bool = ctl.fx.port_sheet_running("left") \
 		and ["capsule_portal_open", "capsule_absorb", "capsule_transfer_trail"].all(func(id): return VFXManager.spawned_log.has(id))
 	_gm_step(ctl, ctl.absorb_s + 0.02)
 	var dropping: bool = l.state == "DROPPING" and not ctl.field.has_capsule(c.capsule_id)
@@ -3283,42 +3292,42 @@ func _test_game_mode_round(rs: Node) -> void:
 		and c.source_dial == GM_L and c.cycle == 1 and c.session == hub.session and is_equal_approx(ctl.absorb_s + ctl.drop_s, 1.1),
 		"game mode: BALL_RECEIVED fixes the drop X (the UFO moves on); port -> UFO -> drop in 1.1 s; the capsule knows its Dial, cycle, session",
 		"%s x=%.1f/%.1f ufo=%.1f %s" % [l.state, cap_x, x_at_switch, ctl.ufo.x(), c])
-	# Dial 2 (right) while the left one is in play: two capsules, independent
+	# #200: there is no right portal: its old key does nothing, and a capsule a Dial 2 still
+	# plugged in reports is not the game's (nothing appears, nothing is released there)
+	game._unhandled_input(_key(KEY_Z))  # the Dial holds one: nothing more
 	game._unhandled_input(_key(KEY_M))
-	game._unhandled_input(_key(KEY_M))  # the Dial holds one: nothing more
-	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	var rc: Dictionary = r.capsule
-	var two: bool = r.state == "SIMULATING" and ctl.capsules.active.size() == 2 and ctl.field.capsule_count() == 2 \
-		and rc.source_dial == GM_R and ctl.fx.played.has("capsule_portal_open:right")
+	hub.dials[GM_R].state = "ARMED"
+	hub.mock_ball(GM_R)
+	_gm_step(ctl, 0.2)
+	var one: bool = ctl.capsules.active.size() == 1 and ctl.field.capsule_count() == 1 and _gm_sent(hub, GM_R) == 0 \
+		and not ctl.fx.played.has("capsule_portal_open:right") \
+		and ctl.trace.rows.any(func(row): return row.event == "event_ignored" and row.result == "not_a_game_dial" and row.source_dial == GM_R)
 	ctl.field.target_hit.emit(c.capsule_id, "bumper", "bumper_0", Vector2(395, 430))
-	ctl.field.target_hit.emit(rc.capsule_id, "pin", "pin_2", Vector2(395, 230))
+	ctl.field.target_hit.emit(c.capsule_id, "pin", "pin_2", Vector2(395, 230))
 	ctl.field.target_hit.emit("nobody", "star", "star", Vector2(640, 505))  # not a capsule of this round
-	var scored: bool = ctl.score.score == 110 and c.score == 100 and rc.score == 10
-	# the left capsule leaves through the centre; the right one keeps playing
+	var scored: bool = ctl.score.score == 110 and c.score == 110
+	# the capsule leaves through the centre
 	ctl.field.capsule_exited.emit(c.capsule_id, "center", Vector2(640, 660))
 	ctl.field.capsule_exited.emit(c.capsule_id, "center", Vector2(640, 660))  # reported twice
-	var returning: bool = l.state == "RETURNING" and r.state == "SIMULATING" and ctl.score.score == 1110 \
+	var returning: bool = l.state == "RETURNING" and ctl.score.score == 1110 \
 		and not ctl.field.has_capsule(c.capsule_id) and hub.count(GM_L, "RELEASE_BALL") == 0 and ctl.fx.streaming("left", false)
-	_ok(two and scored and returning,
-		"game mode: two capsules at once (one per Dial), each scores for itself, a goal counts once, RELEASE_BALL only at the sync point",
-		"%s %s %d" % [l.state, r.state, ctl.score.score])
-	# opposite directions at once: the left goes out while a new right one would come in
+	_ok(one and scored and returning,
+		"game mode: one capsule at a time (the one Dial's); Dial 2 and its old key are not part of the game; a goal counts once, RELEASE_BALL only at the sync point",
+		"%s %s %s %s %d" % [one, scored, returning, l.state, ctl.score.score])
 	_gm_step(ctl, ctl.release_sync_s + 0.05)
 	var releasing: bool = l.state == "RELEASING" and hub.dials[GM_L].state == "RELEASING" and ctl.fx.played.has("capsule_release_burst:left") \
 		and VFXManager.spawned_log.has("capsule_release_burst") and ctl.fx.port_sheet_running("left")
-	ctl.field.capsule_exited.emit(rc.capsule_id, "left", Vector2(300, 660))
 	_gm_step(ctl, 0.3)
 	_gm_step(ctl, MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S)
 	var back: bool = l.state == "READY" and l.released == 1 and hub.dials[GM_L].state == "ARMED" and hub.dials[GM_L].cycle == 2 \
 		and hub.count(GM_L, "RELEASE_BALL") == 1
-	game._unhandled_input(_key(KEY_Z))  # the next left capsule comes in while the right one goes out
-	var opposite: bool = l.state == "ABSORBING" and r.state in ["RELEASING", "VERIFYING"] and ctl.fx.streaming("left", true) \
-		and ctl.fx.streaming("right", false)
+	game._unhandled_input(_key(KEY_Z))  # the next capsule comes in through the same port
+	var again: bool = l.state == "ABSORBING" and ctl.fx.streaming("left", true)
 	_gm_step(ctl, 3.0)
-	_ok(releasing and back and opposite and r.state == "READY" and hub.count(GM_R, "RELEASE_BALL") == 1 and l.capsule.cycle == 2
-		and ctl.capsules.finished.size() == 2 and ctl.score.score == 1210,
-		"game mode: each capsule leaves by its own Dial (RELEASE_BALL once, DONE, status, armed again); left in while right out",
-		"%s %s %s %s" % [releasing, back, opposite, r.state])
+	_ok(releasing and back and again and l.capsule.cycle == 2 and _gm_sent(hub, GM_R) == 0
+		and ctl.capsules.finished.size() == 1 and ctl.score.score == 1110,
+		"game mode: the capsule leaves by the Dial it came in by (RELEASE_BALL once, DONE, status, armed again); then the next one comes in",
+		"%s %s %s %s" % [releasing, back, again, l.state])
 	# the lights are decoration: refused or not, the game goes on; the crane is never touched
 	var names: Array = ctl.trace.rows.map(func(row): return row.event)
 	var row: Dictionary = ctl.trace.named("score")[0]
@@ -3338,14 +3347,13 @@ func _test_game_mode_duplicates_and_sessions(rs: Node) -> void:
 	var ctl := _gm_playing(game)
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
 	# every event twice (a re-sent event) and a bouncing switch: still one capsule
 	hub.duplicate_events = true
 	hub.mock_ball(GM_L)
 	hub.chatter(GM_L, 3)
-	hub.stale_event(GM_R, "BALL_RECEIVED", {"cycle": 1})  # an old session's event arrives late
+	hub.stale_event(GM_L, "BALL_RECEIVED", {"cycle": 9})  # an old session's event arrives late
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	var one: bool = ctl.capsules.active.size() == 1 and ctl.field.capsule_count() == 1 and r.state == "READY"
+	var one: bool = ctl.capsules.active.size() == 1 and ctl.field.capsule_count() == 1
 	var id := str(l.capsule.capsule_id)
 	ctl.field.capsule_exited.emit(id, "left", Vector2(300, 660))
 	_gm_step(ctl, 4.0)
@@ -3361,37 +3369,48 @@ func _test_game_mode_duplicates_and_sessions(rs: Node) -> void:
 	id = str(l.capsule.capsule_id)
 	var old_session := hub.session
 	hub.restart_session()
-	var kept: bool = l.state == "SIMULATING" and bool(l.capsule.orphaned) and r.state == "OFFLINE" and ctl.session == old_session + 1
+	var kept: bool = l.state == "SIMULATING" and bool(l.capsule.orphaned) and ctl.session == old_session + 1
 	ctl.field.target_hit.emit(id, "bumper", "bumper_1", Vector2(640, 415))
 	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
 	_gm_step(ctl, ctl.arm_retry_s + 1.0)
-	_ok(kept and ctl.score.score == 1200 and l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 1 and r.state == "READY"
-		and hub.dials[GM_R].state == "ARMED" and ctl.lane_text("left").contains("係の人"),
-		"game mode: after a reconnection the capsule in play still scores but is NOT released by itself (FAULT); the other Dial arms again",
-		"%s %s %d" % [l.state, r.state, hub.count(GM_L, "RELEASE_BALL")])
+	_ok(kept and ctl.score.score == 1200 and l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 1
+		and ctl.lane_text("left").contains("係の人"),
+		"game mode: after a reconnection the capsule in play still scores but is NOT released by itself (FAULT)",
+		"%s %d" % [l.state, hub.count(GM_L, "RELEASE_BALL")])
+	_gm_free(game, rs)
+	game = _gm_game()
+	ctl = _gm_playing(game)
+	hub = ctl.mock_hub
+	l = ctl.lanes["left"]
+	# the link drops and comes back while the Dial was only waiting: it is armed again
+	hub.restart_session()
+	var idle_off: bool = l.state == "OFFLINE"
+	_gm_step(ctl, ctl.arm_retry_s + 1.0)
+	_ok(idle_off and l.state == "READY" and hub.dials[GM_L].state == "ARMED",
+		"game mode: after a reconnection a Dial that was only waiting arms again", "%s %s" % [idle_off, l.state])
 	# review on #139: a capsule lands before the ARM_RECEIVER's answer is back
 	hub.latency_s = 1.0
-	hub.command(GM_R, "DISARM_RECEIVER")
-	r.state = "ARMING"
-	ctl._arm(r)
-	var arming: bool = r.state == "ARMING" and hub.dials[GM_R].state == "ARMED"
-	hub.mock_ball(GM_R)
-	var taken_early: bool = r.state == "ABSORBING" and not r.capsule.is_empty()
+	hub.command(GM_L, "DISARM_RECEIVER")
+	l.state = "ARMING"
+	ctl._arm(l)
+	var arming: bool = l.state == "ARMING" and hub.dials[GM_L].state == "ARMED"
+	hub.mock_ball(GM_L)
+	var taken_early: bool = l.state == "ABSORBING" and not l.capsule.is_empty()
 	_gm_step(ctl, 1.2)  # the late ACK changes nothing
-	var rid := str(r.capsule.capsule_id)
-	var in_play: bool = r.state == "SIMULATING" and ctl.field.has_capsule(rid)
+	var rid := str(l.capsule.capsule_id)
+	var in_play: bool = l.state == "SIMULATING" and ctl.field.has_capsule(rid)
 	hub.latency_s = 0.03
-	ctl.field.capsule_exited.emit(rid, "right", Vector2(900, 660))
+	ctl.field.capsule_exited.emit(rid, "left", Vector2(300, 660))
 	_gm_step(ctl, 4.0)
-	_ok(arming and taken_early and in_play and r.state == "READY" and hub.count(GM_R, "RELEASE_BALL") == 1,
+	_ok(arming and taken_early and in_play and l.state == "READY" and hub.count(GM_L, "RELEASE_BALL") == 1,
 		"game mode: a capsule reported before the arm's ACK is still played and released (not left in the Dial)",
-		"%s %s %s %s" % [arming, taken_early, in_play, r.state])
-	# one Dial offline for a moment: its lane waits and arms again, the other is not disturbed
-	hub.set_online(GM_R, false)
-	var off: bool = r.state == "OFFLINE"
-	hub.set_online(GM_R, true)
+		"%s %s %s %s" % [arming, taken_early, in_play, l.state])
+	# the Dial offline for a moment: its lane waits and arms again
+	hub.set_online(GM_L, false)
+	var off: bool = l.state == "OFFLINE"
+	hub.set_online(GM_L, true)
 	_gm_step(ctl, 0.3)
-	_ok(off and r.state == "READY", "game mode: a Dial that went offline is armed again when it is back", r.state)
+	_ok(off and l.state == "READY", "game mode: a Dial that went offline is armed again when it is back", l.state)
 	_gm_free(game, rs)
 
 func _test_game_mode_release_faults(rs: Node) -> void:
@@ -3399,64 +3418,74 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	var ctl := _gm_playing(game)
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
 	# the release command is refused: no second try
 	hub.refuse_next["%d|RELEASE_BALL" % GM_L] = "OFFLINE"
 	_gm_play_capsule(ctl, "left", "left")
 	_gm_step(ctl, 6.0)
-	var refused: bool = l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 0 and l.fault.contains("OFFLINE")
-	# the servo sequence fails
-	hub.fail_release[GM_R] = true
-	_gm_play_capsule(ctl, "right", "right")
-	_gm_step(ctl, 4.0)
-	_ok(refused and r.state == "FAULT" and hub.count(GM_R, "RELEASE_BALL") == 1 and ctl.score.score == 200
-		and ctl.fx.played.has("capsule_fault:left") and ctl.fx.played.has("capsule_fault:right") and ctl.phase == "PLAYING",
-		"game mode: a refused release and RELEASE_FAILED stop that lane (FAULT), never a second RELEASE_BALL; the score stays",
-		"%s %s %s" % [l.state, l.fault, r.state])
+	var refused: bool = l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 0 and l.fault.contains("OFFLINE") \
+		and ctl.score.score == 100 and ctl.fx.played.has("capsule_fault:left") and ctl.phase == "PLAYING"
+	var refused_note := "%s %s" % [l.state, l.fault]
 	_gm_free(game, rs)
 	game = _gm_game()
 	ctl = _gm_playing(game)
 	hub = ctl.mock_hub
 	l = ctl.lanes["left"]
-	r = ctl.lanes["right"]
+	# the servo sequence fails
+	hub.fail_release[GM_L] = true
+	_gm_play_capsule(ctl, "left", "left")
+	_gm_step(ctl, 4.0)
+	_ok(refused and l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 1 and ctl.score.score == 100
+		and ctl.fx.played.has("capsule_fault:left") and ctl.phase == "PLAYING",
+		"game mode: a refused release and RELEASE_FAILED stop the lane (FAULT), never a second RELEASE_BALL; the score stays",
+		"%s / %s %s" % [refused_note, l.state, l.fault])
+	_gm_free(game, rs)
+	game = _gm_game()
+	ctl = _gm_playing(game)
+	hub = ctl.mock_hub
+	l = ctl.lanes["left"]
 	# RELEASE_DONE never comes
 	hub.lose_release_done[GM_L] = true
 	_gm_play_capsule(ctl, "left", "left")
 	_gm_step(ctl, ctl.release_sync_s + ctl.release_timeout_s - 0.5)
 	var waiting: bool = l.state == "RELEASING"
-	_gm_step(ctl, 1.0)
-	# every Illumination command is refused: the right lane does not care
+	_gm_step(ctl, 5.0)
+	var settled: bool = l.state == "READY" and l.released == 1 and hub.count(GM_L, "RELEASE_BALL") == 1 \
+		and ctl.trace.rows.any(func(row): return row.release_status == "timeout")
+	# every Illumination command is refused: the next capsule does not care
 	for n in ["SET_LIGHT_MODE", "TRIGGER_EFFECT"]:
 		hub.refuse_next["%d|%s" % [GameModeDevices.ILLUMINATION, n]] = "OFFLINE"
-	_gm_play_capsule(ctl, "right", "center")
+	_gm_play_capsule(ctl, "left", "center")
 	_gm_step(ctl, 4.0)
-	_ok(waiting and l.state == "READY" and l.released == 1 and hub.count(GM_L, "RELEASE_BALL") == 1
-		and ctl.trace.rows.any(func(row): return row.release_status == "timeout") and r.state == "READY" and r.released == 1,
+	_ok(waiting and settled and l.state == "READY" and l.released == 2 and hub.count(GM_L, "RELEASE_BALL") == 2,
 		"game mode: a lost RELEASE_DONE is settled by the Dial's status (done and empty = go on, no re-release); refused lights never hold a release",
-		"%s %s" % [l.state, r.state])
+		"%s %s %s %d" % [waiting, settled, l.state, l.released])
 	# ... and when the status does not say so either: FAULT
 	hub.lose_release_done[GM_L] = true
 	hub.stuck_ball[GM_L] = true
 	_gm_play_capsule(ctl, "left", "left")
 	_gm_step(ctl, ctl.release_sync_s + ctl.release_timeout_s + ctl.verify_retry_s * ctl.verify_tries + 1.0)
-	_ok(l.state == "FAULT" and l.fault.contains("RELEASE_DONE") and hub.count(GM_L, "RELEASE_BALL") == 2
+	_ok(l.state == "FAULT" and l.fault.contains("RELEASE_DONE") and hub.count(GM_L, "RELEASE_BALL") == 3
 		and hub.led_effect(GM_L) == "FLASH",
 		"game mode: no RELEASE_DONE and a Dial that is not done = FAULT (red flash on the Dial), still one RELEASE_BALL per capsule",
 		"%s %s" % [l.state, l.fault])
-	hub.stuck_ball.erase(GM_L)
+	_gm_free(game, rs)
+	game = _gm_game()
+	ctl = _gm_playing(game)
+	hub = ctl.mock_hub
+	l = ctl.lanes["left"]
 	# after the release the Dial still reports a capsule: not armed again blindly
-	hub.mock_ball(GM_R)
+	hub.mock_ball(GM_L)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	hub.stuck_ball[GM_R] = true  # the capsule does not leave: the switch stays on
-	ctl.field.capsule_exited.emit(str(r.capsule.capsule_id), "right", Vector2(900, 660))
+	hub.stuck_ball[GM_L] = true  # the capsule does not leave: the switch stays on
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "left", Vector2(300, 660))
 	_gm_step(ctl, ctl.release_sync_s + MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S + 0.1)
-	var verifying: bool = r.state == "VERIFYING"
+	var verifying: bool = l.state == "VERIFYING"
 	var per_try: float = MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S + ctl.verify_retry_s * ctl.verify_tries + 1.0
 	_gm_step(ctl, per_try * (ctl.release_retries + 1))
 	# #185: the release is tried again, twice; a capsule that still does not leave is a FAULT
-	_ok(verifying and r.state == "FAULT" and r.fault.contains("出ていない") and hub.count(GM_R, "RELEASE_BALL") == 2 + ctl.release_retries
-		and ctl.release_retries == 2 and hub.dials[GM_R].state == "COMPLETE" and r.released == 1,
-		"game mode: RELEASE_DONE is not proof: a capsule still in the Dial gets the release twice more, then the Dial is not armed again (FAULT)", "%s %s %d" % [r.state, r.fault, hub.count(GM_R, "RELEASE_BALL")])
+	_ok(verifying and l.state == "FAULT" and l.fault.contains("出ていない") and hub.count(GM_L, "RELEASE_BALL") == 1 + ctl.release_retries
+		and ctl.release_retries == 2 and hub.dials[GM_L].state == "COMPLETE" and l.released == 0,
+		"game mode: RELEASE_DONE is not proof: a capsule still in the Dial gets the release twice more, then the Dial is not armed again (FAULT)", "%s %s %d" % [l.state, l.fault, hub.count(GM_L, "RELEASE_BALL")])
 	# ... one that leaves at the second try: the round goes on
 	hub.stuck_ball.clear()
 	ctl._halt("test")
@@ -3470,12 +3499,12 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 		and l.re_releases == 0 and ctl.trace.rows.any(func(row): return str(row.get("release_status", "")).begins_with("again 1/"))
 	# ... and a Dial that does not know the second release (older firmware): FAULT, said so
 	hub.no_second_release = true
-	hub.stuck_ball[GM_R] = true
-	_gm_play_capsule(ctl, "right", "center")
+	hub.stuck_ball[GM_L] = true
+	_gm_play_capsule(ctl, "left", "center")
 	_gm_step(ctl, per_try * 2.0 + 2.0)
-	_ok(second_try and r.state == "FAULT" and r.fault.contains("ファームウェア"),
+	_ok(second_try and l.state == "FAULT" and l.fault.contains("ファームウェア"),
 		"game mode (#185): a capsule that leaves at the second release lets the round go on; a Dial that refuses the second release is a FAULT that says so",
-		"%s %s %s %s" % [second_try, l.state, r.state, r.fault])
+		"%s %s %s" % [second_try, l.state, l.fault])
 	_gm_free(game, rs)
 
 ## The Dials' transfer LEDs (UFO-DeviceHub docs/game-mode-interface.md): decoration that
@@ -3485,35 +3514,34 @@ func _test_game_mode_dial_leds(rs: Node) -> void:
 	var ctl := _gm_playing(game)
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
 	var fx_of := func(dev: int) -> Array:
 		return hub.executed.filter(func(e): return e[0] == dev and e[1] == "SET_DIAL_EFFECT").map(func(e): return e[2])
-	var colours: bool = hub.dials[GM_L].color == [0, 255, 255] and hub.dials[GM_R].color == [255, 0, 255] \
-		and hub.count(GM_L, "SET_DIAL_COLOR") == 1 and ctl.fx.colors["left"] == Color8(0, 255, 255) and ctl.fx.colors["right"] == Color8(255, 0, 255)
+	var colours: bool = hub.dials[GM_L].color == [0, 255, 255] and hub.count(GM_L, "SET_DIAL_COLOR") == 1 \
+		and hub.count(GM_R, "SET_DIAL_COLOR") == 0 and ctl.fx.colors["left"] == Color8(0, 255, 255)
 	hub.mock_ball(GM_L)
 	var intake: Dictionary = fx_of.call(GM_L)[-1]
 	var intake_ok: bool = intake.effect == "CHASE" and intake.direction == "TO_SCREEN" and intake.duration_ms == 1500 \
 		and intake.priority == "NORMAL" and intake.target == "BOTH" and not intake.has("color") and hub.led_effect(GM_L) == "CHASE"
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	hub.mock_ball(GM_R)  # the right one comes in ...
-	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "left", Vector2(300, 660))  # ... as the left one goes out
-	var opposite: bool = hub.dials[GM_L].led.effect == "COMET" and hub.dials[GM_L].led.direction == "TO_DIAL" \
-		and hub.dials[GM_R].led.effect == "CHASE" and hub.dials[GM_R].led.direction == "TO_SCREEN"
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "left", Vector2(300, 660))
+	var opposite: bool = hub.dials[GM_L].led.effect == "COMET" and hub.dials[GM_L].led.direction == "TO_DIAL"
 	var sent_before_release: bool = hub.count(GM_L, "RELEASE_BALL") == 0
 	_gm_step(ctl, ctl.release_sync_s + 0.1)
 	var releasing: bool = hub.led_effect(GM_L) == "CHASE" and hub.dials[GM_L].led.direction == "TO_DIAL" and l.state == "RELEASING"
 	_gm_step(ctl, 3.0)
 	_ok(colours and intake_ok and opposite and sent_before_release and releasing and l.state == "READY" and hub.led_effect(GM_L) == "NONE"
 		and fx_of.call(GM_L).map(func(p): return p.effect) == ["CHASE", "COMET", "CHASE"],
-		"game mode LEDs: the unit colour per session, INTAKE (to the screen), RETURN_FLOW then RELEASING (to the Dial); left and right opposite ways at once; the Dial ends it at RELEASE_DONE",
+		"game mode LEDs: the unit colour per session, INTAKE (to the screen), RETURN_FLOW then RELEASING (to the Dial); the Dial ends it at RELEASE_DONE; no LED command for Dial 2",
 		"%s %s %s %s %s" % [colours, intake_ok, opposite, releasing, fx_of.call(GM_L)])
 	# a refused effect (a higher priority is running) holds nothing
-	hub.dials[GM_R].led = {"effect": "FLASH", "direction": "NONE", "color": [255, 0, 0], "priority": "HIGH", "left": 0.0}
-	ctl.field.capsule_exited.emit(str(r.capsule.capsule_id), "right", Vector2(900, 660))
+	hub.mock_ball(GM_L)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+	hub.dials[GM_L].led = {"effect": "FLASH", "direction": "NONE", "color": [255, 0, 0], "priority": "HIGH", "left": 0.0}
+	ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "left", Vector2(300, 660))
 	_gm_step(ctl, 4.0)
 	var refused: bool = ctl.trace.rows.any(func(row): return row.event == "ack" and row.result == "IGNORED_PRIORITY")
-	_ok(refused and r.state == "READY" and r.released == 1 and r.led_ok,
-		"game mode LEDs: IGNORED_PRIORITY changes nothing: the capsule is released as usual", r.state)
+	_ok(refused and l.state == "READY" and l.released == 2 and l.led_ok and fx_of.call(GM_R).is_empty(),
+		"game mode LEDs: IGNORED_PRIORITY changes nothing: the capsule is released as usual", l.state)
 	_gm_free(game, rs)
 	# firmware 0.2: the Dials do not know the LED commands
 	game = _gm_game()
@@ -3525,7 +3553,7 @@ func _test_game_mode_dial_leds(rs: Node) -> void:
 	_gm_play_capsule(ctl, "left", "center")
 	_gm_step(ctl, 4.0)
 	var asked_after: int = ctl.trace.rows.filter(func(row): return row.event == "command" and row.effect_id in ["SET_DIAL_EFFECT", "SET_DIAL_COLOR"]).size()
-	_ok(asked == 2 and asked_after == 2 and not l.led_ok and l.state == "READY" and l.released == 1 and ctl.score.score == 1000
+	_ok(asked == 1 and asked_after == 1 and not l.led_ok and l.state == "READY" and l.released == 1 and ctl.score.score == 1000
 		and ctl.trace.rows.any(func(row): return row.event == "led" and str(row.led_command).contains("not sent")),
 		"game mode LEDs: older firmware (UNSUPPORTED) = no more LED commands this round, the game is the same", "%d %d" % [asked, asked_after])
 	ctl.dial_leds = false
@@ -3542,7 +3570,6 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	var ctl := _gm_playing(game)
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
 	_ok(GameModeHud.clock_text(150.0) == "2:30" and GameModeHud.clock_text(29.2) == "0:30" and GameModeHud.clock_text(0.0) == "0:00",
 		"game mode HUD: the clock counts down from 2:30")
 	ctl.time_left = 30.5
@@ -3555,13 +3582,12 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	ctl.time_left = 0.5
 	hub.mock_ball(GM_L)
 	_gm_step(ctl, 0.6)
-	var settling: bool = ctl.phase == "SETTLING" and l.state == "ABSORBING" and r.state in ["CLOSING", "CLOSED"] \
+	var settling: bool = ctl.phase == "SETTLING" and l.state == "ABSORBING" \
 		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup")
 	_gm_step(ctl, 1.0)
-	var disarmed: bool = r.state == "CLOSED" and hub.dials[GM_R].state == "READY" and not hub.mock_ball(GM_R)
-	_ok(hurry and warned and settling and disarmed and l.state == "SIMULATING" and ctl.time_left == 0.0,
-		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the free Dial is disarmed and the capsule in play goes on",
-		"%s %s %s %s %s" % [hurry, warned, settling, disarmed, l.state])
+	_ok(hurry and warned and settling and l.state == "SIMULATING" and ctl.time_left == 0.0,
+		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the capsule in play goes on",
+		"%s %s %s %s" % [hurry, warned, settling, l.state])
 	# review on #139: time runs out while an ARM_RECEIVER is on its way: that Dial is disarmed too
 	var g2 := _gm_game()
 	var c2 := _gm_playing(g2)
@@ -3578,19 +3604,37 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_ok(armed_now and closing and c2.phase == "RESULT" and l2.state == "CLOSED" and not c2.mock_hub.mock_ball(GM_L),
 		"game mode: at 0 s a Dial whose arming was still on its way is disarmed too", "%s %s %s" % [armed_now, closing, l2.state])
 	_gm_free(g2, rs)
-	# a capsule that landed as the time ran out: back out, no score
-	hub._emit(GM_R, "BALL_RECEIVED", {"cycle": 2})
-	hub.dials[GM_R].state = "BALL_DETECTED"
-	var late: bool = r.state == "RETURNING" and bool(r.capsule.late) and ctl.field.capsule_count() == 1
+	# the Dial was free at 0 s: it is disarmed; a capsule that landed just as the time ran
+	# out (its report comes after 0 s): back out, no score
+	var g3 := _gm_game()
+	var c3 := _gm_playing(g3)
+	var h3 := c3.mock_hub
+	var l3: GameModeController.Lane = c3.lanes["left"]
+	h3.latency_s = 1.0  # the Dial's answers are slow: the lane is still closing when the report comes
+	c3.time_left = 0.01
+	_gm_step(c3, 0.05)
+	var disarmed: bool = c3.phase == "SETTLING" and l3.state == "CLOSING" and h3.dials[GM_L].state == "READY" and not h3.mock_ball(GM_L)
+	h3._emit(GM_L, "BALL_RECEIVED", {"cycle": 2})
+	h3.dials[GM_L].state = "BALL_DETECTED"
+	h3.latency_s = 0.03
+	var late: bool = l3.state == "RETURNING" and bool(l3.capsule.late) and c3.field.capsule_count() == 0
+	_gm_step(c3, 6.0)
+	_ok(disarmed and late and c3.phase == "RESULT" and c3.score.score == 0 and l3.state == "CLOSED" and h3.count(GM_L, "RELEASE_BALL") == 1
+		and h3.dials[GM_L].op_mode == "STANDBY" and c3.capsules.finished.size() == 1
+		and int(c3.result.get("capsules", -1)) == 0 and int(c3.result.get("capsule_bonus", -1)) == 0,
+		"game mode: at 0 s a free Dial is disarmed; a capsule reported after 0 s goes straight back (never on the field, no score, no bonus), then RESULT",
+		"%s %s %s %s %d" % [disarmed, late, c3.phase, l3.state, c3.score.score])
+	_gm_free(g3, rs)
+	# the capsule in play at 0 s is scored and released
 	var id := str(l.capsule.capsule_id)
 	ctl.field.target_hit.emit(id, "star", "star", Vector2(640, 505))
 	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
 	_gm_step(ctl, 5.0)
-	_ok(late and ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED" and r.state == "CLOSED"
-		and hub.count(GM_L, "RELEASE_BALL") == 1 and hub.count(GM_R, "RELEASE_BALL") == 1 and hub.dials[GM_L].op_mode == "STANDBY"
-		and hub.dials[GM_L].cycle == 1 and ctl.hud.result_lines().contains("1500") and ctl.capsules.finished.size() == 2,
-		"game mode: after 0 s the capsules in play are scored and released, a late one goes straight back (no score), then RESULT",
-		"%s %d %s %s" % [ctl.phase, ctl.score.score, l.state, r.state])
+	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"
+		and hub.count(GM_L, "RELEASE_BALL") == 1 and _gm_sent(hub, GM_R) == 0 and hub.dials[GM_L].op_mode == "STANDBY"
+		and hub.dials[GM_L].cycle == 1 and ctl.hud.result_lines().contains("1500") and ctl.capsules.finished.size() == 1,
+		"game mode: after 0 s the capsule in play is scored and released, then RESULT",
+		"%s %d %s" % [ctl.phase, ctl.score.score, l.state])
 	game._unhandled_input(_key(KEY_Z))  # RESULT: nothing is taken
 	game._unhandled_input(_key(KEY_ENTER))  # the result's show ends (#153)...
 	game._unhandled_input(_key(KEY_ENTER))  # ...and the next Enter plays
@@ -3614,13 +3658,13 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_gm_step(ctl, 0.1)
 	_gm_step(ctl, ctl.settle_max_s + 0.5)
 	_ok(ctl.phase == "RESULT" and l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == released_before
-		and ctl.hud.result_lines().contains("左") and hub.dials[GM_L].state == "BALL_DETECTED",
+		and ctl.hud.result_lines().contains("Dial: ") and hub.dials[GM_L].state == "BALL_DETECTED",
 		"game mode: settling is bounded (30 s): what is still in play ends as a FAULT and the result is shown", "%s %s" % [ctl.phase, l.state])
 	# the next round with that capsule still in the Dial: the lane cannot arm and says why
 	game._unhandled_input(_key(KEY_ENTER))  # (the result's show ends, then the round starts)
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, ctl.countdown_s + 0.2)
-	var stuck: bool = l.state in ["OFFLINE", "ARMING"] and ctl.lane_text("left").contains("残っている") and r.state == "READY"
+	var stuck: bool = l.state in ["OFFLINE", "ARMING"] and ctl.lane_text("left").contains("残っている")
 	hub.dials[GM_L].state = "READY"  # a person took it out
 	_gm_step(ctl, ctl.arm_retry_s + 0.3)
 	_ok(stuck and l.state == "READY" and hub.count(GM_L, "RELEASE_BALL") == released_before,
@@ -3628,7 +3672,6 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	# Space
 	hub.mock_ball(GM_L)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	hub.mock_ball(GM_R)
 	id = str(l.capsule.capsule_id)
 	var stops := hub.count(GM_L, "STOP_ALL")
 	var releases := hub.count(GM_L, "RELEASE_BALL")
@@ -3640,9 +3683,9 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_gm_step(ctl, 5.0)
 	_ok(crane_stopped and ctl.phase == "STOPPED" and ctl.field.frozen and hub.count(GM_L, "STOP_ALL") == stops + 1
 		and hub.count(GM_R, "STOP_ALL") >= 1 and hub.count(GM_L, "RELEASE_BALL") == releases and ctl.score.score == 0
-		and l.state == "FAULT" and r.state == "FAULT" and hub.dials[GM_L].op_mode == "STANDBY" and ctl.message.contains("係の人"),
-		"game mode: Space stops the crane and the round, STOP_ALL goes to both Dials, nothing is scored or released afterwards",
-		"%s %s %s" % [ctl.phase, l.state, r.state])
+		and l.state == "FAULT" and hub.dials[GM_L].op_mode == "STANDBY" and ctl.message.contains("係の人"),
+		"game mode: Space stops the crane and the round, STOP_ALL goes to every device, nothing is scored or released afterwards",
+		"%s %s" % [ctl.phase, l.state])
 	game._unhandled_input(_key(KEY_ENTER))
 	_ok(ctl.phase == "COUNTDOWN" and not ctl.field.frozen, "game mode: Enter after a stop starts over")
 	_gm_free(game, rs)
@@ -3662,8 +3705,8 @@ func _test_game_mode_backend_hub(rs: Node) -> void:
 		"game mode backend: picked by game_mode.devices; without a backend it is not available")
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, 0.2)
-	_ok(ctl.phase == "COUNTDOWN" and ctl.lanes["left"].state == "OFFLINE" and ctl.lanes["right"].state == "OFFLINE",
-		"game mode backend: no hub = both lanes wait offline (the round still runs)")
+	_ok(ctl.phase == "COUNTDOWN" and ctl.lanes["left"].state == "OFFLINE",
+		"game mode backend: no hub = the lane waits offline (the round still runs)")
 	# why there is no hub is said on the screen
 	var no_backend: String = ctl.hud.problem_text()
 	hub._problem = ""
@@ -3706,7 +3749,7 @@ func _test_game_mode_backend_hub(rs: Node) -> void:
 
 ## #141: the new look only shows the game; it changes nothing of it.
 func _test_game_mode_visuals(rs: Node) -> void:
-	var words := ["SUMMON THE UFO", "SCORE", "TIME", "JACKPOT", "1000", "100", "DIAL 1", "DIAL 2", "2:30", "0123456789", "+-:!.x"]
+	var words := ["SUMMON THE UFO", "SCORE", "TIME", "JACKPOT", "1000", "100", "DIAL 1", "2:30", "0123456789", "+-:!.x"]
 	_ok(words.all(func(w): return PixelText.supports(w)) and not PixelText.supports("あ") and PixelText.width("100", 3.0) == 51.0
 		and PixelText.height(3.0) == 21.0 and PixelText.width("", 2.0) == 0.0,
 		"game mode art: the pixel font has every arcade word (Japanese stays on the labels)")
@@ -3722,8 +3765,8 @@ func _test_game_mode_visuals(rs: Node) -> void:
 	var low := b.star_count()
 	b.quality = "high"
 	_ok(title and high == 126 and low == 40 and b.side_colors["left"] == ctl.lanes["left"].color
-		and ctl.field.wall_colors[1] == ctl.lanes["right"].color and ctl.visual_quality == "high",
-		"game mode art: the score game's own title (logo, big UFO, START) while it waits; the walls and conduits take the Dials' colours; low quality has fewer stars",
+		and ctl.field.wall_colors[0] == ctl.lanes["left"].color and b.side_colors.keys() == ["left"] and ctl.visual_quality == "high",
+		"game mode art: the score game's own title (logo, big UFO, START) while it waits; the left wall and the conduit take the Dial's colour; low quality has fewer stars",
 		"%s %d %d" % [title, high, low])
 	game._unhandled_input(_key(KEY_ENTER))
 	ctl.tick(1.0 / 60.0)
@@ -3731,7 +3774,6 @@ func _test_game_mode_visuals(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	ctl.mock_hub.mock_ball(GM_L)
 	var lit: float = b.side_level("left")
-	var other: float = b.side_level("right")
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
 	var id := str(ctl.lanes["left"].capsule.capsule_id)
 	var pin: StaticBody2D = ctl.field.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == "pin_3")[0]
@@ -3741,7 +3783,7 @@ func _test_game_mode_visuals(rs: Node) -> void:
 	b.pulse(Color.WHITE, 1.0)
 	var flash := b.flash_level()
 	b.advance(1.0)
-	_ok(playing_clean and lit == 1.0 and other == 0.0 and pin_glow and not ctl.field._pin_flash.has("pin_3")
+	_ok(playing_clean and lit == 1.0 and pin_glow and not ctl.field._pin_flash.has("pin_3")
 		and flash == 1.0 and b.flash_level() == 0.0 and b.side_level("left") == 0.0 and not ctl.hud.title_showing(),
 		"game mode art: no title during play; a hit pin glows and fades; the background's glow and the Dial side's light fade by themselves",
 		"%s %s %s %s" % [playing_clean, lit, pin_glow, flash])
@@ -3873,15 +3915,14 @@ func _test_game_mode_juice(rs: Node) -> void:
 		and game.gesture_hud.ring()[0].x + game.gesture_hud.ring()[1] < card.size.x and GestureHud.CAM_RECT.end.y < card.size.y,
 		"game mode layout: the hand panel (camera, stick, state) is on the left of the status row: it covers neither the score, the UFO's rail, the field nor the Dial's port",
 		str(card))
-	# the field is tall, the Dials' ports are under it: Dial 1 left, Dial 2 right
+	# the field is tall, the Dial's port is under it, on the left (#200: the only one)
 	var pl: Vector2 = GameModeVFX.PORTS["left"]
-	var pr: Vector2 = GameModeVFX.PORTS["right"]
 	_ok(PinballField.FLOOR_Y - PinballField.TOP > PinballField.RIGHT - PinballField.LEFT and screen_rect.encloses(field_rect)
-		and pl.x < GameModeLayout.CX and pr.x > GameModeLayout.CX and pl.y > PinballField.FLOOR_Y + 68.0 and is_equal_approx(pl.y, pr.y)
-		and is_equal_approx(pl.x, GameModeLayout.SCREEN.x - pr.x) and ctl.lanes["left"].device == GM_L and ctl.lanes["right"].device == GM_R
-		and GameModeLayout.dial_edge("left").x < 0.0 and GameModeLayout.dial_edge("right").x > GameModeLayout.SCREEN.x
+		and pl.x < GameModeLayout.CX and pl.y > PinballField.FLOOR_Y + 68.0 and GameModeVFX.PORTS.size() == 1
+		and ctl.lanes["left"].device == GM_L and not ctl.lanes.has("right")
+		and GameModeLayout.dial_edge("left").x < 0.0
 		and ctl.ufo.x_min >= PinballField.LEFT + 30.0 and ctl.ufo.x_max <= PinballField.RIGHT - 30.0,
-		"game mode layout: portrait: the field is taller than wide and inside the screen; Dial 1's port is bottom left, Dial 2's bottom right, their light runs off their own side")
+		"game mode layout: portrait: the field is taller than wide and inside the screen; the one port (Dial 1) is bottom left, its light runs off the left side")
 	game.gesture_hud.column = false
 	game.gesture_hud.place(720.0, 1280.0)
 	_ok(game.gesture_hud.size == GestureHud.SIZE, "game mode layout: outside the score game the hand panel is the wide one as before")
@@ -3910,7 +3951,7 @@ func _test_game_mode_scope(rs: Node) -> void:
 	var card := ArmScope.RECT
 	var field_rect := Rect2(PinballField.LEFT - 12.0, PinballField.TOP - 30.0, PinballField.RIGHT - PinballField.LEFT + 24.0,
 		PinballField.FLOOR_Y - PinballField.TOP + 98.0)
-	var port := Rect2(GameModeVFX.PORTS["right"] - Vector2(40, 40), Vector2(80, 100))
+	var port := Rect2(GameModeVFX.PORTS["left"] - Vector2(40, 40), Vector2(80, 100))
 	var rail := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 52.0, ctl.ufo.x_max - ctl.ufo.x_min + 128.0, 116)  # (the sprite's own top rows are empty)
 	_ok(hidden and shown and sc.stream_header().is_empty()
 		and not card.intersects(field_rect) and not card.intersects(GameModeHud.TIME_RECT) and not card.intersects(port)
@@ -4033,17 +4074,17 @@ func _test_game_mode_audio(rs: Node) -> void:
 	# in a round: the combo's step has its sound, the voices go to the Voice bus
 	var game := _gm_game()
 	var ctl: GameModeController = _gm_playing(game)
-	ctl.mock_hub.mock_ball(GM_R)
+	ctl.mock_hub.mock_ball(GM_L)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
-	var id := str(ctl.lanes["right"].capsule.capsule_id)
+	var id := str(ctl.lanes["left"].capsule.capsule_id)
 	var f := ctl.field
 	for target in ["bumper_0", "pop_1"]:
 		f._on_capsule_body(f.get_children().filter(func(n): return n.has_meta("target") and n.get_meta("target") == target)[0], id)
 	ctl.tick(1.0 / 60.0)
-	_ok(ctl.sounds.log.has("combo") and ctl.sounds.combo_step == 1 and ctl.sounds.side_of("absorb") == "right" and ctl.sounds.side_of("drop") == "right"
+	_ok(ctl.sounds.log.has("combo") and ctl.sounds.combo_step == 1 and ctl.sounds.side_of("absorb") == "left" and ctl.sounds.side_of("drop") == "left"
 		and ctl.sounds.log.has("absorb") and ctl.sounds.log.has("drop") and ctl.sounds.log.has("bumper") and ctl.sounds.log.has("pop")
 		and game.study_mode.speech._player.bus == AudioBuses.VOICE,
-		"audio: in a round the combo's step has its sound, the right Dial's transfer sounds are on the right, and UFOくん's voice is on the Voice bus",
+		"audio: in a round the combo's step has its sound, the Dial's transfer sounds are on its side (the left), and UFOくん's voice is on the Voice bus",
 		"%s %d %s" % [ctl.sounds.log, ctl.sounds.combo_step, ctl.sounds.side_of("absorb")])
 	_gm_free(game, rs)
 
@@ -4199,8 +4240,8 @@ func _test_easy_mode_logic() -> void:
 	var fist = _easy_hand("fist")
 	var one = _easy_hand("point")
 	var two = _easy_hand("peace")
-	# --- both destinations, to the end
-	for dest in [1, 2]:
+	# --- to the portal (Dial 1, the only destination since #200), to the end
+	for dest in [1]:
 		var p = _easy_new()
 		var e: EasyModeControl = p[0]
 		var be: EasyBackend = p[1]
@@ -4227,6 +4268,9 @@ func _test_easy_mode_logic() -> void:
 		_easy_run(e, be, 1.0, sign)  # straight from the fist to the fingers: not read yet
 		var neutral_first = be.sent.size() == 1 and e.note.contains("パー")
 		_easy_run(e, be, 0.3, open)
+		_easy_run(e, be, 1.5, two)  # #200: two fingers mean nothing (there is no right portal)
+		var two_nothing = be.sent.size() == 1 and e.state == "WAIT_DESTINATION" and e.holding == "" and e.note == EasyModeControl.TWO_FINGERS_NOTE
+		_easy_run(e, be, 0.3, open)
 		_easy_run(e, be, 0.7, sign)
 		var chose: bool = be.names() == ["easy_grab", "easy_deliver"] and be.sent[1][1] == {"destination": dest, "grab_id": "g%d" % dest} \
 			and e.state == "DELIVER_DIAL_%d" % dest
@@ -4241,10 +4285,9 @@ func _test_easy_mode_logic() -> void:
 		_easy_run(e, be, 2.0, fist if dest == 1 else sign)  # a shape still held after the end: not a new request
 		_easy_run(e, be, 2.0, fist)
 		var no_repeat = be.sent.size() == 2
-		_ok(needs_neutral and not_yet and asked and following and waiting and neutral_first and chose and carrying and done and no_repeat
-			and cues == ["grab", "caught", "deliver", "done"],
-			"easy mode: fist -> catch -> %s -> carry to Dial %d -> back to the hand; each sign asks once, and only after a neutral hand" % [
-				"one finger" if dest == 1 else "two fingers", dest],
+		_ok(needs_neutral and not_yet and asked and following and waiting and neutral_first and two_nothing and chose and carrying and done and no_repeat
+			and cues == ["grab", "caught", "deliver", "done"] and not EasyModeControl.STATES.has("DELIVER_DIAL_2"),
+			"easy mode: fist -> catch -> one finger -> carry to Dial %d -> back to the hand; each sign asks once, and only after a neutral hand; two fingers ask for nothing and the screen says to show one (#200)" % dest,
 			"%s %s %s %s %s %s %s %s %s %s %s" % [needs_neutral, not_yet, asked, following, waiting, neutral_first, chose, carrying, done, no_repeat, cues])
 	# --- a sign must be held, unbroken, by one fresh hand
 	var p2 = _easy_new()
@@ -4279,7 +4322,7 @@ func _test_easy_mode_logic() -> void:
 	var p3 = _easy_new()
 	var e3: EasyModeControl = p3[0]
 	var be3: EasyBackend = p3[1]
-	be3.report("MANUAL_XY", "old", {"last_result": "done", "destination": 2})  # the catch before this one
+	be3.report("MANUAL_XY", "old", {"last_result": "done", "destination": 1})  # the catch before this one
 	_easy_run(e3, be3, 0.3, open)
 	_easy_run(e3, be3, 0.7, fist)
 	_easy_run(e3, be3, 0.5, fist)  # no answer yet: the old "done" must not be read as this catch's
@@ -4291,9 +4334,11 @@ func _test_easy_mode_logic() -> void:
 	_easy_run(e3, be3, 0.3, open)
 	_easy_run(e3, be3, 0.4, one)
 	_easy_run(e3, be3, 0.4, two)
-	var switched = be3.sent.size() == 1 and e3.holding == "2"
-	_easy_run(e3, be3, 0.3, two)
-	var took_two: bool = be3.sent.size() == 2 and be3.sent[1][1].destination == 2
+	var switched = be3.sent.size() == 1 and e3.holding == ""
+	_easy_run(e3, be3, 0.4, one)  # the hold starts over: 0.4 s again is not enough
+	switched = switched and be3.sent.size() == 1 and e3.holding == "1"
+	_easy_run(e3, be3, 0.3, one)
+	var took_two: bool = be3.sent.size() == 2 and be3.sent[1][1].destination == 1
 	# the backend refuses the choice (it had just given up): back to waiting, then its report decides
 	e3.on_ack(be3.last_rid(), false, {"reason": "not waiting for a destination (state EXPIRED)"})
 	var back_waiting = e3.state == "WAIT_DESTINATION" and e3.note != "" and e3.destination == 0
@@ -4307,7 +4352,7 @@ func _test_easy_mode_logic() -> void:
 	_easy_run(e3, be3, 1.0, fist)
 	var reset_needs_neutral = e3.state == "MANUAL_XY" and be3.sent.size() == 2
 	_ok(old_ignored and other_ack and switched and took_two and back_waiting and expired and stays and reset_needs_neutral,
-		"easy mode: another catch's report and another request's answer are not read; one finger turned into two starts over; nobody choosing ends in FAULT, which only a reset leaves",
+		"easy mode: another catch's report and another request's answer are not read; one finger broken by another shape starts over; nobody choosing ends in FAULT, which only a reset leaves",
 		"%s %s %s %s %s %s %s %s" % [old_ignored, other_ack, switched, took_two, back_waiting, expired, stays, reset_needs_neutral])
 	# --- refusals, lost answers, faults, the link
 	var results = []
@@ -4468,9 +4513,9 @@ func _test_easy_mode_logic() -> void:
 		"easy mode: while it waits for the destination an open hand kept up gives the catch up, once (the short open hand before the fingers does not, nor a pinch, nor with the gate closed); then a new fist catches again",
 		"%s %s %s %s %s %s %s %s %s" % [short_no, still_chooses, not_yet8, cancelled, back8, again8, gate_no, after_time_up, refused8])
 	_ok(EasyModeControl.sign_of(_easy_hand("thumb")) == "grab" and EasyModeControl.sign_of(_easy_hand("point")) == "1"
-		and EasyModeControl.sign_of(_easy_hand("peace")) == "2" and EasyModeControl.sign_of(_easy_hand("open")) == "neutral"
+		and EasyModeControl.sign_of(_easy_hand("peace")) == "" and EasyModeControl.sign_of(_easy_hand("open")) == "neutral"
 		and EasyModeControl.sign_of(_easy_hand("other")) == "" and EasyModeControl.sign_of({}) == "",
-		"easy mode: fist (thumb out or not) = catch, one finger = Dial 1, two = Dial 2, パー = neutral, anything else = nothing")
+		"easy mode: fist (thumb out or not) = catch, one finger = the portal (Dial 1), パー = neutral, anything else (two fingers too, #200) = nothing")
 
 ## The easy mode in the score game: the difficulty, the hand's meaning, the mock run, hard as before.
 func _test_easy_mode_game(rs: Node) -> void:
@@ -4578,7 +4623,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 	feed.call("open", 20)
 	feed.call("other", 2)
 	ctl.easy_hud._process(0.016)
-	var panel: bool = e.state == "WAIT_DESTINATION" and ctl.easy_hud.view() == "panel" and ctl.easy_hud._title.text == "どっちに いれる？" \
+	var panel: bool = e.state == "WAIT_DESTINATION" and ctl.easy_hud.view() == "panel" and ctl.easy_hud._title.text == "ゆび 1ぽんで ポータルへ！" \
 		and ctl.easy_hud.sub_text().contains("ひだり") and ctl.easy_hud._stop.text.contains("Space")
 	game.set_gesture_enabled(false)
 	feed.call("point", 60)  # switched off while it waits: the finger carries nothing
@@ -4594,29 +4639,31 @@ func _test_easy_mode_game(rs: Node) -> void:
 	var before = str(ctl.lanes["left"].state)
 	be.report("MANUAL_XY", "a", {"destination": 1, "last_result": "done"})
 	feed.call("point", 6)
-	var left_took: bool = before == "READY" and ctl.lanes["left"].state == "ABSORBING" and ctl.lanes["right"].state == "READY" \
-		and e.state == "MANUAL_XY"
-	# --- right: the same with two fingers
+	var left_took: bool = before == "READY" and ctl.lanes["left"].state == "ABSORBING" and e.state == "MANUAL_XY"
+	# --- #200: there is no right portal: two fingers after a catch carry nothing (and open no claw)
 	feed.call("open", 20)
 	feed.call("fist", 45)
 	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_grab", "grab_id": "b"})
 	be.report("WAIT_DESTINATION", "b")
 	feed.call("open", 20)
-	feed.call("peace", 45)
-	var chose_right: bool = be.sent.size() == 4 and be.sent[3][1] == {"destination": 2, "grab_id": "b"}
+	feed.call("peace", 90)
+	var two_nothing: bool = be.sent.size() == 3 and e.state == "WAIT_DESTINATION" and claws.is_empty()
+	feed.call("open", 20)
+	feed.call("point", 45)
+	var chose_again: bool = be.sent.size() == 4 and be.sent[3][1] == {"destination": 1, "grab_id": "b"}
 	game.ws.ack.emit(be.last_rid(), true, {"command": "easy_deliver"})
-	be.report("MANUAL_XY", "b", {"destination": 2, "last_result": "done"})
-	feed.call("peace", 6)
-	var right_took: bool = ctl.lanes["right"].state == "ABSORBING" and claws.is_empty()
+	be.report("MANUAL_XY", "b", {"destination": 1, "last_result": "done"})
+	feed.call("point", 6)
+	var no_right: bool = not ctl.lanes.has("right") and _gm_sent(ctl.mock_hub, GM_R) == 0 and claws.is_empty()
 	_ok(starts_hard and no_backend and usable and other_scheme and not_before_the_round and playing and strip and start_reset,
 		"easy mode in the game: hard at start, D on the title switches; without a backend or with another hand scheme it is not used and says why; no catch before the round",
 		"%s %s %s %s %s %s %s" % [starts_hard, no_backend, usable, other_scheme, not_before_the_round, playing, strip])
-	_ok(xy and no_claw and grabbed and locked and panel and chose and left_took and chose_right and right_took,
-		"easy mode in the game: pinch steers XY only, the shapes ask for no claw; fist -> one finger puts the mock capsule into the left Dial, fist -> two fingers into the right; the hand is locked out meanwhile and the screen says what happens",
-		"%s %s %s %s %s %s %s %s %s" % [xy, no_claw, grabbed, locked, panel, chose, left_took, chose_right, right_took])
+	_ok(xy and no_claw and grabbed and locked and panel and chose and left_took and two_nothing and chose_again and no_right,
+		"easy mode in the game: pinch steers XY only, the shapes ask for no claw; fist -> one finger puts the mock capsule into the left Dial (the only portal, #200); two fingers carry nothing; the hand is locked out meanwhile and the screen says what happens",
+		"%s %s %s %s %s %s %s %s %s %s" % [xy, no_claw, grabbed, locked, panel, chose, left_took, two_nothing, chose_again, no_right])
 	# --- the real crane: the game never makes up the Dial's capsule
-	feed.call("open", 600)  # (both capsules through the field and back out)
-	for side in ["left", "right"]:
+	feed.call("open", 600)  # (the capsule through the field and back out)
+	for side in ["left"]:
 		var l: GameModeController.Lane = ctl.lanes[side]
 		if not l.capsule.is_empty() and l.state == "SIMULATING":
 			ctl.field.capsule_exited.emit(l.capsule.capsule_id, "goal_left", Vector2(360, 1000))
@@ -4686,17 +4733,17 @@ func _test_easy_mode_game(rs: Node) -> void:
 		"%s %s %s %s %s %s" % [esc_stops, ctl.difficulty, ctl.phase, claws, z_mode, be.sent.size() - n_sent])
 	# the practice shows the difficulty that is played
 	var easy_steps := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", PinchJoystickScheme.new().claw_poses()).map(func(s): return s.id)
-	_ok(easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
+	_ok(easy_steps.has("easy_one") and not easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
 		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": false}}).text.contains("確かめた")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true},
-			"problems": ["Dial 1 and Dial 2 are recorded at the same place (1,2): move the arm"]}).text.contains("同じ場所")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "stale_z": true}}).text.contains("測り直した")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true}, "problems": []}).state == "ok"
-		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "dial_2": [3, 4], "release_z": 60.0, "catch_z": 20.0, "confirmed": true,
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": false}}).text.contains("確かめた")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "stale_z": true}}).text.contains("測り直した")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true,
 			"saved_at": "2026-11-17T10:00:00"}, "problems": []}).contains("2026-11-17 10:00:00 に記録した値")
+		and not CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0}}).contains("Dial 2")
+		and CalibrationPanel.EASY_VALUES.map(func(v): return v[0]) == ["dial_1", "catch_z", "release_z"]
 		and CalibrationPanel.easy_state({"dials": {"profile": "real"}}).state == "na",
-		"easy mode: the practice has both carries; the 校正 tab says what of the drop points is missing, unconfirmed or done", str(easy_steps))
+		"easy mode: the practice has the one carry (no Dial 2, #200); the 校正 tab asks for Dial 1 only and says what of the drop points is missing, unconfirmed or done", str(easy_steps))
 	RobotState.easy_mode = {}
 	RobotState.source = "mock"
 	RobotState.connected = false
@@ -4733,10 +4780,10 @@ func _test_gesture_tutorial_logic() -> void:
 		"tutorial steps: the spell, パー, the pinch, moving, the catch, the rule, one capsule; the catch asks for the shape that closes the claw in the hand scheme in use",
 		"%s %s %s" % [ids, hard[4].poses, pose_grab.poses])
 	var easy_own := easy.filter(func(s): return str(s.id).begins_with("easy_"))
-	_ok(easy_own.map(func(s): return s.id) == ["easy_grab", "easy_one", "easy_two"] and easy_own[1].poses == ["point"] and easy_own[2].poses == ["peace"]
+	_ok(easy_own.map(func(s): return s.id) == ["easy_grab", "easy_one"] and easy_own[1].poses == ["point"] and str(easy_own[1].title).contains("ポータル")
 		and easy.filter(func(s): return bool(s.get("future", false))).is_empty() and hard.filter(func(s): return bool(s.get("future", false))).is_empty()
 		and changed.map(func(s): return s.id) == ["open", "practice"] and changed[0].title == "X" and is_equal_approx(float(changed[0].hold_s), 2.0),
-		"tutorial steps: the easy mode teaches the fist, one finger (left) and two fingers (right), none marked as not built; config overrides a step and the order",
+		"tutorial steps: the easy mode teaches the fist and one finger (the left portal; no two fingers, #200), none marked as not built; config overrides a step and the order",
 		str(easy.map(func(s): return s.id)))
 	# --- the steps, one by one
 	var t := GestureTutorialController.new()
@@ -4961,10 +5008,11 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	var gotos = []
 	ctl.tutorial_goto.connect(func(d): gotos.append(d))
 	for st in easy:
-		if st.id in ["easy_one", "easy_two"]:
+		if st.id == "easy_one":
 			ctl._on_tutorial_ok(0, st)
 	var hard_gotos = hard.filter(func(s): return int(s.get("goto_demo", 0)) != 0).is_empty()
-	_ok(gotos == [1, 2] and hard_gotos, "tutorial carry (#183): the easy finger steps ask for the arm over Dial 1 and Dial 2; the hard mode's ask nothing", str(gotos))
+	ctl._on_tutorial_ok(0, {"goto_demo": 2})  # (an older config's step for Dial 2: nothing is asked)
+	_ok(gotos == [1] and hard_gotos, "tutorial carry (#183): the easy finger step asks for the arm over Dial 1 (there is no Dial 2, #200); the hard mode's ask nothing", str(gotos))
 	game.mock.arm_marks = {"open": 10.0, "closed": 120.0}
 	game.mock.arm_deg = 10.0
 	var grab = easy.filter(func(s): return s.id == "easy_grab")[0]
@@ -5437,14 +5485,13 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	# the practice capsule: a real transaction of the Dial
 	_gm_step(ctl, 0.5)
 	var left: GameModeController.Lane = ctl.lanes["left"]
-	var right: GameModeController.Lane = ctl.lanes["right"]
-	var armed := ctl.practice == "open" and left.state == "READY" and right.state == "READY"
+	var armed := ctl.practice == "open" and left.state == "READY" and _gm_sent(ctl.mock_hub, GM_R) == 0
 	var n0 := ctl.mock_hub.executed.size()
 	game._unhandled_input(_key(KEY_F8))  # staff may leave it out now (no capsule on its way)...
-	var closing_first := ctl.phase == "TUTORIAL" and ctl.practice == "closing"  # ...the Dials are closed first
+	var closing_first := ctl.phase == "TUTORIAL" and ctl.practice == "closing"  # ...the Dial is closed first
 	_gm_step(ctl, 2.0)
 	var skipped_idle := closing_first and ctl.phase == "COUNTDOWN" \
-		and ctl.mock_hub.executed.slice(n0).filter(func(e): return e[1] == "DISARM_RECEIVER").size() == 2
+		and ctl.mock_hub.executed.slice(n0).filter(func(e): return e[1] == "DISARM_RECEIVER").size() == 1
 	ctl._halt("test")
 	ctl.tutorial_seen = false
 	game._unhandled_input(_key(KEY_ENTER))
@@ -5464,14 +5511,14 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 		ctl.tick(1.0 / 60.0)
 	ctl.tick(1.0 / 60.0)
 	var cycle := left.last_cycle
-	var came_back := ctl.practice == "done" and left.state == "CLOSED" and right.state == "CLOSED" and ctl.practice_released == 1 \
+	var came_back := ctl.practice == "done" and left.state == "CLOSED" and ctl.practice_released == 1 \
 		and ctl.mock_hub.executed.filter(func(e): return e[1] == "RELEASE_BALL").size() == 1
 	var ok_shown := ctl.tutorial.state == "success" and ctl.sounds.log.count("tutorial_ok") == chimes_before + 1
 	_gm_step(ctl, ctl.tutorial.ok_s + 0.1)
 	_ok(armed and skipped_idle and id != "" and practice_score > 0 and skip_refused and came_back
 		and ctl.phase == "COUNTDOWN" and ctl.score.score == 0 and ctl.capsules.finished.is_empty() and is_equal_approx(ctl.time_left, ctl.duration_s)
 		and ctl.practice == "" and not ctl.tutorial.active() and ctl.tutorial_seen and left.last_cycle == cycle and cycle >= 1,
-		"practice capsule: both Dials armed, one capsule taken, played, released once and checked (a bouncing switch is not a second one); then the round starts from zero - no score, no capsule, the full clock",
+		"practice capsule: the Dial armed (Dial 2 is not asked for anything, #200), one capsule taken, played, released once and checked (a bouncing switch is not a second one); then the round starts from zero - no score, no capsule, the full clock",
 		"%s %s %s score %d->%d %s %s" % [armed, skip_refused, came_back, practice_score, ctl.score.score, ctl.phase, ctl.practice])
 	_ok(ok_shown, "practice capsule: its one OK chimes once", str(ctl.sounds.log.count("tutorial_ok")))
 	_gm_step(ctl, ctl.countdown_s + 0.3)
@@ -5491,11 +5538,11 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	while ctl.tutorial.kind() != "practice":
 		ctl.tutorial.skip_step()
 	_gm_step(ctl, 0.5)
-	ctl.mock_hub.fail_release[right.device] = true
-	_gm_play_capsule(ctl, "right", "center")
+	ctl.mock_hub.fail_release[left.device] = true
+	_gm_play_capsule(ctl, "left", "center")
 	var chimes := ctl.sounds.log.count("tutorial_ok")
 	_gm_step(ctl, 12.0)
-	var failed := ctl.phase == "TUTORIAL" and ctl.practice == "fault" and ctl.tutorial.state == "blocked" and right.state == "FAULT" \
+	var failed := ctl.phase == "TUTORIAL" and ctl.practice == "fault" and ctl.tutorial.state == "blocked" and left.state == "FAULT" \
 		and ctl.sounds.log.count("tutorial_ok") == chimes and ctl.tutorial.guide.contains("かかりの")
 	_ok(straight and again and failed,
 		"after a round Enter starts at once and T is the practice once more; a practice capsule that fails to come back gets no OK and no round starts",
@@ -5643,7 +5690,6 @@ func _test_game_mode_result_show(rs: Node) -> void:
 	var show := ctl.result_show
 	var screen := ctl.result_screen
 	var l: GameModeController.Lane = ctl.lanes["left"]
-	var r: GameModeController.Lane = ctl.lanes["right"]
 	# one capsule played and given back in the round
 	hub.mock_ball(GM_L)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
@@ -5653,20 +5699,18 @@ func _test_game_mode_result_show(rs: Node) -> void:
 	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
 	_gm_step(ctl, 5.0)
 	var mid := ctl.score.score
-	# 0 s with a capsule in play (it still scores), then one that lands too late (no score, no bonus)
+	# 0 s with a capsule in play (it still scores)
 	ctl.time_left = 0.5
-	hub.mock_ball(GM_R)
+	hub.mock_ball(GM_L)
 	_gm_step(ctl, 0.6)
 	_process_frame(screen)
 	_ok(ctl.phase == "SETTLING" and show.log == ["time_up"] and screen.mode() == "time_up" and ctl.result.is_empty()
 		and ctl.sounds.log.has("timeup") and ctl.sounds.log.has("timeup_hit") and game.shake.trauma > 0.0 and screen.art.visible
-		and not show.active() and r.state == "ABSORBING",
+		and not show.active() and l.state == "ABSORBING",
 		"game mode result: at 0 s TIME UP! (the thud, the flash and the shake at once) while the round settles as before",
 		"%s %s %s" % [ctl.phase, str(show.log), screen.mode()])
 	_gm_step(ctl, 1.0)
-	hub._emit(GM_L, "BALL_RECEIVED", {"cycle": 2})
-	hub.dials[GM_L].state = "BALL_DETECTED"
-	var id2 := str(r.capsule.capsule_id)
+	var id2 := str(l.capsule.capsule_id)
 	ctl.field.target_hit.emit(id2, "star", "star", Vector2(640, 505))
 	ctl.field.capsule_exited.emit(id2, "left", Vector2(300, 660))
 	var sent := {}
@@ -5674,10 +5718,10 @@ func _test_game_mode_result_show(rs: Node) -> void:
 	var base := ctl.score.score
 	var res: Dictionary = ctl.result
 	var row: Dictionary = ctl.trace.named("result")[-1]
-	_ok(ctl.phase == "RESULT" and base > mid and res.base_score == base and res.capsules == 2 and ctl.capsules.finished.size() == 3
+	_ok(ctl.phase == "RESULT" and base > mid and res.base_score == base and res.capsules == 2 and ctl.capsules.finished.size() == 2
 		and res.capsule_bonus == 200 and res.combo_bonus == 50 * ctl.score.best_chain and res.jackpot_bonus == 0
 		and res.final_score == base + res.total_bonus and ctl.final_score() == res.final_score,
-		"game mode result: what scored while settling is in the result; the late capsule earns no bonus", "%d %s" % [base, str(res)])
+		"game mode result: what scored while settling is in the result", "%d %s" % [base, str(res)])
 	_ok(int(row.score_delta) == base and row.breakdown is Dictionary and int(row.breakdown.final_score) == res.final_score
 		and int(row.breakdown.base_score) == base and int(row.breakdown.total_bonus) == res.total_bonus
 		and ctl.hud.result_lines().contains(str(res.final_score)) and ctl.hud.result_lines().contains(str(base)),
@@ -5716,7 +5760,7 @@ func _test_game_mode_result_show(rs: Node) -> void:
 		and screen.number_text() == str(res.final_score) and ctl.fx.reactions.has("big"),
 		"game mode result: the score counts up, each bonus lands with its sound, FINAL SCORE; the score and the breakdown stay as they were",
 		"%s %s %s %d" % [started, counted, str(show.log.filter(func(n): return n != "count" and n != "confetti")), int(round(show.shown))])
-	_ok(same_commands and ctl.phase == "RESULT" and l.state == "CLOSED" and r.state == "CLOSED" and hub.dials[GM_L].op_mode == "STANDBY",
+	_ok(same_commands and ctl.phase == "RESULT" and l.state == "CLOSED" and hub.dials[GM_L].op_mode == "STANDBY",
 		"game mode result: the show sends nothing to the Dials (STANDBY after the round as before)")
 	_ok(screen.keys_text().contains("もう一回") and screen.keys_text().contains("練習") and screen.keys_text().contains("タイトル")
 		and screen.stats_text().contains("カプセル  2") and screen.faults_text() == "" and ctl.display_score() == float(res.final_score),
@@ -6211,7 +6255,7 @@ func _test_portrait_layout(rs: Node) -> void:
 	var game := _gm_game()
 	var ctl := _gm_playing(game)
 	var hud_inside := true
-	for l in [ctl.hud._centre, ctl.hud._message, ctl.hud._hint, ctl.hud._problem, ctl.hud._lane["left"], ctl.hud._lane["right"], ctl.hud._start]:
+	for l in [ctl.hud._centre, ctl.hud._message, ctl.hud._hint, ctl.hud._problem, ctl.hud._lane["left"], ctl.hud._start]:
 		hud_inside = hud_inside and screen.encloses(Rect2((l as Label).position, (l as Label).size))
 	for l in [ctl.result_screen._sub, ctl.result_screen._stats, ctl.result_screen._keys, ctl.result_screen._faults,
 			ctl.ranking_hud._place, ctl.ranking_hud._note, ctl.ranking_hud._keys, ctl.tutorial_hud._title, ctl.tutorial_hud._guide]:
@@ -6220,8 +6264,11 @@ func _test_portrait_layout(rs: Node) -> void:
 		for r in line:
 			hud_inside = hud_inside and screen.encloses(r)
 	game.shake.enabled = true
-	game.shake.trauma = 1.0
-	game.shake.step(1.0 / 60.0)
+	for i in 30:  # (the shake's noise has a random seed: now and then one step of it is next to nothing)
+		game.shake.trauma = 1.0
+		game.shake.step(1.0 / 60.0)
+		if game.shake.offset.length() > 1.0:
+			break
 	ctl._process(1.0 / 60.0)
 	var moved: Vector2 = ctl.layer.offset
 	var held: Vector2 = ctl.hud.position + moved  # where the HUD really is on the screen
@@ -6233,11 +6280,11 @@ func _test_portrait_layout(rs: Node) -> void:
 		"portrait game: every line of the HUD, the practice, the result and the ranking is inside the screen; in the biggest shake the score and the clock move only a quarter as far and never leave it",
 		"%s %s %s" % [hud_inside, str(moved), str(held)])
 	game.shake.trauma = 0.0
-	_ok(ctl.lanes["left"].device == GameModeDevices.DIAL_1 and ctl.lanes["right"].device == GameModeDevices.DIAL_2
-		and ctl.fx.port("left").x < L.CX and ctl.fx.port("right").x > L.CX and ctl.fx.dial_edge("left").x < ctl.fx.port("left").x
-		and ctl.fx.dial_edge("right").x > ctl.fx.port("right").x and ctl.backdrop.ports["left"] == ctl.fx.port("left")
+	_ok(ctl.lanes["left"].device == GameModeDevices.DIAL_1 and ctl.lanes.size() == 1 and ctl.hud._lane.keys() == ["left"]
+		and ctl.fx.port("left").x < L.CX and ctl.fx.dial_edge("left").x < ctl.fx.port("left").x
+		and ctl.backdrop.ports == {"left": ctl.fx.port("left")}
 		and ctl.ufo.x_min < ctl.ufo.x_max and is_equal_approx(ctl.ufo.y, L.UFO_Y) and ctl.ufo.y < F.TOP,
-		"portrait game: Dial 1 is still the left of the screen and Dial 2 the right (ports, lights and devices agree); the UFO runs above the field")
+		"portrait game: Dial 1 is the left of the screen and the only portal (port, light and device agree); the UFO runs above the field")
 	_gm_free(game, rs)
 	# the staff's screens fit the narrow screen
 	game = load("res://scenes/main.tscn").instantiate()

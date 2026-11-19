@@ -42,8 +42,8 @@ NOTE = ("Values measured on this desk / this machine (#96), written by the backe
         "camera_xy = overview image -> CoreXY XY, focus_camera = arm camera image shift per mm of arm "
         "motion (tools/calibrate_focus.py, #104), z_points = the drum counts of the arm's top / bottom and "
         "at rest, to call them back after a power cycle (#106), study_height = the study mode's capture "
-        "height (the drum radius, #110), easy_dials = where the easy mode drops a capsule into Dial 1 / "
-        "Dial 2 (XY) and at which Z (#169). Per machine: not in Git (every machine measures its own).")
+        "height (the drum radius, #110), easy_dials = where the easy mode drops a capsule into Dial 1 "
+        "(XY) and at which Z (#169, #200). Per machine: not in Git (every machine measures its own).")
 
 _lock = threading.Lock()
 

@@ -1,6 +1,6 @@
 """The score game's easy mode (#169): catch here, wait for the destination, carry to a Dial.
 
-The dry-run crane only (no hardware): both destinations to the end, the one-shot choice, the
+The dry-run crane only (no hardware): the carry to the Dial (the only portal, #200) to the end, the one-shot choice, the
 expiry that moves nothing, every stop, and the server's commands and lock."""
 
 import asyncio
@@ -20,7 +20,7 @@ from corexy_ufo_backend.websocket import GameServer
 from test_auto_catch import Rig, _cmd, _ready, fast_params
 
 LIMITS = RobotLimits()
-DIALS = {1: (20.0, 100.0), 2: (370.0, 100.0)}
+DIALS = {1: (20.0, 100.0)}
 GRAB = ["IDLE", "OPEN_CLAW", "LOWER_TO_CATCH", "CLOSE_CLAW", "RAISE_WITH_ITEM", "WAIT_DESTINATION"]
 DELIVER = ["MOVE_TO_DIAL", "LOWER_TO_RELEASE", "RELEASE", "RAISE_EMPTY", "IDLE"]
 
@@ -57,20 +57,24 @@ def test_repo_dry_run_values_are_usable_and_the_real_ones_are_refused():
     ac = AutoCatchConfig.from_raw(cfg.raw)
     dry = EasyParams.from_raw(cfg.raw, "dry_run")
     assert dry.problems(ac.dry_run, cfg.limits) == []
-    assert dry.dials[1][0] < dry.dials[2][0]  # Dial 1 is the left one, Dial 2 the right (#138)
+    assert list(dry.dials) == [1] and dry.dials[1][0] < 100.0  # #200: the only portal is Dial 1, on the left
+    assert "dial_2" not in dry.as_dict()
     # the real crane: nothing of the config stands in for a measurement
     real = EasyParams.from_raw(cfg.raw, "real", None)
     errs = real.problems(ac.real, cfg.limits)
-    assert any("Dial 1" in e for e in errs) and any("Dial 2" in e for e in errs) and any("release height" in e for e in errs)
+    assert any("Dial 1" in e for e in errs) and not any("Dial 2" in e for e in errs) and any("release height" in e for e in errs)
     # measured but not confirmed is still refused; confirmed is taken
-    saved = {"dial_1": {"x": 10, "y": 50}, "dial_2": {"x": 380, "y": 50}, "release_z": 60, "catch_z": 30}
+    saved = {"dial_1": {"x": 10, "y": 50}, "release_z": 60, "catch_z": 30}
     assert any("not confirmed" in e for e in EasyParams.from_raw(cfg.raw, "real", saved).problems(ac.dry_run, cfg.limits))
     assert EasyParams.from_raw(cfg.raw, "real", {**saved, "confirmed": True}).problems(ac.dry_run, cfg.limits) == []
+    # #200: a Dial 2 saved by an older version is not read and changes nothing
+    old = EasyParams.from_raw(cfg.raw, "real", {**saved, "dial_2": {"x": 9999, "y": 50}, "confirmed": True})
+    assert old.problems(ac.dry_run, cfg.limits) == [] and list(old.dials) == [1]
 
 
 @pytest.mark.parametrize("over, reason", [
-    (dict(dials={1: (-5.0, 100.0), 2: DIALS[2]}), "outside the XY soft limits"),
-    (dict(dials={1: DIALS[1], 2: None}), "Dial 2 drop point is not recorded"),
+    (dict(dials={1: (-5.0, 100.0)}), "outside the XY soft limits"),
+    (dict(dials={1: None}), "Dial 1 drop point is not recorded"),
     (dict(release_z=10.0), "below z_floor"),
     (dict(release_z=99.0), "above safe_z"),
     (dict(release_z=None), "release height is not recorded"),
@@ -83,7 +87,7 @@ async def test_unusable_drop_points_refuse_the_catch_before_anything_moves(over,
         assert rig.robot.commands == [] and not rig.lock.locked() and rig.seq.state == "MANUAL_XY"
 
 
-@pytest.mark.parametrize("dest", [1, 2])
+@pytest.mark.parametrize("dest", [1])
 async def test_catch_then_the_chosen_dial_runs_to_the_end(dest):
     async with EasyRig() as rig:
         await rig.seq.start_grab()
@@ -115,18 +119,18 @@ async def test_a_choice_counts_once_only_while_waiting_and_only_for_this_catch()
         with pytest.raises(RobotCommandError, match="already running"):
             await rig.seq.start_grab()
         await rig.until_state("WAIT_DESTINATION")
-        for bad in (0, 3, "1", True, None):
+        for bad in (0, 2, 3, "1", True, None):  # 2: Dial 2 is gone (#200)
             with pytest.raises(RobotCommandError, match="destination must be"):
                 rig.seq.choose(bad, first)
         with pytest.raises(RobotCommandError, match="stale"):
             rig.seq.choose(1, "an-older-catch")
         with pytest.raises(RobotCommandError, match="stale"):
             rig.seq.choose(1, "")
-        rig.seq.choose(2, first)
+        rig.seq.choose(1, first)
         with pytest.raises(RobotCommandError, match="already chosen"):
             rig.seq.choose(1, first)  # a second sign changes nothing
         await rig.seq.wait()
-        assert rig.seq.destination == 2 and sum(c.startswith("XY") for c in rig.robot.commands) == 1
+        assert rig.seq.destination == 1 and sum(c.startswith("XY") for c in rig.robot.commands) == 1
         with pytest.raises(RobotCommandError, match="not waiting"):
             rig.seq.choose(1, first)  # a late repeat after the delivery: nothing
         # the next catch has its own id; the old one is stale for it
@@ -181,7 +185,7 @@ async def test_stop_right_before_the_claw_opens_never_sends_the_open():
     async with EasyRig() as rig:
         await rig.seq.start_grab()
         await rig.until_state("WAIT_DESTINATION")
-        rig.seq.choose(2, rig.seq.grab_id)
+        rig.seq.choose(1, rig.seq.grab_id)
         await rig.until("LOWER_TO_RELEASE")  # type: ignore[arg-type]
         rig.seq.request_abort("emergency stop (stop)")  # the flag first, as the server's stop does
         await rig.seq.wait()
@@ -361,7 +365,7 @@ async def _until_state(ws, state: str) -> dict:
     raise AssertionError(f"never saw {state}")
 
 
-@pytest.mark.parametrize("dest", [1, 2])
+@pytest.mark.parametrize("dest", [1])
 async def test_server_runs_catch_and_delivery_and_locks_manual_control(server, dest):
     srv, robot, port = server
     async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
@@ -386,8 +390,10 @@ async def test_server_runs_catch_and_delivery_and_locks_manual_control(server, d
         # the same request again (a resend) is answered from the cache, not run again
         await ws.send(json.dumps({"type": "command", "request_id": "d1",
                                   "data": {"name": "easy_deliver", "params": {"destination": dest, "grab_id": gid}}}))
-        r = await _cmd(ws, "d2", "easy_deliver", destination=3 - dest, grab_id=gid)
-        assert r["type"] == "nack"  # the other Dial after the choice: refused
+        r = await _cmd(ws, "d2", "easy_deliver", destination=dest, grab_id=gid)
+        assert r["type"] == "nack"  # a second sign after the choice: refused, nothing carried twice
+        r = await _cmd(ws, "d3", "easy_deliver", destination=2, grab_id=gid)
+        assert r["type"] == "nack" and "destination must be 1" in r["data"]["reason"]  # #200: no Dial 2
         await srv.easy.wait()
         st = (await _cmd(ws, "s1", "easy_status"))["data"]
         assert st["last_result"] == "done" and st["destination"] == dest and st["state"] == "MANUAL_XY"
@@ -465,7 +471,7 @@ async def test_server_cancel_opens_the_claw_and_gives_the_crane_back(server):
         # and again: catch, this time carried
         gid2 = (await _cmd(ws, "g2", "easy_grab"))["data"]["grab_id"]
         await _until_state(ws, "WAIT_DESTINATION")
-        assert (await _cmd(ws, "d2", "easy_deliver", destination=2, grab_id=gid2))["type"] == "ack"
+        assert (await _cmd(ws, "d2", "easy_deliver", destination=1, grab_id=gid2))["type"] == "ack"
         await srv.easy.wait()
         assert srv.easy.status()["last_result"] == "done"
 
@@ -522,7 +528,7 @@ async def test_server_reset_and_the_fist_with_the_arm_down(server):
         gid = (await _cmd(ws, "g1", "easy_grab"))["data"]["grab_id"]
         await _until_state(ws, "WAIT_DESTINATION")
         assert robot.commands[n:] == ["CLAW -> closed", "Z -> 95.00"]
-        assert (await _cmd(ws, "d1", "easy_deliver", destination=2, grab_id=gid))["type"] == "ack"
+        assert (await _cmd(ws, "d1", "easy_deliver", destination=1, grab_id=gid))["type"] == "ack"
         await srv.easy.wait()
         assert srv.easy.status()["last_result"] == "done"
 
@@ -590,11 +596,8 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     _at(robot, 15.0, 90.0)
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and r["data"]["dials"]["dial_1"] == [15.0, 90.0] and not r["data"]["dials"]["confirmed"]
-    assert (await srv.execute("easy_dial_set", {"which": "dial_2"}))["type"] == "ack"  # the same place again
-    r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "nack" and "same place" in r["data"]["reason"]
-    _at(robot, 375.0)
-    assert (await srv.execute("easy_dial_set", {"which": "dial_2"}))["type"] == "ack"
+    r = await srv.execute("easy_dial_set", {"which": "dial_2"})  # #200: there is no Dial 2 to record
+    assert r["type"] == "nack" and "dial_2" not in json.loads(cfg.easy_dials_path.read_text())
     robot.z_reference_set = False
     r = await srv.execute("easy_dial_set", {"which": "release_z"})
     assert r["type"] == "nack"  # no Z reference: the reading means nothing
@@ -607,7 +610,7 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     _at(robot, z=25.0)
     assert (await srv.execute("easy_dial_set", {"which": "catch_z"}))["type"] == "ack"
     saved = json.loads(cfg.easy_dials_path.read_text())
-    assert saved["dial_2"] == {"x": 375.0, "y": 90.0} and saved["confirmed"] is False and saved["catch_z"] == 25.0
+    assert saved["dial_1"] == {"x": 15.0, "y": 90.0} and "dial_2" not in saved and saved["confirmed"] is False and saved["catch_z"] == 25.0
     assert saved["z_counts_per_unit"] == 90.0 and saved["saved_at"]
     r = await srv.execute("easy_grab", {})
     assert r["type"] == "nack" and "not confirmed" in r["data"]["reason"]  # recorded is not yet watched
@@ -618,9 +621,11 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     p = srv.easy.params
     assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
     assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == 9000.0  # #194
-    # a change after the confirmation takes it back
+    # a change after the confirmation takes it back; an older version's Dial 2 leaves the file with it
+    cfg.easy_dials_path.write_text(json.dumps({**json.loads(cfg.easy_dials_path.read_text()), "dial_2": {"x": 375.0, "y": 90.0}}))
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
+    assert "dial_2" not in json.loads(cfg.easy_dials_path.read_text())
     assert (await srv.execute("easy_dial_set", {"which": "clear"}))["data"]["dials"]["dial_1"] is None
 
 
@@ -633,7 +638,7 @@ async def test_the_last_sessions_values_are_used_without_recording_again(tmp_pat
     st = (await srv.execute("easy_status", {}))["data"]
     assert st["problems"] == [] and st["dials"]["confirmed"] and st["dials"]["saved_at"] == "2026-11-17T10:00:00"
     note = srv._easy_prepare_note()
-    assert note.startswith("前回の値を使う") and "X 375" in note and "キャッチ Z 25.0" in note
+    assert note.startswith("前回の値を使う") and "X 15" in note and "Dial 2" not in note and "キャッチ Z 25.0" in note
     # and the real profile really runs with them (the mock stands in for the crane)
     robot.arm_marks = {"closed": 0.0, "open": -120.0}
     _at(robot, 120.0, 100.0, 100.0)
@@ -646,9 +651,10 @@ async def test_the_last_sessions_values_are_used_without_recording_again(tmp_pat
                 break
             await asyncio.sleep(0.01)
         assert srv.easy.state == "WAIT_DESTINATION", (srv.easy.state, srv.easy.error)
-        assert (await srv.execute("easy_deliver", {"destination": 2, "grab_id": srv.easy.grab_id}))["type"] == "ack"
+        assert (await srv.execute("easy_deliver", {"destination": 2, "grab_id": srv.easy.grab_id}))["type"] == "nack"  # #200
+        assert (await srv.execute("easy_deliver", {"destination": 1, "grab_id": srv.easy.grab_id}))["type"] == "ack"
         await asyncio.wait_for(srv.easy.wait(), 60)
-        assert srv.easy.status()["last_result"] == "done" and abs(robot.pos[0] - 375.0) < 1.0
+        assert srv.easy.status()["last_result"] == "done" and abs(robot.pos[0] - 15.0) < 1.0
     finally:
         tick.cancel()
 
@@ -702,11 +708,12 @@ async def test_easy_goto_moves_xy_to_a_dial_and_nothing_else(server):
     async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
         await _ready(ws, robot)
         assert (await _cmd(ws, "b", "easy_goto", destination=3))["type"] == "nack"
+        assert (await _cmd(ws, "b2", "easy_goto", destination=2))["type"] == "nack"  # #200: Dial 2 is gone
         z0 = robot.snapshot().z
         n = len(robot.commands)
-        r = await _cmd(ws, "g1", "easy_goto", destination=2)
+        r = await _cmd(ws, "g1", "easy_goto", destination=1)
         assert r["type"] == "ack", r
-        x, y = srv.easy.easy.dials[2]
+        x, y = srv.easy.easy.dials[1]
         sent = robot.commands[n:]
         assert sent == [f"XY {x:.3f} {y:.3f} F{srv.easy.params.xy_feed_mm_min:.0f}"]
         assert robot.target[0] == x and robot.target[1] == y and robot.snapshot().z == z0
@@ -807,10 +814,10 @@ async def test_easy_goto_along_one_motors_line_goes_in_two_legs(server):
     async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
         await _ready(ws, robot)
         robot.xy_one_motor_ratio = 0.1  # as main.py tells the real robot
-        x, y = srv.easy.easy.dials[2]
-        _at(robot, x=x - 60.0, y=y - 62.0)
+        x, y = srv.easy.easy.dials[1]  # (#200: the only destination)
+        _at(robot, x=x + 60.0, y=y - 62.0)
         n = len(robot.commands)
-        r = await _cmd(ws, "g1", "easy_goto", destination=2)
+        r = await _cmd(ws, "g1", "easy_goto", destination=1)
         assert r["type"] == "ack", r
         f = srv.easy.params.xy_feed_mm_min
         assert robot.commands[n:] == [f"XY {x:.3f} {y - 62.0:.3f} F{f:.0f}", f"XY {x:.3f} {y:.3f} F{f:.0f}"]

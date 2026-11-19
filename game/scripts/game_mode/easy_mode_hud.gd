@@ -5,10 +5,10 @@ extends Control
 ## phase): it decides nothing and sends nothing.
 ##
 ##   playing by hand   a slim strip over the field: つまむ = うごかす, グー = キャッチ,
-##                     ゆび 1 = ひだり, ゆび 2 = みぎ (the two numbers lit only while they count),
+##                     ゆび 1 = ポータルへ (lit only while it counts; #200: the left portal only),
 ##                     the fist's hold as a bar, and why a sign was not taken
-##   the crane moves   a big panel: じどうで キャッチちゅう… / どっちに いれる？ (the two hands,
-##                     the time left) / ひだり・みぎ へ はこぶよ, "いまは そうさ できないよ" and
+##   the crane moves   a big panel: じどうで キャッチちゅう… / ゆび 1ぽんで ポータルへ！ (the hand,
+##                     the time left) / ひだりの ポータルへ はこぶよ, "いまは そうさ できないよ" and
 ##                     "Space で とまる" all the time
 ##   stopped (FAULT)   かかりの ひとを よんでね, the reason, and the staff's key
 
@@ -23,8 +23,10 @@ const RED := Color("ff6b6b")
 const DARK := Color("050818")
 const GLASS := Color(0.02, 0.03, 0.13, 0.9)
 const DIM := Color(0.55, 0.6, 0.75)
-## the strip's four signs: [hand picture, words, the sign it is in EasyModeControl]
-const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["point", "1ぽん ひだり", "1"], ["peace", "2ほん みぎ", "2"]]
+## the width of one sign of the strip
+const SLOT_W := 213.0
+## the strip's three signs: [hand picture, words, the sign it is in EasyModeControl]
+const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["point", "1ぽんで ポータルへ", "1"]]
 
 var ctl: GameModeController
 var _legend: Array[Label] = []
@@ -33,7 +35,6 @@ var _sub: Label
 var _note: Label
 var _stop: Label
 var _left: Label
-var _right: Label
 var _t := 0.0
 
 func setup(c: GameModeController) -> void:
@@ -43,7 +44,7 @@ func setup(c: GameModeController) -> void:
 	z_index = 21  # over the round's own HUD, under the result and the practice
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	for i in LEGEND.size():
-		var l := _label(15, Color.WHITE, Rect2(STRIP.position.x + 160.0 * i + 34.0, STRIP.position.y + 4.0, 124, 40), HORIZONTAL_ALIGNMENT_LEFT)
+		var l := _label(15, Color.WHITE, Rect2(STRIP.position.x + SLOT_W * i + 34.0, STRIP.position.y + 4.0, SLOT_W - 40.0, 40), HORIZONTAL_ALIGNMENT_LEFT)
 		l.text = str(LEGEND[i][1])
 		_legend.append(l)
 	_title = _label(34, YELLOW, Rect2(PANEL.position.x, PANEL.position.y + 10.0, PANEL.size.x, 44), HORIZONTAL_ALIGNMENT_CENTER)
@@ -51,7 +52,6 @@ func setup(c: GameModeController) -> void:
 	_note = _label(16, Color("ffd24a"), Rect2(STRIP.position.x + 8.0, STRIP.end.y, STRIP.size.x - 16.0, 30), HORIZONTAL_ALIGNMENT_CENTER)
 	_stop = _label(16, Color("b8c6ff"), Rect2(PANEL.position.x, PANEL.end.y - 30.0, PANEL.size.x, 24), HORIZONTAL_ALIGNMENT_CENTER)
 	_left = _label(18, CYAN, Rect2(PANEL.position.x + 4.0, PANEL.position.y + 128.0, 110, 30), HORIZONTAL_ALIGNMENT_CENTER)
-	_right = _label(18, MAGENTA, Rect2(PANEL.end.x - 114.0, PANEL.position.y + 128.0, 110, 30), HORIZONTAL_ALIGNMENT_CENTER)
 	visible = false
 
 func _label(font_size: int, color: Color, r: Rect2, align: int) -> Label:
@@ -95,8 +95,8 @@ func sub_text() -> String:
 				return "いちど パーに してね"
 			if e.holding == "cancel":
 				return "パーを つづけると やりなおし（つめを ひらく）"
-			return "ゆび 1ぽん＝ひだり　2ほん＝みぎ\nつかめなかったら パーを つづける　あと %d びょう" % int(ceil(e.wait_left_s))
-		"DELIVER_DIAL_1", "DELIVER_DIAL_2", "CANCEL":
+			return "ゆび 1ぽんで ひだりの ポータルへ\nつかめなかったら パーを つづける　あと %d びょう" % int(ceil(e.wait_left_s))
+		"DELIVER_DIAL_1", "CANCEL":
 			return (e.step_text() + "\n" if e.step_text() != "" else "") + "いまは そうさ できないよ"
 		"FAULT":
 			return e.note + "\nスタッフ: なおしてから F9（または つぎの ラウンド）"
@@ -114,23 +114,20 @@ func _process(dt: float) -> void:
 		_legend[i].visible = not panel
 		# the numbers count only after a catch: dim while playing by hand
 		var sgn := str(LEGEND[i][2])
-		_legend[i].add_theme_color_override("font_color", DIM if sgn in ["1", "2"] else (YELLOW if e.holding == sgn and sgn != "" else Color.WHITE))
+		_legend[i].add_theme_color_override("font_color", DIM if sgn == "1" else (YELLOW if e.holding == sgn and sgn != "" else Color.WHITE))
 	_note.visible = not panel and e.note != ""
 	_note.text = e.note
 	_title.visible = panel
 	_sub.visible = panel
 	_stop.visible = panel
 	_left.visible = panel and e.state == "WAIT_DESTINATION"
-	_right.visible = _left.visible
 	if panel:
 		_title.text = e.title_text()
 		_title.add_theme_color_override("font_color", RED if e.faulted() else YELLOW)
 		_sub.text = sub_text()
 		_stop.text = "Space で とまる" if not e.faulted() else "Space: 止める   Esc: タイトル"
-		_left.text = "1 ひだり"
-		_right.text = "2 みぎ"
+		_left.text = "1 ポータル"
 		_left.add_theme_color_override("font_color", ctl.lanes["left"].color)
-		_right.add_theme_color_override("font_color", ctl.lanes["right"].color)
 	queue_redraw()
 
 func _frame(r: Rect2, col: Color) -> void:
@@ -150,7 +147,7 @@ func _draw() -> void:
 	if view() == "strip":
 		_frame(STRIP_NOTE if e.note != "" else STRIP, CYAN)
 		for i in LEGEND.size():
-			var at := Vector2(STRIP.position.x + 160.0 * i + 8.0, STRIP.position.y + 6.0)
+			var at := Vector2(STRIP.position.x + SLOT_W * i + 8.0, STRIP.position.y + 6.0)
 			GestureTutorialHud.paint_hand(self, at, 1.0, str(LEGEND[i][0]))
 			if e.holding == str(LEGEND[i][2]) and e.holding != "":
 				_bar(Rect2(at.x + 26.0, STRIP.end.y - 10.0, 120, 6), e.progress, YELLOW)
@@ -159,24 +156,20 @@ func _draw() -> void:
 	PinballField.glow_rect(self, PANEL, col, 0.5 + 0.3 * sin(_t * 5.0))
 	_frame(PANEL, col)
 	if e.state == "WAIT_DESTINATION":
-		# the two answers, each on its Dial's side, in its Dial's colour
+		# the one answer, on the portal's side (the left), in the Dial's colour
 		var lc: Color = ctl.lanes["left"].color
-		var rc: Color = ctl.lanes["right"].color
 		GestureTutorialHud.paint_hand(self, Vector2(PANEL.position.x + 30.0, PANEL.position.y + 28.0), 3.0, "point")
-		GestureTutorialHud.paint_hand(self, Vector2(PANEL.end.x - 90.0, PANEL.position.y + 28.0), 3.0, "peace")
 		if e.holding == "1":
 			_bar(Rect2(PANEL.position.x + 10.0, PANEL.position.y + 160.0, 100, 8), e.progress, lc)
-		elif e.holding == "2":
-			_bar(Rect2(PANEL.end.x - 110.0, PANEL.position.y + 160.0, 100, 8), e.progress, rc)
 		elif e.holding == "cancel":  # the open hand kept up: the catch is given up when it is full
 			_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 164.0, PANEL.size.x - 260.0, 8), e.progress, Color.WHITE)
 		# the time left to choose
 		_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 150.0, PANEL.size.x - 260.0, 8),
 			e.wait_left_s / maxf(e.wait_s, 0.1), YELLOW if e.wait_left_s > 5.0 else RED)
 	elif e.state.begins_with("DELIVER_DIAL_"):
-		# an arrow to the side it goes to
-		var side := -1.0 if e.destination == 1 else 1.0
-		var c: Color = ctl.lanes["left" if e.destination == 1 else "right"].color
+		# an arrow to the portal's side (the left)
+		var side := -1.0
+		var c: Color = ctl.lanes["left"].color
 		var y := PANEL.position.y + 150.0
 		for i in 8:
 			var x := SCREEN.x * 0.5 + side * (40.0 + i * 22.0 + fmod(_t * 60.0, 22.0))

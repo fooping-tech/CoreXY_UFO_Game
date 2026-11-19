@@ -11,7 +11,7 @@ extends Node
 ## sequence ended (there is no sensor that sees the capsule leave).
 
 const DIAL_1 := 0x20  # left of the screen
-const DIAL_2 := 0x21  # right of the screen
+const DIAL_2 := 0x21  # not part of the game since #200 (it was the right of the screen)
 const ILLUMINATION := 0x10
 
 ## {name, source (int or null), data: Dictionary, event_id (int or null), session_id (int or null)}
