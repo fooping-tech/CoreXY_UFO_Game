@@ -616,7 +616,7 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     # recorded heights, the descent bounded by exactly what was recorded
     p = srv.easy.params
     assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
-    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == cfg.fast_feed()
+    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == 9000.0  # #194
     # a change after the confirmation takes it back
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
     assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
@@ -731,3 +731,14 @@ async def test_easy_goto_moves_xy_to_a_dial_and_nothing_else(server):
         assert r["type"] == "nack" and "busy" in r["data"]["reason"]
         assert (await _cmd(ws, "s", "stop"))["type"] == "ack"
         await srv.easy.wait()
+
+
+def test_the_repo_config_carries_to_a_dial_slower_than_the_fast_feed():
+    # #194: at the firmware's top feed a 45-degree carry ended in its alarm on the machine
+    from corexy_ufo_backend.config import load_config
+    from corexy_ufo_backend.sequence.easy import EasyParams, real_catch_params
+    cfg = load_config(local=False)
+    p = real_catch_params(cfg.raw, EasyParams(), cfg.limits, cfg)
+    assert p.xy_feed_mm_min == p.xy_feed_max_mm_min == 9000.0 < cfg.fast_feed()
+    # one motor's step rate on a diagonal at this feed is under an axis move's at the fast feed
+    assert p.xy_feed_mm_min * 2 ** 0.5 < cfg.fast_feed()
