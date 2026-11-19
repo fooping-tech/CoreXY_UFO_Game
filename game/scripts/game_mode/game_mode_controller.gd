@@ -244,11 +244,13 @@ var tutorial_speech: StudySpeech
 var tutorial_auto := true
 ## what the practice shows: the round's own difficulty as it is played (set when it starts)
 var tutorial_mode := GestureTutorialSteps.DEFAULT_MODE
-## The round's difficulty (#169): "hard" = the manual hand control, "easy" = pinch for XY,
-## a fist = catch by itself, one / two fingers = carry to Dial 1 / 2. Its own state (config
-## game_mode.difficulty, D on the title); what the hand does with it is the main scene's
+## How the round is played (#169): "easy" = pinch for XY, a fist = catch by itself, one / two
+## fingers = carry to Dial 1 / 2; "hard" = the manual hand control. Since #198 nobody chooses:
+## it is always easy (no config, no key, no hand shape, no option), and the manual control is
+## only what is played where the easy mode cannot be used (easy_block). set_difficulty stays
+## for the tests of that manual control. What the hand does with it is the main scene's
 ## EasyModeControl. This controller still sends nothing to the crane.
-var difficulty := "hard"
+var difficulty := "easy"
 ## why the easy mode cannot be used here ("" = it can): another hand scheme, no backend.
 ## Set by the main scene. Then the round is played with the manual controls and says so.
 var easy_block := ""
@@ -456,8 +458,7 @@ func _configure(cfg: Dictionary) -> void:
 		result_show.configure(cfg.result_show)
 	_tutorial_cfg = cfg.get("tutorial", {}) if cfg.get("tutorial") is Dictionary else {}
 	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
-	# (an older config has only tutorial.mode)
-	set_difficulty(str(cfg.get("difficulty", _tutorial_cfg.get("mode", difficulty))))
+	# #198: game_mode.difficulty / tutorial.mode of an older config are not read: always easy
 	tutorial.configure(_tutorial_cfg)
 	voice_link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", voice_link_wait_s)), 0.0, 10.0)
 	debug_panel = bool(cfg.get("debug_panel", debug_panel))
@@ -478,6 +479,8 @@ func taking() -> bool:
 	return _active and _taking()
 
 # ------------------------------------------------------------------ difficulty (#169)
+## Not reachable by a player or the staff since #198 (see `difficulty`): the tests' way to the
+## manual control.
 func set_difficulty(d: String) -> void:
 	difficulty = "easy" if d == "easy" else "hard"
 
@@ -485,14 +488,12 @@ func set_difficulty(d: String) -> void:
 func easy_on() -> bool:
 	return difficulty == "easy" and easy_block == ""
 
-## #183: the game mode's title by hand. An open hand held title_start_hold_s starts (as Enter),
-## one finger = easy, two fingers = hard (held title_mode_hold_s). A shape counts only after
-## the hand was seen in another shape (or not at all) since the title came up: the two
-## fingers that chose the game mode on the first screen do not switch the difficulty.
+## #183: the game mode's title by hand. An open hand held title_start_hold_s starts (as Enter).
+## A shape counts only after the hand was seen in another shape (or not at all) since the
+## title came up. (#198: one / two fingers no longer choose a difficulty.)
 var title_start_hold_s := 3.0
-var title_mode_hold_s := 0.8
-const TITLE_HAND := {"open": "start", "point": "easy", "peace": "hard"}
-var title_hand := ""  # what the hand holds now: "start" / "easy" / "hard" / ""
+const TITLE_HAND := {"open": "start"}
+var title_hand := ""  # what the hand holds now: "start" / ""
 var title_hand_progress := 0.0
 var _title_hand_armed := false
 var _title_hand_entry := "?"  # the shape seen when the title came up ("?" = not looked yet)
@@ -511,23 +512,17 @@ func tick_title_hand(dt: float, hand: Dictionary) -> void:
 		_title_hand_armed = true
 		_title_hand_entry = ""
 	var what := str(TITLE_HAND.get(pose, "")) if _title_hand_armed else ""
-	if what in ["easy", "hard"] and what == difficulty:
-		what = ""  # already that
 	if what != title_hand:
 		title_hand = what
 		title_hand_progress = 0.0
 	if what == "":
 		return
-	title_hand_progress = minf(title_hand_progress + dt / maxf(title_start_hold_s if what == "start" else title_mode_hold_s, 0.05), 1.0)
+	title_hand_progress = minf(title_hand_progress + dt / maxf(title_start_hold_s, 0.05), 1.0)
 	if title_hand_progress < 1.0:
 		return
 	title_hand = ""
 	title_hand_progress = 0.0
-	if what == "start":
-		begin()
-	else:
-		set_difficulty(what)
-		sounds.play("count")
+	begin()
 
 ## #183: the best score of today (this machine's date): of the ranking's records, and of the
 ## rounds played since the game was started that did not get into it. 0 = none yet.
@@ -550,20 +545,12 @@ func _note_today(score: int) -> void:
 		_today_best = 0
 	_today_best = maxi(_today_best, score)
 
-## D on the title (never in a round): the other difficulty.
-func toggle_difficulty() -> void:
-	if running():
-		return
-	set_difficulty("hard" if difficulty == "easy" else "easy")
-	sounds.play("count")
-
-## The line under START on the title: the difficulty, and why easy is not used when it is not.
+## The line over START on the title: nothing when the easy mode is played (#198: there is no
+## choice to show), or why it is not and what is played instead.
 func difficulty_text() -> String:
-	var name := str(GestureTutorialSteps.MODE_NAMES.get(difficulty, difficulty))
-	var out := "ゆび 1ぽん：かんたん　2ほん：むずかしい　（D キーでも）\nいまは ［ %s ］" % name
-	if difficulty == "easy" and easy_block != "":
-		out += "\n" + easy_block + " → むずかしいモードの操作で遊ぶ"
-	return out
+	if easy_on():
+		return ""
+	return (easy_block + "\n" if easy_block != "" else "") + "→ てで ぜんぶ そうさして あそぶ"
 
 ## The easy mode's carry to this side's Dial ended: the claw opened over it (the backend's
 ## report, passed on by the main scene). That is not a capsule in the Dial: the Dial's own
@@ -2072,11 +2059,6 @@ func handle_key(keycode: int) -> bool:
 		KEY_T:
 			if not running():
 				start_tutorial()
-				return true
-			return false
-		KEY_D:
-			if not running():
-				toggle_difficulty()
 				return true
 			return false
 		KEY_R:
