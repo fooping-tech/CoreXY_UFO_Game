@@ -462,23 +462,23 @@ func _test_score_game_panel_and_spell_voice(rs: Node) -> void:
 		"%s %s %s %s" % [closed, f1_opens, back, kept])
 	# the spell: its voice comes over a link that is only just opening
 	ctl.tutorial_auto = true
-	var hw = ctl._voice_client()
+	var hw = ctl.tutorial_voice.client()
 	game._unhandled_input(_key(KEY_ENTER))
-	var waits = hw == null or (not ctl._say_pending.is_empty() and ctl.tutorial_speech.current == "")
+	var waits = hw == null or (not ctl.tutorial_voice.pending.is_empty() and ctl.tutorial_speech.current == "")
 	_gm_step(ctl, 1.0)
-	var still = hw == null or (not ctl._say_pending.is_empty() and ctl.tutorial.kind() == "summon")
+	var still = hw == null or (not ctl.tutorial_voice.pending.is_empty() and ctl.tutorial.kind() == "summon")
 	if hw != null:
 		hw.link.enabled = false  # (no link to wait for any more: as when it is up and the hello came)
 	_gm_step(ctl, 0.1)
 	if hw != null:
 		hw.link.enabled = true
-	var said_after_hello = ctl._say_pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
+	var said_after_hello = ctl.tutorial_voice.pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
 	# no link ever: the words come anyway, after the wait, and the practice goes on
 	ctl.close()
 	ctl.open()
 	ctl.start_tutorial()
-	_gm_step(ctl, ctl.voice_link_wait_s + 0.2)
-	var words_anyway = ctl._say_pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
+	_gm_step(ctl, ctl.tutorial_voice.link_wait_s + 0.2)
+	var words_anyway = ctl.tutorial_voice.pending.is_empty() and ctl.tutorial_speech.current.contains("ベントラ")
 	_ok(waits and still and said_after_hello and words_anyway and is_equal_approx(ctl.tutorial_speech.voice_wait_s, 6.0),
 		"tutorial voice: the spell waits for the voice's link (at most a moment) instead of being shown without its voice",
 		"%s %s %s %s hw=%s" % [waits, still, said_after_hello, words_anyway, hw != null])
@@ -1042,7 +1042,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 		and board.keys_text().contains("もう一回") and board.keys_text().contains("練習") and board.keys_text().contains("タイトル"),
 		"game mode ranking: then the board, HIGH SCORES: places and scores only, this round's place marked", str(lines))
 	_gm_step(ctl, 20.0)
-	ctl._register_score()
+	ctl.ranking_flow.register_score()
 	_ok(rk.entries.size() == 1 and ctl.ranking_view == "board" and ctl.phase == "RESULT",
 		"game mode ranking: staying on the board, or asking again, never records the round a second time")
 	# Enter on the board plays again; the new round is a new record of its own

@@ -503,7 +503,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 
 `PLAYING` → `SETTLING` → `RESULT`（リザルト演出）→ 登録 → ランキング表示。phase は `RESULT` のままで、ランキングの画面は `GameModeController.ranking_view`（`""` / `record` / `board`）で表す。
 
-1. リザルト演出が終わった tick で登録する（`_register_score`）。ファイルもこのとき書く。
+1. リザルト演出が終わった tick で登録する（`GameModeRankingFlow.register_score`）。ファイルもこのとき書く。
 2. 最終スコアをそのまま `hold_s`（1.2 秒）見せる。
 3. TOP10 に入ったとき: 「NEW RECORD!」と「第 ○ 位！」を `record_s`（3.2 秒）。同じ tick で、合成音 `new_record` とファンファーレ（`jackpot`）、シェイク、バウンド、ヒットストップ、衝撃波 3 重、火花、紙吹雪（pixelfx `success_confetti` `success_sparkle`）。順位が高いほど強い。
 4. ランキングの画面（HIGH SCORES）。今回の順位はネオンの枠で光り、点滅し、`NEW` の印が付く。圏外・登録なしのときは 3 を飛ばしてここに来る。
@@ -622,9 +622,9 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | 音 | `game_mode_sounds.gd`。効果音とジングルは Kenney の CC0 の音源ファイル（`game/assets/audio/sfx/`、対応は `manifest.json`）、ない・読めないときはゲーム内の合成音。音楽は `game/assets/audio/bgm/` に置いたファイル（#173、#181: トップメニュー `top.wav`、種類を選んだときのジングル `Intro Jingle.wav`（1 回）、練習 `tutorial.mp3`、校正タブは無音、フェードなし、音量は `gain_db` でそろえる。スコアゲームのタイトル `intro.mp3`、ゲーム中 `game.wav`、結果発表 `ending.mp3`。Git に入れない各 PC のファイル）、なければゲーム中だけ合成の曲。バス・左右のパン・優先度・連打の抑制・出典は `docs/audio_sources.md`（#143） |
 | HUD | `game_mode_hud.gd` |
 | 縦画面の配置（#157） | `game_mode_layout.gd`（`GameModeLayout`: 画面・各帯・ポート・中央の位置。数字はここだけに書く） |
-| ハイスコアランキング（#155） | 順位・保存・読み込み・重複の防止 `ranking_manager.gd`（`RankingManager`。画面なしでテストできる）、画面 `game_mode_ranking_hud.gd`（`GameModeRankingHud`）、登録と画面の切り替え `GameModeController._tick_ranking` ほか |
+| ハイスコアランキング（#155） | 順位・保存・読み込み・重複の防止 `ranking_manager.gd`（`RankingManager`。画面なしでテストできる）、画面 `game_mode_ranking_hud.gd`（`GameModeRankingHud`）、登録と画面の切り替え `game_mode_ranking_flow.gd`（`GameModeRankingFlow`。#222 で `GameModeController` から出した） |
 | 終了のリザルト演出（#153） | 計算 `result_bonus.gd`（`ResultBonus`）、時刻表 `result_show.gd`（`ResultShow`。画面なしでテストできる）、画面 `game_mode_result_screen.gd`（`GameModeResultScreen`）。合図への応答は `GameModeController._on_result_cue` |
-| 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
+| 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）、声の取り次ぎ `game/scripts/game_mode/game_mode_tutorial_voice.gd`（#222）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |
 | バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ）、UFO-DeviceHub の Python パッケージ `ufo-devicehub`（`external/UFO-DeviceHub/` の clone。コピーではない。`docs/devicehub_dependency.md`） |
