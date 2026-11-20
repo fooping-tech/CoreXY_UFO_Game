@@ -7,11 +7,11 @@ extends VBoxContainer
 ## the game never writes RobotState. While this tab shows, main.gd lets the keys move the
 ## arm (arrows, W / S, [ ], Q / A); gestures and the auto catch stay off, Space stops.
 
-const YELLOW := Color("ffe03c")
-const CYAN := Color("7ae0ff")
-const MUTED := Color("8fa3c4")
-const BAD := Color("ff8a8a")
-const GOOD := Color("9ff0a8")
+const YELLOW := PanelKit.YELLOW
+const CYAN := PanelKit.CYAN
+const MUTED := PanelKit.MUTED
+const BAD := PanelKit.BAD
+const GOOD := PanelKit.GOOD
 const INK := Color("e8eefc")
 const CARD_BG := Color("1f2a44")
 const CARD_BORDER := Color("34446a")
@@ -446,14 +446,7 @@ func scroll_to(key: String) -> void:
 		(p as ScrollContainer).scroll_vertical = int(card.position.y)
 
 func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v: float) -> SpinBox:
-	parent.add_child(StudyHud.label(label, 16, MUTED, 2))
-	var s := SpinBox.new()
-	s.min_value = lo
-	s.max_value = hi
-	s.step = step
-	s.value = v
-	parent.add_child(s)
-	return s
+	return PanelKit.spin(parent, label, lo, hi, step, v)
 
 ## #110: the entered values -> the backend (calibration.json#study_height), unconfirmed.
 ## desk: "bottom" = the Z calibration's bottom, "here" = the arm's Z now.
@@ -595,10 +588,7 @@ func _card(key: String, purpose: String) -> void:
 	_note(purpose)
 
 func _note(text: String) -> void:
-	var l := StudyHud.label(text, 16, MUTED, 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
+	PanelKit.wrapped(_box, text, 16, MUTED, 2, WIDTH)
 
 ## A small heading inside a card ("いつもは", "最後に").
 func _sub(text: String) -> void:
@@ -611,37 +601,20 @@ func _step(n: String, text: String) -> void:
 	h.add_theme_constant_override("separation", 6)
 	_box.add_child(h)
 	h.add_child(StudyHud.label(n, 18, YELLOW, 2))
-	var l := StudyHud.label(text, 17, INK, 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH - 30, 0)
-	h.add_child(l)
+	PanelKit.wrapped(h, text, 17, INK, 2, WIDTH - 30)
 
 func _caution(text: String) -> void:
-	var l := StudyHud.label("⚠ " + text, 15, Color("ffc87a"), 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
+	PanelKit.wrapped(_box, "⚠ " + text, 15, Color("ffc87a"), 2, WIDTH)
 
 func _value() -> Label:
-	var l := StudyHud.label("", 18, Color.WHITE, 3)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
-	return l
+	return PanelKit.wrapped(_box, "", 18, Color.WHITE, 3, WIDTH)
 
 func _row() -> HBoxContainer:
-	var r := HBoxContainer.new()
-	r.add_theme_constant_override("separation", 10)
-	_box.add_child(r)
-	return r
+	return PanelKit.row(_box)
 
 ## kind: "" (plain), "primary" (the step's main button), "danger" (it erases a record).
 func _button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
-	var b := Button.new()
-	b.text = text
-	b.add_theme_font_size_override("font_size", 18)
-	b.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
-	b.pressed.connect(cb)
+	var b := PanelKit.button(text, 18, cb)
 	if kind != "":
 		var col := Color("2f6fb3") if kind == "primary" else Color("6a2a35")
 		for st in ["normal", "hover", "pressed", "disabled"]:

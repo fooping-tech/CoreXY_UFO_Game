@@ -1,5 +1,5 @@
 class_name GameModeResultScreen
-extends Control
+extends GameModeShowScreen
 ## The end of a round on the screen (#153, docs/game_mode_spec.md §3.2): "TIME UP!" while
 ## the round settles, then the result's show: the huge score in the middle, the bonuses
 ## flying into it one by one, "FINAL SCORE!".
@@ -15,7 +15,6 @@ extends Control
 
 ## Portrait (#157): everything of the result sits under the HUD and the status row, one
 ## thing under another down the middle of the screen.
-const SCREEN := GameModeLayout.SCREEN
 ## the middle of the number
 const CENTRE := Vector2(360, 610)
 const TITLE_Y := 408.0
@@ -36,72 +35,31 @@ const CONFETTI_Y := 960.0
 ## "TIME UP!" on two lines: [the words, the middle of the line]
 const TIME_UP := [["TIME", 500.0], ["UP!", 700.0]]
 const TIME_UP_SCALE := 24.0
-const RAYS := 14
 const YELLOW := Color("ffe03c")
 const GOLD := Color("ffb020")
 const CYAN := Color("3ff0ff")
 const MAGENTA := Color("ff4fd8")
-const DARK := Color("050818")
 const UFO_FACES_SHEET := "res://assets/ufo/ufo_expressions.png"
 const TITLE_SCALES := {"YOUR SCORE": 10.0, "BONUS!": 14.0, "FINAL SCORE!": 8.0}
 
-var ctl: GameModeController
 var seq: ResultShow
-## the picture's root, in the pixel canvas (over the field, the effects and the UFO)
-var art: Node2D
-## the result's own sparks, rings and confetti (the same pool class as the field's)
-var particles: GameModeParticles
-var _back: Node2D
-var _front: Node2D
 var _sub: Label
 var _stats: Label
 var _faults: Label
 var _keys: Label
 var _faces: Texture2D
-var _t := 0.0
 
 func setup(c: GameModeController) -> void:
-	ctl = c
 	seq = c.result_show
-	size = SCREEN
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	z_index = 30  # over the HUD's panels
 	if ResourceLoader.exists(UFO_FACES_SHEET):
 		_faces = load(UFO_FACES_SHEET)
-	art = Node2D.new()
-	art.name = "ResultArt"
-	art.z_index = 40
-	art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	art.visible = false
-	c.pixel_view.add_child(art)
-	_back = Node2D.new()
-	_back.name = "Back"
-	_back.draw.connect(_draw_back)
-	art.add_child(_back)
-	particles = GameModeParticles.new()
-	particles.name = "ResultParticles"
-	art.add_child(particles)
+	_build_art(c, 30, "ResultArt", 40, "ResultParticles")  # over the HUD's panels
 	particles.z_index = 1  # over the dimmed field and the rays, under the letters
-	_front = Node2D.new()
-	_front.name = "Front"
-	_front.z_index = 2
-	_front.draw.connect(_draw_front)
-	art.add_child(_front)
 	_sub = _label(30, Color.WHITE, SUB_Y, 44.0)
 	_stats = _label(22, Color("c8d6ff"), 980.0, 34.0)
 	_keys = _label(24, Color.WHITE, 1030.0, 38.0)
 	_faults = _label(20, Color("ff6b6b"), 1080.0, 64.0)
 	_faults.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
-
-func _label(font_size: int, color: Color, y: float, h: float) -> Label:
-	var l := StudyHud.label("", font_size, color, maxi(font_size / 6, 3))
-	l.add_theme_color_override("font_outline_color", DARK)
-	l.position = Vector2(20, y)
-	l.size = Vector2(SCREEN.x - 40.0, h)
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	add_child(l)
-	return l
 
 # ------------------------------------------------------------------ what is on
 ## "" (nothing) / "time_up" (the round settles) / "result" (the show, or its last picture).
@@ -163,32 +121,6 @@ func keys_text() -> String:
 		return "Enter：スキップ"
 	return "Enter：ランキングへ" if ctl.ranking_enabled else "Enter：もう一回      T：練習から      Esc：タイトル"
 
-## A pixelfx sheet over the result (success_confetti, success_sparkle...), in the canvas.
-func sheet(id: String, at: Vector2, sheet_scale := 2.0, color := Color.WHITE) -> void:
-	if ctl.effects and art.visible:
-		VFXManager.spawn_fx(id, at, {"parent": art, "scale": sheet_scale, "color": color, "layer": "front"})
-
-## Everything of the show that is still on the screen goes (a new round, the title).
-func clear() -> void:
-	particles.clear()
-	for c in art.get_children():
-		if c.is_in_group("vfx"):
-			VFXManager.stop_fx(c)
-
-func sheets() -> int:
-	var n := 0
-	for c in art.get_children():
-		if c.is_in_group("vfx") and not c.is_queued_for_deletion():
-			n += 1
-	return n
-
-## The particles' time (the controller's tick: the same clock as the cues).
-func advance(dt: float) -> void:
-	particles.z_index = 1  # (the pool's own _ready puts it at the field's height)
-	particles.effects = ctl.effects
-	particles.quality = ctl.visual_quality
-	particles.advance(dt)
-
 func _process(dt: float) -> void:
 	if ctl == null:
 		return
@@ -238,12 +170,7 @@ func _draw_back() -> void:
 	var turn := _t * (0.9 if fin else 0.35)
 	var cols := [CYAN, MAGENTA, GOLD] if fin else [CYAN, MAGENTA]
 	var alpha := (0.2 if fin else 0.1) + 0.12 * seq.punch
-	for i in RAYS:
-		var a := turn + TAU * i / RAYS
-		var w := TAU / RAYS * 0.5
-		var col: Color = cols[i % cols.size()]
-		_back.draw_colored_polygon(PackedVector2Array([CENTRE, CENTRE + Vector2(cos(a), sin(a)) * 900.0,
-			CENTRE + Vector2(cos(a + w), sin(a + w)) * 900.0]), Color(col.r, col.g, col.b, alpha))
+	_draw_rays(CENTRE, turn, cols, alpha)
 	# the spotlight on the number
 	for i in 3:
 		_back.draw_circle(CENTRE, 330.0 - 80.0 * i, Color(1.0, 0.95, 0.6, 0.05 + 0.03 * seq.punch))
