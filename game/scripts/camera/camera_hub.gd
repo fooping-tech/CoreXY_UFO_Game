@@ -28,7 +28,6 @@ const DEFAULT_SIZE := Vector2i(640, 480)
 
 var enabled := true
 var _match := {"overview": "", "focus": ""}
-var _flip := {"overview": Vector2i.ZERO, "focus": Vector2i.ZERO}
 var _feed_id := {"overview": -1, "focus": -1}
 var _manual := {"overview": false, "focus": false}
 ## role -> {"y": CameraTexture, "cbcr": ..., "rgb": ...}

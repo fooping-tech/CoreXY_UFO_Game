@@ -52,8 +52,6 @@ JOG_TIMEOUT_S = 0.25  # firmware ends a jog session this long after the last JOG
 
 QUEUE_ACK_RE = re.compile(r"^ACK (QUEUED \S+|ABORT requested)")
 QUEUE_FULL = "ERROR: CommandQueue full"
-ERROR_RE = re.compile(r"^ERROR: ")
-REJECT_RE = re.compile(r"^REJECT: ")
 
 # Lines that mean "the command failed", mirrored from tools/serial_tool/serial_send.py
 _FAILURE_MARKERS = ("NACK", "REJECT:", "rejected reason=", "ALARM=YES", "machine is alarmed")

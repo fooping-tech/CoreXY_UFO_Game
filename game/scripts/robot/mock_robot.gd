@@ -165,9 +165,6 @@ func run_scenario(name: String) -> void:
 	_scenario_wait = 0.0
 	scenario_started.emit(name)
 
-func is_scenario_running() -> bool:
-	return not _scenario.is_empty()
-
 func _tick_scenario(dt: float) -> void:
 	if _scenario.is_empty():
 		return

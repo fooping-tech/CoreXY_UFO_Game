@@ -86,8 +86,8 @@ async def test_unusable_drop_points_refuse_the_catch_before_anything_moves(over,
         assert rig.robot.commands == [] and not rig.lock.locked() and rig.seq.state == "MANUAL_XY"
 
 
-@pytest.mark.parametrize("dest", [1])
-async def test_catch_then_the_chosen_dial_runs_to_the_end(dest):
+async def test_catch_then_the_chosen_dial_runs_to_the_end():
+    dest = 1  # the only destination (#200)
     async with EasyRig() as rig:
         await rig.seq.start_grab()
         assert rig.seq.state == "AUTO_GRAB" and rig.lock.locked()
@@ -364,8 +364,8 @@ async def _until_state(ws, state: str) -> dict:
     raise AssertionError(f"never saw {state}")
 
 
-@pytest.mark.parametrize("dest", [1])
-async def test_server_runs_catch_and_delivery_and_locks_manual_control(server, dest):
+async def test_server_runs_catch_and_delivery_and_locks_manual_control(server):
+    dest = 1  # the only destination (#200)
     srv, robot, port = server
     async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
         await _ready(ws, robot)

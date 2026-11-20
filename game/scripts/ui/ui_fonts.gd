@@ -27,10 +27,6 @@ static func title() -> Font:
 			_title = body()
 	return _title
 
-## The font for text of this size (pixels).
-static func for_size(size: int) -> Font:
-	return title() if size >= TITLE_MIN_SIZE else body()
-
 ## A Control's text in the title font (buttons and labels made outside StudyHud.label).
 static func use_title(c: Control) -> void:
 	c.add_theme_font_override("font", title())

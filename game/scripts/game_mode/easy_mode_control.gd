@@ -53,7 +53,6 @@ signal delivered(destination: int)
 signal cue(name: String)
 
 const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL", "FAULT"]
-const GRAB_POSES := ["fist", "thumb"]  # a fist with the thumb out is still a fist (as for the claw)
 const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1"}
 ## said while the catch waits for its one finger and two are shown
 const TWO_FINGERS_NOTE := "ゆびは 1ぽん だけ だしてね"

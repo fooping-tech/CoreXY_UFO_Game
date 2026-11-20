@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 
 MARK_MM = 12.0
-HOLE_MM = 4.0
 CENTRES_MM = {"tl": (14.0, 14.0), "tr": (196.0, 14.0), "bl": (14.0, 283.0), "br": (196.0, 283.0)}
 RATIO = (283.0 - 14.0) / (196.0 - 14.0)  # 269 / 182
 MAX_CANDIDATES = 14

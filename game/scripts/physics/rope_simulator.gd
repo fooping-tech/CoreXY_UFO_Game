@@ -124,9 +124,6 @@ func set_ufo_mass(m: float) -> void:
 func segment_length() -> float:
 	return rope_length / float(segment_count)
 
-func ufo_point() -> Point:
-	return points[points.size() - 1]
-
 func ufo_position() -> Vector3:
 	return points[points.size() - 1].position
 
@@ -138,12 +135,6 @@ func anchor_velocity() -> Vector3:
 
 func anchor_acceleration() -> Vector3:
 	return _anchor_accel
-
-## Direction of the last rope segment (from the second-last point to the UFO).
-func end_tangent() -> Vector3:
-	var n := points.size()
-	var d := points[n - 1].position - points[n - 2].position
-	return d.normalized() if d.length_squared() > 1e-9 else Vector3.DOWN
 
 ## Actual straight-line length from anchor to UFO (<= rope_length when slack).
 func anchor_to_ufo_distance() -> float:

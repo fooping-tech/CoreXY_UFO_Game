@@ -81,12 +81,6 @@ const POST_TOP := 1024.0
 const LAYER_STATIC := 1
 const LAYER_CAPSULE := 2
 # the palette (#141): deep navy with cyan, magenta, yellow and purple accents
-const COL_PANEL := Color("0a1036")
-const COL_PANEL_LINE := Color("1b2a6b")
-const COL_WALL := Color("1a2460")
-const COL_EDGE := Color("3ff0ff")
-const COL_PIN := Color("b9c8ff")
-const COL_DARK := Color("050818")
 const YELLOW := Color("ffe03c")
 const MAGENTA := Color("ff4fd8")
 const PURPLE := Color("8a5cff")

@@ -28,14 +28,12 @@ const HINT_Y := 116.0
 
 # ---- the status row: the hand, the combo, the arm camera
 const STATUS_Y := 130.0
-const STATUS_H := 112.0
 const GESTURE_RECT := Rect2(12, 130, 232, 112)
 const SCOPE_RECT := Rect2(476, 130, 232, 112)
 ## the combo and the jackpot notice, between the two panels
 const COMBO_RECT := Rect2(252, 130, 216, 112)
 
 # ---- UFOくん's rail
-const RAIL_Y := 258.0
 const UFO_Y := 298.0
 
 # ---- the pinball field (PinballField has its own layout of what is in it)
@@ -48,7 +46,6 @@ const FIELD_FLOOR := 1066.0
 const DIALS_Y := 1100.0
 const PORTS := {"left": Vector2(92, 1192)}
 ## each port's line of words (what that Dial is doing)
-const LANE_LABEL_SIZE := Vector2(200, 56)
 const LANE_LABEL_Y := 1112.0
 
 # ---- what comes up over the field

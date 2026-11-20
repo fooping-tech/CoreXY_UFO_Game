@@ -264,9 +264,6 @@ func set_power_portal(side: String, enabled: bool) -> void:
 func flights() -> int:
 	return _flights.size()
 
-func port_open(side: String) -> float:
-	return _port_open[side]
-
 func streaming(side: String, to_screen: bool) -> bool:
 	for s in _streams:
 		if s.side == side and s.to_screen == to_screen:

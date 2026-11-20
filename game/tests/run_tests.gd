@@ -3004,8 +3004,8 @@ func _gm_free(game: Node, rs: Node) -> void:
 	rs.clear_samples()
 
 ## A capsule goes through the field: from the Dial's switch to the exit `goal`.
-func _gm_play_capsule(ctl: GameModeController, side: String, goal: String) -> String:
-	var l: GameModeController.Lane = ctl.lanes[side]
+func _gm_play_capsule(ctl: GameModeController, goal: String) -> String:
+	var l: GameModeController.Lane = ctl.lanes["left"]
 	ctl.mock_hub.mock_ball(l.device)
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
 	var id := str(l.capsule.get("capsule_id", ""))
@@ -3420,7 +3420,7 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	var l: GameModeController.Lane = ctl.lanes["left"]
 	# the release command is refused: no second try
 	hub.refuse_next["%d|RELEASE_BALL" % GM_L] = "OFFLINE"
-	_gm_play_capsule(ctl, "left", "left")
+	_gm_play_capsule(ctl, "left")
 	_gm_step(ctl, 6.0)
 	var refused: bool = l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 0 and l.fault.contains("OFFLINE") \
 		and ctl.score.score == 100 and ctl.fx.played.has("capsule_fault:left") and ctl.phase == "PLAYING"
@@ -3432,7 +3432,7 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	l = ctl.lanes["left"]
 	# the servo sequence fails
 	hub.fail_release[GM_L] = true
-	_gm_play_capsule(ctl, "left", "left")
+	_gm_play_capsule(ctl, "left")
 	_gm_step(ctl, 4.0)
 	_ok(refused and l.state == "FAULT" and hub.count(GM_L, "RELEASE_BALL") == 1 and ctl.score.score == 100
 		and ctl.fx.played.has("capsule_fault:left") and ctl.phase == "PLAYING",
@@ -3445,7 +3445,7 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	l = ctl.lanes["left"]
 	# RELEASE_DONE never comes
 	hub.lose_release_done[GM_L] = true
-	_gm_play_capsule(ctl, "left", "left")
+	_gm_play_capsule(ctl, "left")
 	_gm_step(ctl, ctl.release_sync_s + ctl.release_timeout_s - 0.5)
 	var waiting: bool = l.state == "RELEASING"
 	_gm_step(ctl, 5.0)
@@ -3454,7 +3454,7 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	# every Illumination command is refused: the next capsule does not care
 	for n in ["SET_LIGHT_MODE", "TRIGGER_EFFECT"]:
 		hub.refuse_next["%d|%s" % [GameModeDevices.ILLUMINATION, n]] = "OFFLINE"
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, 4.0)
 	_ok(waiting and settled and l.state == "READY" and l.released == 2 and hub.count(GM_L, "RELEASE_BALL") == 2,
 		"game mode: a lost RELEASE_DONE is settled by the Dial's status (done and empty = go on, no re-release); refused lights never hold a release",
@@ -3462,7 +3462,7 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	# ... and when the status does not say so either: FAULT
 	hub.lose_release_done[GM_L] = true
 	hub.stuck_ball[GM_L] = true
-	_gm_play_capsule(ctl, "left", "left")
+	_gm_play_capsule(ctl, "left")
 	_gm_step(ctl, ctl.release_sync_s + ctl.release_timeout_s + ctl.verify_retry_s * ctl.verify_tries + 1.0)
 	_ok(l.state == "FAULT" and l.fault.contains("RELEASE_DONE") and hub.count(GM_L, "RELEASE_BALL") == 3
 		and hub.led_effect(GM_L) == "FLASH",
@@ -3493,14 +3493,14 @@ func _test_game_mode_release_faults(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 1.0)
 	var n_rel := hub.count(GM_L, "RELEASE_BALL")
 	hub.stuck_ball[GM_L] = 1
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, per_try * 2.0 + 2.0)
 	var second_try: bool = ctl.phase == "PLAYING" and l.state == "READY" and l.released == 1 and hub.count(GM_L, "RELEASE_BALL") == n_rel + 2 \
 		and l.re_releases == 0 and ctl.trace.rows.any(func(row): return str(row.get("release_status", "")).begins_with("again 1/"))
 	# ... and a Dial that does not know the second release (older firmware): FAULT, said so
 	hub.no_second_release = true
 	hub.stuck_ball[GM_L] = true
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, per_try * 2.0 + 2.0)
 	_ok(second_try and l.state == "FAULT" and l.fault.contains("ファームウェア"),
 		"game mode (#185): a capsule that leaves at the second release lets the round go on; a Dial that refuses the second release is a FAULT that says so",
@@ -3550,7 +3550,7 @@ func _test_game_mode_dial_leds(rs: Node) -> void:
 	hub = ctl.mock_hub
 	l = ctl.lanes["left"]
 	var asked: int = ctl.trace.rows.filter(func(row): return row.event == "command" and row.effect_id in ["SET_DIAL_EFFECT", "SET_DIAL_COLOR"]).size()
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, 4.0)
 	var asked_after: int = ctl.trace.rows.filter(func(row): return row.event == "command" and row.effect_id in ["SET_DIAL_EFFECT", "SET_DIAL_COLOR"]).size()
 	_ok(asked == 1 and asked_after == 1 and not l.led_ok and l.state == "READY" and l.released == 1 and ctl.score.score == 1000
@@ -5500,7 +5500,7 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 		ctl.tutorial.skip_step()
 	_gm_step(ctl, 0.5)
 	var chimes_before := ctl.sounds.log.count("tutorial_ok")
-	var id := _gm_play_capsule(ctl, "left", "center")
+	var id := _gm_play_capsule(ctl, "center")
 	var practice_score := ctl.score.score
 	game._unhandled_input(_key(KEY_F8))  # a capsule is on its way: it is not left behind
 	var skip_refused := ctl.phase == "TUTORIAL" and ctl.practice_busy()
@@ -5524,7 +5524,7 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 0.3)
 	ctl._on_ball(left, cycle)  # the practice capsule reported once more, in the round
 	var old_ignored := ctl.phase == "PLAYING" and left.state == "READY" and left.capsule.is_empty()
-	var id2 := _gm_play_capsule(ctl, "left", "center")
+	var id2 := _gm_play_capsule(ctl, "center")
 	_ok(old_ignored and id2 != "" and id2 != id and ctl.score.score > 0,
 		"after the practice: a late report of the practice capsule is old in the round; a new capsule plays and scores", "%s %s" % [old_ignored, ctl.score.score])
 	# after a round: Enter starts at once, T is the practice once more
@@ -5539,7 +5539,7 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 		ctl.tutorial.skip_step()
 	_gm_step(ctl, 0.5)
 	ctl.mock_hub.fail_release[left.device] = true
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	var chimes := ctl.sounds.log.count("tutorial_ok")
 	_gm_step(ctl, 12.0)
 	var failed := ctl.phase == "TUTORIAL" and ctl.practice == "fault" and ctl.tutorial.state == "blocked" and left.state == "FAULT" \
@@ -5964,7 +5964,7 @@ func _test_ranking_logic() -> void:
 ## A round to its result and through the result's show (the ranking is asked in the tick the show ends).
 func _gm_finish_round(ctl: GameModeController, with_capsule := true) -> void:
 	if with_capsule:
-		_gm_play_capsule(ctl, "left", "center")
+		_gm_play_capsule(ctl, "center")
 		_gm_step(ctl, 5.0)
 	ctl.time_left = 0.05
 	_gm_step(ctl, 3.0)
@@ -6003,7 +6003,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	# a round: nothing is recorded before the result's show is over, then it is, by itself
 	var first_id := ctl.round_id
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, 5.0)
 	ctl.time_left = 0.05
 	_gm_step(ctl, 3.0)
@@ -6054,14 +6054,14 @@ func _test_game_mode_ranking(rs: Node) -> void:
 		"%s %s %s" % [skipped, zero, ctl.phase])
 	# a stopped round, the demo and a shortened round make no record
 	_gm_step(ctl, ctl.countdown_s + 0.2)
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	var asked := ctl.trace.named("ranking").size()
 	game._unhandled_input(_key(KEY_SPACE))
 	_gm_step(ctl, 20.0)
 	var stopped: bool = ctl.phase == "STOPPED" and rk.entries.size() == 1 and ctl.ranking_view == "" and ctl.trace.named("ranking").size() == asked
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, ctl.countdown_s + 0.2)
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, 5.0)
 	ctl.demo = true
 	_gm_finish_round(ctl, false)
@@ -6162,7 +6162,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	ctl.ranking_enabled = true
 	ctl.ranking.clear()
 	_gm_step(ctl, ctl.countdown_s + 0.2)
-	_gm_play_capsule(ctl, "left", "center")
+	_gm_play_capsule(ctl, "center")
 	_gm_step(ctl, 5.0)
 	ctl.time_left = 0.05
 	_gm_step(ctl, 3.0)
@@ -6173,7 +6173,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_3))
 	game._unhandled_input(_key(KEY_ENTER))
 	_gm_step(ctl, ctl.countdown_s + 0.2)
-	_gm_play_capsule(ctl, "left", "left")
+	_gm_play_capsule(ctl, "left")
 	_gm_step(ctl, 5.0)
 	ctl.time_left = 0.05
 	_gm_step(ctl, 3.0)
@@ -6352,7 +6352,6 @@ func _test_game_mode_physics() -> void:
 	for i in xs.size():
 		var id := "p%d" % i
 		f.spawn_capsule(id, xs[i], Color.WHITE)
-		var body: RigidBody2D = f._capsules[id].body
 		var age := 0.0
 		for step in 60 * 20:
 			await get_tree().physics_frame
@@ -6360,7 +6359,6 @@ func _test_game_mode_physics() -> void:
 				age = float(f._capsules[id].age)
 				break
 		worst = maxf(worst, age)
-		_ok_quiet(is_instance_valid(body))
 		f.remove_capsule(id)
 	Engine.physics_ticks_per_second = ticks
 	Engine.time_scale = 1.0
@@ -6376,9 +6374,6 @@ func _test_game_mode_physics() -> void:
 		"%.1f %.1f %.1f" % [f.settle_after_s, f.settle_over_s, f.max_stay_s])
 	remove_child(holder)
 	holder.free()
-
-func _ok_quiet(_cond: bool) -> void:
-	pass
 
 ## #134: the body font is the project's default, titles and big lines are in the dot font.
 func _test_fonts() -> void:
