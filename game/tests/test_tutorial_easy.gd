@@ -753,9 +753,9 @@ func _test_game_title_hand(rs: Node) -> void:
 	var d := Time.get_date_string_from_system()
 	ctl.ranking.entries.assign([{"score": 9000, "timestamp": "2001-01-01T10:00:00", "id": "old"}, {"score": 700, "timestamp": d + "T09:00:00", "id": "a"}])
 	var from_board = ctl.today_best() == 700
-	ctl._note_today(450)
+	ctl.ranking_flow.note_today(450)
 	var lower_kept = ctl.today_best() == 700
-	ctl._note_today(1200)
+	ctl.ranking_flow.note_today(1200)
 	_ok(none and from_board and lower_kept and ctl.today_best() == 1200,
 		"game title (#183): today's best is the best of today's records and of today's rounds, not an older day's", str(ctl.today_best()))
 	ctl.ranking.entries.clear()

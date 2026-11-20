@@ -183,8 +183,8 @@ var round_id := ""
 var ranking_force := false
 var rank_hold_s := 1.2
 var rank_record_s := 3.2
-var _rank_state := ""  # "" (not offered yet) / "hold" / "record" / "done"
-var _rank_t := 0.0
+## how the ranking comes up after a round, and today's best (the flow's own step and timer)
+var ranking_flow := GameModeRankingFlow.new(self)
 var _full_duration_s := 150.0
 var _rng := RandomNumberGenerator.new()
 var layer: CanvasLayer
@@ -270,11 +270,8 @@ var practice := ""
 var practice_released := 0
 ## staff left the practice capsule out: the Dials are closed first, then the practice ends
 var _practice_skip := false
-var _voice_seq := 0
-## lines waiting for the voice's link, and for how long still (config game_mode.tutorial.voice_link_wait_s)
-var _say_pending: Array = []
-var _say_wait := 0.0
-var voice_link_wait_s := 2.5
+## UFOくん's voice in the practice: the wait for the helper's link, the request, the answer
+var tutorial_voice := GameModeTutorialVoice.new(self)
 var _active := false
 var _cmds: Dictionary = {}  # rid -> {lane: Lane or null, what, left}
 var _seen: Dictionary = {}  # "session|source|event_id" -> true
@@ -373,9 +370,9 @@ func setup(m: Node) -> void:
 	tutorial_speech = StudySpeech.new()
 	tutorial_speech.name = "TutorialSpeech"
 	add_child(tutorial_speech)
-	tutorial_speech.voice_request = _tutorial_voice
+	tutorial_speech.voice_request = tutorial_voice.request
 	tutorial_speech.voice_wait_s = 6.0  # a line VOICEVOX makes for the first time (after that: its cache, #171)
-	tutorial.say.connect(_on_tutorial_say)
+	tutorial.say.connect(tutorial_voice.say)
 	tutorial.step_started.connect(_on_tutorial_step)
 	tutorial.step_succeeded.connect(_on_tutorial_ok)
 	tutorial.finished.connect(_on_tutorial_finished)
@@ -461,7 +458,7 @@ func _configure(cfg: Dictionary) -> void:
 	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
 	# #198: game_mode.difficulty / tutorial.mode of an older config are not read: always easy
 	tutorial.configure(_tutorial_cfg)
-	voice_link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", voice_link_wait_s)), 0.0, 10.0)
+	tutorial_voice.link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", tutorial_voice.link_wait_s)), 0.0, 10.0)
 	debug_panel = bool(cfg.get("debug_panel", debug_panel))
 
 # ------------------------------------------------------------------ on / off
@@ -525,26 +522,9 @@ func tick_title_hand(dt: float, hand: Dictionary) -> void:
 	title_hand_progress = 0.0
 	begin()
 
-## #183: the best score of today (this machine's date): of the ranking's records, and of the
-## rounds played since the game was started that did not get into it. 0 = none yet.
-var _today_date := ""
-var _today_best := 0
-
+## #183: the best score of today (GameModeRankingFlow); the title's HUD reads it here.
 func today_best() -> int:
-	var d := Time.get_date_string_from_system()
-	var best := _today_best if _today_date == d else 0
-	if ranking != null:
-		for e in ranking.entries:
-			if str(e.get("timestamp", "")).begins_with(d):
-				best = maxi(best, int(e.get("score", 0)))
-	return best
-
-func _note_today(score: int) -> void:
-	var d := Time.get_date_string_from_system()
-	if _today_date != d:
-		_today_date = d
-		_today_best = 0
-	_today_best = maxi(_today_best, score)
+	return ranking_flow.today_best()
 
 ## The line over START on the title: nothing when the easy mode is played (#198: there is no
 ## choice to show), or why it is not and what is played instead.
@@ -611,7 +591,7 @@ func close() -> void:
 	if running() and (phase != "TUTORIAL" or practice != ""):
 		_halt("タイトルに戻った")  # the practice capsule too: STOP_ALL, nothing released afterwards
 	_end_tutorial()
-	_flush_ranking()
+	ranking_flow.flush()
 	_active = false
 	sounds.set_bgm(false)
 	sounds.ending_on = false
@@ -619,7 +599,7 @@ func close() -> void:
 	_clear_powerups()
 	fx.reset()
 	_clear_result()
-	_clear_ranking_view()
+	ranking_flow.clear_view()
 	trace.close()
 	layer.visible = false
 	layer.offset = Vector2.ZERO
@@ -654,7 +634,7 @@ func start_tutorial() -> void:
 		scheme_id = main.gesture.scheme.id()
 		claw = main.gesture.scheme.claw_poses()
 		hand_on = main.gesture.enabled
-	var hw := _voice_client()
+	var hw := tutorial_voice.client()
 	if hw != null and hw.has_method("_ensure_link"):
 		hw._ensure_link()  # the voice comes over the helper's link (it may be off until now)
 	tutorial_mode = "easy" if easy_on() else "hard"  # the practice shows what the round will be
@@ -663,7 +643,7 @@ func start_tutorial() -> void:
 
 func _end_tutorial() -> void:
 	tutorial.cancel()
-	_say_pending = []
+	tutorial_voice.pending = []
 	tutorial_speech.clear()
 	practice = ""
 
@@ -728,35 +708,6 @@ func _hand_snapshot() -> Dictionary:
 		"speed": maxf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), absf(g.velocity_z) / maxf(g.joystick.max_speed_z, 1e-6)) if g.is_active() else 0.0,
 		"gate": str(main.get("gesture_gate_reason")), "claw_progress": g.claw_progress(now)}
 
-## Lines for UFOくん. The voice comes over the helper's link, which may only just be
-## opening (the practice's first line, the spell): the lines wait for it a moment
-## (voice_link_wait_s) instead of being shown without a voice. Never longer: the voice is
-## decoration.
-func _on_tutorial_say(lines: Array) -> void:
-	tutorial_speech.clear()
-	_say_pending = []
-	if voice_link_wait_s > 0.0 and _voice_coming():
-		_say_pending = lines.duplicate()
-		_say_wait = voice_link_wait_s
-		return
-	tutorial_speech.say(lines)
-
-## A voice is possible but its link is not up yet (still connecting, or no hello yet).
-func _voice_coming() -> bool:
-	var hw := _voice_client()
-	if hw == null or not tutorial_speech.voice_on or hw.get("link") == null or not hw.link.enabled:
-		return false
-	return not hw.link.is_open() or not bool(hw.get("hello_seen"))
-
-func _tick_say(dt: float) -> void:
-	if _say_pending.is_empty():
-		return
-	_say_wait -= dt
-	if _say_wait <= 0.0 or not _voice_coming():
-		var lines := _say_pending
-		_say_pending = []
-		tutorial_speech.say(lines)
-
 var _demo_claw_closed := false
 
 func _on_tutorial_step(_index: int, step: Dictionary) -> void:
@@ -813,41 +764,6 @@ func _tick_gauge_sound(dt: float) -> void:
 		_gauge_left = gauge_tick_s
 		sounds.play("gauge", "", 0.8 + 1.0 * p)
 
-## UFOくん's voice for a line: asked of the backend (VOICEVOX / say) over the helper's link.
-## "" = no voice now: the line is shown as words for its reading time.
-func _tutorial_voice(text: String) -> String:
-	var hw := _voice_client()
-	if hw == null or not bool(hw.get("speech_available")) or hw.get("link") == null or not hw.link.is_open():
-		return ""
-	_voice_seq += 1
-	var rid := "sm-gt-say-%d-%d" % [Time.get_ticks_msec(), _voice_seq]  # "sm-": the helper leaves it to its asker
-	if hw.link.send_aux({"type": "homework_say", "request_id": rid, "data": {"text": text}}) != OK:
-		return ""
-	return rid
-
-## The helper's link to the backend (the game's own, else the study mode's): where a voice
-## can be asked for. null = there is none (no helper configured): the lines are words only.
-func _voice_client() -> Node:
-	if main == null:
-		return null
-	var hw: Node = main.get("homework") if main.get("homework") is Node else null
-	if hw == null and main.get("study_mode") != null and main.study_mode != null and main.study_mode.services.homework is Node:
-		hw = main.study_mode.services.homework
-	if hw != null and hw.has_signal("aux_message") and not hw.aux_message.is_connected(_on_tutorial_aux):
-		hw.aux_message.connect(_on_tutorial_aux)
-	return hw
-
-func _on_tutorial_aux(msg: Dictionary) -> void:
-	var rid := str(msg.get("request_id", ""))
-	if not rid.begins_with("sm-gt-"):
-		return
-	var data: Dictionary = msg.get("data", {}) if msg.get("data") is Dictionary else {}
-	match str(msg.get("type", "")):
-		"homework_speech":
-			tutorial_speech.on_voice(rid, HomeworkClient.wav_stream(Marshalls.base64_to_raw(str(data.get("wav_base64", "")))), str(data.get("credit", "")))
-		"homework_speech_error", "homework_error":
-			tutorial_speech.on_voice_error(rid, str(data.get("message", "")))
-
 ## `after_practice`: what the Dials reported in the practice stays known (a repeated
 ## BALL_RECEIVED of the practice capsule is still old), everything else starts new.
 func start(after_practice := false) -> void:
@@ -877,7 +793,7 @@ func start(after_practice := false) -> void:
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
-	_flush_ranking()
+	ranking_flow.flush()
 	score.reset()
 	_clear_powerups()
 	capsules.reset()
@@ -887,7 +803,7 @@ func _reset_round() -> void:
 	fx.reset()
 	particles.clear()
 	_clear_result()
-	_clear_ranking_view()
+	ranking_flow.clear_view()
 	_hitstop_left = 0.0
 	_bounce = 0.0
 	sounds.set_bgm(false)
@@ -1015,7 +931,7 @@ func tick(dt: float) -> void:
 	result_screen.advance(dt)
 	ranking_hud.advance(dt)
 	result_show.advance(dt)  # the result's timeline: its cues come out of this, in this tick
-	_tick_ranking(dt)
+	ranking_flow.tick(dt)
 	backdrop.advance(dt)
 	if phase in ["PLAYING", "SETTLING"]:
 		powerups.advance(dt)
@@ -1050,9 +966,9 @@ func tick(dt: float) -> void:
 				if demo and practice == "open" and devices.can_mock_ball() and tutorial.t > 2.0 and not practice_busy() \
 						and lanes["left"].state == "READY":
 					_mock_ball("left")  # the rehearsal puts the practice capsule in by itself
-			_tick_say(dt)
+			tutorial_voice.tick(dt)
 			_tick_gauge_sound(dt)
-			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy() or not _say_pending.is_empty(), "practice": practice,
+			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy() or not tutorial_voice.pending.is_empty(), "practice": practice,
 				"devices_ok": devices.available(), "capsule": practice_busy()})
 		"COUNTDOWN":
 			clock += dt
@@ -1280,123 +1196,6 @@ func _confetti(bursts: int) -> void:
 	for i in bursts:
 		result_screen.particles.burst(Vector2(_rng.randf_range(60.0, GameModeLayout.SCREEN.x - 60.0), _rng.randf_range(-10.0, 160.0)),
 			cols[(i + _rng.randi()) % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
-
-# ------------------------------------------------------------------ high scores (#155)
-## The result's show is over: the round's final score is offered to the ranking, by
-## itself (no one types anything), once. Then "NEW RECORD!" when it made the top ten, then
-## the board. Presentation and a file: no device hears of it, the score is not changed.
-func _tick_ranking(dt: float) -> void:
-	ranking_view_t += dt
-	if phase != "RESULT":
-		return
-	match _rank_state:
-		"":
-			if result_show.settled():
-				_register_score()
-				_rank_t = rank_hold_s  # the final score stands a moment longer
-				_rank_state = "hold" if ranking_enabled else "done"
-		"hold":
-			_rank_t -= dt
-			if _rank_t <= 0.0:
-				_show_rank()
-		"record":
-			_rank_t -= dt
-			if _rank_t <= 0.0:
-				_show_board()
-
-## Why this round is not offered to the ranking ("" = it is): only a round played to its
-## end by people counts. STOPPED and the practice never come here (they have no result).
-func ranking_excluded() -> String:
-	if not ranking_enabled:
-		return "off"
-	if ranking_force:
-		return ""
-	if demo:
-		return "demo"
-	if duration_s < _full_duration_s - 0.01:
-		return "short"  # a round shortened from the command line (a rehearsal)
-	return ""
-
-func _register_score() -> void:
-	ranking_rank = 0
-	ranking_note = ranking_excluded()
-	var final := final_score()
-	if ranking_note == "" and final <= 0:
-		ranking_note = "zero"
-	if ranking_note == "":
-		_note_today(final)  # also when it does not get into the ranking
-	if ranking_note == "":
-		ranking_rank = ranking.submit(final, round_id)
-		if ranking_rank == 0:
-			ranking_note = "out"
-	_trace("ranking", null, {"score_delta": final, "result": ("rank %d" % ranking_rank) if ranking_rank > 0 else ranking_note})
-	trace.close()
-
-func _show_rank() -> void:
-	if ranking_rank <= 0 or not effects:
-		_show_board()  # not a record (or no effects): straight to the board
-		return
-	ranking_view = "record"
-	ranking_view_t = 0.0
-	_rank_state = "record"
-	_rank_t = rank_record_s
-	result_screen.clear()
-	# every part of the celebration starts in this one tick
-	var c := GameModeRankingHud.CENTRE
-	var rp := ranking_hud.particles
-	var k := 1.0 - 0.06 * (ranking_rank - 1)  # the higher the place, the more of everything
-	sounds.play("new_record")
-	sounds.play("jackpot")  # the fanfare
-	_shake(0.6 + 0.4 * k)
-	bounce(1.2 + 0.8 * k)
-	hitstop(HITSTOP_MAX_S)
-	rp.ring(c, Color("ffd23c"), 620.0, 0.8, 80.0)
-	rp.ring(c, Color("3ff0ff"), 460.0, 0.65, 60.0)
-	rp.ring(c, Color("ff4fd8"), 320.0, 0.5, 40.0)
-	rp.burst(c, Color("ffe03c"), int(50 + 40 * k), 600.0)
-	var cols := [Color("ffe03c"), Color("3ff0ff"), Color("ff4fd8")]
-	for i in 6:
-		rp.burst(Vector2(_rng.randf_range(60.0, GameModeLayout.SCREEN.x - 60.0), _rng.randf_range(-10.0, 160.0)), cols[i % 3], 14, 300.0, PI * 0.5, PI * 0.9, 0.15)
-	ranking_hud.art.visible = true  # (it is shown from this tick: the sheets go on it now)
-	ranking_hud.sheet("success_sparkle", c, 5.0)
-	ranking_hud.sheet("success_confetti", Vector2(c.x, GameModeRankingHud.CONFETTI_Y), 3.0)
-	fx.react("big")
-	backdrop.pulse(Color("ffd23c"), 1.0)
-
-func _show_board() -> void:
-	ranking_view = "board"
-	ranking_view_t = 0.0
-	_rank_state = "done"
-	result_screen.clear()
-	ranking_hud.clear()
-	sounds.play("goal")
-
-## R on the score game's title: the board, and back.
-func toggle_ranking() -> void:
-	if phase != "IDLE":
-		return
-	ranking_view = "" if ranking_view != "" else "board"
-	ranking_view_t = 0.0
-	if ranking_view == "board":
-		ranking.load_file()  # as it is on the disk now
-		sounds.play("goal")
-
-## A result is being left before its show was over (Enter then T, T, Esc): the round was
-## played to its end, so its score is still offered to the ranking, quietly.
-func _flush_ranking() -> void:
-	if phase == "RESULT" and _rank_state == "" and not result.is_empty():
-		_register_score()
-		_rank_state = "done"
-
-func _clear_ranking_view() -> void:
-	ranking_view = ""
-	ranking_view_t = 0.0
-	ranking_rank = 0
-	ranking_note = ""
-	_rank_state = ""
-	_rank_t = 0.0
-	if ranking_hud != null:
-		ranking_hud.clear()
 
 # ------------------------------------------------------------------ lanes
 func _prepare(l: Lane) -> void:
@@ -2052,12 +1851,12 @@ func handle_key(keycode: int) -> bool:
 			# takes it to its last picture; the next one starts the round.
 			if phase == "RESULT" and result_show.active() and not result_show.settled():
 				result_show.skip()
-			elif phase == "RESULT" and ranking_enabled and _rank_state != "done":
+			elif phase == "RESULT" and ranking_enabled and ranking_flow.state != "done":
 				# the final score, or NEW RECORD!, is still up: on to the board (the score is
 				# offered to the ranking first if it was not yet); Enter on the board plays
-				if _rank_state == "":
-					_tick_ranking(0.0)
-				_show_board()
+				if ranking_flow.state == "":
+					ranking_flow.tick(0.0)
+				ranking_flow.show_board()
 			elif not running():
 				begin()
 			return true
@@ -2068,7 +1867,7 @@ func handle_key(keycode: int) -> bool:
 			return false
 		KEY_R:
 			if phase == "IDLE" and ranking_enabled:
-				toggle_ranking()
+				ranking_flow.toggle()
 				return true
 			return false
 		KEY_F6, KEY_F7, KEY_F8:
