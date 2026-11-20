@@ -24,6 +24,7 @@ _process(dt)          ← 描画フレーム
 - Autoload の読み込み順は `GameConfig` → `RobotState` → `GameState`（`project.godot`）。`RobotState._ready` は `GameConfig` を使う。
 - `project.godot` の作業ツリーには `physics_ticks_per_second` がない（既定値の 60 を使う）。ロープの調整値は 60 Hz を前提にしている。tick を変えるなら物理テストと見た目を確認し直す。
 - `main.gd` がすべてを配線する唯一の場所。ノードはコードで生成し、`.tscn` は最小限（`main.tscn`, `ufo.tscn`, `debug.tscn`）。
+  - 起動オプション（`-- --scenario ...`）、`--log-motion` のログ、`--capture` の撮影は `game/scripts/game/main_dev_tools.gd`（`MainDevTools`、main が `dev` として持つ。#223）。ジョグ・自動キャッチを断られたときの文言は `game/scripts/game/operator_hints.gd`（`OperatorHints`。main の `jog_hint_for` などは転送）。
 
 ## 2. 状態の持ち主
 

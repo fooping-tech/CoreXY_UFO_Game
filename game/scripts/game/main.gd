@@ -293,7 +293,7 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	set_gesture_enabled(bool(GameConfig.get_value("gesture", "enabled", false)))
-	_apply_cmdline()
+	dev.apply_cmdline()
 
 ## The study mode reuses the homework watch (HomeworkClient); without the F1 panel's
 ## one (homework.enabled false) it gets its own, kept out of the game's helper keys.
@@ -486,161 +486,11 @@ func _title_status() -> String:
 		return "アーム: バックエンドにつながっていない"
 	return "アーム: バックエンド（%s）  モーターは「実機」タブで有効にするまで動かない" % RobotState.machine_state
 
-## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
-func _apply_cmdline() -> void:
-	var args := OS.get_cmdline_user_args()
-	# the configured window mode at start (review on #158: render.fullscreen saved in the
-	# settings must hold after a restart with no argument); --fullscreen / --windowed below win
-	apply_window_mode()
-	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
-			DisplayServer.get_name() == "headless",
-			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
-		show_title()
-		open_startup_screen()
-	for i in range(args.size()):
-		match args[i]:
-			"--scenario":
-				if i + 1 < args.size():
-					mock.run_scenario(args[i + 1])
-			"--source":
-				if i + 1 < args.size():
-					use_source(args[i + 1])
-			"--capture-frames":
-				# how many frames --capture saves (2 per second; 16 = 8 s when left out). After --capture.
-				if i + 1 < args.size():
-					_capture_left = maxi(int(args[i + 1]), 1)
-			"--hide-debug":
-				debug_ui.visible = false
-				_layout()
-			"--capture":
-				# Save a viewport PNG every 0.5 s into <dir> for 8 s, print FPS, quit.
-				if i + 1 < args.size():
-					_capture_dir = args[i + 1]
-					_capture_left = 16
-			"--log-motion":
-				# CSV of every physics tick (P) and render frame (R) for debugging
-				# jitter: robot samples, playback pose, anchor, UFO, character cues.
-				if i + 1 < args.size():
-					_open_motion_log(args[i + 1])
-			"--gesture":
-				set_gesture_enabled(true)
-			"--no-gesture":
-				# start.sh always says --gesture or --no-gesture; the config's gesture.enabled
-				# is only the default of a game started without it
-				set_gesture_enabled(false)
-			"--gesture-scheme":
-				# how the hand is read: pinch_joystick / pose_direction (config gesture.scheme)
-				if i + 1 < args.size():
-					gesture.set_scheme(args[i + 1])
-			"--gesture-demo":
-				# a scripted hand (pinch, steer, release, lose it) through the gesture path
-				_gesture_demo_t = 0.0
-				set_gesture_enabled(true)
-				gesture_require_focus = false
-			"--study-mode", "--study-demo":
-				# the study mode right away; --study-demo <simulated|camera> also picks what it
-				# uses (mock / real still read: mock = simulated, real = camera)
-				if study_mode == null:
-					_setup_study_mode()
-				if args[i] == "--study-demo" and i + 1 < args.size():
-					study_mode.services.set_mode(args[i + 1])
-				study_mode.call_deferred("start")
-			"--game-mode":
-				# the 150 s score game right away (#138); --game-mode-devices mock / backend picks
-				# the peripherals, --game-mode-seconds <n> a shorter round (demos, captures),
-				# --game-mode-demo lets the mock Dials take capsules by themselves
-				if game_mode != null:
-					_on_title_chosen("score")
-					game_mode.call_deferred("start")
-			"--game-mode-tutorial":
-				# the score game from its practice (#149: the spell, the hand shapes, one capsule);
-				# with --game-mode-demo a scripted hand and the mock Dial go through it by themselves
-				if game_mode != null:
-					_on_title_chosen("score")
-					game_mode.call_deferred("start_tutorial")
-			"--game-mode-title":
-				# the score game's own title screen (waiting for Enter): for captures
-				if game_mode != null:
-					_on_title_chosen("score")
-			"--game-mode-devices":
-				if game_mode != null and i + 1 < args.size():
-					game_mode.devices_wanted = args[i + 1]
-					game_mode.use_devices(args[i + 1])
-			"--game-mode-demo":
-				if game_mode != null:
-					game_mode.demo = true
-			"--fullscreen":
-				fullscreen_override = "on"
-				apply_window_mode()
-			"--windowed":
-				fullscreen_override = "off"
-				apply_window_mode()
-			"--game-mode-ranking-file":
-				# the high scores (#155) in a file of its own, and a rehearsal's rounds
-				# (--game-mode-demo, --game-mode-seconds) are recorded in it: for captures and
-				# checks, never the exhibit's ranking
-				if game_mode != null and i + 1 < args.size():
-					game_mode.ranking.path = args[i + 1]
-					game_mode.ranking_force = true
-					game_mode.ranking.load_file()
-			"--game-mode-seconds":
-				if game_mode != null and i + 1 < args.size():
-					game_mode.duration_s = maxf(float(args[i + 1]), 1.0)
-			"--quit-after":
-				if i + 1 < args.size():
-					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
-
-var _motion_log: FileAccess
-
-func _open_motion_log(path: String) -> void:
-	_motion_log = FileAccess.open(path, FileAccess.WRITE)
-	if _motion_log == null:
-		push_warning("cannot open motion log " + path)
-		return
-	_motion_log.store_line("kind,usec,dt,src,raw_x,raw_y,raw_z,pose_x,pose_y,pose_z,anchor_x,anchor_z,accel_x,accel_z,rope_target,rope_len,ufo_x,ufo_y,ufo_z,screen_x,screen_y,screen_vel_x,anchor_screen_accel,rotation_deg,face,game_state,play_ms,newest_ms,recv_ms,delay_ms")
-
-func _log_motion(kind: String, dt: float, pose: Vector3) -> void:
-	if _motion_log == null:
-		return
-	var u := sim.ufo_position()
-	var acc := sim.anchor_acceleration()
-	_motion_log.store_line("%s,%d,%.5f,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.2f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.1f,%.1f,%.1f" % ([
-		kind, Time.get_ticks_usec(), dt, RobotState.source,
-		RobotState.x_mm, RobotState.y_mm, RobotState.z_mm, pose.x, pose.y, pose.z,
-		sim.anchor.x, sim.anchor.z, acc.x, acc.z, sim.target_rope_length, sim.rope_length,
-		u.x, u.y, u.z, ufo.position.x, ufo.position.y, _ufo_screen_vel.x, _anchor_screen_accel.length(),
-		rad_to_deg(ufo.rotation), ufo.current_face(), GameState.state] + RobotState.playback_debug()))
+## The startup options, the motion log and the frame capture (MainDevTools, #223).
+var dev := MainDevTools.new(self)
 
 func _exit_tree() -> void:
-	if _motion_log != null:
-		_motion_log.close()
-
-var _capture_dir := ""
-var _capture_left := 0
-var _capture_timer := 0.0
-var _capture_index := 0
-var _fps_samples: Array[float] = []
-
-func _capture_tick(dt: float) -> void:
-	if _capture_dir == "":
-		return
-	_capture_timer += dt
-	if Engine.get_frames_per_second() > 0:
-		_fps_samples.append(Engine.get_frames_per_second())
-	if _capture_timer >= 0.5:
-		_capture_timer = 0.0
-		var img := get_viewport().get_texture().get_image()
-		img.save_png(_capture_dir.path_join("frame_%02d.png" % _capture_index))
-		_capture_index += 1
-		_capture_left -= 1
-		if _capture_left <= 0:
-			var sum := 0.0
-			var lo := 9999.0
-			for f in _fps_samples:
-				sum += f
-				lo = minf(lo, f)
-			print("[capture] frames saved to %s; avg FPS %.1f min FPS %.1f physics %d us" % [_capture_dir, sum / maxf(_fps_samples.size(), 1), lo, physics_usec])
-			get_tree().quit()
+	dev.close()
 
 func _apply_config() -> void:
 	var p: Dictionary = GameConfig.data["physics"]
@@ -775,7 +625,7 @@ func _physics_process(dt: float) -> void:
 	sim.step(dt)
 	physics_usec = sim.last_step_usec
 	_store_tick(dt)
-	_log_motion("P", dt, pose)
+	dev.log_motion("P", dt, pose)
 
 ## Start the render/cue history from the current rope (no blend, no velocity).
 func _reset_render_history() -> void:
@@ -821,7 +671,7 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 	return Vector3(move, rise, sink)
 
 func _process(dt: float) -> void:
-	_capture_tick(dt)
+	dev.capture_tick(dt)
 	if game_mode != null:
 		# the menu's music (#173): the title screen, and the score game's own title
 		# #181: the title screen at start has its own (top), the practice too; none in the 校正 tab
@@ -863,7 +713,7 @@ func _process(dt: float) -> void:
 	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
 	_update_scope(dt)
 	_update_gesture_presentation(dt)
-	_log_motion("R", dt, Vector3.ZERO)
+	dev.log_motion("R", dt, Vector3.ZERO)
 
 ## The telescope moment: the trigger decides, the UFO peers through its
 ## spyglass and the round focus-camera view opens on the right.
@@ -966,23 +816,15 @@ func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
 	elif moving:
 		jog_hint = ""
 
-## A refused jog, said as what to do next (the backend refuses before anything
-## reaches the serial line, so otherwise the keys just seem dead).
+## The operator's lines (OperatorHints, #223), under the names their callers know.
 static func jog_hint_for(reason: String) -> String:
-	var r := reason.to_lower()
-	if r.is_empty():
-		return ""
-	if r.contains("not connected"):
-		return "実機に未接続（バックエンドとシリアルを確認）"
-	if r.contains("motors not enabled"):
-		return "モーターが無効:「実機」タブの「モーター有効」を押す"
-	if r.contains("alarm"):
-		return "アラーム中:「アラーム解除」→「原点復帰 (home)」を押す"
-	if r.contains("not homed") or r.contains("not_homed"):
-		return "原点復帰が必要:「原点復帰 (home)」を押す"
-	if r.contains("busy"):
-		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
-	return "JOG が拒否された: " + reason
+	return OperatorHints.jog_hint_for(reason)
+
+static func auto_catch_status_text(ac: Dictionary) -> String:
+	return OperatorHints.auto_catch_status_text(ac)
+
+static func auto_catch_hint_for(reason: String) -> String:
+	return OperatorHints.auto_catch_hint_for(reason)
 
 ## A moving jog's parameters. On the settings screen's 校正 tab, z_free: Z goes past the
 ## measured top / bottom, to measure them again (#102; still hold-to-move, Space stops).
@@ -1030,53 +872,6 @@ func request_auto_catch() -> void:
 		return
 	auto_catch_hint = ""
 	_auto_catch_rid = ws.send_command("auto_catch")
-
-## Phase names for the status line.
-const AUTO_CATCH_PHASE_JA := {
-	"IDLE": "待機", "OPEN_CLAW": "爪を開く", "LOWER_TO_CATCH": "キャッチ位置へ下降", "CLOSE_CLAW": "爪を閉じる",
-	"RAISE_WITH_ITEM": "安全高さへ上昇", "MOVE_TO_BOX": "救出ボックスへ移動", "LOWER_TO_RELEASE": "リリース高さへ下降",
-	"RELEASE": "爪を開いて落とす", "RAISE_EMPTY": "安全高さへ戻る", "CLAW_STANDBY": "爪を待機位置へ", "FAULT": "異常停止",
-}
-
-## One line (or two) about the auto catch for the debug panel: what it is doing, or why it stopped.
-static func auto_catch_status_text(ac: Dictionary) -> String:
-	if ac.is_empty():
-		return "自動キャッチ: 状態なし（バックエンド未接続）"
-	var phase := str(ac.get("phase", ""))
-	var name := str(AUTO_CATCH_PHASE_JA.get(phase, phase))
-	var prof := "ドライラン" if str(ac.get("profile", "")) == "dry_run" else "実機"
-	if bool(ac.get("active", false)):
-		return "自動キャッチ [%s] %d/%d %s（%s）  %.1f s" % [prof, int(ac.get("step", 0)), int(ac.get("steps", 0)), name, phase,
-			float(ac.get("elapsed_s", 0.0))]
-	match str(ac.get("last_result", "")):
-		"done":
-			return "自動キャッチ [%s]: 完了（手動操作に戻った）" % prof
-		"fault":
-			return "自動キャッチ [%s]: 異常停止 — %s\n→ ABORT 済み。原因を確かめてから「アラーム解除」→「原点復帰」" % [prof, str(ac.get("error", ""))]
-	return "自動キャッチ [%s]: 待機（C で開始）" % prof
-
-## A refused auto catch, said as what to do next.
-static func auto_catch_hint_for(reason: String) -> String:
-	var r := reason.to_lower()
-	if r.is_empty() or r.contains("debounced"):
-		return ""
-	if r.contains("not confirmed") or r.contains("is not set"):
-		return "自動キャッチ: 校正値が未設定・未確認（config/game_config.json の auto_catch.real）。実機では動かさない"
-	if r.contains("alarm"):
-		return "自動キャッチ: アラーム中 →「アラーム解除」→「原点復帰 (home)」"
-	if r.contains("not homed"):
-		return "自動キャッチ: 先に「原点復帰 (home)」"
-	if r.contains("motors not enabled"):
-		return "自動キャッチ: 先に「モーター有効」"
-	if r.contains("z reference"):
-		return "自動キャッチ: Z の基準が未設定（アームを一番上にして「巻き上げ点（上）に」）"
-	if r.contains("claw open / closed"):
-		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 4）"
-	if r.contains("below safe_z"):
-		return "自動キャッチ: アームを安全高さまで上げてから（W）"
-	if r.contains("busy") or r.contains("already running"):
-		return "自動キャッチ: ほかの動作中"
-	return "自動キャッチ拒否: " + reason
 
 ## Velocity (mm/s, robot X/Y) for the arrow keys: diagonals keep the same speed.
 static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
