@@ -32,26 +32,22 @@ PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "s
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status", "calibration_prepare_status",
                      "easy_deliver", "easy_cancel", "easy_status")
-# Accepted while the auto catch runs (anything else is refused as busy).
-AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
-                      "gesture_config", "homework_approach_status", "camera_map_status", "study_cleanup_status",
-                      "study_height_status", "easy_status")
-# Accepted while the arm approaches the homework (anything else is refused as busy).
-APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                    "homework_approach", "homework_approach_release", "homework_approach_status",
-                    "camera_map_status", "study_cleanup_status", "study_height_status", "easy_status")
-# Accepted while the 校正 tab's preparation runs (#167; anything else is refused as busy).
-PREPARE_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                   "homework_approach_status", "camera_map_status", "study_cleanup_status", "study_height_status",
-                   "calibration_prepare_status", "easy_status")
-# Accepted while the study mode tidies up (anything else is refused as busy).
-CLEANUP_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                   "homework_approach_status", "camera_map_status", "study_cleanup_start", "study_cleanup_confirm",
-                   "study_cleanup_status", "study_height_status", "easy_status")
+# What every sequence (the auto catch, the homework approach, the preparation, the tidy-up, the
+# easy mode) accepts while it runs and holds the motion lock: the two stops, always, and the
+# commands that only read. Anything else is refused as busy, except what that sequence adds.
+ALWAYS_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
+                  "homework_approach_status", "camera_map_status", "study_cleanup_status", "study_height_status",
+                  "easy_status")
+# Accepted while the auto catch runs.
+AUTO_CATCH_ALLOWED = (*ALWAYS_ALLOWED, "auto_catch")
+# Accepted while the arm approaches the homework.
+APPROACH_ALLOWED = (*ALWAYS_ALLOWED, "homework_approach", "homework_approach_release")
+# Accepted while the 校正 tab's preparation runs (#167).
+PREPARE_ALLOWED = (*ALWAYS_ALLOWED, "calibration_prepare_status")
+# Accepted while the study mode tidies up.
+CLEANUP_ALLOWED = (*ALWAYS_ALLOWED, "study_cleanup_start", "study_cleanup_confirm")
 # Accepted while the easy mode catches, waits for its destination or carries (#169).
-EASY_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                "homework_approach_status", "camera_map_status", "study_cleanup_status", "study_height_status",
-                "easy_deliver", "easy_cancel", "easy_status")
+EASY_ALLOWED = (*ALWAYS_ALLOWED, "easy_deliver", "easy_cancel")
 
 
 def now_ms() -> int:
