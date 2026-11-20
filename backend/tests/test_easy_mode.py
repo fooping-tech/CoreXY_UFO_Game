@@ -16,7 +16,8 @@ from corexy_ufo_backend.sequence import AutoCatchConfig, AutoCatchParams, EasyPa
 from corexy_ufo_backend.sequence.dry_run import make_dry_run_robot
 from corexy_ufo_backend.websocket import GameServer
 
-from test_auto_catch import Rig, _cmd, _ready, fast_params
+from test_auto_catch import Rig, _ready, fast_params
+from ws_helpers import cmd_kw as _cmd
 
 LIMITS = RobotLimits()
 DIALS = {1: (20.0, 100.0)}

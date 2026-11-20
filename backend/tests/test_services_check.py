@@ -17,7 +17,7 @@ from corexy_ufo_backend.homework.speech import SpeechConfig
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
 
-from test_homework_advice import _cmd
+from ws_helpers import cmd as _cmd
 
 TOKEN = "cf-secret-token-123"
 

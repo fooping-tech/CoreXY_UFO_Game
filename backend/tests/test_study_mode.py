@@ -28,7 +28,7 @@ from corexy_ufo_backend.study_mode import (HeightCalibration, HeightError, Works
                                            parse_explanation, split_speech)
 from corexy_ufo_backend.study_mode.explain import ExplainError, compare_with_known, explain_prompt, similarity
 from corexy_ufo_backend.study_mode.worksheets import box_in_image, paper_to_image, point_inside
-from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd as _cmd, start_server
 
 RAW = json.loads((REPO_ROOT / "config" / "game_config.json").read_text(encoding="utf-8"))
 CAT = WorksheetCatalog.load()
@@ -450,17 +450,7 @@ async def test_real_cleanup_is_refused_by_default():
 
 # ------------------------------------------------------------------ server
 async def _server(robot):
-    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30, backend_cfg=BackendConfig(raw=RAW))
-    await srv.start()
-    return srv, next(iter(srv._server.sockets)).getsockname()[1]
-
-
-async def _cmd(ws, name, params=None, rid="r"):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params or {}}}))
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 5))
-        if m.get("request_id") == rid:
-            return m
+    return await start_server(robot, backend_cfg=BackendConfig(raw=RAW))
 
 
 async def test_server_staged_help_and_cleanup_on_the_mock():

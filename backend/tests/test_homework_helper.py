@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
-import io
 import json
 import shutil
 import sys
@@ -21,6 +19,7 @@ from corexy_ufo_backend.homework.locate import (LocateError, agrees, jev_box, je
 from corexy_ufo_backend.homework.speech import SayEngine, Speech, SpeechError, VoicevoxEngine
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import recv_type as _recv_type
 
 
 def jpeg(width: int, height: int, tag: bytes = b"") -> bytes:
@@ -370,13 +369,6 @@ async def test_say_engine_makes_a_wav():
 
 
 # ------------------------------------------------------------------ WebSocket
-async def _recv_type(ws, t):
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 3))
-        if m["type"] == t:
-            return m
-
-
 async def test_websocket_say_and_locate():
     jev = ScriptedJev([box_output(0.34, 0.57, 0.44, 0.61)])
     svc = HomeworkService(HomeworkConfig(enabled=True), client_factory=lambda: jev,

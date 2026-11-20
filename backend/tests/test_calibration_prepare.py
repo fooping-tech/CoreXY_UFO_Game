@@ -14,7 +14,7 @@ from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.sequence.prepare import STEPS, PrepareSequencer
 from corexy_ufo_backend.serial_service import SerialService
 from corexy_ufo_backend.websocket.server import GameServer
-from test_homework_advice import _cmd
+from ws_helpers import cmd as _cmd
 from test_z_restore import cfg_for, first_session
 
 
