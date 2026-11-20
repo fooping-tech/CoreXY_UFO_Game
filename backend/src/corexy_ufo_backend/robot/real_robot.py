@@ -449,7 +449,7 @@ class RealRobot(RobotInterface):
 
     @property
     def _z_zero_counts(self) -> int | None:
-        """The reference counts (kept for the tests and logs written against the old z_zero name)."""
+        """The reference counts (kept for the tests and logs written against z_zero)."""
         ref = self._z_reference()
         return ref[0] if ref else None
 
