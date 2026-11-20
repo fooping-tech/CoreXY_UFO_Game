@@ -127,6 +127,7 @@ description: >
 | ▲ / ▼ を押しても巻き上げが動かない・途中で止まる（エラーなし） | 巻き上げサーボだけ電源が切れて 1 回転モードに戻った（`SERVO_STATUS` が `tracking=YES limits=0/4095`）。ファームウェアの `beginJog` はこれを見ない | `robot_state.z_servo_reset`。新ファームウェア（CoreXY_UFO #11、`tracking=LOST`）なら `z_servo_jog_recovers` が立ち、▲ / ▼ を押せば `JOG servo ... tracking=RESET` で戻る。旧ファームウェアはデバッグパネル「巻き上げサーボを復帰」（`z_servo_recover`）。どちらも点を記録し直す。`docs/HANDOFF_FIRMWARE_Z_SERVO.md` |
 | W / S（や爪のキー）が無反応、ログに `JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)` | Core2 だけが再起動（USB の挿し直しなど）して、サーボは電源が入ったまま多回転・トルク OFF。重みでドラムが最後の goal から 5 カウント超ずれると、ファームウェアが回転数を決められず拒否する（CoreXY_UFO `StsServoBus::enableTracking`） | `robot_state.z_servo_power_cycle` / `arm_servo_power_cycle`（#163）。そのサーボの電源を入れ直す（`SERVO_STATUS` が `limits=0/4095` に戻れば解除）。Z の点を記録し直す |
 | `move_z` が NACK になる | Z の点（`z_set top` / `bottom`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
+| 起動やテストで `Parse Error: Identifier "…" not declared in the current scope`、ヘッドレスのテストが終わらない | `class_name` を持つスクリプトが増えたコミットを取り込んだ後で、Git に入らないキャッシュ `game/.godot/global_script_class_cache.cfg` が古い（Godot は実行時に作り直さない） | `godot --headless --path game --import`。`./start.sh` と `tools/verify.sh` は起動前に `tools/godot_refresh.sh` で作り直す（#228）。`godot` を直接起動するときは手で |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
 | perf テストが 2 ms に近い | 初回起動のばらつき | 再実行する。安定して遅い場合のみ調べる |
@@ -149,9 +150,10 @@ description: >
 # Godot 物理・マッピング・アセット・表情（基準 509 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
-#   クリーンなチェックアウトでは先に: godot --headless --path game --import
+#   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
+#   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 495 件）
+# Python バックエンド（基準 502 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 
