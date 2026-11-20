@@ -36,7 +36,7 @@ game/                       Godot 4 プロジェクト
   scripts/game/game_config.gd         [Autoload] config/game_config.json 読み込み
   scripts/game/main.gd                配線: RobotState → sim → projection → view/UFO
   scripts/ui/debug_ui.gd              デバッグパネル（コードで構築、tscn 編集不要）
-  tests/run_tests.gd                  ヘッドレス物理テスト（26 件）
+  tests/run_tests.gd                  ヘッドレステストの入口（実行順）。テストは tests/test_*.gd（分野ごと、509 件）
 backend/                    Python（uv）
   src/corexy_ufo_backend/serial_service/   protocol.py（行解析）, transport.py（pyserial スレッド）, service.py（ACK/完了待ち）
   src/corexy_ufo_backend/robot/            interface.py, mock_robot.py, real_robot.py, state.py

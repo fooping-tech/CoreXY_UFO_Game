@@ -78,6 +78,6 @@ VFXManager.stop_fx(sprite); VFXManager.stop_all(); VFXManager.enabled = false
 
 ## 5. 確認とテスト
 
-- 自動テスト（`game/tests/run_tests.gd`）: `_test_vfx_manager`（全シートの読み込み・フレーム数・fps・pivot・オプション・自動解放・追従・無効化）、`_test_vfx_follows_the_game`（場面 → VFX、重複イベント 1 回、成功は結果イベントのみ、無効でも進む）。
+- 自動テスト（`game/tests/test_ui.gd`）: `_test_vfx_manager`（全シートの読み込み・フレーム数・fps・pivot・オプション・自動解放・追従・無効化）、`_test_vfx_follows_the_game`（場面 → VFX、重複イベント 1 回、成功は結果イベントのみ、無効でも進む）。
 - 目視: デバッグパネル（F1）の「VFX」タブで各エフェクトと場面を再生する。スクリーンショットが要るときは、一時的なシーンで `main.vfx.play(<moment>, 3.0, true)` を呼んで `get_viewport().get_texture().get_image().save_png()`（窓ありで起動。終わったら一時ファイルを消す）。
 - `config/game_config.json` の `render.vfx`（false で全 VFX 無効。ゲームはそのまま動く）。

@@ -629,7 +629,7 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | トレース | `game_mode_trace.gd` |
 | バックエンド | `devicehub/service.py::mock_ball`、`websocket/server.py` の `devicehub_mock_ball`（模擬ハブのときだけ）、UFO-DeviceHub の Python パッケージ `ufo-devicehub`（`external/UFO-DeviceHub/` の clone。コピーではない。`docs/devicehub_dependency.md`） |
 | 設定 | `config/game_config.json` の `game_mode` |
-| テスト | `game/tests/run_tests.gd` の `_test_game_mode_*`、`backend/tests/test_devicehub.py` |
+| テスト | `game/tests/test_game_mode.gd` と `test_game_mode_show.gd` の `_test_game_mode_*`、`backend/tests/test_devicehub.py` |
 
 演出のシート（pixelfx 0.3.0 で焼いたもの。`game/assets/vfx/catalog.json`、作り方は `pixelfx-vfx` スキル）:
 
