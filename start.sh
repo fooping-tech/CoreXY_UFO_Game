@@ -288,7 +288,11 @@ run_game() {
     echo "[START_SH_NO_GAME] godot --path $GAME_DIR -- $*$backend"
     return 0
   fi
-  "$(find_godot)" --path "$GAME_DIR" -- "$@"
+  local godot_bin
+  godot_bin="$(find_godot)"
+  # after a pull that adds a class_name, Godot's cache must be rebuilt before the game starts
+  "$ROOT/tools/godot_refresh.sh" "$godot_bin" "$GAME_DIR"
+  "$godot_bin" --path "$GAME_DIR" -- "$@"
 }
 
 start_backend() {

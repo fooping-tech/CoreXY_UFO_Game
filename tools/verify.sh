@@ -110,9 +110,7 @@ if want godot; then
   if [[ -z "$GODOT_BIN" ]]; then
     echo "Godot が見つからない (GODOT=... で指定)"; record 1 "godot"
   else
-    if [[ ! -d "$ROOT/game/.godot/imported" ]]; then
-      "$GODOT_BIN" --headless --path "$ROOT/game" --import >/dev/null 2>&1
-    fi
+    "$ROOT/tools/godot_refresh.sh" "$GODOT_BIN" "$ROOT/game"  # a stale class cache stops the tests
     run_godot_tests
     record $? "godot"
   fi
