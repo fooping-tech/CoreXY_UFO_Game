@@ -193,7 +193,7 @@ class AutoCatchSequencer:
         if not s.homed:
             errs.append("not homed")
         if not s.z_reference_set:
-            errs.append("Z reference not set (z_zero)")
+            errs.append("Z reference not set (z_set top)")
         if s.arm_span_deg is None:
             errs.append("claw open / closed positions not recorded (arm_set)")
         else:

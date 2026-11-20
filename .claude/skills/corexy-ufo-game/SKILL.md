@@ -5,7 +5,7 @@ description: >
   Python WebSocket/シリアルバックエンド）専用の設計制約・作業手順・テスト手順。このリポジトリの
   game/ backend/ config/ tools/ assets/ を変更・調査・デバッグ・テストするときは最初に読む。
   対象: UFO の表情/ポーズ/アニメーション、ロープの揺れ・3D Verlet 物理・2.5D 投影、RobotState/GameState、
-  MockRobot、WebSocket・request_id・ACK/NACK、実機同期（XY、Z 軸、z_sign、z_zero、ロープ長の逆マッピング）、
+  MockRobot、WebSocket・request_id・ACK/NACK、実機同期（XY、Z 軸、z_sign、z_set、ロープ長の逆マッピング）、
   E-STOP/ABORT/ALARM、通信切断、game_config.json、スプライトシート、演出・ゲーム体験、headless テスト。
   例:「UFOの表情を増やして」「ロープの揺れを改善して」「実機のZ軸と同期して」「急停止の演出」
   「切断時の表示」「バックエンドにコマンド追加」。汎用の Godot / game-feel / physics の知識は
@@ -96,7 +96,7 @@ description: >
 3. ソルバーを変えるなら伸びなし・UFO がロープ長を超えない・減衰・性能のテストを全部通す。詳細は [rope-physics.md](references/rope-physics.md)。
 
 ### C. 「実機の Z 軸と同期して」
-1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
+1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
 2. ゲーム側の逆マッピング（`rope_length_for_z`）は正しい前提で触らない。ずれは backend の換算（`z_sign`, `z_counts_per_unit`）か基準設定の手順で直す。
 3. 実機での確認が必要（§5）。手順は `docs/HANDOFF.md` §6。詳細は [robot-protocol.md](references/robot-protocol.md) §3。
 
@@ -126,7 +126,7 @@ description: >
 | 実機モードで ERROR から戻らない（驚き顔のまま、望遠鏡が出ない） | `GameState` は実機が正常な状態を報告したときか `error_cleared` で ERROR を抜ける。実機の状態が変わらないと残る | デバッグパネルの game= を見る。[robot-protocol.md](references/robot-protocol.md) §5 |
 | ▲ / ▼ を押しても巻き上げが動かない・途中で止まる（エラーなし） | 巻き上げサーボだけ電源が切れて 1 回転モードに戻った（`SERVO_STATUS` が `tracking=YES limits=0/4095`）。ファームウェアの `beginJog` はこれを見ない | `robot_state.z_servo_reset`。新ファームウェア（CoreXY_UFO #11、`tracking=LOST`）なら `z_servo_jog_recovers` が立ち、▲ / ▼ を押せば `JOG servo ... tracking=RESET` で戻る。旧ファームウェアはデバッグパネル「巻き上げサーボを復帰」（`z_servo_recover`）。どちらも点を記録し直す。`docs/HANDOFF_FIRMWARE_Z_SERVO.md` |
 | W / S（や爪のキー）が無反応、ログに `JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)` | Core2 だけが再起動（USB の挿し直しなど）して、サーボは電源が入ったまま多回転・トルク OFF。重みでドラムが最後の goal から 5 カウント超ずれると、ファームウェアが回転数を決められず拒否する（CoreXY_UFO `StsServoBus::enableTracking`） | `robot_state.z_servo_power_cycle` / `arm_servo_power_cycle`（#163）。そのサーボの電源を入れ直す（`SERVO_STATUS` が `limits=0/4095` に戻れば解除）。Z の点を記録し直す |
-| `move_z` が NACK になる | Z の点（`z_set top` / `bottom`、`z_zero`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
+| `move_z` が NACK になる | Z の点（`z_set top` / `bottom`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
 | perf テストが 2 ms に近い | 初回起動のばらつき | 再実行する。安定して遅い場合のみ調べる |

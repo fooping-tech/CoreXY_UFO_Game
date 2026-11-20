@@ -8,7 +8,7 @@
     "z_min_mm": 0.0,
     "z_max_mm": 100.0,
     "z_up_is_positive": true,
-    "_z_note": "Z is reported by the backend in abstract 'z units' (0..z_max) derived from the STS3020 ID1 drum servo count (SERVO_STATUS abs=). The firmware has no Z homing; the backend defines 0 at the position seen when 'z_zero' is sent. If a LARGER value means the arm is HIGHER set z_up_is_positive=true. The on-screen rope is longest when the arm is highest (inverse mapping)."
+    "_z_note": "Z is reported by the backend in abstract 'z units' (0..z_max) derived from the STS3020 ID1 drum servo count (SERVO_STATUS abs=). The firmware has no Z homing; the backend defines 0 at the position seen when 'z_set top' is sent. If a LARGER value means the arm is HIGHER set z_up_is_positive=true. The on-screen rope is longest when the arm is highest (inverse mapping)."
   },
   "world": {
     "travel_x_cm": 52.0,
@@ -694,7 +694,7 @@
     }
   },
   "auto_catch": {
-    "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_zero reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",
+    "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_set top reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",
     "real": {
       "safe_z": null,
       "catch_z": null,

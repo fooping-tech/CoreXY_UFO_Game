@@ -86,7 +86,7 @@ class MockRobot(RobotInterface):
         self.target[2] = self.limits.clamp_z(z)
 
     async def set_z_zero(self) -> None:
-        self.z_points.add("top")  # z_zero = z_set top
+        self.z_points.add("top")  # = z_set top
         self.z_reference_set = True
 
     async def set_z_point(self, which: str) -> None:

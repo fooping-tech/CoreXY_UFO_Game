@@ -14,7 +14,7 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
    ─ USB シリアル 115200 → M5Stack Core2 ファームウェア
 ```
 
-戻り: `robot_state` を 30 Hz でブロードキャスト（`RobotSnapshot.to_message()`）。Godot は `connected homed motors_enabled state x y z measured error z_reference_set` を読む（`alarm test_mode` は今は読んでいない）。Z はバックエンドがサーボ ID1 を追跡して更新する: ジョグ中は `JOG_POS` の `Z_ABS`、それ以外は `SERVO_STATUS 1` を `backend.z_poll_hz`（3 Hz）で問い合わせる。ジョイスティックなどゲーム以外の操作も反映されるが、`z_zero`（アーム最上位で押す）までは Z は 100 のまま。
+戻り: `robot_state` を 30 Hz でブロードキャスト（`RobotSnapshot.to_message()`）。Godot は `connected homed motors_enabled state x y z measured error z_reference_set` を読む（`alarm test_mode` は今は読んでいない）。Z はバックエンドがサーボ ID1 を追跡して更新する: ジョグ中は `JOG_POS` の `Z_ABS`、それ以外は `SERVO_STATUS 1` を `backend.z_poll_hz`（3 Hz）で問い合わせる。ジョイスティックなどゲーム以外の操作も反映されるが、`z_set top`（アーム最上位で押す）までは Z は 100 のまま。
 
 ## 2. 安全上の制約と、それを壊さない設計
 

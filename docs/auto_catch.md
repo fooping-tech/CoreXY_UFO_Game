@@ -76,9 +76,9 @@ FAULT ─(アラーム解除・原点復帰の後に auto_catch・条件OK)→ O
 
 ## 3. 安全機構と異常時の挙動
 
-**開始できる条件**（1 つでも欠けると NACK、理由を全部返す）: 校正値がすべて設定済みで範囲内（実機は `confirmed` も全部 true）、接続中、モーター有効、アラームなし、**ホーミング済み**、Z 基準（`z_zero`）設定済み、爪の開閉位置が記録済みで弧が `claw_span_min_deg..max_deg` 内、ロボットが IDLE、ほかのモーション・ジョグがない、XY がソフトリミット内、Z が `safe_z` 以上、ホーム外でリミットスイッチが入っていない、いまの Z から `catch_z` までの最初の下降が `max_drop_units` と `max_drum_turns` 以内、前回の押下から `button_debounce_ms` 以上経過。
+**開始できる条件**（1 つでも欠けると NACK、理由を全部返す）: 校正値がすべて設定済みで範囲内（実機は `confirmed` も全部 true）、接続中、モーター有効、アラームなし、**ホーミング済み**、Z 基準（`z_set top`）設定済み、爪の開閉位置が記録済みで弧が `claw_span_min_deg..max_deg` 内、ロボットが IDLE、ほかのモーション・ジョグがない、XY がソフトリミット内、Z が `safe_z` 以上、ホーム外でリミットスイッチが入っていない、いまの Z から `catch_z` までの最初の下降が `max_drop_units` と `max_drum_turns` 以内、前回の押下から `button_debounce_ms` 以上経過。
 
-**排他制御**: シーケンスは実行中ずっとサーバーのモーションロックを持つ。`move_xy` `move_z` `home` `grab` `arm_*` `z_zero` `clear_alarm`、動くジョグ、2 回目の `auto_catch` は `busy` で拒否。受け付けるのは `stop` `soft_stop` `get_state` `auto_catch_status` ゼロのジョグ（キーを離した）・`enable_motors false` だけ。ゲーム側も実行中はキー・ジェスチャー・爪キーを送らない。
+**排他制御**: シーケンスは実行中ずっとサーバーのモーションロックを持つ。`move_xy` `move_z` `home` `grab` `arm_*` `z_set top` `clear_alarm`、動くジョグ、2 回目の `auto_catch` は `busy` で拒否。受け付けるのは `stop` `soft_stop` `get_state` `auto_catch_status` ゼロのジョグ（キーを離した）・`enable_motors false` だけ。ゲーム側も実行中はキー・ジェスチャー・爪キーを送らない。
 
 **監視（毎ポーリング）**: stop 要求、状態のタイムアウト、全体のタイムアウト、接続、モーター有効、アラーム / ESTOP、ホーミングが外れていないか、位置が数値か、XY がソフトリミット内か、Z が範囲内で `z_floor` より下でないか、ホーム外でリミットスイッチが入っていないか、動作の失敗（サーボ `result=TIMEOUT` など）。各 Z 移動の直前には、そのときの Z から目標までの下降量とドラム回転数を検査する。XY 移動の完了後は `POS` を読み直してリミットを確かめる。実機のリミット状態は、それを読んだ `POS` の XY に機械がいる間だけ有効として扱う（移動中の推定位置や後の位置と組み合わせない）。
 
@@ -99,7 +99,7 @@ FAULT ─(アラーム解除・原点復帰の後に auto_catch・条件OK)→ O
 ## 4. 校正パラメータ（`config/game_config.json` の `auto_catch`）
 
 同じキーで 2 つのプロファイル: `real`（実機。未確認は null）と `dry_run`（`--mock` と `--auto-catch-dry-run` だけが使う仮の値）。
-XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm..z_max_mm`（Z 単位、`z_max` = 巻き上げ点（`z_set top` / `z_zero`）を記録したアーム最上位、`z_min` = 下げ点（`z_set bottom`）を記録したなら最下位）をそのまま使う。
+XY の可動範囲と Z の上下端は既存の `robot.x_min_mm..` / `z_min_mm..z_max_mm`（Z 単位、`z_max` = 巻き上げ点（`z_set top`）を記録したアーム最上位、`z_min` = 下げ点（`z_set bottom`）を記録したなら最下位）をそのまま使う。
 
 | キー | 意味 | real の現状 |
 |---|---|---|
@@ -142,7 +142,7 @@ uv run corexy-ufo-backend --auto-catch-dry-run stall_xy --fault-at MOVE_TO_BOX
 
 1. **配線**: リミットスイッチ X=GPIO36 / Y=GPIO35 が実際にその端子か、`POS` の `LIMIT_X/LIMIT_Y` が押したときだけ ACTIVE になるか。非常停止はソフトウェア（ABORT）しかないので、モーター電源を切る外部スイッチを手の届く所に付けるか。
 2. **軸方向**: `docs/HANDOFF.md` §6 の手順で、Z を少し下げたときに実機のアームが**下がる**か（逆なら `backend.z_sign=-1`）→ `confirmed.z_direction`。
-3. **原点**: `HOME` 後の位置が (0,0) で、そこがホーム側のリミットか。Z は `z_zero`（アームを手で最上位）でしか基準がない。
+3. **原点**: `HOME` 後の位置が (0,0) で、そこがホーム側のリミットか。Z は `z_set top`（アームを手で最上位）でしか基準がない。
 4. **巻取り量**: ドラム 1 回転あたりの昇降量を測り `backend.z_counts_per_unit` を決める → `confirmed.z_scale`。机に当たらない最も低い Z を `z_floor`、そこまでの回転数から `max_drum_turns`、`max_drop_units` を決める。ファームウェアの追従範囲 ±28000 count（約 ±6.8 回転、サーボ電源投入時が 0）に収まるか。
 5. **高さ**: `safe_z`（移動中に何にも当たらない）、`catch_z`（物を掴める）、`release_z`（ボックスの縁より上）→ `confirmed.z_positions`。
 6. **可動範囲**: `robot.x/y_min/max_mm`（ファームウェアは X 0..390 / Y 0..200）が機械的に安全か。

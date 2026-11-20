@@ -38,7 +38,7 @@ var last_error: String = ""
 ## The backend's current `error` field, mirrored as-is (empty once it clears).
 var robot_error: String = ""
 ## The backend has a Z reference (z_set top = arm wound up, or bottom = lowered;
-## z_zero = top); without it Z is unknown.
+## z_set top); without it Z is unknown.
 var z_reference_set: bool = false
 ## Which Z points are recorded in this firmware session, and whether the counts
 ## per unit / drum direction are measured from both (or saved from before).

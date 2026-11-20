@@ -597,7 +597,7 @@ Godot 側はデバッグパネルの「Robot source」を **WebSocket backend** 
 接続後の手順（安全のため起動時はモーター操作無効）:
 
 1. 「実機」タブの `モーター有効`（アーミング）
-2. **原点復帰より先に巻き上げを合わせる**（アームが下がったまま XY を動かすとぶつかるため）。アームを最上位に合わせて（▲ か W で上げる）「ここを巻き上げ点（上）に」（`z_set top`、旧 `z_zero` と同じ。Z 基準。ファームウェアに Z ホーミングはない）。
+2. **原点復帰より先に巻き上げを合わせる**（アームが下がったまま XY を動かすとぶつかるため）。アームを最上位に合わせて（▲ か W で上げる）「ここを巻き上げ点（上）に」（`z_set top`。Z 基準。ファームウェアに Z ホーミングはない）。
    - 初回は続けてアームを一番下まで下げ（▼ か S）、「ここを下げ点（下）に」（`z_set bottom`）。上と下の 2 点のサーボのカウント差から、Z 1 単位あたりのカウント（`z_counts_per_unit`）とドラムの回転の向き（`z_sign`）を測り、`config/calibration.json` の `z` に保存する（設定ファイルの値より優先。自動キャッチの検査も同じ値を使う）。2 点が半回転より近いときは記録しない。
    - 上と下を測るまでは、▲ / ▼ が Z 0〜100 で止まらない（設定の換算は推測なので、本当の上 / 下まで動かせるように。押している間だけ動くので見ながら操作する）。測った後は 0〜100 で止まる。測り直すときは「Z の上下をやり直す」（`z_set clear`。記録と保存した実測を消す）。
    - 次回からは、電源を入れ直しても上か下の 1 点を記録するだけでよい（カウントはファームウェアの起動ごとに振り直されるので、記録した点はファームウェアの再起動・再接続で消える）。
@@ -615,7 +615,7 @@ WebSocket メッセージ例:
 {"type":"ack","request_id":"g12-3","timestamp":1730000000100,"data":{"command":"move_xy","x":120.0,"y":80.0}}
 ```
 
-コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_zero`, `z_set{which: top|bottom|clear}`, `z_servo_recover`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`, `auto_catch`, `auto_catch_status`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
+コマンド: `enable_motors{enable}`, `home`, `move_xy{x,y,feed?}`, `move_z{z}`, `z_set{which: top|bottom|clear}`, `z_servo_recover`, `grab{close}`, `stop`, `clear_alarm`, `get_state`, `list_ports`, `auto_catch`, `auto_catch_status`。同じ `request_id` の再送はキャッシュ済み結果を返し、二重実行しません。
 
 実機の座標系・コマンド・制約の詳細は [docs/firmware_protocol.md](docs/firmware_protocol.md) を参照してください。
 特に **`backend.z_sign`（どちらの回転でアームが上がるか）は実機で確認して `config/game_config.json` に設定**してください。

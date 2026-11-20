@@ -464,7 +464,7 @@ async def test_server_runs_the_sequence_and_locks_manual_control(server):
         assert r["type"] == "ack" and r["data"]["active"]
         for rid, name, params in [("x1", "move_xy", dict(x=10, y=10)), ("x2", "jog", dict(vx=10, vy=0)),
                                   ("x3", "move_z", dict(z=50)), ("x4", "arm_goto", dict(which="open")),
-                                  ("x5", "z_zero", {}), ("x6", "clear_alarm", {}), ("x7", "auto_catch", {})]:
+                                  ("x5", "z_set", dict(which="top")), ("x6", "clear_alarm", {}), ("x7", "auto_catch", {})]:
             if name == "auto_catch":
                 await asyncio.sleep(0.25)  # past the button debounce: a real second press
             r = await _cmd(ws, rid, name, **params)
