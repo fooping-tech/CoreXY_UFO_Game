@@ -81,7 +81,7 @@ BGM の実音源（#173）: `game/assets/audio/bgm/` に置いたファイルを
 
 | 項目 | 内容 |
 |---|---|
-| バス | `SFX`（効果音）、`SFX Left` / `SFX Right`（左右の Dial の音。`SFX` へ）、`BGM`、`Voice`。起動時にコードで作る |
+| バス | `SFX`（効果音）、`SFX Left`（左の Dial の音。左へ寄せて `SFX` へ。#200: Dial は左の 1 台だけ）、`BGM`、`Voice`。起動時にコードで作る |
 | 音量・ミュート | `audio.volume_db`（効果音の基準）、`audio.sfx_volume_db` / `audio.bgm_volume_db`（バス）、`audio.sfx_enabled` / `audio.bgm_enabled`、`audio.enabled`（全部）。設定画面の「画面と音」に音楽のオン・オフと大きさ |
 | 左右 | 取り込み・投下・戻り・排出・異常の音は、その Dial の側へ寄せる（`game_mode.sounds.pan`、既定 0.6）。ほかは中央 |
 | 同時発音 | 8 個。全部鳴っているとき、優先度 0（ピン・スリングショット）は鳴らさず、高い優先度の音はいちばん優先度の低い音を止めて鳴る |

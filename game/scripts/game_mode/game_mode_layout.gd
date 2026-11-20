@@ -10,10 +10,9 @@ extends RefCounted
 ##   STATUS     y  130 ..  242   the hand (left), the combo (middle), the arm camera (right)
 ##   RAIL       y  250 ..  352   UFOくん going left and right
 ##   FIELD      y  352 .. 1100   the pinball field, tall
-##   DIALS      y 1100 .. 1280   Dial 1's port bottom left, Dial 2's bottom right
+##   DIALS      y 1100 .. 1280   Dial 1's port bottom left (#200: the only port)
 ##
-## Dial 1 is the left of the screen and Dial 2 the right, as the real Dials stand beside
-## the monitor. Nothing here is a robot coordinate: this is the picture only.
+## Dial 1 is the left of the screen, as the real Dial stands beside the monitor. Nothing here is a robot coordinate: this is the picture only.
 
 const SCREEN := Vector2(720, 1280)
 const PIXEL_SIZE := Vector2i(360, 640)

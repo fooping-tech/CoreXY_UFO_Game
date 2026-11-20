@@ -46,7 +46,7 @@ var energy := 0.0
 var _mood := 0.0  # urgency, eased
 var _energy := 0.0  # energy, eased
 var _galaxy: Array = []  # [pos, size, colour index]
-## the colour of each side's conduit (the Dial's colour)
+## the colour of the conduit by its side (the Dial's colour; #200: the left only)
 var side_colors := {"left": Color("00ffff")}
 ## where each conduit starts (the port) and the field's edges
 var ports: Dictionary = GameModeLayout.PORTS.duplicate()
@@ -186,7 +186,7 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, SIZE), Color(_flash_color.r, _flash_color.g, _flash_color.b, 0.16 * _flash))
 
 ## Under the field: each port's conduit runs out to its side of the screen, where the real
-## Dial stands (Dial 1 left, Dial 2 right), with a light running along it and a few panel
+## Dial stands (#200: Dial 1, on the left), with a light running along it and a few panel
 ## lamps (the machine the capsule travels through).
 func _draw_sides() -> void:
 	for side in ports.keys():
