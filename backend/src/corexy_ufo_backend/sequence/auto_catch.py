@@ -33,13 +33,13 @@ from enum import StrEnum
 from ..config import BackendConfig, RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
 from ..robot.state import MachineState, RobotSnapshot
+from .abortable import ABORT_WAIT_S, AbortableSequence  # noqa: F401 (ABORT_WAIT_S: as before)
 from .fault import SequenceFault
 from .params import COUNTS_PER_TURN, AutoCatchParams, height, validate
 
 log = logging.getLogger(__name__)
 
 HISTORY_MAX = 30
-ABORT_WAIT_S = 2.0  # after ABORT, how long a still-running action may take to end
 
 
 class Phase(StrEnum):
@@ -90,8 +90,10 @@ def build_steps(p: AutoCatchParams) -> list[Step]:
     return steps
 
 
-class AutoCatchSequencer:
+class AutoCatchSequencer(AbortableSequence):
     label = "auto_catch"  # in the log lines (a subclass is another sequence)
+    FAULT_PHASE = Phase.FAULT
+    _log = log
 
     def __init__(self, robot: RobotInterface, params: AutoCatchParams, limits: RobotLimits,
                  backend: BackendConfig | None = None, *, lock: asyncio.Lock | None = None,
@@ -252,29 +254,6 @@ class AutoCatchSequencer:
         self._t_start = self.clock()
         self._task = asyncio.get_running_loop().create_task(self._run())
 
-    def request_abort(self, reason: str) -> bool:
-        """Synchronous part of an abort: from now on no new action is started.
-        Returns True if a sequence was running."""
-        if not self.active:
-            return False
-        if not self._abort_reason:
-            self._abort_reason = reason
-        return True
-
-    async def abort(self, reason: str, *, send_stop: bool = True) -> bool:
-        """Stop the sequence now. send_stop=False when the caller sends the robot's stop itself."""
-        if not self.request_abort(reason):
-            return False
-        if send_stop:
-            await self._emergency_stop()
-        else:
-            self._stop_sent = True
-        return True
-
-    async def wait(self) -> None:
-        if self._task is not None:
-            await asyncio.shield(self._task)
-
     # ------------------------------------------------------------------ run loop
     async def _run(self) -> None:
         try:
@@ -340,18 +319,6 @@ class AutoCatchSequencer:
                     and s.state not in (MachineState.Z_LOWERING, MachineState.Z_RAISING))
         return True  # claw: the servo command itself reported PASS
 
-    async def _action_body(self, step: Step) -> None:
-        # A task runs only after the current one yields: a stop that came in between
-        # creating it and its first step must not let the command out after the ABORT.
-        if self._abort_reason:
-            raise RobotCommandError(f"not sent ({self._abort_reason})")
-        if step.kind == "claw":
-            await self.robot.arm_goto(step.claw)
-        elif step.kind == "z":
-            await self.robot.move_z(step.z)
-        else:
-            await self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
-
     def _start_action(self, step: Step) -> asyncio.Task:
         return asyncio.get_running_loop().create_task(self._action_body(step))
 
@@ -393,31 +360,3 @@ class AutoCatchSequencer:
     def _finish_ok(self) -> None:
         self.last_result = "done"
         self._set_phase(Phase.IDLE, "done")
-
-    async def _emergency_stop(self) -> None:
-        if self._stop_sent:
-            return
-        self._stop_sent = True
-        try:
-            await self.robot.stop()
-        except Exception as e:  # e.g. not connected: report it, nothing else to do here
-            log.error("%s: emergency stop failed: %s", self.label, e)
-            self.error += f" (stop failed: {e})"
-
-    async def _fault(self, reason: str) -> None:
-        action = self._action
-        self.error = reason
-        self.last_result = "fault"
-        await self._emergency_stop()
-        self._set_phase(Phase.FAULT, self.error)
-        log.error("%s: FAULT: %s", self.label, self.error)
-        if action is not None and not action.done():
-            # ABORT ends the firmware's move / servo command; give the action time to see it
-            try:
-                await asyncio.wait_for(asyncio.shield(action), ABORT_WAIT_S)
-            except Exception:  # its failure is expected after ABORT; the fault is already recorded
-                pass
-            if not action.done():
-                action.cancel()
-        elif action is not None and action.done() and not action.cancelled():
-            action.exception()  # retrieved: no "exception was never retrieved" warning
