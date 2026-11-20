@@ -19,7 +19,7 @@ an XY move the firmware does not answer POS, so the position is estimated by
 linear interpolation from start to target (measured=False). During a jog the
 firmware reports `JOG_POS` every 50 ms (measured). Z is tracked from
 the drum servo's absolute count (`SERVO_STATUS 1 abs=`), relative to a point
-recorded by hand (the firmware has no Z homing): `set_z_point("top")` (= z_zero,
+recorded by hand (the firmware has no Z homing): `set_z_point("top")` (= z_set top,
 the arm wound up) and / or `set_z_point("bottom")` (the arm lowered). With both,
 the counts per unit and the drum's direction are measured (ZCalibration, saved)
 instead of taken from the config. The recorded counts only hold for one firmware

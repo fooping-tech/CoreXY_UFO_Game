@@ -8,7 +8,7 @@ import time
 # The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
 DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
                       "devicehub_command", "devicehub_stop_all", "devicehub_mock_ball")
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
+COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
             "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
             "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
             "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",

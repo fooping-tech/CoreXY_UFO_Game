@@ -6,7 +6,7 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
+  home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z},
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
   measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
   last session's top / bottom after a power cycle; apply false = the estimate only, true =
@@ -757,8 +757,6 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                                         "cap_mm_s": self.robot.jog_boost_mm_s if lasts > 0 else 0.0})
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
-            elif name == "z_zero":
-                await self.robot.set_z_zero()
             elif name == "z_set":
                 await self.robot.set_z_point(str(params.get("which", "")))
             elif name == "z_restore":
