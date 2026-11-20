@@ -29,12 +29,16 @@ async def cmd(ws, name, params=None, rid="r", events=None, timeout=10.0):
 
 
 async def cmd_kw(ws, rid, name, **params):
-    """As cmd(), with the request_id first and the parameters as keywords."""
-    return await cmd(ws, name, params, rid=rid)
+    """As cmd(), with the request_id first and the parameters as keywords. The answer
+    must be an ack or a nack (nothing else carries a command's request_id)."""
+    m = await cmd(ws, name, params, rid=rid)
+    assert m["type"] in ("ack", "nack"), m
+    return m
 
 
 async def recv_type(ws, t, timeout=3.0):
-    """The next message of type `t` (AssertionError when none comes in `timeout`)."""
+    """The next message of type `t`. Fails when none comes within `timeout` seconds:
+    AssertionError while other messages keep coming, TimeoutError on a silent socket."""
     loop = asyncio.get_event_loop()
     end = loop.time() + timeout
     while loop.time() < end:
