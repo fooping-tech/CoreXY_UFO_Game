@@ -366,7 +366,7 @@
     "scope": {
       "enabled": true,
       "zoom": 1.0,
-      "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. optical_flow: arrows showing how the picture moves (measured in the game on a 48 x 48 grey copy about 10 times a second; display only, never used to move anything). zoom 1..4 crops the middle."
+      "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. zoom 1..4 crops the middle."
     },
     "trace": true,
     "result_bonus": {
