@@ -8,7 +8,7 @@ extends Node
 ##
 ## How they are played:
 ##   - a pool of players on the SFX buses; a sound of a Dial's side (absorb, drop, return,
-##     release, fault) goes to that side's bus (left Dial left, right Dial right)
+##     release, fault) goes to that side's bus (#200: the one Dial, on the left)
 ##   - priority: when every player is busy a priority 0 sound (a pin) is dropped, a higher
 ##     one takes the player of the least important sound playing
 ##   - at most one of a key per its min_gap_ms (a capsule rattling down the pins)
@@ -354,8 +354,8 @@ func min_gap_ms(name: String) -> int:
 
 ## The controller's lane_changed: remembers which side entered a state last, so the
 ## sound played right after that step comes from that Dial's side. (A sound that follows a
-## later event of a Dial, like the release, is given its side by the caller instead: both
-## lanes can be in the same state by then.)
+## later event of a Dial, like the release, is given its side by the caller instead: the
+## lane may have moved on by then.)
 func on_lane(side: String, state: String) -> void:
 	_side_of[state] = side
 
@@ -363,7 +363,7 @@ func on_lane(side: String, state: String) -> void:
 func side_of(name: String) -> String:
 	return str(_side_of.get(SIDE_SOUNDS.get(name, ""), ""))
 
-## Plays the sound `name`. `side` ("left" / "right"): the Dial it belongs to, when the
+## Plays the sound `name`. `side` ("left"): the Dial it belongs to, when the
 ## caller knows it (an event of that Dial); left out, a Dial's sound takes the side that
 ## entered its lane state last (side_of). `pitch` > 0: played at that pitch (the result's
 ## counting blips climb as the number does).

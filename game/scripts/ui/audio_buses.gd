@@ -3,8 +3,8 @@ class_name AudioBuses
 ## step: effects, music and voice each have their own, all into Master.
 ##
 ##   SFX        every sound effect
-##   SFX Left   effects of the left Dial's side (panned left, into SFX)
-##   SFX Right  effects of the right Dial's side (panned right, into SFX)
+##   SFX Left   effects of the Dial's side (panned left, into SFX; #200: the only Dial of
+##              the game stands on the left)
 ##   BGM        music
 ##   Voice      UFOくん's and the helper's spoken lines
 ##
@@ -14,33 +14,31 @@ class_name AudioBuses
 
 const SFX := "SFX"
 const SFX_LEFT := "SFX Left"
-const SFX_RIGHT := "SFX Right"
 const BGM := "BGM"
 const VOICE := "Voice"
-## how far the side buses are panned (0 = centre, 1 = hard)
+## how far the side bus is panned (0 = centre, 1 = hard)
 const DEFAULT_PAN := 0.6
 ## the voice bus counts as speaking above this peak
 const VOICE_PEAK_DB := -45.0
 
 ## Makes the buses that are missing (safe to call again). `pan` 0..1 sets how far the side
-## buses are panned; left out (negative), a pan already set stays as it is.
+## bus is panned; left out (negative), a pan already set stays as it is.
 static func ensure(pan := -1.0) -> void:
 	for name in [SFX, BGM, VOICE]:
 		_bus(name, "Master")
-	for side in [[SFX_LEFT, -1.0], [SFX_RIGHT, 1.0]]:
-		var idx := _bus(side[0], SFX)
-		var fresh := AudioServer.get_bus_effect_count(idx) == 0
-		if fresh:
-			AudioServer.add_bus_effect(idx, AudioEffectPanner.new())
-		if fresh or pan >= 0.0:
-			(AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan = clampf(float(side[1]) * (pan if pan >= 0.0 else DEFAULT_PAN), -1.0, 1.0)
+	var idx := _bus(SFX_LEFT, SFX)
+	var fresh := AudioServer.get_bus_effect_count(idx) == 0
+	if fresh:
+		AudioServer.add_bus_effect(idx, AudioEffectPanner.new())
+	if fresh or pan >= 0.0:
+		(AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan = clampf(-(pan if pan >= 0.0 else DEFAULT_PAN), -1.0, 0.0)
 
-## How far the side buses are panned now (0..1).
+## How far the side bus is panned now (0..1).
 static func pan() -> float:
-	var idx := AudioServer.get_bus_index(SFX_RIGHT)
+	var idx := AudioServer.get_bus_index(SFX_LEFT)
 	if idx < 0 or AudioServer.get_bus_effect_count(idx) == 0:
 		return 0.0
-	return (AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan
+	return absf((AudioServer.get_bus_effect(idx, 0) as AudioEffectPanner).pan)
 
 static func _bus(name: String, send: String) -> int:
 	var idx := AudioServer.get_bus_index(name)
@@ -51,9 +49,9 @@ static func _bus(name: String, send: String) -> int:
 	AudioServer.set_bus_send(idx, send)
 	return idx
 
-## The bus for an effect of `side` ("left" / "right"; anything else = the middle).
+## The bus for an effect of `side` ("left" = the Dial's; anything else = the middle).
 static func sfx_bus(side: String) -> String:
-	return SFX_LEFT if side == "left" else (SFX_RIGHT if side == "right" else SFX)
+	return SFX_LEFT if side == "left" else SFX
 
 ## Volumes and mutes from the config's `audio` section (the settings screen changes them live).
 static func apply(audio: Dictionary) -> void:

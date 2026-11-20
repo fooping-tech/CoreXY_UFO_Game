@@ -265,23 +265,21 @@ func _test_game_mode_audio(rs: Node) -> void:
 		"audio: every sound the score game asks for has a file and a synthesised fallback; with files off or the manifest missing it still plays",
 		"%d %s %s %s %s" % [asked.size(), with_files, synth, no_manifest, fallback_plays])
 	# the buses, the Dial's side, the gap, the priority
-	var buses: bool = [AudioBuses.SFX, AudioBuses.SFX_LEFT, AudioBuses.SFX_RIGHT, AudioBuses.BGM, AudioBuses.VOICE].all(
-		func(b): return AudioServer.get_bus_index(b) >= 0)
+	var buses: bool = [AudioBuses.SFX, AudioBuses.SFX_LEFT, AudioBuses.BGM, AudioBuses.VOICE].all(
+		func(b): return AudioServer.get_bus_index(b) >= 0) and AudioServer.get_bus_index("SFX Right") < 0
 	var pan_l: float = (AudioServer.get_bus_effect(AudioServer.get_bus_index(AudioBuses.SFX_LEFT), 0) as AudioEffectPanner).pan
-	var pan_r: float = (AudioServer.get_bus_effect(AudioServer.get_bus_index(AudioBuses.SFX_RIGHT), 0) as AudioEffectPanner).pan
-	snd.on_lane("right", "ABSORBING")
+	snd.on_lane("left", "ABSORBING")
 	snd.on_lane("left", "RETURNING")
-	snd.on_lane("left", "RELEASING")
-	snd.on_lane("right", "RELEASING")  # both lanes releasing: the event's own side decides
+	snd.on_lane("", "RELEASING")  # the lane state does not say: the event's own side decides
 	snd.play("absorb")
 	snd.play("return")
 	snd.play("go")
 	snd.play("release", "left")
 	var sides: Array = snd.voices.filter(func(v): return not v.is_empty()).map(func(v): return "%s:%s" % [v.key, v.side])
-	var bus_r: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_RIGHT)
+	var bus_mid: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX)
 	var bus_l: bool = snd._players.any(func(pl): return pl.playing and pl.bus == AudioBuses.SFX_LEFT)
-	_ok(buses and pan_l < 0.0 and pan_r > 0.0 and sides.has("absorb:right") and sides.has("return:left") and sides.has("go:") and sides.has("release:left") and bus_r and bus_l,
-		"audio: effects, music and voice have their own buses; a Dial's sounds go to its side (left Dial left, right Dial right), the others stay in the middle",
+	_ok(buses and pan_l < 0.0 and AudioBuses.sfx_bus("right") == AudioBuses.SFX and sides.has("absorb:left") and sides.has("return:left") and sides.has("go:") and sides.has("release:left") and bus_mid and bus_l,
+		"audio: effects, music and voice have their own buses; the Dial's sounds go to its side (the left; there is no right bus, #200), the others stay in the middle",
 		str(sides))
 	snd.silence()
 	snd.log.clear()
