@@ -1,0 +1,847 @@
+extends "res://tests/test_base.gd"
+## The screens: title, settings, calibration, device test, debug panel, VFX, fonts.
+
+## Debug panel: hardware tests in the first tab; a held Z button never outlives the mouse press.
+func _test_debug_panel_tabs_and_z_buttons(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var tabs: TabContainer = game.debug_ui._tabs
+	var titles := []
+	for i in tabs.get_tab_count():
+		titles.append(tabs.get_tab_title(i))
+	game.ui_jog_z = 1.0  # as if "▲" were held, but no mouse button is down
+	var d: Vector3 = game._jog_input()
+	var expected_tabs := 7 + (1 if bool(GameConfig.data.study.enabled) else 0) + (1 if bool(GameConfig.data.homework.enabled) else 0)
+	var study_matches_config: bool = titles.has("Study") == bool(GameConfig.data.study.enabled)
+	_ok(titles[0] == "実機" and titles.size() == expected_tabs and study_matches_config and game.ui_jog_z == 0.0 and d.z == 0.0,
+		"debug panel: tabs (hardware first); on-screen Z jog stops once the mouse is up", "%s %.1f %.1f" % [titles, game.ui_jog_z, d.z])
+	# backend / serial lines and game lines land in one log; the copy has the state on top
+	game.ws._handle({"type": "log", "data": {"line": "[serial] RX JOG servo id=1 disabled test"}})
+	game.debug_log.emit("keys: jog vx 0 vy 0 vz 15 -> mock")
+	var report: String = game.debug_ui.log_report()
+	_ok(report.begins_with("CoreXY UFO debug log") and report.contains("robot: source=") and report.contains("window_focus=")
+		and report.contains("[serial] RX JOG servo id=1 disabled test") and report.contains("keys: jog vx 0 vy 0 vz 15"),
+		"debug panel: the log collects backend, serial and key lines; the copy starts with the state", report.left(300))
+	# a focused text field (the Study question) holds the keys; a click on the game releases it (#68)
+	var field := TextEdit.new()
+	game.debug_ui.add_child(field)
+	field.grab_focus()
+	var typing: bool = game.text_entry_focused()
+	game._unhandled_input(_mouse_press())
+	_ok(typing and not game.text_entry_focused(), "debug panel: typing holds the jog keys until the game is clicked")
+	field.queue_free()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## pixelfx VFX: every catalog sheet loads with its frames, timing, loop and pivot;
+## spawn_fx honours the options; one-shots free themselves; off = nothing spawns.
+func _test_vfx_manager() -> void:
+	var bad: Array[String] = []
+	for id in VFXManager.ids():
+		var m := VFXManager.meta(id)
+		var sf := VFXManager._load(id, bool(m.get("loop", false)))
+		if m.is_empty() or sf == null or sf.get_frame_count("default") != int(m.frames) \
+				or not is_equal_approx(sf.get_animation_speed("default"), float(m.fps)) \
+				or not is_equal_approx(sf.get_frame_duration("default", 0), 1.0):
+			bad.append(id)
+	_ok(VFXManager.ids().size() >= 9 and bad.is_empty(), "vfx: every catalog sheet loads (frames, fps, per-frame time)", str(bad))
+	var holder := Node2D.new()
+	add_child(holder)
+	var was_layer = VFXManager.layer if is_instance_valid(VFXManager.layer) else null
+	VFXManager.layer = holder
+	var m := VFXManager.meta("grab_burst")
+	var s := VFXManager.spawn_fx("grab_burst", Vector2(100, 200), {"scale": 3.0, "speed": 2.0, "alpha": 0.5, "layer": "back"})
+	var pivot_ok := s != null and s.offset == Vector2(m.frameSize[0], m.frameSize[1]) * 0.5 - Vector2(m.pivot[0], m.pivot[1])
+	var opts_ok := s != null and s.scale == Vector2(3, 3) and s.speed_scale == 2.0 and is_equal_approx(s.modulate.a, 0.5) \
+		and s.z_index == VFXManager.Z_BACK and s.position == Vector2(100, 200) and s.get_parent() == holder
+	var frees := s != null and s.animation_finished.is_connected(s.queue_free) and not s.sprite_frames.get_animation_loop("default")
+	var loop := VFXManager.spawn_fx("grab_burst", Vector2.ZERO, {"loop": true})
+	var loops := loop != null and loop.sprite_frames.get_animation_loop("default") and not loop.animation_finished.is_connected(loop.queue_free)
+	var target := Node2D.new()
+	holder.add_child(target)
+	target.position = Vector2(300, 50)
+	var f := VFXManager.spawn_fx("idle_glow", Vector2.ZERO, {"follow": target, "offset": Vector2(0, 10)})
+	target.position = Vector2(320, 60)
+	f._process(0.016)
+	var follows := f != null and f.global_position == Vector2(320, 70)
+	var count := VFXManager.active_count()
+	VFXManager.stop_all()
+	var stopped := VFXManager.active_count() == 0
+	VFXManager.enabled = false
+	var off := VFXManager.spawn_fx("grab_burst", Vector2.ZERO) == null
+	VFXManager.enabled = true
+	var unknown := VFXManager.spawn_fx("no_such_fx", Vector2.ZERO) == null
+	_ok(pivot_ok and opts_ok and frees and loops and follows and count == 3 and stopped and off and unknown,
+		"vfx: spawn_fx options (pivot, scale, speed, alpha, layer, loop, follow), auto free, stop_all, off",
+		"%s %s %s %s %s %d %s %s %s" % [pivot_ok, opts_ok, frees, loops, follows, count, stopped, off, unknown])
+	VFXManager.layer = was_layer
+	remove_child(holder)
+	holder.free()
+
+## The director plays the moments from GameState, loops one at a time, one-shots
+## not repeated by a duplicate event, success only from the result event.
+func _test_vfx_follows_the_game(rs: Node) -> void:
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	var gs := GameState
+	var was_follow := gs.follow_robot
+	gs.follow_robot = false
+	var log: Array[String] = VFXManager.spawned_log
+	var since := func(n: int) -> Array: return log.slice(n)
+	gs.set_state("DISCONNECTED")
+	var n := log.size()
+	gs.set_state("READY")
+	var start: Array = since.call(n)
+	n = log.size()
+	gs.set_state("MOVING")
+	gs.set_state("READY")
+	gs.set_state("MOVING")
+	var loops := VFXManager.active_count()
+	var moving: Array = since.call(n)
+	n = log.size()
+	gs.post_event("claw_closed")
+	gs.post_event("claw_closed")  # a duplicate (slow link): one burst
+	var grabs: Array = since.call(n)
+	n = log.size()
+	gs.post_event("result_success")
+	var win: Array = since.call(n)
+	n = log.size()
+	gs.set_state("READY")
+	gs.post_event("result_failure")
+	var lose: Array = since.call(n)
+	_ok(start.has("start_countdown") and start.has("start_energy") and start.has("idle_glow")
+		and moving.count("idle_glow") == 1 and not moving.has("move_sparkle") and grabs == ["grab_burst"]
+		and win.has("success_confetti") and win.has("success_sparkle") and not win.has("fail_poof")
+		and lose.has("fail_poof") and lose.has("end_fade") and not lose.has("success_confetti"),
+		"vfx: game moments -> effects (start, loops, grab once, success / failure from the result only)",
+		"%s | %s | %s | %s | %s" % [start, moving, grabs, win, lose])
+	# loops are one slot: the moving state left the idle loop stopped
+	_ok(loops <= 3, "vfx: state loops replace each other instead of stacking", "%d active" % loops)
+	# "stop all" (debug tab) frees the running loop; the next state still gets its effects
+	gs.set_state("READY")  # the idle loop runs
+	var had_loop: bool = is_instance_valid(game.vfx._loop)
+	VFXManager.stop_all()
+	await_free_now(game)
+	n = log.size()
+	gs.set_state("LOWERING")
+	_ok(had_loop and since.call(n).has("lower_charge"), "vfx: after stop all, the next state's loop still starts", "%s %s" % [had_loop, since.call(n)])
+	VFXManager.enabled = false
+	n = log.size()
+	gs.post_event("result_success")
+	_ok(log.size() == n, "vfx: off = no effects, the game goes on", str(since.call(n)))
+	VFXManager.enabled = true
+	gs.follow_robot = was_follow
+	gs.set_state("DISCONNECTED")
+	remove_child(game)
+	game.free()
+	VFXManager.stop_all()
+	rs.clear_samples()
+
+## Auto catch (runs in the backend): the catch button's debounce, the refusal hints,
+## the status line, and the manual lock while the backend reports it active.
+func _test_auto_catch_controls(rs: Node) -> void:
+	var m: GDScript = load("res://scripts/game/main.gd")
+	_ok(m.auto_catch_press_ok(1000.0, 0.0, 500.0, false, false) and not m.auto_catch_press_ok(1300.0, 1000.0, 500.0, false, false)
+		and not m.auto_catch_press_ok(5000.0, 0.0, 500.0, true, false) and not m.auto_catch_press_ok(5000.0, 0.0, 500.0, false, true),
+		"auto catch: a press within the debounce, while running, or while waiting for an answer is ignored")
+	var cases := {"auto catch refused: catch_z is not set; not confirmed on the real machine: z_scale": "未設定",
+		"auto catch refused: alarm active (abort requested): clear_alarm, then home": "アラーム解除",
+		"auto catch refused: not homed": "原点復帰", "auto catch refused: Z 40.0 below safe_z 95: raise the claw first": "安全高さ",
+		"busy: auto catch already running": "ほかの動作中"}
+	var all_ok := true
+	for reason in cases:
+		if not str(m.auto_catch_hint_for(reason)).contains(cases[reason]):
+			all_ok = false
+			print("      hint for %s: %s" % [reason, m.auto_catch_hint_for(reason)])
+	_ok(all_ok and m.auto_catch_hint_for("debounced: pressed again too soon") == "", "auto catch: refusals are shown as the next step")
+	var running: String = m.auto_catch_status_text({"active": true, "phase": "MOVE_TO_BOX", "step": 5, "steps": 9, "profile": "dry_run", "elapsed_s": 3.2})
+	var fault: String = m.auto_catch_status_text({"active": false, "phase": "FAULT", "last_result": "fault", "error": "LOWER_TO_CATCH timeout (8 s, Z -> 30)", "profile": "real"})
+	_ok(running.contains("5/9") and running.contains("救出ボックス") and running.contains("ドライラン")
+		and fault.contains("異常停止") and fault.contains("LOWER_TO_CATCH timeout") and fault.contains("ABORT"),
+		"auto catch: the status line shows the state, or why it stopped", running + " | " + fault)
+
+	var game: Node = load("res://scenes/main.tscn").instantiate()
+	add_child(game)
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": true, "motors_enabled": true,
+		"state": "Z_LOWERING", "x": 120.0, "y": 100.0, "z": 60.0, "auto_catch": {"active": true, "phase": "LOWER_TO_CATCH", "step": 2, "steps": 9, "profile": "dry_run"}}})
+	var active: bool = rs.auto_catch_active()
+	game._handle_input(1.0 / 60.0)
+	var src: String = game.control_source
+	var before: float = rs.arm_deg
+	game.arm_goto("open")
+	game.arm_step(10.0)
+	_ok(active and src == "halt" and (is_nan(before) and is_nan(rs.arm_deg) or rs.arm_deg == before),
+		"auto catch: while the backend runs it, no manual jog or claw command is made", "%s %s" % [active, src])
+	game.ws._handle({"type": "auto_catch", "data": {"active": false, "phase": "FAULT", "last_result": "fault", "error": "emergency stop (stop)", "profile": "dry_run"}})
+	game._handle_input(1.0 / 60.0)
+	game.debug_ui._update_robot_test()
+	_ok(not rs.auto_catch_active() and game.control_source != "halt" and str(game.debug_ui._auto_label.text).contains("emergency stop"),
+		"auto catch: a FAULT message unlocks manual control and the panel shows the cause", str(game.debug_ui._auto_label.text))
+	game._auto_catch_last_ms = -1.0e9
+	game.request_auto_catch()  # no backend link in the test
+	_ok(game._auto_catch_rid == "" and str(game.auto_catch_hint).contains("バックエンド"),
+		"auto catch: without a backend the button explains instead of sending", game.auto_catch_hint)
+	# #167: the preparation's status reaches RobotState (message and robot_state)
+	game.ws._handle({"type": "calibration_prepare", "data": {"active": true, "step": "home", "steps": []}})
+	var prep_seen: bool = rs.calibration_prepare.get("step", "") == "home"
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "state": "IDLE",
+		"x": 0.0, "y": 0.0, "z": 100.0, "calibration_prepare": {"active": false, "last_result": "done", "steps": []}}})
+	_ok(prep_seen and rs.calibration_prepare.get("last_result", "") == "done",
+		"calibration prepare: its progress messages and robot_state reach RobotState", str(rs.calibration_prepare))
+	rs.calibration_prepare = {}
+	# #163: a servo the firmware refuses until its power is cut and restored: said in the panel
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": false, "motors_enabled": true,
+		"state": "IDLE", "x": 0.0, "y": 0.0, "z": 100.0, "z_servo_power_cycle": true}})
+	game.debug_ui._process(0.0)
+	var refused_chip := str(game.debug_ui._state_chip.text)
+	var refused_ok: bool = rs.z_servo_power_cycle and not rs.arm_servo_power_cycle and refused_chip.contains("電源")
+	game.ws._handle({"type": "robot_state", "timestamp": 0, "data": {"connected": true, "homed": false, "motors_enabled": true,
+		"state": "IDLE", "x": 0.0, "y": 0.0, "z": 100.0}})
+	game.debug_ui._process(0.0)
+	_ok(refused_ok and not rs.z_servo_power_cycle and not str(game.debug_ui._state_chip.text).contains("サーボの電源"),
+		"servo power cycle: robot_state's flag reaches RobotState and the panel's hint, and goes with it", refused_chip)
+	remove_child(game)
+	game.free()
+	rs.auto_catch = {}
+	rs.source = "mock"
+	rs.connected = false
+	rs.clear_samples()
+
+## The title screen (#90): not shown headless; when shown it holds the arm (Space still
+## stops), picks the study or the game mode by keys or a click, and Esc comes back.
+func _test_settings(rs: Node) -> void:
+	# the schema: what the screen may change, nothing about calibration or safety
+	var items := GameConfig.schema_items(GameConfig.schema)
+	var missing := []
+	for k in items.keys():
+		if GameConfig.base_value(k) == null:
+			missing.append(k)
+	var banned := []
+	for k in items.keys():
+		for b in ["robot.", "backend.z_", "backend.arm_open", "backend.home_", "auto_catch.", "study_mode.height.",
+				"study_mode.cleanup.", "gesture.allow_real_robot", "network."]:
+			if str(k).begins_with(b):
+				banned.append(k)
+	_ok(items.size() >= 15 and missing.is_empty() and banned.is_empty(),
+		"settings: the schema lists the settings (all in game_config.json, no calibration / safety key)",
+		"%d %s %s" % [items.size(), missing, banned])
+	var warns: Array[String] = []
+	var got := GameConfig.filter_overrides({"backend.z_sign": -1, "robot.x_max_mm": 999.0, "study.enabled": "yes",
+		"audio.volume_db": 50.0, "backend.serial_port": "a\nb", "study.provider": "codex", "audio.volume_db_x": 1,
+		"study_mode.demo.source": "camera"}, items, warns)
+	_ok(got == {"study.provider": "codex", "study_mode.demo.source": "camera"} and warns.size() == 6,
+		"settings: only allowed keys and values are used from local_settings.json", str(got))
+	_ok(GameConfig.flatten({"a": {"b": {"c": 1}}, "d": 2}) == {"a.b.c": 1, "d": 2}
+		and GameConfig.nest({"a.b.c": 1, "a.x": true}) == {"a": {"b": {"c": 1}, "x": true}},
+		"settings: flatten / nest of the dotted keys")
+
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var st: SettingsScreen = game.settings
+	game._unhandled_input(_key(KEY_S))
+	_ok(not game.settings_active(), "settings: only from the title")
+	game.show_title()
+	game._unhandled_input(_key(KEY_S))
+	game._handle_input(0.1)
+	var held: bool = game.settings_active() and game.title_active() and game.control_source == "halt"
+	_ok(held and st.layer > t.layer and game.debug_ui.layer > st.layer,
+		"settings: S opens it over the title; the arm stays held; the debug panel above it", game.control_source)
+	game._unhandled_input(_key(KEY_G))
+	_ok(game.settings_active() and game.title_active(), "settings: the title's keys do not reach through it")
+	# #126: each section of the schema is a card holding its own rows
+	var in_card := true
+	for key in st._rows.keys():
+		var n: Node = st._rows[key].control
+		while n != null and not (n is PanelContainer and st.cards.has(n)):
+			n = n.get_parent()
+		in_card = in_card and n != null
+	_ok(st.cards.size() == (GameConfig.schema.get("sections", []) as Array).size() and in_card and not st._rows.is_empty(),
+		"settings: one card per section, every setting inside its card (#126)", str(st.cards.size()))
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.settings_active() and game.mock.target.is_equal_approx(game.mock.pos), "settings: Space still stops")
+	# review on #95: Space stops even while a settings field has the keyboard
+	var field: LineEdit = st._rows["backend.serial_port"].control
+	field.grab_focus()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._input(_key(KEY_SPACE))
+	_ok(game.text_entry_focused() and game.mock.target.is_equal_approx(game.mock.pos),
+		"settings: Space stops while typing in a settings field (the GUI would take it)")
+	field.release_focus()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and game.title_active() and t.notice() == "", "settings: Esc closes it unsaved, back to the title")
+	t.gear.pressed.emit()
+	_ok(game.settings_active(), "settings: the gear opens it")
+
+	# save to a test file (never the machine's own)
+	var real_path := GameConfig.local_path
+	var path := "user://test_local_settings.json"
+	GameConfig.local_path = path
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var base_provider = GameConfig.base_value("study.provider")
+	st.set_form_value("study.provider", "codex")
+	st.set_form_value("study_mode.demo.source", "simulated")  # the default is camera since #110
+	st.set_form_value("audio.volume_db", -20.0)
+	var marked: bool = (st._rows["study.provider"].label as Label).text.ends_with("＊")
+	var err := st.save()
+	var saved = GameConfig.read_json(path)
+	_ok(game.study_mode.services.mode == "simulated" and is_equal_approx(game.sfx.volume_db, -20.0),
+		"settings: the 今すぐ items apply on 保存 (the study mode's source, the volume)")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", false)
+	st.set_form_value("study_mode.grade", "jhs_1")
+	st.save()
+	var live_ok: bool = not game.shake.enabled and game.study_mode.grade_index == game.study_mode.catalog.grade_index("jhs_1")
+	game.open_settings()
+	st.set_form_value("render.screen_shake", true)
+	st.set_form_value("study_mode.grade", str(GameConfig.base_value("study_mode.grade")))
+	st.save()
+	_ok(live_ok and game.shake.enabled, "settings: the screen shake and the grade apply on 保存 too (and back)")
+	_ok(err == "" and not game.settings_active() and t.notice().contains("保存") and marked
+		and saved == {"audio": {"volume_db": -20.0}, "study": {"provider": "codex"}, "study_mode": {"demo": {"source": "simulated"}}}
+		and GameConfig.value("study.provider") == "codex" and GameConfig.base_value("study.provider") == base_provider,
+		"settings: 保存 writes only the changed keys to local_settings.json and uses them", str(saved))
+	game.open_settings()
+	var shown: bool = st.form_value("study.provider") == "codex" and is_equal_approx(float(st.form_value("audio.volume_db")), -20.0)
+	_ok(shown and GameConfig.save_local({"robot.x_max_mm": 1.0}) != "" and GameConfig.read_json(path) == saved,
+		"settings: it reopens with the saved values; a key outside the schema is refused")
+	GameConfig.load_local()
+	_ok(GameConfig.local == {"study.provider": "codex", "study_mode.demo.source": "simulated", "audio.volume_db": -20.0},
+		"settings: the saved file reads back", str(GameConfig.local))
+	st.reset_defaults()
+	st.save()
+	_ok(GameConfig.read_json(path) == {} and GameConfig.local.is_empty() and GameConfig.value("study.provider") == base_provider,
+		"settings: 既定に戻す + 保存 empties the overrides")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	GameConfig.local_path = real_path
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## #108: the テスト tab drives the peripherals' hub like UFO-DeviceHub's console.
+func _test_device_test_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	st.show_tab(SettingsScreen.TEST_TAB)
+	var p: DeviceTestPanel = st.tests
+	st._process(0.0)
+	var no_backend: bool = st.testing() and not game.calibrating() and p._hub.text.contains("つながっていない") \
+		and _find_button(p, "適用").disabled and not st._save_b.visible and st._cancel_b.text.begins_with("閉じる")
+	_ok(no_backend, "device test: the テスト tab shows, without a backend its buttons cannot be pressed (and say why)")
+	p._lm_mode.select(DeviceTestPanel.LIGHT_MODES.find("GAME_PLAY"))
+	p._lm_color.color = Color8(255, 136, 0)
+	var lp := p.light_params()
+	_ok(lp.mode == "GAME_PLAY" and lp.brightness == 160 and lp.speed == 128 and lp.transition_ms == 500
+		and lp.color == [255, 136, 0], "device test: SET_LIGHT_MODE as the console sends it", JSON.stringify(lp))
+	# the backend's answers and the hub's events
+	game.ws.ack.emit("m", true, {"command": "devicehub_meta", "connected": true, "system_id": 1,
+		"port": "/dev/cu.usbmodem1", "session_id": 7})
+	game.ws.ack.emit("d", true, {"command": "devicehub_devices", "devices": [
+		{"id": 16.0, "name": "Ill", "online": true, "state": "NORMAL", "session_ok": true},
+		{"id": 32.0, "name": "Dial", "online": false}]})
+	game.ws.ack.emit("s", true, {"command": "devicehub_status", "device": 16.0, "status": {"state": "NORMAL",
+		"op_mode": "GAME", "mist_pattern": "PUFF", "mist_on": true, "mist_remaining_s": 30, "light_mode": "AURORA",
+		"brightness": 160, "fw": "0.1"}})
+	game.ws.ack.emit("c", true, {"command": "devicehub_command", "result": {"destination": 32.0,
+		"name": "ARM_RECEIVER", "result": "REJECTED_STATE", "ok": false}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:00.000", "source": 32,
+		"name": "BALL_RECEIVED", "data": {"cycle": 1}}})
+	game.ws.message_received.emit({"type": "devicehub_event", "data": {"time": "12:00:01.000", "source": null,
+		"name": "HUB_CONNECTED", "data": {}}})
+	p.refresh()
+	st._process(0.0)
+	_ok(p._hub.text.contains("接続") and p._hub.text.contains("usbmodem1") and p._dev.text.contains("● Illumination")
+		and p._dev.text.contains("○ M5Dial 1") and p._ill_kv.text.contains("PUFF") and p._ill_kv.text.contains("AURORA")
+		and p._log.text.contains("M5Dial 1  BALL_RECEIVED {\"cycle\":1}") and p._log.text.contains("hub  HUB_CONNECTED")
+		and p._log.text.contains("✗ M5Dial 1 → ARM_RECEIVER: REJECTED_STATE")
+		and st._status.text.contains("REJECTED_STATE"),
+		"device test: the hub, the devices, the status, a refused command and an event are shown", p._log.text)
+	game.ws.ack.emit("sa", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"},
+		"32": {"ok": false, "result": "OFFLINE"}}})
+	var partial: String = p.result_text
+	var partial_bad: bool = not p.result_ok
+	game.ws.ack.emit("sb", true, {"command": "devicehub_stop_all", "results": {"16": {"ok": true, "result": "ACCEPTED"}}})
+	_ok(partial_bad and partial.contains("M5Dial 1") and p.result_ok and p.result_text.contains("すべて止めた"),
+		"device test: STOP ALL is a success only when every device accepted it (review on #109)", partial)
+	game.ws.ack.emit("w", true, {"command": "devicehub_meta", "connected": false, "system_id": 1, "port": "/dev/cu.usbmodem101",
+		"session_id": 0, "problem": "ポート /dev/cu.usbmodem101 のハブは別のシステムのもの（this hub is system 2）。設定のシステム番号は 1"})
+	p.refresh()
+	_ok(p._hub.text.contains("接続待ち") and p._hub.text.contains("別のシステム") and p._hub.text.contains("システム番号は 1"),
+		"device test: a hub that does not connect says why (another UFO system's hub)", p._hub.text)
+	game.ws.ack.emit("x", false, {"command": "devicehub_meta", "reason": "周辺機器のハブを使っていない"})
+	p.refresh()
+	_ok(p._hub.text.contains("使っていない"), "device test: no hub in the backend says how to turn it on", p._hub.text)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and not st.testing(), "device test: Esc closes the screen")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _test_calibration_summary() -> void:
+	# #120: the summary on top (one row per section, the next thing to do) and each card's badge
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.open_settings()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	var cp: CalibrationPanel = st.calibration
+	cp.refresh()
+	var states := cp.section_states()
+	var by := {}
+	for x in states:
+		by[x.key] = x
+	_ok(states.size() == CalibrationPanel.SECTIONS.size() and by.link.state == "todo" and by.z.state == "na"
+		and by.claw.state == "todo" and cp._next.text.contains("1. つながりとモーター")
+		and (cp._summary["z"] as Button).text.begins_with("－ 2.") and (cp._cards["z"].badge as Label).text == "使えない",
+		"calibration summary: without a backend, connect first; the backend's sections say they need it", cp._next.text)
+	# #124: a real robot that is not connected is a problem of the link, with its reason
+	var missing := {"kind": "real", "connected": false, "problem": "port_missing", "registered": ["/dev/cu.usbserial-AAAA"],
+		"port": "/dev/cu.usbserial-AAAA", "others": ["/dev/cu.usbserial-CCCC"], "error": "could not open port"}
+	var down: Dictionary = CalibrationPanel.link_state("websocket", true, false, false, "real", missing)
+	var long_text := CalibrationPanel.link_problem_text(missing)
+	_ok(down.state == "todo" and str(down.text).contains("登録したポートが見つからない")
+		and long_text.contains("usbserial-AAAA") and long_text.contains("usbserial-CCCC")
+		and long_text.contains("シリアルポート 2 台目") and long_text.contains("起動し直す"),
+		"calibration link: a registered port that is missing is shown with the port seen instead and what to do", long_text)
+	var unplugged := CalibrationPanel.link_problem_text({"problem": "port_missing", "registered": ["A"], "others": []})
+	var none := CalibrationPanel.link_problem_text({"problem": "no_port"})
+	var busy := CalibrationPanel.link_problem_text({"problem": "open_failed", "port": "/dev/cu.usbserial-AAAA", "error": "Resource busy"})
+	_ok(unplugged.contains("USB ケーブル") and not unplugged.contains("2 台目") and none.contains("1 つも見つからない")
+		and busy.contains("usbserial-AAAA") and busy.contains("Resource busy") and busy.contains("ほかのプログラム")
+		and CalibrationPanel.link_problem_text({}).contains("確かめています"),
+		"calibration link: unplugged, no port at all, a port that does not open and no answer yet have their own words", busy)
+	# #161: the link went silent while running (a USB hub's error): said so, with the reopen and the hub
+	var silent_info := {"kind": "real", "connected": false, "problem": "silent", "port": "/dev/cu.usbserial-AAAA",
+		"error": "no reply from the robot (serial link silent: USB cable / hub?) (5 s without a reply)"}
+	var silent := CalibrationPanel.link_problem_text(silent_info)
+	var z_refused := CalibrationPanel.reason_text("internal error: timeout after 3.0s")
+	_ok(str(CalibrationPanel.link_state("websocket", true, false, false, "real", silent_info).text).contains("返事が来ない")
+		and silent.contains("usbserial-AAAA") and silent.contains("つなぎ直") and silent.contains("ハブ")
+		and z_refused.contains("実機から返事がない") and z_refused.contains("timeout after 3.0s")
+		and CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("USB")
+		and CalibrationPanel.reason_text("timeout") == "バックエンドから返事がない",
+		"calibration link: a silent link and a refusal for a firmware timeout point at the USB hub / cable", z_refused)
+	# #167: the one-button preparation's progress, its end and why it stopped
+	var prep_steps := [{"key": "motors", "label": "モーター有効", "state": "done", "note": ""},
+		{"key": "z_restore", "label": "前回の Z の上下を呼び出す", "state": "fail", "note": ""},
+		{"key": "claw_open", "label": "爪を開く", "state": "todo", "note": ""}]
+	var prep_fault := CalibrationPanel.prepare_text({"active": false, "last_result": "fault", "steps": prep_steps,
+		"error": "前回から +25 単位ずれている（電源を切っている間に回った）: W で一番上まで巻き上げて「ここを上に記録」"})
+	var prep_skip := [{"key": "claw_open", "label": "爪を開く", "state": "skip", "note": "爪の開き・閉じが未記録"}]
+	_ok(CalibrationPanel.prepare_text({}) == "" and prep_fault.begins_with("止まった") and prep_fault.contains("✓ モーター有効")
+		and prep_fault.contains("✗ 前回の Z") and prep_fault.contains("ここを上に記録")
+		and CalibrationPanel.prepare_text({"active": true, "steps": prep_steps}).begins_with("実行中")
+		and CalibrationPanel.prepare_text({"last_result": "done", "steps": prep_skip}).contains("－ 爪を開く（爪の開き・閉じが未記録）"),
+		"calibration prepare: the steps, the end and the reason it stopped are shown", prep_fault)
+	# #163: a servo refused until its power is cut and restored: which one, not the USB, and what after
+	var pc_z := CalibrationPanel.servo_power_cycle_text(true, false)
+	var pc_arm := CalibrationPanel.servo_power_cycle_text(false, true)
+	_ok(CalibrationPanel.servo_power_cycle_text(false, false) == "" and pc_z.contains("巻き上げサーボ")
+		and pc_z.contains("USB ではない") and pc_z.contains("記録し直す") and pc_z.contains("下がる")
+		and pc_arm.contains("爪のサーボ") and not pc_arm.contains("巻き上げ")
+		and CalibrationPanel.servo_power_cycle_text(true, true).contains("巻き上げサーボと爪のサーボ"),
+		"calibration: a servo refused until a power cycle says which one and what to do", pc_z)
+	var up: Dictionary = CalibrationPanel.link_state("websocket", true, true, true, "real", {})
+	var motors_off: Dictionary = CalibrationPanel.link_state("websocket", true, true, false, "mock", {})
+	_ok(up.state == "ok" and up.text == "実機" and motors_off.state == "todo" and str(motors_off.text).contains("モーターが無効")
+		and CalibrationPanel.link_state("mock", false, true, true, "", {}).state == "todo",
+		"calibration link: connected is as before (done with the motors on, the motors' hint, no backend)", str(up))
+	cp.link_info = {}
+	cp._on_ack("r", true, {"command": "list_ports", "ports": [], "robot": missing})
+	_ok(cp.link_info.get("problem") == "port_missing" and cp.result_text == "",
+		"calibration link: the backend's list_ports answer is kept, without a result message", str(cp.link_info))
+	cp.link_info = {}
+	var open0 := RobotState.arm_open_deg
+	var closed0 := RobotState.arm_closed_deg
+	RobotState.arm_open_deg = 40.0
+	RobotState.arm_closed_deg = 5.0
+	cp.refresh()
+	var claw_done: bool = (cp._summary["claw"] as Button).text.begins_with("✓ 3.") and (cp._cards["claw"].badge as Label).text == "済"
+	RobotState.arm_open_deg = open0
+	RobotState.arm_closed_deg = closed0
+	_ok(claw_done, "calibration summary: a recorded claw turns its row and badge to done")
+	var all_ok := []
+	for x in CalibrationPanel.SECTIONS:
+		all_ok.append({"key": x[0], "title": x[1], "state": "ok", "text": ""})
+	var waiting := all_ok.duplicate(true)
+	waiting[5].state = "wait"
+	waiting[5].text = "2 の Z の上と下を記録すると使える"
+	_ok(CalibrationPanel.next_text(all_ok).begins_with("すべて済み")
+		and CalibrationPanel.next_text(waiting).contains("6. 勉強モードの撮影の高さ: 2 の Z の上と下を記録すると使える"),
+		"calibration summary: the next thing to do is the first section not done")
+	_ok(CalibrationPanel.short_detail("2.1.325 (Claude Code)（/Users/x/.vscode/claude）") == "2.1.325 (Claude Code)"
+		and CalibrationPanel.short_detail("VOICEVOX 0.26.0（http://127.0.0.1:50021）") == "VOICEVOX 0.26.0"
+		and CalibrationPanel.short_detail("つながらない") == "つながらない",
+		"calibration summary: the service lines leave out file paths")
+	remove_child(game)
+	game.free()
+
+func _test_calibration_tab(rs: Node) -> void:
+	# #114: at start the 校正 tab opens over the title (the backend's checks come when it connects)
+	var g0 := _study_game()
+	g0.show_title()
+	g0.open_startup_screen()
+	var first: bool = g0.settings_active() and g0.settings.calibrating() and g0.title_active()
+	g0._unhandled_input(_key(KEY_ESCAPE))
+	_ok(first and not g0.settings_active() and g0.title_active(),
+		"startup: the 校正 tab opens first, Esc shows the title (#114)")
+	GameConfig.data["title_screen"]["calibration_first"] = false
+	g0.open_startup_screen()
+	_ok(not g0.settings_active(), "startup: calibration_first false keeps the title")
+	GameConfig.data["title_screen"]["calibration_first"] = true
+	remove_child(g0)
+	g0.free()
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	game.ui_jog_z = 1.0  # as if W were held (the debug panel's hold button uses the same path)
+	game._handle_input(0.1)
+	var held_on_settings: bool = game.control_source == "halt" and not game.calibrating()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._handle_input(0.1)
+	var moves: bool = game.calibrating() and game.control_source != "halt"
+	_ok(held_on_settings and moves and game.title_active(),
+		"calibration: the keys move the arm only on the 校正 tab (the title stays up)", game.control_source)
+	_ok(game.gesture_gate() != "", "calibration: the hand gestures stay off on the 校正 tab")
+	var deg0: float = game.mock.arm_deg
+	game._unhandled_input(_key(KEY_BRACKETRIGHT))
+	var turned: bool = not is_equal_approx(game.mock.arm_deg, deg0)
+	game._unhandled_input(_key(KEY_C))
+	_ok(turned and not rs.auto_catch_active() and st.calibrating(),
+		"calibration: [ ] turn the claw there; C (the auto catch) still goes nowhere")
+	var open_b := _find_button(st.calibration, "ここを開きに記録")
+	open_b.pressed.emit()
+	_ok(is_equal_approx(float(game.mock.arm_marks.get("open", NAN)), game.mock.arm_deg),
+		"calibration: 開きに記録 records the claw position (the game's mock here)")
+	st.calibration.refresh()
+	var z_b := _find_button(st.calibration, "ここを上に記録")
+	_ok(z_b.disabled and st.calibration._link.text.contains("バックエンドなし"),
+		"calibration: without a backend the Z / spot / camera buttons cannot be pressed, with the reason")
+	# #126: 上げる / 下げる beside the record buttons go to the recorded top / bottom (move_z)
+	var up_b := _find_button(st.calibration, "上げる（上の記録へ）")
+	var down_b := _find_button(st.calibration, "下げる（下の記録へ）")
+	var bottom_b := _find_button(st.calibration, "ここを下に記録")
+	var sent: Array[String] = []
+	var cap := func(l: String): if l.contains(" move_z "): sent.append(l)
+	game.ws.log_line.connect(cap)
+	rs.z_top_set = true
+	rs.z_bottom_set = false
+	st.calibration.refresh()
+	var one_point_off: bool = up_b.disabled and down_b.disabled
+	st.calibration.move_z_to("bottom")
+	var refused_one: bool = sent.is_empty() and st.calibration.result_text.contains("両方")
+	rs.z_bottom_set = true
+	st.calibration.move_z_to("bottom")
+	st.calibration.move_z_to("top")
+	game.ws.log_line.disconnect(cap)
+	rs.z_top_set = false
+	rs.z_bottom_set = false
+	var zb := JSON.stringify({"z": CalibrationPanel.z_end("bottom")})
+	var zt := JSON.stringify({"z": CalibrationPanel.z_end("top")})
+	_ok(up_b != null and down_b != null and up_b.get_parent() == bottom_b.get_parent() and one_point_off and refused_one
+		and sent.size() == 2 and sent[0].contains(zb) and sent[1].contains(zt)
+		and CalibrationPanel.z_end("top") != CalibrationPanel.z_end("bottom"),
+		"calibration: 上げる / 下げる beside the record buttons move Z to the recorded top / bottom, only with both (#126)", str(sent))
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))
+	game._unhandled_input(_key(KEY_SPACE))
+	_ok(game.mock.target.is_equal_approx(game.mock.pos) and st.calibrating(), "calibration: Space still stops")
+	game.ws.ack.emit("r1", false, {"command": "home",
+		"reason": "the arm is not wound up (Z 3.0, top 100): raise it to the top before homing"})
+	st._process(0.0)
+	var refused: String = st._status.text
+	game.ws.ack.emit("r2", false, {"command": "jog", "reason": "busy"})
+	st._process(0.0)
+	_ok(refused.contains("原点復帰 は断られました") and refused.contains("巻き上げ")
+		and st._status.text == refused,
+		"calibration: a refused command shows why under the tab (a jog's refusal does not replace it)", refused)
+	game.ws.ack.emit("r3", true, {"command": "z_set"})
+	st._process(0.0)
+	_ok(st._status.text.contains("Z の記録: できました"), "calibration: an accepted command says so", st._status.text)
+	# #114: the AI / outside services, as the backend checked them
+	var cpp: CalibrationPanel = st.calibration
+	game.ws.ack.emit("sv1", true, {"command": "services_check", "results": [
+		{"name": "jev", "label": "Jev（Cloudflare）", "status": "ok", "detail": "トークン有効"},
+		{"name": "voicevox", "label": "VOICEVOX", "status": "ng", "detail": "つながらない"},
+		{"name": "tutor", "label": "学習支援 AI（ローカル LLM）", "status": "skip", "detail": "使っていない"}]})
+	game.ws.ack.emit("sv2", true, {"command": "services_check", "results": [
+		{"name": "jev", "label": "Jev（Cloudflare）", "status": "ok", "detail": "トークン有効"},
+		{"name": "ask", "label": "AI に試しに質問", "status": "ok", "detail": "claude が答えた: OK"}]})
+	cpp.refresh()
+	var svt: String = cpp._services.text
+	_ok(svt.contains("✓ Jev（Cloudflare）") and svt.contains("✗ VOICEVOX: つながらない") and svt.contains("－ 学習支援 AI")
+		and svt.contains("✓ AI に試しに質問: claude が答えた: OK"),
+		"calibration: the AI / outside services are listed, an ask adds its line (#114)", svt)
+	# #110 / #165: the capture heights: the saved values fill the inputs, the stages and the state are shown
+	var cp: CalibrationPanel = st.calibration
+	game.ws.ack.emit("h1", true, {"command": "study_height_status", "usable": false, "stages": [],
+		"problem": "the 10 cm stage leaves no clearance", "z_calibrated": true, "default_drum_radius_mm": 15.0,
+		"saved": {"drum_radius_mm": 15.0, "camera_offset_cm": 3.0, "landing_tip_cm": 1.0, "allow_landing_contact": false,
+			"desk": "bottom", "confirmed": false},
+		"values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": false},
+		"trial_stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
+			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
+	cp.refresh()
+	var hp := cp.height_params("bottom")
+	var unconfirmed_text: String = cp._height.text
+	game.ws.ack.emit("h2", true, {"command": "study_height_status", "usable": true, "z_calibrated": true,
+		"saved": null, "values": {"z_per_cm": 5.404, "z_desk_tip": 0.0, "confirmed": true},
+		"stages": [{"name": "10cm", "z": 37.83, "tip_cm": 7.0}, {"name": "5cm", "z": 10.81, "tip_cm": 2.0},
+			{"name": "landing", "z": 5.4, "tip_cm": 1.0}]})
+	cp.refresh()
+	_ok(not hp.has("camera_offset_cm") and is_equal_approx(float(hp.drum_radius_mm), 15.0)
+		and hp.desk == "bottom" and unconfirmed_text.contains("1cm = Z 5.40") and unconfirmed_text.contains("10cm: Z 37.8")
+		and unconfirmed_text.contains("このままでは使えない") and cp._height.text.contains("勉強モードで使う")
+		and not cp._height.text.contains("確かめた")
+		and is_equal_approx(cp.stage_z("5cm"), 10.81) and is_nan(cp.stage_z("bogus")),
+		"calibration: the study heights are shown and used from the Z bottom with no check (#110, #165)",
+		cp._height.text)
+	# #106: the call-back's estimate is shown, then used only with the same turn shift
+	game.ws.ack.emit("r4", true, {"command": "z_restore", "restore": {"turns": -1, "drift_counts": 150,
+		"drift_units": 1.9, "z": 42.5, "too_far": false, "applied": false}})
+	var est_text: String = st.calibration._z_restore.text
+	var est_kept: bool = int(st.calibration.restore_estimate.get("turns", 0)) == -1
+	game.ws.ack.emit("r5", true, {"command": "z_restore", "restore": {"turns": 4, "drift_units": 22.0, "z": 10.0,
+		"too_far": true, "applied": false}})
+	var far_dropped: bool = st.calibration.restore_estimate.is_empty() and st.calibration._z_restore.text.contains("上を記録")
+	game.ws.ack.emit("r6", true, {"command": "z_restore", "restore": {"turns": -1, "z": 42.5, "applied": true}})
+	st._process(0.0)
+	_ok(est_text.contains("42.5") and est_text.contains("これを使う") and est_kept and far_dropped
+		and st.calibration.restore_estimate.is_empty() and st._status.text.contains("呼び出しました"),
+		"calibration: the last Z points are called back after a look at the estimate (#106)", est_text)
+	var free_here: bool = game.jog_params(Vector3(0, 0, -5)).get("z_free", false) == true
+	RobotState.z_calibrated = true
+	RobotState.z_reference_set = true
+	var hint_here: String = game.z_end_hint_for(-5.0, 0.0)
+	st.show_tab(0)
+	var usual: Dictionary = game.jog_params(Vector3(0, 0, -5))
+	_ok(free_here and not usual.has("z_free"),
+		"calibration: only the 校正 tab's jog goes past the measured Z range (z_free, #102)", str(usual))
+	_ok(game.z_end_hint_for(-5.0, 0.0).contains("校正") and game.z_end_hint_for(-5.0, 50.0) == ""
+		and game.z_end_hint_for(5.0, 0.0) == "" and hint_here.contains("校正"),
+		"calibration: S held at the measured bottom says how to measure it again")
+	RobotState.z_calibrated = false
+	RobotState.z_reference_set = false
+	game._handle_input(0.1)
+	var held_again: bool = game.control_source == "halt"
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	game._unhandled_input(_key(KEY_ESCAPE))
+	game._handle_input(0.1)
+	_ok(held_again and not game.settings_active() and game.title_active() and game.control_source == "halt",
+		"calibration: back on the settings tab or closed, the arm is held again")
+	game.open_settings()
+	_ok(not game.calibrating(), "calibration: the settings screen always opens on the settings tab")
+	game.ui_jog_z = 0.0
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+func _test_title_screen(rs: Node) -> void:
+	var game := _study_game()
+	var t: TitleScreen = game.title
+	var ctl: StudyModeController = game.study_mode
+	_ok(t != null and not game.title_active(), "title: not shown at start when headless (tests, CI)")
+	game.show_title()
+	game._handle_input(0.1)
+	var held: bool = game.title_active() and game.control_source == "halt"
+	game._unhandled_input(_key(KEY_C))  # the auto catch key goes nowhere
+	game._unhandled_input(_key(KEY_RIGHT))
+	var moved_sel: bool = t.selected_mode() == t.choices[1] and t.choices.size() == 2 and game.title_active()
+	game._unhandled_input(_key(KEY_LEFT))
+	_ok(held and moved_sel and t.selected_mode() == "study" and not ctl.active(),
+		"title: holds the manual controls; arrows choose, other keys are swallowed", game.control_source)
+	game._unhandled_input(_key(KEY_ENTER))
+	_ok(not game.title_active() and ctl.active() and ctl.state == "INTRO", "title: Enter on the study mode starts it", ctl.state)
+	game._handle_input(0.1)
+	var free_again: bool = game.control_source != "halt"
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(free_again and game.title_active() and not ctl.active(), "title: Esc stops the study mode and comes back", ctl.state)
+	game._unhandled_input(_key(KEY_G))
+	_ok(not game.title_active() and not ctl.active(), "title: G (staff) picks the plain crane screen, no study mode")
+	game.show_title()
+	game.mock.set_target(game.mock.pos + Vector3(50, 0, 0))  # as if the arm were on its way
+	game._unhandled_input(_key(KEY_SPACE))
+	var stopped: bool = game.mock.target.is_equal_approx(game.mock.pos)
+	_ok(game.title_active() and stopped, "title: Space still reaches the game's stop (the mock halts) and leaves the title up")
+	var card: PanelContainer = t._cards[1]
+	card.gui_input.emit(_mouse_press())
+	_ok(not game.title_active() and not ctl.active() and t.selected_mode() == t.choices[1], "title: a click on a card picks it")
+	# #183: the hand picks: one finger = the first card, two fingers = the second, held; a
+	# shape that was already up when the title opened does not choose
+	game.show_title()
+	var two = {"fresh": true, "detected": true, "pose": "peace"}
+	var one = {"fresh": true, "detected": true, "pose": "point"}
+	for i in 200:
+		t.hand_tick(1.0 / 60.0, two)
+	var not_yet: bool = game.title_active() and t.hand_index == -1
+	t.hand_tick(1.0 / 60.0, {"fresh": true, "detected": true, "pose": "open"})
+	for i in 30:
+		t.hand_tick(1.0 / 60.0, one)
+	var holding: bool = game.title_active() and t.hand_index == 0 and t.hand_progress > 0.2 and t.hand_progress < 0.5 and t.selected == 0
+	for i in 30:
+		t.hand_tick(1.0 / 60.0, two)  # another shape: the hold starts again
+	var restarted: bool = game.title_active() and t.hand_index == 1 and t.hand_progress < 0.5
+	t.hand_tick(1.0 / 60.0, {"fresh": false, "detected": true, "pose": "peace"})  # a stale hand is no hand
+	var stale_none: bool = t.hand_index == -1
+	var picked := ""
+	for i in 100:
+		var got: String = t.hand_tick(1.0 / 60.0, two)
+		if got != "":
+			picked = got
+	_ok(not_yet and holding and restarted and stale_none and picked == t.choices[1] and not game.title_active() and t.choices == ["study", "score"],
+		"title (#183): two modes (study, the game mode = the score game); one finger / two fingers held pick a card; the shape already up when the title opened does not",
+		"%s %s %s %s %s" % [not_yet, holding, restarted, stale_none, picked])
+	var logo := TitleScreen.logo_label("SUMMON", 104)
+	_ok(logo.get_theme_font("font") is FontVariation and t.sky != null and TitleScreen.NightSky.ridge(0, 0.3) > TitleScreen.NightSky.ridge(2, 0.3) - 0.2,
+		"title (#183): the logo is in its display font over the drawn night sky")
+	logo.free()
+	game.show_title()
+	game._unhandled_input(_key(KEY_F5))
+	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
+	ctl.stop()
+	# review on #91: the claw poses are gated too (the gate reaches GestureControl._claw_tick)
+	game.gesture_require_focus = false
+	var open_gate: String = game.gesture_gate()
+	game.show_title()
+	var title_gate: String = game.gesture_gate()
+	_ok(open_gate == "" and title_gate != "", "title: the gesture gate (steering and claw poses) is shut while it shows",
+		"%s / %s" % [open_gate, title_gate])
+	# the debug panel goes above the title (hidden; F1 shows it there), and back after
+	var dbg: CanvasLayer = game.debug_ui
+	var above: bool = dbg.layer > t.layer and not dbg.visible
+	game._unhandled_input(_key(KEY_F1))
+	var shown: bool = dbg.visible and game.title_active()
+	game._unhandled_input(_key(KEY_G))
+	_ok(above and shown and dbg.layer < t.layer and dbg.visible, "title: the debug panel opens above it (F1) and goes back after",
+		"layer %d" % dbg.layer)
+	# when the title is shown at start
+	var none := PackedStringArray()
+	var GameMain: GDScript = load("res://scripts/game/main.gd")
+	_ok(GameMain.title_on_start(none, true, false, false) and not GameMain.title_on_start(none, true, true, false)
+		and not GameMain.title_on_start(none, false, false, false)
+		and not GameMain.title_on_start(none, true, false, true)
+		and not GameMain.title_on_start(PackedStringArray(["--study-mode"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--scenario", "x_sweep"]), true, false, false)
+		and not GameMain.title_on_start(PackedStringArray(["--no-title"]), true, false, false)
+		and GameMain.title_on_start(PackedStringArray(["--capture", "d", "--title"]), true, true, true),
+		"title: at start unless headless, disabled, autostarted or decided by arguments; --title forces it")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+## #179: the arm in an alarm (or without homing) can be recovered from the score game's screen.
+func _test_arm_recovery(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	ctl.hud._process(0.016)
+	# the game's own mock crane: nothing to recover, nothing shown
+	var mock_nothing = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
+		and not game.recover_arm()
+	game.mock.enabled = false
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.motors_enabled = true
+	RobotState.homed = true
+	RobotState.machine_state = "IDLE"
+	RobotState.calibration_prepare = {}
+	game.backend_link = func() -> bool: return true
+	ctl.hud._process(0.016)
+	var fine = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible
+	RobotState.machine_state = "ALARM"
+	RobotState.homed = false
+	ctl.hud._process(0.016)
+	var shown = game.arm_recovery_reason().contains("アラーム") and ctl.hud._recover.visible and ctl.hud._recover_button.visible \
+		and ctl.hud.recover_text().contains("ふっきする") and ctl.hud._recover_button.focus_mode == Control.FOCUS_NONE
+	game.ws._pending.clear()
+	var types := func() -> Array: return game.ws._pending.values().map(func(p): return str(p.type))
+	# the backend's answer to the request of that kind still open (taken off the open ones, as the link does)
+	var answer := func(type: String, ok: bool) -> String:
+		for r in game.ws._pending.keys():
+			if str(game.ws._pending[r].type) == type:
+				game.ws._pending.erase(r)
+				game.ws.ack.emit(str(r), ok, {"command": type})
+				return str(r)
+		return ""
+	# the stop key between the two steps: the preparation is never asked for
+	game._unhandled_input(_key(KEY_F10))
+	var first_only = types.call() == ["clear_alarm"]
+	game.stop_key()
+	answer.call("clear_alarm", true)
+	var stop_between = first_only and types.call().is_empty()
+	# the stop key right after the preparation was asked for: if it starts after all, it is stopped again
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", true)
+	var asked_prepare = types.call() == ["calibration_prepare"]
+	game.stop_key()
+	answer.call("calibration_prepare", true)
+	var stopped_again = asked_prepare and types.call() == ["soft_stop"]
+	# a refused clearing: no preparation either
+	game.ws._pending.clear()
+	game._unhandled_input(_key(KEY_F10))
+	answer.call("clear_alarm", false)
+	var refused_stops = types.call().is_empty()
+	# the normal way: the alarm cleared, then the preparation; pressed twice = once
+	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F10))
+	var once = types.call() == ["clear_alarm"]
+	answer.call("clear_alarm", true)
+	var sent: Array = types.call()
+	var by_key = once and sent == ["calibration_prepare"] and stop_between and stopped_again and refused_stops
+	answer.call("calibration_prepare", true)
+	# while the recovery runs: its steps are shown, the button is away, a second press sends nothing
+	RobotState.calibration_prepare = {"active": true, "steps": [{"key": "home", "label": "原点復帰", "state": "run", "note": ""}]}
+	ctl.hud._process(0.016)
+	game._unhandled_input(_key(KEY_F10))
+	ctl.hud._recover_button.pressed.emit()
+	var running = types.call().is_empty() and ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
+		and ctl.hud.recover_text().contains("原点復帰")
+	# it stopped: why is said, and the button is back; the button does the same as the key
+	RobotState.calibration_prepare = {"active": false, "last_result": "fault", "error": "robot not connected", "steps": []}
+	RobotState.machine_state = "IDLE"  # (the alarm is cleared, homing is still missing)
+	ctl.hud._process(0.016)
+	var stopped = game.arm_recovery_reason().contains("げんてんふっき") and ctl.hud.recover_text().contains("とまった") and ctl.hud._recover_button.visible
+	ctl.hud._recover_button.pressed.emit()
+	answer.call("clear_alarm", true)
+	var by_button = types.call() == ["calibration_prepare"]
+	answer.call("calibration_prepare", true)
+	RobotState.homed = true
+	RobotState.calibration_prepare = {"active": false, "last_result": "done", "steps": []}
+	ctl.hud._process(0.016)
+	var recovered = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible
+	_ok(mock_nothing and fine and shown and by_key and running and stopped and by_button and recovered,
+		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F10 or the button sends clear_alarm and, when that is answered, the preparation, once (never after the stop key; a preparation that started behind the stop is stopped again); its steps and a stop's reason are shown; gone when the arm is ready",
+		"%s %s %s %s %s %s %s %s %s | %s %s %s %s %s %s" % [mock_nothing, fine, shown, by_key, running, stopped, by_button, recovered, sent,
+			first_only, stop_between, asked_prepare, stopped_again, refused_stops, once])
+	game.ws._pending.clear()
+	RobotState.calibration_prepare = {}
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.motors_enabled = false
+	RobotState.homed = false
+	_gm_free(game, rs)
+
+## #134: the body font is the project's default, titles and big lines are in the dot font.
+func _test_fonts() -> void:
+	var body := UiFonts.body()
+	var title := UiFonts.title()
+	var files_ok := body is FontFile and title is FontFile and body != title \
+		and str(ProjectSettings.get_setting("gui/theme/custom_font", "")) == UiFonts.BODY_PATH
+	var big := StudyHud.label("UFOくん", 96)
+	var small := StudyHud.label("説明", 16)
+	var box := StudyHud.label("☐", 30)
+	var labels_ok := big.get_theme_font("font") == title and not small.has_theme_font_override("font") \
+		and not box.has_theme_font_override("font")
+	var glyphs_ok := true
+	for f in [body, title]:
+		for ch in "UFOくん勉強校正上げる下げる宿題スコア0123456789":
+			glyphs_ok = glyphs_ok and (f as Font).has_char(ch.unicode_at(0))
+	_ok(files_ok and labels_ok and glyphs_ok,
+		"fonts: M PLUS Rounded 1c for the body, DotGothic16 for titles and big lines, both with the game's kana and kanji",
+		str([files_ok, labels_ok, glyphs_ok]))
+	for l in [big, small, box]:
+		l.free()
