@@ -12,6 +12,8 @@ if [[ -f "$CACHE" && -d "$GAME/.godot/imported" ]]; then
   newer="$(find "$GAME" -path "$GAME/.godot" -prune -o -name '*.gd' -newer "$CACHE" -print 2>/dev/null | head -n 1)"
   [[ -z "$newer" ]] && exit 0
 fi
-"$GODOT_BIN" --headless --path "$GAME" --import >/dev/null 2>&1 || true
-[[ -f "$CACHE" ]] && touch "$CACHE"
+# marked fresh only when the import succeeded: after a failed one the next start tries again
+if "$GODOT_BIN" --headless --path "$GAME" --import >/dev/null 2>&1 && [[ -f "$CACHE" ]]; then
+  touch "$CACHE"
+fi
 exit 0
