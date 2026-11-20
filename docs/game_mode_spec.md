@@ -623,7 +623,7 @@ WAIT_DESTINATION ─15 秒だれも選ばない→ EXPIRED（バックエンド�
 | HUD | `game_mode_hud.gd` |
 | 縦画面の配置（#157） | `game_mode_layout.gd`（`GameModeLayout`: 画面・各帯・ポート・中央の位置。数字はここだけに書く） |
 | ハイスコアランキング（#155） | 順位・保存・読み込み・重複の防止 `ranking_manager.gd`（`RankingManager`。画面なしでテストできる）、画面 `game_mode_ranking_hud.gd`（`GameModeRankingHud`）、登録と画面の切り替え `game_mode_ranking_flow.gd`（`GameModeRankingFlow`。#222 で `GameModeController` から出した） |
-| 終了のリザルト演出（#153） | 計算 `result_bonus.gd`（`ResultBonus`）、時刻表 `result_show.gd`（`ResultShow`。画面なしでテストできる）、画面 `game_mode_result_screen.gd`（`GameModeResultScreen`）。合図への応答は `GameModeController._on_result_cue` |
+| 終了のリザルト演出（#153） | 計算 `result_bonus.gd`（`ResultBonus`）、時刻表 `result_show.gd`（`ResultShow`。画面なしでテストできる）、画面 `game_mode_result_screen.gd`（`GameModeResultScreen`）（ランキングの画面と共通の土台は `game_mode_show_screen.gd` の `GameModeShowScreen`）。合図への応答は `GameModeController._on_result_cue` |
 | 開始前の練習（#149） | `game/scripts/tutorial/`: ステップの定義 `gesture_tutorial_steps.gd`、判定 `gesture_tutorial_controller.gd`（画面なしでテストできる。何も送らない）、画面 `gesture_tutorial_hud.gd`（手の絵・図解はコードで描く）、声の取り次ぎ `game/scripts/game_mode/game_mode_tutorial_voice.gd`（#222）。練習カプセルは `GameModeController`（`practice_begin` ほか） |
 | 機器の窓口 | `game_mode_devices.gd`、ゲーム内の模擬 `mock_dial_hub.gd`、バックエンド経由 `backend_dial_hub.gd` |
 | トレース | `game_mode_trace.gd` |

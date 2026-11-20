@@ -10,9 +10,9 @@ extends CanvasLayer
 
 signal closed(saved: bool)
 
-const YELLOW := Color("ffe03c")
-const CYAN := Color("7ae0ff")
-const MUTED := Color("8fa3c4")
+const YELLOW := PanelKit.YELLOW
+const CYAN := PanelKit.CYAN
+const MUTED := PanelKit.MUTED
 const APPLY_LABELS := {"now": "今すぐ", "restart": "次の起動から", "backend": "バックエンド再起動"}
 
 ## Portrait (#157): the screen is 720 wide, so the panel is 690 and everything inside it
@@ -189,12 +189,7 @@ func _process(dt: float) -> void:
 			_status.add_theme_color_override("font_color", CalibrationPanel.GOOD if calibration.result_ok else CalibrationPanel.BAD)
 
 func _button(text: String, cb: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.add_theme_font_size_override("font_size", 22)
-	b.focus_mode = Control.FOCUS_NONE  # Space stays the stop key, never "press the button"
-	b.pressed.connect(cb)
-	return b
+	return PanelKit.button(text, 22, cb)
 
 func _add_row(it: Dictionary) -> void:
 	var key := str(it["key"])
