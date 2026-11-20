@@ -14,8 +14,9 @@ from corexy_ufo_backend.homework.camera_map import (CameraMapError, CameraMapPar
                                                      camera_signature, convex_hull, distance_outside)
 from corexy_ufo_backend.robot import RobotCommandError
 
-from test_homework_advice import (_cmd, _server, _stop_tickers, fast_mock, ready_robot,  # noqa: F401
+from test_homework_advice import (_server, _stop_tickers, fast_mock, ready_robot,  # noqa: F401
                                   settle, wait_phase)
+from ws_helpers import cmd as _cmd  # noqa: F401
 
 CAM = {"width": 1280, "height": 720, "flip_h": True, "flip_v": True}
 # a made-up camera: perspective (tilted), rotated, scaled; image (u, v) -> XY mm

@@ -12,6 +12,7 @@ from corexy_ufo_backend.vision_service.cameras import index_by_name, order_by_un
 from corexy_ufo_backend.vision_service.hand_control import (HandControl, HandControlConfig, palm_center,
                                                             pinch_ratio)
 from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd_kw as _cmd, start_server as _server
 
 W, H = 640, 480
 
@@ -164,20 +165,6 @@ def test_camera_index_by_name_follows_unique_id_order():
 
 
 # ------------------------------------------------------------ host-side jog guards
-async def _server(robot):
-    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
-    await srv.start()
-    return srv, next(iter(srv._server.sockets)).getsockname()[1]
-
-
-async def _cmd(ws, rid, name, **params):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params}}))
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 2))
-        if m.get("request_id") == rid:
-            return m
-
-
 async def _ready_mock():
     robot = MockRobot()
     await robot.connect()

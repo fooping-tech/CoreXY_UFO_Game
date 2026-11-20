@@ -13,6 +13,7 @@ from corexy_ufo_backend.robot.state import MachineState
 from corexy_ufo_backend.serial_service import protocol as P
 from corexy_ufo_backend.serial_service.service import SerialService
 from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd_kw as _cmd
 
 
 # ------------------------------------------------------------------ protocol
@@ -234,14 +235,6 @@ async def server():
     port = next(iter(srv._server.sockets)).getsockname()[1]
     yield srv, robot, port
     await srv.stop()
-
-
-async def _cmd(ws, rid, name, **params):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params}}))
-    while True:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), 2))
-        if msg["type"] in ("ack", "nack") and msg.get("request_id") == rid:
-            return msg
 
 
 async def test_server_jog_and_soft_stop(server):

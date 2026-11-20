@@ -16,7 +16,7 @@ from corexy_ufo_backend.homework import HomeworkConfig, HomeworkService, JevErro
 from corexy_ufo_backend.homework.jev import JevClient, JevCredentials, JevResult, load_credentials, read_env_file, unwrap
 from corexy_ufo_backend.homework.progress import CRITERIA, ProgressTracker, build_input, score_to_pct
 from corexy_ufo_backend.robot.mock_robot import MockRobot
-from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import recv_type as _recv_type, start_server
 
 JPEG = b"\xff\xd8homework\xff\xd9"
 JPEG_B64 = base64.b64encode(JPEG).decode()
@@ -216,16 +216,7 @@ def test_config_from_raw():
 async def _server(homework):
     robot = MockRobot()
     await robot.connect()
-    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30, homework=homework)
-    await srv.start()
-    return srv, next(iter(srv._server.sockets)).getsockname()[1]
-
-
-async def _recv_type(ws, t):
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 3))
-        if m["type"] == t:
-            return m
+    return await start_server(robot, homework=homework)
 
 
 async def test_websocket_homework_flow():

@@ -18,7 +18,7 @@ from corexy_ufo_backend.homework.progress import ProgressTracker
 from corexy_ufo_backend.homework.service import advice_prompt
 from corexy_ufo_backend.robot import RobotCommandError
 from corexy_ufo_backend.robot.mock_robot import MockRobot
-from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd as _cmd, start_server
 
 JPEG = b"\xff\xd8homework\xff\xd9"
 JPEG_B64 = base64.b64encode(JPEG).decode()
@@ -211,17 +211,7 @@ async def test_motors_disabled_mid_way_is_a_fault():
 
 # ------------------------------------------------------------------ server
 async def _server(robot, homework=None):
-    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30, homework=homework)
-    await srv.start()
-    return srv, next(iter(srv._server.sockets)).getsockname()[1]
-
-
-async def _cmd(ws, name, params=None, rid="r"):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params or {}}}))
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 5))
-        if m.get("request_id") == rid:
-            return m
+    return await start_server(robot, homework=homework)
 
 
 async def test_server_approach_is_exclusive_and_stop_aborts_it():

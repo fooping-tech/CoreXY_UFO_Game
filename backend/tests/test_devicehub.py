@@ -15,7 +15,7 @@ from ufo_devicehub import device_gateway as gwmod
 from corexy_ufo_backend.devicehub import DeviceHubConfig, DeviceHubService
 from corexy_ufo_backend.devicehub.service import ExcludingSerialTransport
 from corexy_ufo_backend.robot.mock_robot import MockRobot
-from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd as _cmd, start_server
 
 ILL, DIAL1, DIAL2 = 0x10, 0x20, 0x21
 
@@ -85,19 +85,7 @@ def test_a_port_that_cannot_be_opened_does_not_hide_the_hub(monkeypatch):
 async def _server(devicehub):
     robot = MockRobot()
     await robot.connect()
-    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30, devicehub=devicehub)
-    await srv.start()
-    return srv, next(iter(srv._server.sockets)).getsockname()[1]
-
-
-async def _cmd(ws, name, params=None, rid="r", events=None):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params or {}}}))
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 10))
-        if m.get("type") == "devicehub_event" and events is not None:
-            events.append(m["data"])
-        if m.get("request_id") == rid:
-            return m
+    return await start_server(robot, devicehub=devicehub)
 
 
 async def _until_connected(ws, events):

@@ -27,8 +27,9 @@ from corexy_ufo_backend.study_mode.navigation import (FocusCalibration, Navigati
                                                       plan_relative, xy_to_uv)
 
 from test_camera_map import CAM, H_TRUE, calibrated
-from test_homework_advice import _cmd, _server, ready_robot  # noqa: F401
+from test_homework_advice import _server, ready_robot  # noqa: F401
 from test_study_mode import B64
+from ws_helpers import cmd as _cmd
 
 CAT = WorksheetCatalog.load()
 

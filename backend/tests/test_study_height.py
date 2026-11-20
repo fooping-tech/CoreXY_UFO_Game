@@ -18,7 +18,7 @@ from corexy_ufo_backend.serial_service import SerialService
 from corexy_ufo_backend.study_mode.height import HeightCalibration, HeightError, z_per_cm_from_drum
 from corexy_ufo_backend.websocket import GameServer
 
-from test_homework_advice import _cmd
+from ws_helpers import cmd as _cmd
 
 LIM = RobotLimits(z_max=100.0, z_up_is_positive=True)
 VALUES = {"drum_radius_mm": 15.0, "camera_offset_cm": 3.0, "landing_tip_cm": 1.0, "allow_landing_contact": False}
