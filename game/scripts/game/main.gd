@@ -1583,6 +1583,8 @@ func stop_key() -> void:
 		study_mode.on_stop_key()
 	if game_mode != null:
 		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
+	if settings != null and settings.calibration != null:
+		settings.calibration.on_stop_key()  # #242: the arm-tip camera's calibration run ends
 	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
 	_stop_recovery()  # a recovery asked for from the game's screen goes no further
 	_jog_latched = _jog_input() != Vector3.ZERO

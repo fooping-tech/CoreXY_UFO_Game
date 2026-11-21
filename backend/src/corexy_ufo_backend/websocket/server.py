@@ -606,6 +606,8 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
             return await self._worksheet_find(params)
         if name == "sheet_read":  # #230: a camera frame -> POST /v1/sheet; never the robot
             return await self._sheet_read(params)
+        if name in ("focus_calibrate", "focus_status"):  # #242: the arm-tip camera's calibration; never the robot
+            return await self._focus_calibration(name, params)
         if name == "services_check":  # #114: Jev / the tutor / Claude Code / VOICEVOX; never the robot
             from ..services_check import check_all
             cfg = self.backend_cfg
@@ -891,6 +893,46 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         return self._ack(name, {"found": found is not None, **(found or {})})
 
     SHEET_READ_MAX_BYTES = 4 * 1024 * 1024
+
+    async def _focus_calibration(self, name: str, params: dict) -> dict:
+        """#242: the 校正 tab moved the arm (move_xy) and took the arm-tip camera's pictures; this
+        works out how a move in mm shifts the picture (study_mode/navigation.calibrate_from_jpegs)
+        and keeps it in calibration.json#focus_camera (as tools/calibrate_focus.py). focus_status:
+        which heights are calibrated."""
+        import base64
+        import binascii
+        from ..study_mode.navigation import NavigationError, calibrate_from_jpegs, px_per_mm
+        target = getattr(self.backend_cfg, "focus_camera_path", None) if self.backend_cfg is not None else None
+        raw: dict = {}
+        if target is not None and target.exists():
+            try:
+                raw = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = {}
+        heights = raw.get("heights") if isinstance(raw.get("heights"), dict) else {}
+        if name == "focus_status":
+            return self._ack(name, {"heights": {k: {"px_per_mm": px_per_mm(v.get("A")), "residual_px": v.get("residual_px")}
+                                                for k, v in heights.items() if isinstance(v, dict) and v.get("A")}})
+        if target is None:
+            return self._nack(name, "校正の保存先がありません（設定ファイルの場所）")
+        height = str(params.get("height", "10cm"))
+        try:
+            base = base64.b64decode(str(params.get("base_jpeg_base64", "")), validate=True)
+            moves = [(base64.b64decode(str(m.get("image_jpeg_base64", "")), validate=True), float(m["dx"]), float(m["dy"]))
+                     for m in params.get("moves") or [] if isinstance(m, dict)]
+        except (binascii.Error, ValueError, KeyError, TypeError):
+            return self._nack(name, "画像か移動量が読めません")
+        if not base or len(moves) < 2:
+            return self._nack(name, "基準の画像と、X・Y に動かした画像が要ります")
+        try:
+            result = await asyncio.to_thread(calibrate_from_jpegs, base, moves)
+        except NavigationError as e:
+            return self._nack(name, str(e))
+        heights[height] = {"A": result["A"], "image": result["image"], "residual_px": result["residual_px"]}
+        raw["heights"] = heights
+        target.write_text(json.dumps(raw, ensure_ascii=False, indent=1), encoding="utf-8")
+        log.info("focus camera calibrated at %s: %.1f px/mm, residual %s px", height, result["px_per_mm"], result["residual_px"])
+        return self._ack(name, {"height": height, **result})
 
     async def _sheet_read(self, params: dict) -> dict:
         """The プリント tab's check (#230): one frame of a connected camera, read by the learning

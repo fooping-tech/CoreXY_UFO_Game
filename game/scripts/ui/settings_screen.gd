@@ -209,6 +209,11 @@ func _process(dt: float) -> void:
 		if sheet_checking() and sheet.result_text != "":
 			_status.text = sheet.result_text
 			_status.add_theme_color_override("font_color", SheetCheckPanel.GOOD if sheet.result_ok else SheetCheckPanel.BAD)
+	if calibration != null:
+		if calibrating():
+			calibration.tick(dt)
+		else:
+			calibration.focus_cal.cancel("校正タブを閉じた")
 	if calibrating():
 		calibration.refresh()
 		if calibration.result_text != "":  # the backend's answer, under the scrolled tab

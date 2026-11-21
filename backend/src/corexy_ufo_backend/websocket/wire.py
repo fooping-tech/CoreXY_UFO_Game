@@ -19,7 +19,7 @@ COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_set", "z_restore", 
             "calibration_prepare", "calibration_prepare_status",
             "easy_grab", "easy_reset", "easy_deliver", "easy_cancel", "easy_status", "easy_dial_set", "easy_dial_confirm",
             "easy_goto", "jog_boost",
-            *DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "sheet_read")
+            *DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "sheet_read", "focus_calibrate", "focus_status")
 MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover", "easy_goto")
 # Never queued behind another command of the same connection: a stop must reach
 # the robot while a move_xy of that connection is still running.
@@ -28,7 +28,7 @@ MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", 
 # 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
 CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "sheet_read", "devicehub_meta", "devicehub_devices", "devicehub_status",
                         "devicehub_diag")
-PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "sheet_read", "stop", "soft_stop", "jog", "jog_boost", "get_state", "auto_catch_status",
+PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "sheet_read", "focus_calibrate", "focus_status", "stop", "soft_stop", "jog", "jog_boost", "get_state", "auto_catch_status",
                      "homework_approach_release", "homework_approach_status",
                      "study_cleanup_confirm", "study_cleanup_status", "calibration_prepare_status",
                      "easy_deliver", "easy_cancel", "easy_status")

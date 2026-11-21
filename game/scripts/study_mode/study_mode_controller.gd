@@ -762,6 +762,12 @@ func _on_explained(result: Dictionary) -> void:
 		return
 	explanation = result
 	explain_note = "" if not bool(result.get("needs_confirmation", false)) else "（読み取りに自信がないので、大人の人も確かめてね）"
+	if not nav.is_empty() and not nav.get("d_mm") is Array:
+		# #242: not in the picture and the arm stays (no calibration, hidden, lost): the words say
+		# what the child can do (the backend's stay_words), never "さがしに いくね"
+		explain_note = "（問題 %d が写っていません。アームは動かしません%s）" % [help_problem,
+			(": " + str(nav.error)) if str(nav.get("error", "")) != "" else ""]
+		notice = explain_note
 	_speak_explanation()
 
 func _on_explain_failed(reason: String, fallback: Dictionary) -> void:

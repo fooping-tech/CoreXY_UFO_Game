@@ -52,6 +52,18 @@ class FocusCalibration:
         d = np.linalg.solve(np.asarray(h["A"], float), p)          # 移動後に物が -p 動けば中心に来る: -A·d = -p
         return round(float(d[0]), 1), round(float(d[1]), 1)
 
+    def direction_to_mm(self, direction: str, distance_mm: float, height: str = "10cm") -> tuple[float, float]:
+        """camera_move (up/down/left/right in the picture, distance_mm) -> the arm's move [mm]: the way
+        that brings what lies that way in the picture to its centre, distance_mm long (#242)."""
+        if height not in self.heights:
+            raise NavigationError(f"高さ {height} の先端カメラのキャリブレーションがありません")
+        u = {"up": (0.0, -1.0), "down": (0.0, 1.0), "left": (-1.0, 0.0), "right": (1.0, 0.0)}.get(direction)
+        if u is None:
+            raise NavigationError(f"向き {direction!r} が分かりません")
+        d = np.linalg.solve(np.asarray(self.heights[height]["A"], float), np.asarray(u))
+        d = d / np.linalg.norm(d) * float(distance_mm)
+        return round(float(d[0]), 1), round(float(d[1]), 1)
+
 
 def plan_relative(current_xy: tuple[float, float], d_mm: tuple[float, float], *, x_range=(0.0, 390.0), y_range=(0.0, 200.0),
                   max_step_mm: float = 60.0, min_step_mm: float = 3.0) -> tuple[float, float]:
@@ -111,3 +123,53 @@ def estimate_A(moves_mm: list[tuple[float, float]], shifts_px: list[tuple[float,
         raise NavigationError("X と Y の両方向に動かした組が必要です")
     At, *_ = np.linalg.lstsq(D, S, rcond=None)  # D·Aᵀ = S
     return At.T
+
+
+# ------------------------------------------------------------------ the 校正 tab's calibration (#242)
+MAX_RESIDUAL_PX = 6.0  # a calibration whose shifts do not fit A within this is not kept
+CAL_EDGE = 640
+
+
+def px_per_mm(A) -> float | None:
+    """How many pixels the picture moves for 1 mm of the arm (sqrt |det A|); None when A is not 2x2."""
+    try:
+        a = np.asarray(A, float)
+        return round(float(abs(np.linalg.det(a)) ** 0.5), 2) if a.shape == (2, 2) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _gray_jpeg(data: bytes, max_edge: int = CAL_EDGE) -> tuple[np.ndarray, tuple[int, int], float]:
+    import cv2
+    im = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if im is None:
+        raise NavigationError("画像を読めません")
+    H, W = im.shape
+    s = min(1.0, max_edge / max(W, H))
+    if s < 1:
+        im = cv2.resize(im, (round(W * s), round(H * s)), interpolation=cv2.INTER_AREA)
+    return np.asarray(im, float), (W, H), s
+
+
+def calibrate_from_jpegs(base: bytes, moves: list[tuple[bytes, float, float]]) -> dict:
+    """The arm-tip camera's calibration from pictures (tools/calibrate_focus.py, done by the 校正 tab):
+    a base picture and pictures after moving the arm (dx, dy) mm at the same height ->
+    {"A", "image", "residual_px", "px_per_mm", "shifts"}. NavigationError when unusable."""
+    b, size, s = _gray_jpeg(base)
+    mv, sh = [], []
+    for data, dx, dy in moves:
+        img, size2, _ = _gray_jpeg(data)
+        if size2 != size:
+            raise NavigationError("画像の大きさが違います")
+        sx, sy = phase_shift(b, img)
+        mv.append((float(dx), float(dy)))
+        sh.append((sx / s, sy / s))
+    A = estimate_A(mv, sh)
+    resid = [float(np.hypot(*(np.asarray(x) + A @ np.asarray(m)))) for m, x in zip(mv, sh)]
+    ppm = float(abs(np.linalg.det(A)) ** 0.5)
+    if ppm < 0.3:
+        raise NavigationError("アームを動かしても画像がほとんど動きませんでした（先端カメラの映像・プリントの上か）")
+    if max(resid) > MAX_RESIDUAL_PX:
+        raise NavigationError(f"ずれの測り方がばらつきます（誤差 {max(resid):.1f} px）: 紙や手が動かないようにしてもう一度")
+    return {"A": A.round(4).tolist(), "image": list(size), "residual_px": [round(r, 2) for r in resid],
+            "px_per_mm": round(ppm, 2), "shifts": [[round(a, 1), round(b2, 1)] for a, b2 in sh]}
