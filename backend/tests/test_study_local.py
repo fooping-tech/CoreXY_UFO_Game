@@ -70,7 +70,7 @@ class FakeReader:
     def __init__(self, problems=None, error=None):
         self.problems, self.error, self.calls = problems or [], error, 0
 
-    def read(self, photo, calc=True, crop=True, long_side=1800, on_problem=None):
+    def read(self, photo, calc=True, crop=True, long_side=1800, on_problem=None, deadline_s=None, label=""):
         self.calls += 1
         self.streamed = on_problem is not None
         if self.error:
@@ -161,6 +161,39 @@ async def test_a_local_locate_reads_the_problem_box():
     await svc.locate("s", "l4", "problem", B64, emit, problem=1, worksheet_id="mon-elem_1-01")
     await svc._locate_task
     assert sent[-1]["type"] == "homework_locate_error" and sent[-1]["data"]["code"] == "busy"
+    # #244: 20 s by default, the reader told so; a reader that never answers is cut off too
+    reader.error = None
+    got = {}
+    orig = reader.read
+
+    def spy(*a, **k):
+        got.update(k)
+        return orig(*a, **k)
+    reader.read = spy
+    await svc.locate("s", "l5", "problem", B64, emit, problem=3, worksheet_id="mon-elem_1-01")
+    await svc._locate_task
+    assert got["deadline_s"] == 20.0 and got["label"] == "locate 3"
+
+    def hangs(*a, **k):
+        import time
+        time.sleep(1.5)
+    reader.read = hangs
+    from dataclasses import replace as _replace
+    svc.config = _replace(svc.config, locate_timeout_s=3.0)  # the smallest allowed
+    import asyncio as _a
+    real_wait_for = _a.wait_for
+
+    async def quick(aw, t):  # 3 s + 5 s of guard is long for a test: cut the guard to 1 s
+        return await real_wait_for(aw, 1.0)
+    import corexy_ufo_backend.homework.service as hs
+    hs.asyncio.wait_for, saved = quick, hs.asyncio.wait_for
+    try:
+        await svc.locate("s", "l6", "problem", B64, emit, problem=3, worksheet_id="mon-elem_1-01")
+        await svc._locate_task
+    finally:
+        hs.asyncio.wait_for = saved
+    assert sent[-1]["type"] == "homework_locate_error" and sent[-1]["data"]["code"] == "timeout"
+    assert "混んでいる" in sent[-1]["data"]["message"]
     await svc.close()
 
 
