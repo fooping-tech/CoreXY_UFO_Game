@@ -1090,6 +1090,13 @@ func _handle_input(dt: float) -> void:
 			jog_hint = "勉強モードでアームを使っている間は手動操作できない（Space で止める）"
 		if gesture.is_active():
 			gesture.stop("study_mode")
+	# #242 review: the arm-tip camera's calibration owns the arm (a jog would change what it measures)
+	if settings != null and settings.calibration != null and settings.calibration.focus_cal.active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "先端カメラの校正中は手動操作できない（Space で止める）"
+		if gesture.is_active():
+			gesture.stop("focus_calibration")
 	# the auto catch owns the crane: no manual jog until it ends (Space / E-STOP still stop it)
 	if RobotState.auto_catch_active():
 		halt = true
@@ -1583,6 +1590,8 @@ func stop_key() -> void:
 		study_mode.on_stop_key()
 	if game_mode != null:
 		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
+	if settings != null and settings.calibration != null:
+		settings.calibration.on_stop_key()  # #242: the arm-tip camera's calibration run ends
 	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
 	_stop_recovery()  # a recovery asked for from the game's screen goes no further
 	_jog_latched = _jog_input() != Vector3.ZERO

@@ -570,11 +570,17 @@ func _test_study_mode_looks_again(rs: Node) -> void:
 	_ok(refused.contains("大きすぎ") and str(ctl.explanation.get("source", "")) == "worksheet",
 		"study: a refused look-again (over 60 mm) moves nothing and gives the hints", refused)
 	# no d_mm (no arm camera calibration): no motion, the AI's own words
-	ctl.services.inject_navigate = [{"kind": "move"}]
+	ctl.services.inject_navigate = [{"kind": "move", "error": "先端カメラの校正がまだ"}]
 	ctl.request_help()
 	_study_pump(game, 60.0, func(): return ctl.state == "STUDYING")
-	_ok(ctl.nav_tries == 0 and str(ctl.explanation.get("source", "")) == "demo",
-		"study: without d_mm (arm camera not calibrated) the arm does not look again", str(ctl.nav_tries))
+	var said: Array = []
+	for l in ctl._explain_lines(ctl.explanation, false):
+		said.append(str(l.text))
+	_ok(ctl.nav_tries == 0 and str(ctl.explanation.get("source", "")) == "demo"
+		and ctl.explain_note.contains("アームは動かしません") and ctl.explain_note.contains("校正がまだ")
+		and not " ".join(said).contains("さがしに"),
+		"study: without d_mm (arm camera not calibrated) the arm does not look again, and says so (#242)",
+		"%s %s" % [ctl.nav_tries, ctl.explain_note])
 	# Space while waiting to look again: no looking again
 	ctl.services.inject_navigate = [{"kind": "move", "d_mm": [0.0, 30.0]}]
 	ctl.request_help()

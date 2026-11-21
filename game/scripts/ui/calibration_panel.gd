@@ -48,6 +48,10 @@ var _drum: SpinBox
 var _height_filled := false
 ## #169: the easy mode's drop points over the two Dials, as the backend has them (easy_status)
 var easy_status: Dictionary = {}
+## #242: the arm-tip camera's calibration (focus_status), and the run that makes it
+var focus_status: Dictionary = {}
+var focus_cal := FocusCalibrator.new()
+var _focus_label: Label
 var _easy: Label
 var _prep_was_active := false
 var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
@@ -77,7 +81,7 @@ var _prepare_label: Label
 const SECTIONS := [
 	["link", "つながりとモーター"], ["z", "Z の上下と原点復帰"], ["claw", "爪の開き・閉じ"],
 	["spot", "宿題を見に行く位置"], ["camera", "俯瞰カメラ → XY"], ["height", "勉強モードの撮影の高さ"],
-	["services", "AI・外部サービス"], ["easy", "かんたんモードの投入位置"],
+	["focus", "先端カメラの校正（問題を見に行く）"], ["services", "AI・外部サービス"], ["easy", "かんたんモードの投入位置"],
 ]
 
 ## The commands this tab sends (directly or through main.gd / the homework client), with
@@ -89,6 +93,7 @@ const COMMANDS := {
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
 	"camera_map_clear": "カメラの点を消す",
 	"calibration_prepare": "準備をまとめて実行", "study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
+	"focus_calibrate": "先端カメラの校正",
 	"easy_dial_set": "かんたんモードの投入位置の記録", "easy_dial_confirm": "かんたんモードの投入位置の確認",
 }
 
@@ -254,7 +259,20 @@ func setup(m: Node) -> void:
 	row = _row()
 	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]), "primary")
 
-	# --- 7. the AI / outside services
+	# --- 7. the arm-tip camera's calibration (#242)
+	_card("focus", "HELP で「〇ばんが わからない」と言われたとき、先端カメラの画像を見てアームを問題の真上へ動かすための校正。"
+		+ "アームを 1cm ずつ動かして、先端カメラの画像がどれだけずれるかを測る。2 の Z と原点復帰、6 の高さのあとで。")
+	_focus_label = _value()
+	_focus_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_focus_label.custom_minimum_size = Vector2(WIDTH, 0)
+	_step("①", "文字の書いてあるプリントをステージに置き、動かないようにする")
+	_step("②", "6 の「10cm へ動かす（試す）」でアームを撮影の高さへ。矢印キーでプリントの真上へ（先端カメラに文字が写る所）")
+	_step("③", "「先端カメラを校正する」: アームが前後左右に 1cm ずつ動いて撮り、もとの位置へ戻る（30 秒ほど）")
+	_caution("校正の間はプリントや手を動かさない。Space でいつでも止まる。")
+	row = _row()
+	_ws_button(row, "先端カメラを校正する", func(): start_focus_calibration(), "primary")
+
+	# --- 8. the AI / outside services
 	_card("services", "勉強モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
 		+ "「AI に試しに質問する」は、サンプルのプリント 1 枚と短い質問を解説の AI に 1 回だけ送る。")
 	_services = _value()
@@ -265,7 +283,7 @@ func setup(m: Node) -> void:
 	_ws_button(srow, "もう一度確かめる", func(): check_services(false))
 	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
 
-	# --- 8. the easy mode's drop points (#169)
+	# --- 9. the easy mode's drop points (#169)
 	_card("easy", "スコアゲームのかんたんモードで自動で動く場所。ポータル（左の Dial 1）の真上（XY）、"
 		+ "カプセルをつかむ高さと、Dial の上で爪を開く高さ（Z）。実機でだけ記録する。2 の Z の上下と原点復帰のあとで。"
 		+ "一度記録して確かめた値は次の起動でもそのまま使う（記録し直すのは、置き場所を変えたときと Z を測り直したとき）。")
@@ -352,6 +370,10 @@ func section_states() -> Array[Dictionary]:
 					text = "2 の Z の上と下を記録すると使える"
 				else:
 					text = "使えない: " + str(height_status.get("problem", ""))
+			"focus":
+				var fs := focus_state(focus_status, focus_cal)
+				st = fs.state
+				text = fs.text
 			"easy":
 				var es := easy_state(easy_status)
 				st = es.state
@@ -452,6 +474,63 @@ func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v:
 
 ## #110: the entered values -> the backend (calibration.json#study_height), unconfirmed.
 ## desk: "bottom" = the Z calibration's bottom, "here" = the arm's Z now.
+## #242: the arm-tip camera's calibration at the first capture height (6's "10cm").
+func start_focus_calibration() -> void:
+	focus_cal.capture = func() -> Image:
+		var cams: CameraHub = main.cameras if main != null else null
+		return cams.texture("focus").get_image() if cams != null and cams.has_feed("focus") else null
+	focus_cal.send = func(name: String, params: Dictionary) -> String: return main.ws.send_command(name, params)
+	focus_cal.log_line = func(line: String) -> void: main.debug_log.emit(line)
+	var stage: String = StudyServices.stage_names()[0]
+	var why := focus_height_blocker(RobotState.z_mm, stage_z(stage), stage)
+	if why == "":
+		why = focus_cal.start(stage)
+	if why != "":
+		_set_result(false, "先端カメラの校正を始められない: " + why)
+	else:
+		_set_result(true, focus_cal.progress_text())
+
+## Every frame while the tab shows (settings_screen.gd); the run stops when the tab hides.
+func tick(dt: float) -> void:
+	if not focus_cal.active():
+		return
+	if not backend_ready():
+		focus_cal.cancel("バックエンドとの接続が切れた")
+	else:
+		focus_cal.tick(dt)
+	if focus_cal.state != FocusCalibrator.COMPUTING or result_text == "":
+		_set_result(focus_cal.state != FocusCalibrator.FAILED, focus_cal.progress_text())
+
+## Space (main.gd stop_key): the run ends (soft_stop stops the arm).
+func on_stop_key() -> void:
+	if focus_cal.active():
+		focus_cal.cancel("Space で止めました")
+		_set_result(false, focus_cal.progress_text())
+
+## The calibration is for HELP's capture height: the arm must be there (Z within 2 units).
+static func focus_height_blocker(z: float, stage_at: float, stage: String) -> String:
+	if is_nan(stage_at):
+		return "6 の撮影の高さがまだ使えない（2 の Z の上と下を記録する）"
+	if is_nan(z) or absf(z - stage_at) > 2.0:
+		return "先に 6 の「%s へ動かす（試す）」でアームを撮影の高さへ（いま Z %.0f、%s は Z %.0f）" % [stage, z, stage, stage_at]
+	return ""
+
+## The arm-tip camera's calibration in words: {state, text}.
+static func focus_state(st: Dictionary, cal: FocusCalibrator) -> Dictionary:
+	if cal != null and cal.active():
+		return {"state": "wait", "text": "校正中"}
+	if cal != null and cal.state == FocusCalibrator.FAILED and not (st.get("heights") is Dictionary
+			and (st.heights as Dictionary).has(StudyServices.stage_names()[0])):
+		return {"state": "todo", "text": "できなかった: " + cal.error}
+	if st.is_empty():
+		return {"state": "wait", "text": "問い合わせ中"}
+	var heights: Dictionary = st.heights if st.get("heights") is Dictionary else {}
+	var stage := StudyServices.stage_names()[0]
+	if heights.get(stage) is Dictionary:
+		var h: Dictionary = heights[stage]
+		return {"state": "ok", "text": "%s で校正済み（1 mm = %.1f px）" % [stage, float(h.get("px_per_mm", 0.0) if h.get("px_per_mm") != null else 0.0)]}
+	return {"state": "todo", "text": "まだ: HELP でアームが問題を見に行けない"}
+
 func height_params(desk: String) -> Dictionary:
 	return {"drum_radius_mm": _drum.value, "desk": desk}
 
@@ -714,6 +793,17 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		if ok:
 			show_heights(data)
 		return
+	if cmd == "focus_status":  # asked when the tab opens: no message
+		if ok:
+			focus_status = data
+		return
+	focus_cal.on_ack(_rid, ok, data)
+	if cmd == "focus_calibrate":
+		if main != null and main.get("ws") != null:
+			main.ws.send_command("focus_status")
+		_set_result(ok, focus_cal.progress_text() if focus_cal.state in [FocusCalibrator.DONE, FocusCalibrator.FAILED]
+			else ("先端カメラの校正: " + reason_text(str(data.get("reason", "")))))
+		return
 	if cmd == "easy_status":  # asked when the tab opens: no message
 		if ok:
 			easy_status = data
@@ -838,6 +928,7 @@ func _ask_backend() -> void:
 		hw.request_camera_map()
 	main.ws.send_command("study_height_status")
 	main.ws.send_command("easy_status")
+	main.ws.send_command("focus_status")
 	check_services(false)
 
 func check_services(ask: bool) -> void:
@@ -905,6 +996,8 @@ func refresh() -> void:
 			l.add_theme_color_override("font_color", colour)
 			_services_box.add_child(l)
 	_height.text = height_text(height_status)
+	_focus_label.text = focus_cal.progress_text() if focus_cal.active() or focus_cal.state == FocusCalibrator.FAILED \
+		else focus_state(focus_status, focus_cal).text
 	_height.add_theme_color_override("font_color", GOOD if bool(height_status.get("usable", false)) else YELLOW)
 	if RobotState.source != "websocket":
 		_link.text = "ゲーム内の仮想クレーン（バックエンドなし）: 爪だけ試せる。Z・宿題の位置・カメラの校正には ./start.sh で起動する"

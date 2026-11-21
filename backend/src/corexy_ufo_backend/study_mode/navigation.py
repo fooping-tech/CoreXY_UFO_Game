@@ -52,6 +52,18 @@ class FocusCalibration:
         d = np.linalg.solve(np.asarray(h["A"], float), p)          # 移動後に物が -p 動けば中心に来る: -A·d = -p
         return round(float(d[0]), 1), round(float(d[1]), 1)
 
+    def direction_to_mm(self, direction: str, distance_mm: float, height: str = "10cm") -> tuple[float, float]:
+        """camera_move (up/down/left/right in the picture, distance_mm) -> the arm's move [mm]: the way
+        that brings what lies that way in the picture to its centre, distance_mm long (#242)."""
+        if height not in self.heights:
+            raise NavigationError(f"高さ {height} の先端カメラのキャリブレーションがありません")
+        u = {"up": (0.0, -1.0), "down": (0.0, 1.0), "left": (-1.0, 0.0), "right": (1.0, 0.0)}.get(direction)
+        if u is None:
+            raise NavigationError(f"向き {direction!r} が分かりません")
+        d = np.linalg.solve(np.asarray(self.heights[height]["A"], float), np.asarray(u))
+        d = d / np.linalg.norm(d) * float(distance_mm)
+        return round(float(d[0]), 1), round(float(d[1]), 1)
+
 
 def plan_relative(current_xy: tuple[float, float], d_mm: tuple[float, float], *, x_range=(0.0, 390.0), y_range=(0.0, 200.0),
                   max_step_mm: float = 60.0, min_step_mm: float = 3.0) -> tuple[float, float]:
@@ -79,8 +91,10 @@ def xy_to_uv(h_inv, x: float, y: float) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------- 先端カメラのキャリブレーション
-def phase_shift(img_a: np.ndarray, img_b: np.ndarray) -> tuple[float, float]:
-    """画像 a → b で、写っている物が何 px 動いたか（位相限定相関。サブピクセル）。グレースケールの 2 次元配列。"""
+def phase_shift(img_a: np.ndarray, img_b: np.ndarray, exclude_px: float = 0.0) -> tuple[float, float]:
+    """画像 a → b で、写っている物が何 px 動いたか（位相限定相関。サブピクセル）。グレースケールの 2 次元配列。
+    exclude_px > 0: ずれ 0 の近く（その半径の内）の山を見ない。カメラと一緒に動く物（爪・アームの影・
+    レンズの汚れ）は画像の中で止まって見え、紙の動きより強い山を 0 に作ることがある（#242）。"""
     a = img_a.astype(float) - img_a.mean()
     b = img_b.astype(float) - img_b.mean()
     win = np.outer(np.hanning(a.shape[0]), np.hanning(a.shape[1]))  # 端の影響を減らす
@@ -88,6 +102,11 @@ def phase_shift(img_a: np.ndarray, img_b: np.ndarray) -> tuple[float, float]:
     r = fb * np.conj(fa)
     r /= np.abs(r) + 1e-9
     c = np.fft.ifft2(r).real
+    if exclude_px > 0:
+        H0, W0 = c.shape
+        yy = np.minimum(np.arange(H0), H0 - np.arange(H0))[:, None]
+        xx = np.minimum(np.arange(W0), W0 - np.arange(W0))[None, :]
+        c = np.where(yy ** 2 + xx ** 2 <= exclude_px ** 2, c.min(), c)
     iy, ix = np.unravel_index(np.argmax(c), c.shape)
 
     def sub(cm, cc, cp):  # 放物線で頂点を細かく求める
@@ -111,3 +130,74 @@ def estimate_A(moves_mm: list[tuple[float, float]], shifts_px: list[tuple[float,
         raise NavigationError("X と Y の両方向に動かした組が必要です")
     At, *_ = np.linalg.lstsq(D, S, rcond=None)  # D·Aᵀ = S
     return At.T
+
+
+# ------------------------------------------------------------------ the 校正 tab's calibration (#242)
+MAX_RESIDUAL_PX = 6.0  # a calibration whose shifts do not fit A within this is not kept
+STILL_PX = 4.0  # shifts this small are what moves with the camera (the claw), not the sheet
+CAL_EDGE = 640
+
+
+def px_per_mm(A) -> float | None:
+    """How many pixels the picture moves for 1 mm of the arm (sqrt |det A|); None when A is not 2x2."""
+    try:
+        a = np.asarray(A, float)
+        return round(float(abs(np.linalg.det(a)) ** 0.5), 2) if a.shape == (2, 2) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _gray_jpeg(data: bytes, max_edge: int = CAL_EDGE) -> tuple[np.ndarray, tuple[int, int], float]:
+    import cv2
+    im = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_GRAYSCALE)
+    if im is None:
+        raise NavigationError("画像を読めません")
+    H, W = im.shape
+    s = min(1.0, max_edge / max(W, H))
+    if s < 1:
+        im = cv2.resize(im, (round(W * s), round(H * s)), interpolation=cv2.INTER_AREA)
+    return np.asarray(im, float), (W, H), s
+
+
+def calibrate_from_jpegs(base, moves: list) -> dict:
+    """The arm-tip camera's calibration from pictures (tools/calibrate_focus.py, done by the 校正 tab):
+    a base picture and pictures after moving the arm (dx, dy) mm at the same height ->
+    {"A", "image", "residual_px", "px_per_mm", "shifts"}. NavigationError when unusable.
+
+    The camera hangs on the rope and may still swing: `base` and each move's picture may be a
+    list of pictures taken in a row. Each shift is then the median of all of them against the
+    first base picture, less the base's own (a swing goes either side of where it rests)."""
+    bases = list(base) if isinstance(base, (list, tuple)) else [base]
+    if not bases:
+        raise NavigationError("基準の画像がありません")
+    b, size, s = _gray_jpeg(bases[0])
+
+    def shift_of(pictures) -> tuple[float, float]:
+        out = []
+        for data in pictures:
+            img, size2, _ = _gray_jpeg(data)
+            if size2 != size:
+                raise NavigationError("画像の大きさが違います")
+            out.append(phase_shift(b, img, exclude_px=STILL_PX))
+        return tuple(float(v) for v in np.median(np.asarray(out), axis=0))
+    b0 = (0.0, 0.0)
+    if len(bases) > 1:  # the base frames against the first one: the first may be off the swing's middle
+        others = [phase_shift(b, _gray_jpeg(d)[0], exclude_px=0.0) for d in bases[1:]]
+        b0 = tuple(float(v) for v in np.median(np.asarray([(0.0, 0.0)] + others), axis=0))
+    mv, sh = [], []
+    for data, dx, dy in moves:
+        sx, sy = shift_of(data if isinstance(data, (list, tuple)) else [data])
+        mv.append((float(dx), float(dy)))
+        sh.append(((sx - b0[0]) / s, (sy - b0[1]) / s))
+    A = estimate_A(mv, sh)
+    resid = [float(np.hypot(*(np.asarray(x) + A @ np.asarray(m)))) for m, x in zip(mv, sh)]
+    ppm = float(abs(np.linalg.det(A)) ** 0.5)
+    seen = "、".join(f"({m[0]:+g},{m[1]:+g})mm→({x[0]:+.0f},{x[1]:+.0f})px" for m, x in zip(mv, sh))
+    if ppm < 0.3:
+        raise NavigationError(f"アームを動かしても画像がほとんど動きませんでした（{seen}）。"
+                              "先端カメラに文字が大きく写る高さ・プリントの真上か確かめる")
+    if max(resid) > MAX_RESIDUAL_PX:
+        raise NavigationError(f"画像のずれがアームの動きと合いません（誤差 {max(resid):.1f} px。{seen}）。"
+                              "文字が写っているか、紙や手が動かなかったか確かめてもう一度")
+    return {"A": A.round(4).tolist(), "image": list(size), "residual_px": [round(r, 2) for r in resid],
+            "px_per_mm": round(ppm, 2), "shifts": [[round(a, 1), round(b2, 1)] for a, b2 in sh]}

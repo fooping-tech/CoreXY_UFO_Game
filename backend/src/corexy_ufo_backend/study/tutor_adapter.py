@@ -89,6 +89,20 @@ def gives_answer(sentence: str, answers: Sequence[str] = ()) -> bool:
     return False
 
 
+NO_CALIBRATION = "先端カメラの校正がまだ（校正タブの「先端カメラの校正」）"
+IMAGE_DIRECTIONS = ("up", "down", "left", "right")
+
+
+def stay_words(kind: str, n: int) -> str:
+    """What UFOくん says when the problem is not in the picture and the arm stays (#242): what the
+    child can do instead."""
+    if kind == "uncover":
+        return f"{n}ばんが 手や ものに かくれているみたい。どけて くれるかな？"
+    if kind == "zoom_out":
+        return f"{n}ばんが どこか わからなかったよ。プリントを まっすぐ おいて、もう いちど おしえてね。"
+    return f"{n}ばんが カメラに うつっていないみたい。{n}ばんが ユーフォーの 下に くるように、プリントを ずらして くれるかな？"
+
+
 class TutorStudyAdapter:
     _breakers: dict[str, dict] = {}  # 接続先 URL → {"fails", "open_until"}
 
@@ -205,15 +219,37 @@ class TutorStudyAdapter:
         out = {"problem_number": c.get("problem_number") or n, "recognized_problem": c.get("recognized_problem", ""),
                "confidence": c.get("confidence", 0.0), "hint": c.get("hint", ""), "explanation": c.get("explanation") or msg,
                "speech_text": msg, "needs_confirmation": bool(c.get("needs_confirmation", True))}
-        nav = tr.get("navigate")
+        nav = tr.get("navigate") if isinstance(tr.get("navigate"), dict) else None
+        cm = g.get("camera_move") if isinstance(g.get("camera_move"), dict) else None
         if nav and nav.get("kind") in ("move", "uncover", "zoom_out"):
             out["needs_confirmation"] = True
             out["navigate"] = {"kind": nav["kind"], "target": n, "offset": nav.get("offset"), "height": role}
-            if nav["kind"] == "move" and self.calib is not None and nav.get("offset"):
+            if nav["kind"] == "move" and nav.get("offset"):
+                if self.calib is None:
+                    out["navigate"]["error"] = NO_CALIBRATION
+                else:
+                    try:
+                        out["navigate"]["d_mm"] = list(self.calib.offset_to_mm(nav["offset"], role))
+                    except Exception as e:  # noqa: BLE001  キャリブレーションがない高さなど → 動かさない
+                        out["navigate"]["error"] = str(e)
+        elif cm and cm.get("direction") in IMAGE_DIRECTIONS and cm.get("distance_mm"):
+            # #242: "move the camera" (§5.3 camera_move: up/down/left/right in the picture, mm) -> the
+            # same arm move as navigate; the calibration gives which way the arm goes for the picture
+            out["needs_confirmation"] = True
+            out["navigate"] = {"kind": "move", "target": n, "height": role, "direction": cm["direction"]}
+            if self.calib is None:
+                out["navigate"]["error"] = NO_CALIBRATION
+            else:
                 try:
-                    out["navigate"]["d_mm"] = list(self.calib.offset_to_mm(nav["offset"], role))
-                except Exception as e:  # noqa: BLE001  キャリブレーションがない高さなど → 動かさない
+                    out["navigate"]["d_mm"] = list(self.calib.direction_to_mm(cm["direction"], float(cm["distance_mm"]), role))
+                except Exception as e:  # noqa: BLE001
                     out["navigate"]["error"] = str(e)
+        nv = out.get("navigate")
+        if nv is not None and "d_mm" not in nv:
+            # #242: the arm does not move: never "さがしに いくね" (the server's words assume it does)
+            words = stay_words(nv["kind"], n)
+            out["speech_text"] = out["explanation"] = words
+            out["hint"] = ""
         return out
 
     def converse_stream(self, image: bytes, utterance: str, *, turns: Sequence[dict] = (), target: int | None = None,
