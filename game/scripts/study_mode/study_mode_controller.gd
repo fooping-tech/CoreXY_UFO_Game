@@ -31,6 +31,8 @@ const FAILURE_LABEL := {"": "なし", "locate": "位置の特定", "motion": "�
 var main: Node
 var services: StudyServices
 var speech: StudySpeech
+## #233: the voice dialogue (push to talk -> Whisper -> the tutor)
+var voice: StudyVoice
 var sounds: StudySounds
 var tracker := StudyQuestionTracker.new()
 var catalog: WorksheetCatalog
@@ -100,6 +102,10 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	services.name = "StudyServices"
 	add_child(services)
 	services.setup(m, hw)
+	voice = StudyVoice.new()
+	voice.name = "StudyVoice"
+	add_child(voice)
+	voice.setup(self)
 	speech.voice_request = services.voice_request
 	services.on_voice = speech.on_voice
 	services.on_voice_error = speech.on_voice_error
@@ -169,6 +175,7 @@ func start() -> void:
 		{"text": "席について、プリントを置いてね！", "face": "wink"}], _enter_waiting)
 
 func stop() -> void:
+	voice.reset()
 	services.abort("勉強モードを終えました")
 	services.watch_stop()
 	speech.clear()
@@ -176,6 +183,8 @@ func stop() -> void:
 
 func reset_story() -> void:
 	_story += 1
+	if voice != null:
+		voice.reset()
 	offer_problem = 0
 	_hand_used = ""
 	_hand_since_ms = -1.0
@@ -698,6 +707,7 @@ func advance() -> void:
 func on_stop_key() -> void:
 	if not active():
 		return
+	voice.cancel()
 	if _pending_adult in ["help", "cleanup"]:
 		_pending_adult = ""
 		adult_prompt = ""
@@ -733,7 +743,9 @@ func handle_key(keycode: int) -> bool:
 		return true
 	if not active():
 		return false
-	if keycode == keys.advance or keycode == KEY_KP_ENTER:
+	if keycode == voice.talk_keycode:
+		voice.press()  # #233: held = listening; the release ends it (handle_key_release)
+	elif keycode == keys.advance or keycode == KEY_KP_ENTER:
 		advance()
 	elif keycode == help_keycode:
 		request_help()
@@ -752,6 +764,45 @@ func handle_key(keycode: int) -> bool:
 	else:
 		return false
 	return true
+
+## A key let go: the talk key ends the listening (#233). True when used here.
+func handle_key_release(keycode: int) -> bool:
+	if not active() or keycode != voice.talk_keycode:
+		return false
+	voice.release()
+	return true
+
+## The voice dialogue's answer as it comes (#233): the first lines replace what was being said,
+## the next ones queue after them.
+func voice_lines(lines: Array, first: bool) -> void:
+	if not active():
+		return
+	if first:
+		_say(lines)
+	else:
+		speech.say(lines)
+
+## The answer is complete: `look` > 0 then sends the arm's camera to that problem once UFOくん
+## has said it all (the usual HELP, asked by the child).
+func voice_done(look := 0) -> void:
+	if not active() or look <= 0:
+		return
+	var f := func():
+		if voice.in_talk_state():
+			request_help(look, true)
+	if speech.busy():
+		_after_speech = f
+	else:
+		f.call()
+
+## UFOくん answers what the child said (#233); `look` > 0: then the arm's camera looks at that
+## problem (the usual HELP, asked by the child: a problem already written is looked at too).
+func voice_answer(lines: Array, look := 0) -> void:
+	if not active():
+		return
+	_say(lines, func():
+		if look > 0 and voice.in_talk_state():
+			request_help(look, true))
 
 ## The arm belongs to the study mode now: no manual jog.
 func blocks_manual_control() -> bool:
@@ -847,6 +898,7 @@ func _process(dt: float) -> void:
 	if state == "OFF":
 		return
 	_state_t += dt
+	voice.tick(dt)
 	for t in _timers.duplicate():
 		t[0] -= dt
 		if t[0] <= 0.0:

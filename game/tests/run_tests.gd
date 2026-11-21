@@ -74,6 +74,7 @@ func _ready() -> void:
 	_s.study._test_focus_stream()
 	_s.study._test_study_hand_help(rs)
 	_s.study._test_study_local_frames(rs)
+	_s.study._test_study_voice(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)

@@ -576,6 +576,16 @@
       "open_claw": false,
       "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
     },
+    "voice": {
+      "enabled": true,
+      "key": "V",
+      "max_s": 20.0,
+      "model": "mlx-community/whisper-large-v3-turbo",
+      "language": "ja",
+      "device": "",
+      "preload": true,
+      "_note": "#233: the voice dialogue. While studying (camera mode, study.ai local), hold key (or the microphone button over UFOくん's bubble) and speak; on release the backend turns it into text with mlx-whisper on this Mac (model; downloaded once, ~1.6 GB, loaded at the backend's start when preload) and sends the text, the overview frame (cut out and turned upright as the プリント tab says) and the turns so far to the tutor (study.tutor_url). UFOくん says the answer; when the tutor wants a closer look (need_recapture) the usual HELP starts for that problem. The microphone (device: part of its name, \"\" = the default input) is open only while held, at most max_s; the sound stays in memory and never leaves the Mac. Never while UFOくん speaks. macOS asks once for the microphone permission (for the terminal that runs ./start.sh). Not yet tried with a real child or the real robot."
+    },
     "hand_help": {
       "enabled": true,
       "hold_ms": 600.0,

@@ -1593,6 +1593,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 	if ev is InputEventMouseButton and ev.pressed and text_entry_focused():
 		# a click on the game area ends typing, so the jog keys work again
 		get_viewport().gui_release_focus()
+	# #233: the study mode's talk key is held while the child speaks: its release ends the listening
+	if ev is InputEventKey and not ev.pressed and study_mode != null and not settings_active() \
+			and not title_active() and not text_entry_focused() and study_mode.handle_key_release(ev.keycode):
+		return
 	if ev is InputEventKey and ev.pressed and not ev.echo:
 		# the settings and the title screens take every key but the stop (Space) and the
 		# debug panel (F1 / Tab); typing in a settings field never gets here

@@ -114,6 +114,39 @@ class HomeworkConfig:
                    env_path=env_path)
 
 
+def _warm_image() -> bytes:
+    """The warm-up's picture: a small grey JPEG (only to load the tutor's model; no child's sheet)."""
+    import cv2
+    import numpy as np
+    return cv2.imencode(".jpg", np.full((64, 64, 3), 200, np.uint8))[1].tobytes()
+
+
+WARM_IMAGE = _warm_image()
+
+NUMBER_WORDS = {"いち": 1, "に": 2, "さん": 3, "よん": 4, "し": 4, "ご": 5, "ろく": 6, "なな": 7, "しち": 7,
+                "はち": 8, "きゅう": 9, "く": 9, "じゅう": 10}
+KANJI_NUMBERS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def number_in_utterance(text: str) -> int | None:
+    """The problem a child names (#233): "3ばん", "３番", "(3)", "③", "さんばん", "三番", "もんだい 3"."""
+    import re
+    t = text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    for ch in t:
+        if "①" <= ch <= "⑳":
+            return ord(ch) - ord("①") + 1
+    m = re.search(r"([0-9]{1,2})\s*(ばん|番|もん|問)|[(（]\s*([0-9]{1,2})\s*[)）]|(もんだい|問題)\s*([0-9]{1,2})", t)
+    if m:
+        return int(next(g for g in (m.group(1), m.group(3), m.group(5)) if g))
+    m = re.search(r"(じゅう|きゅう|いち|さん|よん|ろく|なな|しち|はち|に|し|ご|く)\s*(ばん|番)", t)
+    if m:
+        return NUMBER_WORDS[m.group(1)]
+    m = re.search(r"([一二三四五六七八九十])\s*(ばん|番)", t)
+    if m:
+        return KANJI_NUMBERS[m.group(1)]
+    return None
+
+
 # a refused token / address / setting: the local watch stops by itself after FATAL_LIMIT of these
 SHEET_FATAL = ("auth", "forbidden", "config", "blocked")
 
@@ -168,8 +201,15 @@ class HomeworkService:
                  explain_factory: Callable[[], Any] | None = None,
                  locate: LocateParams | None = None, speech: SpeechService | None = None,
                  worksheets: WorksheetCatalog | None = None,
-                 sheet_factory: Callable[[], Any] | None = None) -> None:
+                 sheet_factory: Callable[[], Any] | None = None, voice: Any = None,
+                 talk_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
+        # #233: the voice dialogue: push to talk (homework/voice.VoiceService) and the tutor (converse)
+        self.voice = voice
+        self._talk_factory = talk_factory
+        self._talk_task: asyncio.Task | None = None
+        self._warm_task: asyncio.Task | None = None
+        self._last_talk = 0.0  # monotonic time of the last turn (or warm-up)
         # #232: the worksheet reader (study/sheet_client.SheetClient) for the study mode's sessions
         self._sheet_factory = sheet_factory
         self.worksheets = worksheets
@@ -201,6 +241,127 @@ class HomeworkService:
         if self._local(s):
             raise ValueError(f"{what}は勉強モード（ローカル LLM だけ、study.ai local）では使えません")
 
+    # ------------------------------------------------------------------ the voice dialogue (#233)
+    @property
+    def voice_available(self) -> bool:
+        return self.voice is not None and self.voice.available and self._talk_factory is not None
+
+    def voice_problem(self) -> str:
+        if self._talk_factory is None:
+            return "声の対話は学習支援 AI（study.ai local と study.tutor_url）が要ります"
+        if self.voice is None:
+            return "声の入力がありません"
+        return self.voice.why_not()
+
+    async def listen_start(self, owner: object, request_id: str, emit: Emit) -> None:
+        from .voice import VoiceError
+        if self._talk_factory is None:
+            raise VoiceError("off", self.voice_problem())
+        if self.voice is None:
+            raise VoiceError("off", self.voice_problem())
+        st = await self.voice.start(owner)
+        await emit({"type": "homework_listen", "request_id": request_id, "data": st})
+
+    async def listen_stop(self, owner: object, request_id: str, emit: Emit) -> None:
+        """-> homework_heard {text, seconds} or homework_heard_error {code, message}."""
+        from .voice import VoiceError
+        if self.voice is None:
+            raise VoiceError("off", self.voice_problem())
+        try:
+            heard = await self.voice.stop(owner)
+        except VoiceError as e:
+            await emit({"type": "homework_heard_error", "request_id": request_id,
+                        "data": {"code": e.kind, "message": str(e)}})
+            return
+        await emit({"type": "homework_heard", "request_id": request_id, "data": heard})
+
+    def listen_cancel(self, owner: object) -> bool:
+        return self.voice is not None and self.voice.cancel(owner)
+
+    async def talk(self, request_id: str, text: str, image_b64: str, emit: Emit, *, target: int | None = None,
+                   history: list | None = None, worksheet_id: str = "") -> None:
+        """One turn with the tutor, streamed (docs/ufo_api_spec.md, "dialog"): each sentence as homework_talk_delta
+        {text} while it is made, then homework_talk_result {message, rest (what is still to be
+        said), action, target_problem, need_recapture, visual_effect} or homework_talk_error.
+        `history`: the turns so far [{role: user|assistant, content}]. One at a time."""
+        if self._talk_factory is None:
+            raise ValueError(self.voice_problem())
+        if self._talk_task is not None and not self._talk_task.done():
+            raise ValueError("前の返事を考えているところです")
+        if not request_id:
+            raise ValueError("request_id is required")
+        text = str(text).strip()
+        if not text:
+            raise ValueError("ことばがありません")
+        image = decode_jpeg(image_b64, self.config.max_image_bytes)
+        grade = None
+        answers: list[str] = []
+        if worksheet_id:
+            from ..study.tutor_adapter import grade_in_prompt
+            ws = self.worksheet(worksheet_id)
+            grade = grade_in_prompt(f"{ws.get('grade_label', '')}の宿題プリント", 3)
+            answers = [str(p.get("answer", "")) for p in ws.get("problems", []) if p.get("answer") not in (None, "")]
+        said = number_in_utterance(text)  # "3ばん" picks the problem; else the one talked about
+        target = said or (target if isinstance(target, int) and target > 0 else None)
+        self._talk_task = asyncio.create_task(
+            self._talk(request_id, text, image, target, list(history or []), grade, emit, answers))
+
+    def _start_warming(self) -> None:
+        every = getattr(getattr(self.voice, "config", None), "warm_every_s", 0.0)
+        if self._talk_factory is None or not every or (self._warm_task is not None and not self._warm_task.done()):
+            return
+        self._warm_task = asyncio.create_task(self._warm_loop(every))
+
+    async def _warm_loop(self, every: float) -> None:
+        """Keep the tutor's model loaded while a study session runs (#233): the first question of
+        a child must not wait for the model to load."""
+        while any(s.worksheet is not None for s in self.sessions.values()):
+            if time.monotonic() - self._last_talk >= every and (self._talk_task is None or self._talk_task.done()):
+                self._last_talk = time.monotonic()
+                t0 = time.monotonic()
+                try:
+                    adapter = self._talk_factory()  # type: ignore[misc]
+                    await asyncio.wait_for(asyncio.to_thread(adapter.converse_stream, WARM_IMAGE, "こんにちは"), 60.0)
+                    log.info("talk: the tutor's model is warm (%.1f s)", time.monotonic() - t0)
+                except Exception as e:  # never in the way: the next turn says what is wrong
+                    log.info("talk: warming the tutor failed: %s", e)
+            await asyncio.sleep(min(every, 30.0))
+
+    async def _talk(self, request_id: str, text: str, image: bytes, target: int | None, history: list,
+                    grade: int | None, emit: Emit, answers: list[str] | None = None) -> None:
+        t0 = time.monotonic()
+        self._last_talk = t0
+        loop = asyncio.get_running_loop()
+        first: list[float] = []
+
+        def sentence(line: str) -> None:  # on the worker thread: in order, to the game at once
+            if not first:
+                first.append(time.monotonic() - t0)
+            asyncio.run_coroutine_threadsafe(emit({"type": "homework_talk_delta", "request_id": request_id,
+                                                   "data": {"text": line}}), loop).result(10)
+        try:
+            adapter = self._talk_factory()  # type: ignore[misc]
+            res = await asyncio.wait_for(asyncio.to_thread(adapter.converse_stream, image, text, turns=history,
+                                                           target=target, grade=grade, on_sentence=sentence,
+                                                           answers=answers or []),
+                                         self.config.explain_timeout_s)
+            # the problem named or talked about; else the one the tutor found (e.g. "上から 2 つ目",
+            # review on #235), so the next question and a close-up know it
+            res["target_problem"] = target or res.get("server_target")
+            res["latency_ms"] = round((time.monotonic() - t0) * 1000)
+            res["first_ms"] = round(first[0] * 1000) if first else None
+            if res.get("held_back") or res.get("notes"):
+                log.info("talk: held back %s, the server's notes %s", res.get("held_back"), res.get("notes"))
+            await emit({"type": "homework_talk_result", "request_id": request_id, "data": res})
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            await emit({"type": "homework_talk_error", "request_id": request_id,
+                        "data": {"code": "timeout", "message": "返事がまにあいませんでした"}})
+        except Exception as e:
+            await emit({"type": "homework_talk_error", "request_id": request_id,
+                        "data": {"code": getattr(e, "kind", "tutor_error"), "message": str(e)}})
+
     def worksheet(self, worksheet_id: str) -> dict:
         if not worksheet_id:
             raise ValueError("worksheet_id is required")
@@ -224,6 +385,7 @@ class HomeworkService:
         s = self.sessions[session_id]
         if ws is not None:
             s.worksheet = ws
+            self._start_warming()
             if s.client is None and not self.study_local:  # pragma: no cover - a service is one or the other
                 s.client = self._client_factory()
         return {"session_id": session_id, "state": "running", "interval_s": self.config.interval_s,
@@ -437,7 +599,9 @@ class HomeworkService:
                         "data": {"kind": "problem", "code": code, "message": message, "source": "sheet"}})
         try:
             client = self._sheet_factory()  # type: ignore[misc]
-            res = await asyncio.to_thread(client.read, image)
+            # streamed (docs/ufo_api_spec.md §6.3): stop as soon as the problem looked for has come (~2.5 s
+            # for the first one instead of the whole sheet's ~10 s); the connection is then closed
+            res = await asyncio.to_thread(client.read, image, on_problem=lambda p: p.get("number") == number)
         except asyncio.CancelledError:
             raise
         except SheetError as e:
@@ -701,7 +865,10 @@ class HomeworkService:
     async def close(self) -> None:
         for session_id in list(self.sessions):
             await self.stop(session_id)
-        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, *self._speech_tasks)
+        if self.voice is not None:
+            self.voice.cancel()
+        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, self._talk_task, self._warm_task,
+                             *self._speech_tasks)
                  if t is not None and not t.done()]
         for t in tasks:
             t.cancel()

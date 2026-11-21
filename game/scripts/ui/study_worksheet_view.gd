@@ -12,6 +12,9 @@ var caption := ""
 ## ({tl, tr, bl, br: Vector2 0..1 of the camera image}); empty = the drawn sheet.
 var photo_texture: Texture2D
 var marks: Dictionary = {}
+## #232: read by the local LLM server, the sheet is shown as it is sent: the overview camera's
+## frame cut out and turned upright (SheetFrame, the プリント tab's settings). Over the drawing.
+var crop_texture: Texture2D
 const PAGE := Vector2(210.0, 297.0)
 const MARKS_MM := {"tl": Vector2(14, 14), "tr": Vector2(196, 14), "bl": Vector2(14, 283), "br": Vector2(196, 283)}
 const RECTIFY := preload("res://shaders/sheet_rectify.gdshader")
@@ -81,6 +84,15 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var page := PAGE
 	var top := 22.0
+	if crop_texture != null:
+		_photo.visible = false
+		draw_string(font, Vector2(0, 16), caption, HORIZONTAL_ALIGNMENT_LEFT, size.x, 14, Color("c8d6f0"))
+		var tex := Vector2(crop_texture.get_size())
+		var k := minf(size.x / tex.x, (size.y - top) / tex.y)
+		var shown := Rect2(Vector2((size.x - tex.x * k) * 0.5, top), tex * k)
+		draw_texture_rect(crop_texture, shown, false)
+		draw_rect(shown, Color("5cb8ff"), false, 2.0)
+		return
 	var s := minf(size.x / page.x, (size.y - top) / page.y)
 	var o := Vector2((size.x - page.x * s) * 0.5, top)
 	draw_string(font, Vector2(o.x, 16), caption, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("c8d6f0"))

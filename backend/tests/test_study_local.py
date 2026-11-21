@@ -69,11 +69,21 @@ class FakeReader:
     def __init__(self, problems=None, error=None):
         self.problems, self.error, self.calls = problems or [], error, 0
 
-    def read(self, photo, calc=True, crop=True, long_side=1800):
+    def read(self, photo, calc=True, crop=True, long_side=1800, on_problem=None):
         self.calls += 1
+        self.streamed = on_problem is not None
         if self.error:
             raise self.error
-        raw = {"problems": self.problems, "paper_px": None, "image": {"width": 320, "height": 240}}
+        problems = self.problems
+        if on_problem is not None:  # the stream: one by one, maybe stopped early
+            got = []
+            for p in self.problems:
+                got.append(p)
+                if on_problem(p):
+                    problems = got
+                    break
+            self.seen = len(problems)
+        raw = {"problems": problems, "paper_px": None, "image": {"width": 320, "height": 240}}
         return parse_result(raw, prepare_image(photo))
 
 
@@ -134,6 +144,7 @@ async def test_a_local_locate_reads_the_problem_box():
     d = sent[-1]["data"]
     assert sent[-1]["type"] == "homework_locate_result" and d["usable"] and d["verified"] and d["source"] == "sheet"
     assert (d["u"], d["v"]) == (0.4, 0.65) and d["problem_number"] == 3 and d["box_kind"] == "answer_box"
+    assert reader.streamed and reader.seen == 2  # streamed, and stopped at problem 3
     # a problem the reader does not see: no move
     await svc.locate("s", "l2", "problem", B64, emit, problem=1, worksheet_id="mon-elem_1-01")
     await svc._locate_task

@@ -50,6 +50,10 @@ var _error: PanelContainer
 var _error_text: Label
 var _flash: ColorRect
 var _keys: Label
+## #233: the voice dialogue: the microphone button (held) and what the child said / is happening
+var _voice_bar: PanelContainer
+var _mic: Button
+var _voice_text: Label
 var sheet: StudyWorksheetView
 var scope: StudyScopeView
 var crackers: StudyCrackers
@@ -67,8 +71,11 @@ func setup(controller: StudyModeController) -> void:
 	_build_header()
 	_build_checklist()
 	_build_bubble()
+	_build_voice()
 	_build_centre()
 	ctl.changed.connect(refresh)
+	if ctl.voice != null:
+		ctl.voice.changed.connect(refresh)
 	ctl.state_changed.connect(_on_state)
 	ctl.speech.line_started.connect(func(_t, _f): _typed = 0.0)
 	visible = false
@@ -226,6 +233,47 @@ func _build_bubble() -> void:
 	_keys.clip_text = true
 	root.add_child(_keys)
 
+## #233: over UFOくん's bubble: hold the microphone (or the talk key) and speak.
+func _build_voice() -> void:
+	_voice_bar = panel(Color("eaf6ff"), Color("5cb8ff"), 20, 3)
+	# portrait (#157): the left column, under the worksheet and over the bubble (the checklist is
+	# on the right down to about there)
+	_voice_bar.anchor_top = 1.0
+	_voice_bar.anchor_bottom = 1.0
+	_voice_bar.anchor_right = 1.0
+	_voice_bar.offset_left = 20
+	_voice_bar.offset_right = -(RIGHT_W + 26)
+	_voice_bar.offset_top = -378
+	_voice_bar.offset_bottom = -258
+	root.add_child(_voice_bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	_voice_bar.add_child(row)
+	_mic = Button.new()
+	_mic.text = "🎤"
+	_mic.custom_minimum_size = Vector2(52, 52)
+	_mic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_mic.add_theme_font_size_override("font_size", 24)
+	_mic.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
+	_mic.mouse_filter = Control.MOUSE_FILTER_STOP
+	_mic.button_down.connect(func(): if ctl.voice != null: ctl.voice.press())
+	_mic.button_up.connect(func(): if ctl.voice != null: ctl.voice.release())
+	row.add_child(_mic)
+	_voice_text = label("", 18, INK)
+	_voice_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_voice_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(_voice_text)
+	_voice_bar.visible = false
+
+## What the voice bar says: the child's words, then how it goes.
+static func voice_line(heard: String, status: String) -> String:
+	if heard != "" and status != "":
+		return "きみ:「%s」\n%s" % [heard, status]
+	if heard != "":
+		return "きみ:「%s」" % heard
+	return status
+
 func _build_centre() -> void:
 	_explain = panel(Color("fff7d6"), ORANGE, 18, 4)
 	_explain.position = Vector2(20, EXPLAIN_Y)
@@ -365,6 +413,16 @@ func refresh() -> void:
 	if line != "":
 		_last_line = line
 	_bubble_text.text = _last_line
+	# #233: the voice dialogue
+	var vo := ctl.voice
+	if vo != null:
+		var status := vo.status_text()
+		var talking := vo.state != StudyVoice.IDLE
+		_voice_bar.visible = vo.enabled and ctl.services.mode != "simulated" and vo.in_talk_state() \
+			and (status != "" or vo.heard != "" or talking)
+		_voice_text.text = voice_line(vo.heard, status)
+		_mic.disabled = not (talking or vo.can_talk())
+		_mic.modulate = Color("ff8a8a") if vo.state == StudyVoice.LISTENING else Color.WHITE
 	var credit := ctl.services.voice_credit
 	_credit.text = credit if credit != "" else ("（声なし）" if not ctl.speech.voice_on else "")
 	# the explanation card
@@ -381,8 +439,12 @@ func refresh() -> void:
 	sheet.marks = ctl.services.sheet_marks() if ctl.services.mode == "camera" else {}
 	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
 	sheet.photo_texture = cams.texture("overview") if cams != null and cams.has_feed("overview") else null
-	sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
-		("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
+	sheet.crop_texture = _crop if _crop_wanted() else null
+	if sheet.crop_texture != null:
+		sheet.caption = "カメラ（AI に送る画像）"
+	else:
+		sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
+			("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
 	sheet.visible = st not in ["CELEBRATION", "GAME_UNLOCKED", "HOMEWORK_COMPLETE"]
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)
@@ -432,12 +494,47 @@ static func key_help(state: String, mode: String) -> String:
 		parts.append(", . 学年")
 	if mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
+	elif state in StudyVoice.TALK_STATES:
+		parts.append("V 押して話す")  # #233
 	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
 	return "  ".join(parts)
+
+## #232: the sheet as it goes to the local LLM server, from the overview camera now and then.
+const CROP_EVERY_S := 0.5
+const CROP_EDGE := 480
+var _crop: ImageTexture
+var _crop_left := 0.0
+
+func _crop_wanted() -> bool:
+	var hw := ctl.services.homework if ctl.services != null else null
+	return ctl.services.mode == "camera" and hw != null and hw.reads_locally()
+
+func _update_crop(dt: float) -> void:
+	_crop_left -= dt
+	if _crop_left > 0.0 or not _crop_wanted():
+		return
+	_crop_left = CROP_EVERY_S
+	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
+	if cams == null or not cams.has_feed("overview"):
+		return
+	var img := cams.texture("overview").get_image()
+	if img == null or img.is_empty():
+		return
+	var out := ctl.services.homework.watch_image(img)
+	var big := maxi(out.get_width(), out.get_height())
+	if big > CROP_EDGE:
+		out.resize(maxi(1, out.get_width() * CROP_EDGE / big), maxi(1, out.get_height() * CROP_EDGE / big), Image.INTERPOLATE_BILINEAR)
+	if _crop == null or Vector2i(_crop.get_size()) != out.get_size():
+		_crop = ImageTexture.create_from_image(out)
+	else:
+		_crop.update(out)
+	sheet.crop_texture = _crop
+	sheet.queue_redraw()
 
 func _process(dt: float) -> void:
 	if not visible or ctl == null:
 		return
+	_update_crop(dt)
 	_typed += dt * 28.0
 	_bubble_text.visible_characters = -1 if _typed >= _bubble_text.text.length() else int(_typed)
 	_timer.text = "べんきょう " + HomeworkClient.format_elapsed(ctl.elapsed_s())

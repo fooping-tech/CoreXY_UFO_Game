@@ -11,6 +11,8 @@ dependencies = [
     "opencv-python>=4.9",
     # the peripherals' hub (UFO-DeviceHub's PC client: gateway, protocol, mock hub), #159
     "ufo-devicehub",
+    "mlx-whisper>=0.4 ; platform_machine == 'arm64' and sys_platform == 'darwin'",
+    "sounddevice>=0.5 ; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
