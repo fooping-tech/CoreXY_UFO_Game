@@ -697,7 +697,9 @@ func _on_locate_failed(reason: String) -> void:
 		return
 	notice = "見に行けませんでした: " + reason
 	_set_state("RESUME_STUDY")
-	_say([{"text": "ごめんね、いまは近くで見られないみたい。", "face": "worried"},
+	# #244: the AI is busy (no answer in time): say so, not "cannot look"
+	var first := "ごめんね、AI が いま こんでいるみたい。" if reason.contains("混んでいる") else "ごめんね、いまは近くで見られないみたい。"
+	_say([{"text": first, "face": "worried"},
 		{"text": "プリントのヒントを出すね！", "face": "normal"}], func(): _show_fallback_explanation(reason))
 
 ## Without the arm: the worksheet's own hints, so the child still gets help.

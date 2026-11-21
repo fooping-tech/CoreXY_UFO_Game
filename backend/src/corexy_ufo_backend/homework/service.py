@@ -96,6 +96,9 @@ class HomeworkConfig:
     stall_min_gain: float = STALL_MIN_GAIN
     advice_timeout_s: float = 120.0
     explain_timeout_s: float = 150.0
+    # #244: HELP's "where is problem n" from the worksheet reader gives up after this long in all
+    # (the wait behind the watch's readings included) and says the AI is busy
+    locate_timeout_s: float = 20.0
     env_path: Path | None = None
 
     @classmethod
@@ -111,6 +114,7 @@ class HomeworkConfig:
                    stall_min_gain=max(float(d.get("stall_min_gain", STALL_MIN_GAIN)), 0.0),
                    advice_timeout_s=max(float(d.get("advice_timeout_s", 120.0)), 5.0),
                    explain_timeout_s=max(float(d.get("explain_timeout_s", 150.0)), 5.0),
+                   locate_timeout_s=max(float(d.get("locate_timeout_s", 20.0)), 3.0),
                    env_path=env_path)
 
 
@@ -602,9 +606,17 @@ class HomeworkService:
             client = self._sheet_factory()  # type: ignore[misc]
             # streamed (docs/ufo_api_spec.md §6.3): stop as soon as the problem looked for has come (~2.5 s
             # for the first one instead of the whole sheet's ~10 s); the connection is then closed
-            res = await asyncio.to_thread(client.read, image, on_problem=lambda p: p.get("number") == number)
+            limit = self.config.locate_timeout_s
+            # the client gives up by itself (the slot's wait included); wait_for only guards a reader
+            # that does not (a test's, or a socket that never times out)
+            res = await asyncio.wait_for(asyncio.to_thread(
+                client.read, image, on_problem=lambda p: p.get("number") == number, deadline_s=limit,
+                label=f"locate {number}"), limit + 5.0)
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError:
+            await fail("timeout", f"プリントの読み取り: AI が混んでいるみたい（{self.config.locate_timeout_s:.0f} 秒たっても返事がない）")
+            return
         except SheetError as e:
             await fail(e.kind, f"プリントの読み取り: {e}")
             return

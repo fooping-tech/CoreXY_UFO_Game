@@ -289,10 +289,10 @@ def test_make_sheet_client_uses_the_tutor_settings(tmp_path):
 
 def test_check_sheet_says_what_it_read(monkeypatch, tmp_path):
     cfg = replace(StudyConfig.from_raw({"study": {"tutor_url": URL}}), root=str(tmp_path))
-    monkeypatch.setattr(SheetClient, "_open", lambda self, req: FakeResp(json.dumps(ANSWER).encode()))
+    monkeypatch.setattr(SheetClient, "_open", lambda self, req, timeout=None: FakeResp(json.dumps(ANSWER).encode()))
     r = sc.check_sheet(cfg)
     assert r["name"] == "sheet" and r["status"] == "ok" and "3 問" in r["detail"]
-    monkeypatch.setattr(SheetClient, "_open", lambda self, req: FakeResp(json.dumps({**ANSWER, "problems": []}).encode()))
+    monkeypatch.setattr(SheetClient, "_open", lambda self, req, timeout=None: FakeResp(json.dumps({**ANSWER, "problems": []}).encode()))
     assert sc.check_sheet(cfg)["status"] == "ng"
     monkeypatch.setattr(sc, "make_sheet_client", lambda c: (_ for _ in ()).throw(SheetError("config", "URL がない")))
     r = sc.check_sheet(cfg)
@@ -445,3 +445,65 @@ def test_two_readings_may_run_at_once_a_third_waits():
     for t in threads:
         t.join(5)
     assert at_once == 2 and len(inside) == 3
+
+
+# ------------------------------------------------------------------ #244: HELP's locate gives up in time
+def test_a_deadline_includes_the_wait_for_a_free_slot():
+    import time as _t
+    srv = FakeServer(ANSWER)
+    c = client(srv, concurrency=1)
+    c.lock.acquire()  # the watch's reading holds the only slot
+    try:
+        t0 = _t.monotonic()
+        with pytest.raises(SheetError) as e:
+            c.read(jpeg(320, 240), deadline_s=0.3, label="locate 3")
+        assert e.value.kind == "timeout" and "混んでいる" in str(e.value) and "0 秒" not in str(e.value)
+        assert _t.monotonic() - t0 < 1.0 and srv.calls == []  # never sent
+    finally:
+        c.lock.release()
+    assert c.read(jpeg(320, 240), deadline_s=5).problems  # the slot is free again (and released after)
+    assert c.lock.acquire(blocking=False)
+    c.lock.release()
+
+
+def test_a_deadline_caps_the_socket_wait_and_a_slow_stream():
+    import time as _t
+
+    class SlowStream(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def __iter__(self):
+            for k in range(50):
+                _t.sleep(0.05)
+                yield b": still reading\n"
+
+    calls = []
+
+    def opener(req, timeout):
+        calls.append(timeout)
+        return SlowStream()
+    c = SheetClient(URL, TOKEN, opener=opener, sleep=lambda s: None)
+    t0 = _t.monotonic()
+    with pytest.raises(SheetError) as e:
+        c.read(jpeg(320, 240), on_problem=lambda p: False, deadline_s=0.4, label="locate 3")
+    assert e.value.kind == "timeout" and _t.monotonic() - t0 < 1.0
+    assert calls and calls[0] <= 0.4  # the socket waits no longer than what is left
+    # a socket timeout at the deadline is "busy", not "cannot connect"
+
+    def timing_out(req, timeout):
+        _t.sleep(timeout)
+        raise urllib.error.URLError(TimeoutError("timed out"))
+    c = SheetClient(URL, TOKEN, opener=timing_out, sleep=lambda s: None)
+    with pytest.raises(SheetError) as e:
+        c.read(jpeg(320, 240), deadline_s=0.2)
+    assert e.value.kind == "timeout"
+    # without a deadline nothing changes: the socket's own timeout
+    srv = FakeServer(ANSWER)
+    client(srv).read(jpeg(320, 240))
+    assert srv.calls[0]["timeout"] == 180.0
