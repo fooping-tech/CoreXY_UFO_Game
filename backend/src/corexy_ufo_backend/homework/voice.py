@@ -49,7 +49,10 @@ class VoiceConfig:
     language: str = "ja"
     max_s: float = 20.0
     min_s: float = 0.4
-    min_rms: float = 0.004  # quieter than this is no voice (a float32 signal, full scale 1.0)
+    # #246: the loudest LOUD_WINDOW_S of the recording quieter than this is no voice (float32, full
+    # scale 1.0). Not the whole recording's mean: the silence before / after the words pulled a
+    # child's voice a little away from the MacBook's microphone under 0.004 (the room alone: ~0.002)
+    min_rms: float = 0.003
     device: str = ""  # "" = the default input; else part of the device's name
     preload: bool = True
     # the tutor's model is unloaded when idle (the first answer then takes ~10 s): a tiny turn keeps
@@ -62,7 +65,7 @@ class VoiceConfig:
         d = sm.get("voice") if isinstance(sm.get("voice"), dict) else {}
         return cls(enabled=bool(d.get("enabled", True)), model=str(d.get("model", cls.model)),
                    language=str(d.get("language", "ja")), max_s=min(max(float(d.get("max_s", 20.0)), 1.0), 60.0),
-                   min_s=max(float(d.get("min_s", 0.4)), 0.0), min_rms=max(float(d.get("min_rms", 0.004)), 0.0),
+                   min_s=max(float(d.get("min_s", 0.4)), 0.0), min_rms=max(float(d.get("min_rms", 0.003)), 0.0),
                    device=str(d.get("device", "")), preload=bool(d.get("preload", True)),
                    warm_every_s=max(float(d.get("warm_every_s", 240.0)), 0.0))
 
@@ -163,6 +166,23 @@ def _close_late(rec: Recorder) -> None:
         rec.stop()
     except Exception:  # pragma: no cover
         log.exception("voice: closing a late microphone")
+
+
+LOUD_WINDOW_S = 0.25
+
+
+def loudness(audio: np.ndarray) -> tuple[float, float]:
+    """(the RMS of the loudest LOUD_WINDOW_S, the whole recording's RMS) (#246)."""
+    a = np.asarray(audio, np.float32).reshape(-1)
+    if not len(a):
+        return 0.0, 0.0
+    whole = float(np.sqrt(np.mean(np.square(a))))
+    n = int(RATE * LOUD_WINDOW_S)
+    if len(a) <= n:
+        return whole, whole
+    c = np.concatenate([[0.0], np.cumsum(np.square(a, dtype=np.float64))])
+    win = (c[n:] - c[:-n]) / n
+    return float(np.sqrt(win.max())), whole
 
 
 def stt_available() -> str:
@@ -268,9 +288,12 @@ class VoiceService:
         rec, self._recorder, self._owner = self._recorder, None, None
         audio = await asyncio.to_thread(rec.stop)
         secs = len(audio) / RATE
-        rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-        if secs < self.config.min_s or rms < self.config.min_rms:
+        loud, whole = loudness(audio)
+        if secs < self.config.min_s or loud < self.config.min_rms:
+            log.info("voice: not heard: %.1f s, loudest %.4f, whole %.4f (min %.1f s, %.4f)", secs, loud, whole,
+                     self.config.min_s, self.config.min_rms)
             raise VoiceError("not_heard", "声が聞こえませんでした（短い・小さい）")
+        log.info("voice: %.1f s, loudest %.4f, whole %.4f -> Whisper", secs, loud, whole)
         self._busy = True
         t0 = time.monotonic()
         try:

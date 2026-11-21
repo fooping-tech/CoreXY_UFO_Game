@@ -84,6 +84,33 @@ async def test_too_short_or_too_quiet_is_not_heard_and_never_transcribed():
         assert e.value.kind == "not_heard" and w.calls == 0
 
 
+async def test_a_short_quiet_word_in_a_long_silence_is_heard():
+    """#246: 3 s held, 0.6 s of words at the MacBook's level from a little away, room noise around:
+    the whole recording's mean (0.0028) was under the old 0.004; the loudest part is the voice."""
+    from corexy_ufo_backend.homework.voice import loudness
+    rng = np.random.default_rng(0)
+    t = np.arange(int(RATE * 0.6)) / RATE
+    words = (0.006 * np.sin(2 * np.pi * 220 * t) * (1 + 0.5 * np.sin(2 * np.pi * 3 * t))).astype(np.float32)
+    audio = (rng.normal(0, 0.0012, RATE * 3)).astype(np.float32)
+    audio[RATE: RATE + len(words)] += words
+    loud, whole = loudness(audio)
+    assert whole < 0.004 and loud > 0.004  # the old check would have dropped it
+    w = FakeWhisper()
+    v, _ = voice(FakeMic(audio), w)
+    o = object()
+    await v.start(o)
+    assert (await v.stop(o))["text"] == "3ばんが わからない" and w.calls == 1
+    # the room alone is still not a voice
+    w = FakeWhisper()
+    v, _ = voice(FakeMic((rng.normal(0, 0.0012, RATE * 3)).astype(np.float32)), w)
+    o = object()
+    await v.start(o)
+    with pytest.raises(VoiceError) as e:
+        await v.stop(o)
+    assert e.value.kind == "not_heard" and w.calls == 0
+    assert loudness(np.zeros(0, np.float32)) == (0.0, 0.0)
+
+
 async def test_whispers_made_up_words_are_not_heard():
     assert clean_text("ご視聴ありがとうございました") == "" and clean_text("  ") == ""
     assert clean_text("ありがとう UFOくん") == "ありがとう UFOくん"
