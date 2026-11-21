@@ -381,32 +381,62 @@ func _test_device_test_tab(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
-## #230: the プリント tab tries the worksheet reader (POST /v1/sheet) with a connected camera.
+## #230: the プリント tab tries the worksheet reader (POST /v1/sheet) with a connected camera: the
+## frame is cut out and turned upright before it is sent; what was sent and the answer are shown.
 func _test_sheet_check_tab(rs: Node) -> void:
 	var game := _study_game()
 	var st: SettingsScreen = game.settings
+	var p: SheetCheckPanel = st.sheet
+	p.settings_path = ""  # never the player's own user://sheet_check.cfg
+	p.rotations = {}
+	p.regions = {}
 	game.show_title()
 	game.open_settings()
 	st.show_tab(SettingsScreen.SHEET_TAB)
-	var p: SheetCheckPanel = st.sheet
 	st._process(0.0)
-	_ok(st.sheet_checking() and not st.testing() and not game.calibrating() and p._read_b.disabled
+	_ok(st.sheet_checking() and not st.testing() and not game.calibrating() and p._read_b.disabled and p._look_b.disabled
 		and not st._save_b.visible and st._cancel_b.text.begins_with("閉じる"),
-		"sheet check: the プリント tab shows; without a backend or a camera 撮って読む cannot be pressed", p._camera_state.text)
+		"sheet check: the プリント tab shows; without a backend or a camera nothing can be taken", p._camera_state.text)
 	p.read_now()
 	_ok(not p.waiting() and not p.result_ok and p.result_text.contains("つながっていない"),
 		"sheet check: pressed anyway, it says why and sends nothing", p.result_text)
 	p.pick_camera("focus")
 	_ok(p.role == "focus" and p._camera_buttons["focus"].button_pressed and not p._camera_buttons["overview"].button_pressed,
 		"sheet check: the arm camera can be picked")
-	# an answer over the frame that was sent
-	p.shot = Image.create(640, 480, false, Image.FORMAT_RGB8)
+	p.pick_camera("overview")
+	# the part sent, turned upright: a 400x300 frame, its right half, upside down
+	var img := Image.create(400, 300, false, Image.FORMAT_RGB8)
+	img.fill_rect(Rect2i(200, 0, 200, 300), Color.WHITE)
+	img.set_pixel(390, 290, Color.RED)  # the bottom right of the frame
+	var out := SheetCheckPanel.prepare(img, 180, Rect2(0.5, 0, 0.5, 1))
+	var turned := SheetCheckPanel.prepare(img, 90, Rect2())
+	var tiny := SheetCheckPanel.prepare(img, 0, Rect2(0, 0, 0.01, 0.01))
+	_ok(out.get_size() == Vector2i(200, 300) and out.get_pixel(9, 9).is_equal_approx(Color.RED)
+		and turned.get_size() == Vector2i(300, 400) and tiny.get_size() == Vector2i(400, 300) and img.get_pixel(390, 290) == Color.RED,
+		"sheet check: the region is cut out, then turned (180° / 90°); a region too small sends the whole frame", str(out.get_size()))
+	p.set_rotation_deg(180)
+	p.set_region(Rect2(Vector2(0.9, 0.8), Vector2(-0.5, -0.8)))  # dragged from bottom right to top left
+	_ok(p.rotation_deg() == 180 and p.region().is_equal_approx(Rect2(0.4, 0, 0.5, 0.8)) and p.rotation_deg("focus") == 0
+		and p._region_label.text.contains("左 40%") and not p._clear_b.disabled
+		and p._rotation.get_selected_id() == 180,
+		"sheet check: the turn and the region are kept per camera", p._region_label.text)
+	p.take_frame(img, false)  # 送る画像を見る: shown, not sent
+	_ok(not p.waiting() and p.view_mode == "sent" and p.sent.get_size() == Vector2i(200, 240)
+		and p._view_label.text.contains("まだ送っていない") and p._view_label.text.contains("上下反転"),
+		"sheet check: what would be sent is shown before sending", p._view_label.text)
+	p.show_view("frame")
+	_ok(p.view_mode == "frame" and p._view_label.text.contains("400×300"), "sheet check: the whole frame can be shown again",
+		p._view_label.text)
+	# an answer over the image sent
+	p.sending = true
+	p.show_view("sent")
 	p._rid = "sr1"
 	game.ws.ack.emit("sr1", false, {"reason": "timeout"})  # the link's own few seconds: keep waiting
 	var still := p.waiting()
 	game.ws.ack.emit("other", true, {"command": "sheet_read", "problems": []})  # not ours
 	game.ws.ack.emit("sr1", true, {"command": "sheet_read", "read_anything": true, "summary": "2 問（正解 1・まちがい 1）",
 		"seconds": 9.5, "paper": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]], "notes": ["形の正しくない枠を除外"],
+		"response": {"id": "sheet-1", "model": "tutor-ufo-v6-sheet", "image": {"width": 200, "height": 240}},
 		"problems": [
 			{"number": 1, "answer_status": "correct", "student_answer": "12", "correct_answer": "12", "visible": "full",
 				"notes": [], "box": [100, 100, 900, 300], "answer_box": [600, 150, 880, 280]},
@@ -414,22 +444,24 @@ func _test_sheet_check_tab(rs: Node) -> void:
 				"notes": ["計算し直した"], "box": [100, 400, 900, 600], "answer_box": null}]})
 	st._process(0.0)
 	_ok(still and not p.waiting() and p.result_ok and p._summary.text.contains("2 問") and p._summary.text.contains("9.5 秒")
-		and p._summary.text.contains("切り出し: あり") and p._list.text.contains("○ 1. 正解　答え「12」")
+		and p._list.text.contains("○ 1. 正解　答え「12」")
 		and p._list.text.contains("× 2. まちがい　答え「42」　正答 45（見切れ）　※計算し直した")
 		and p._list.text.contains("※ 形の正しくない枠を除外") and st._status.text.contains("プリント読み取り: 2 問")
-		and not p._live_b.disabled,
-		"sheet check: the answer is listed and kept over the frame (the link's early timeout does not end the wait)", p._list.text)
-	# the boxes land on the shown frame (kept aspect, centred)
+		and p._json.text.contains("\"model\": \"tutor-ufo-v6-sheet\"") and p._view_label.text.begins_with("送った画像")
+		and p._view_label.text.contains("サーバが受け取ったのは 200×240"),
+		"sheet check: the answer is listed over the image sent, with the server's JSON (the link's early timeout does not end the wait)",
+		p._view_label.text)
+	# the boxes land on the shown image (kept aspect, centred)
 	var shown := SheetCheckPanel.frame_rect(Vector2(640, 480), Vector2(630, 470))
 	var r := SheetCheckPanel.box_rect([100, 100, 900, 300], shown)
 	_ok(shown.size.is_equal_approx(Vector2(626.6667, 470)) and is_equal_approx(shown.position.x, 1.6666667)
 		and r.position.is_equal_approx(shown.position + Vector2(62.66667, 47)) and r.size.is_equal_approx(Vector2(501.3333, 94))
 		and SheetCheckPanel.box_rect(null, shown) == Rect2(),
-		"sheet check: a 0..1000 box is drawn on the frame as shown", str(r))
+		"sheet check: a 0..1000 box is drawn on the image as shown", str(r))
 	# a refusal, and a sheet it could not read
 	p._rid = "sr2"
 	game.ws.ack.emit("sr2", false, {"command": "sheet_read", "reason": "学習支援 AI のトークンが違う"})
-	_ok(not p.waiting() and not p.result_ok and p.result_text.contains("トークンが違う"),
+	_ok(not p.waiting() and not p.result_ok and p.result_text.contains("トークンが違う") and p._json.text.contains("トークンが違う"),
 		"sheet check: a refusal says why", p.result_text)
 	p.show_result({"read_anything": false, "summary": "問題を読めなかった", "problems": []})
 	_ok(not p.result_ok and p._summary.text.begins_with("読めなかった"), "sheet check: nothing read is not \"no problems\"",
@@ -438,8 +470,9 @@ func _test_sheet_check_tab(rs: Node) -> void:
 	p._rid = "sr3"
 	p.tick_hidden(SheetCheckPanel.WAIT_S + 1.0)
 	_ok(not p.waiting() and p.result_text.contains("返事がない"), "sheet check: no answer in time ends the wait", p.result_text)
+	p.set_region(Rect2())
 	p.show_live()
-	_ok(p.shot == null and p.result.is_empty() and p._list.text == "", "sheet check: ライブに戻す clears the answer")
+	_ok(p.view_mode == "live" and not p.region().has_area() and p._clear_b.disabled, "sheet check: ライブ, and the region cleared")
 	game._unhandled_input(_key(KEY_ESCAPE))
 	_ok(not game.settings_active() and not st.sheet_checking(), "sheet check: Esc closes the screen")
 	remove_child(game)
