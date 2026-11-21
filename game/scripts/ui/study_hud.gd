@@ -28,7 +28,12 @@ var _mode: Label
 var _grade: Label
 var _grade_prev: Button
 var _grade_next: Button
-var _check_rows: Array = []  # [box Label, text Label]
+## #237: "きょうのミッション" (the 4 steps) and, apart from it, each problem's state / verdict
+const MISSION := ["こたえを かく", "UFOくんと かくにん", "パワーを うけとる", "ゲームで あそぶ"]
+var mission_rows: Array = []  # [mark Label, text Label]
+var _energy: Label
+var _powers: PanelContainer
+var _power_buttons: Array[Button] = []
 var _count: Label
 var _chips: Array = []  # [PanelContainer, Label]
 var _bar: ProgressBar
@@ -152,16 +157,19 @@ func _build_checklist() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 8)
 	p.add_child(v)
-	v.add_child(label("%sの宿題チェック表" % ctl.weekday_label, 24, BLUE))
-	for text in ["さんすうプリント", "むずかしい問題にチャレンジ", "おかたづけ"]:
+	v.add_child(label("きょうのミッション", 26, BLUE))
+	for i in MISSION.size():
 		var h := HBoxContainer.new()
-		h.add_theme_constant_override("separation", 10)
-		var box := label("☐", 30, INK)
-		var t := label(text, 22, INK)
-		h.add_child(box)
+		h.add_theme_constant_override("separation", 8)
+		var mark := label("", 24, INK)
+		mark.custom_minimum_size = Vector2(30, 0)
+		var t := label("%s %s" % ["①②③④"[i], MISSION[i]], 19, INK)
+		t.clip_text = true
+		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(mark)
 		h.add_child(t)
 		v.add_child(h)
-		_check_rows.append([box, t])
+		mission_rows.append([mark, t])
 	v.add_child(HSeparator.new())
 	_count = label("宿題 0 / 3 問", 30, INK)
 	v.add_child(_count)
@@ -172,7 +180,10 @@ func _build_checklist() -> void:
 		var c := panel(Color("e8ecf4"), Color("9aa6bb"), 12, 3)
 		c.custom_minimum_size = Vector2(98, 0)
 		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var l := label("", 19, INK)
+		var csb := c.get_theme_stylebox("panel") as StyleBoxFlat
+		csb.content_margin_left = 6  # #237: three verdicts side by side in the right column
+		csb.content_margin_right = 6
+		var l := label("", 17, INK)
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		c.add_child(l)
 		chips.add_child(c)
@@ -190,6 +201,8 @@ func _build_checklist() -> void:
 	_bar.add_theme_stylebox_override("background", bg)
 	_bar.add_theme_stylebox_override("fill", fill)
 	v.add_child(_bar)
+	_energy = label("", 22, ORANGE)
+	v.add_child(_energy)
 	_timer = label("べんきょう 00:00", 24, INK)
 	v.add_child(_timer)
 	_notice = label("", 17, Color("8a4b00"))
@@ -317,6 +330,23 @@ func _build_centre() -> void:
 	_play.add_theme_color_override("font_hover_color", Color.WHITE)
 	_play.pressed.connect(func(): ctl.play_game())
 	root.add_child(_play)
+	# #237: the power ticket: one of the game's power-ups (keys 1 / 2 / 3, a click, or fingers)
+	_powers = panel(Color("10223a"), Color("ffe03c"), 22, 5)
+	_powers.mouse_filter = Control.MOUSE_FILTER_STOP
+	var pr := HBoxContainer.new()
+	pr.add_theme_constant_override("separation", 14)
+	_powers.add_child(pr)
+	for i in StudyModeController.POWERUPS.size():
+		var kind: String = StudyModeController.POWERUPS[i][0]
+		var b := Button.new()
+		b.text = "%d\n%s" % [i + 1, StudyModeController.POWERUPS[i][1]]
+		b.custom_minimum_size = Vector2(196, 120)
+		b.add_theme_font_size_override("font_size", 26)
+		b.focus_mode = Control.FOCUS_NONE
+		b.pressed.connect(func(): ctl.choose_powerup(kind))
+		pr.add_child(b)
+		_power_buttons.append(b)
+	root.add_child(_powers)
 	_time_panel = panel(Color("10223a"), Color("4fd0ec"), 22, 5)
 	var tv := VBoxContainer.new()
 	_time_panel.add_child(tv)
@@ -353,11 +383,11 @@ func flash(strength := 0.8, secs := 0.5) -> void:
 func _on_state(_prev: String, cur: String) -> void:
 	visible = cur != "OFF"
 	match cur:
-		"CELEBRATION":
+		"REWARD_REVEAL":
 			flash(0.9, 0.8)
 			crackers.burst()
 			_pop_banner()
-		"GAME_UNLOCKED":
+		"GAME_READY_WITH_REWARD":
 			flash(0.6, 0.6)
 			crackers.burst()
 			_pop_banner()
@@ -386,26 +416,45 @@ func refresh() -> void:
 	_grade_next.visible = choosing
 	# the checklist
 	var t := ctl.tracker
-	var tidy := StudyModeController.cleanup_enabled()
-	var done := [t.complete or ctl.completion_fired, t.is_filled(ctl.help_problem), ctl.cleanup_ok]
-	_check_rows[2][1].text = "おかたづけ" if tidy else "おかたづけ（今はなし）"
-	_check_rows[2][0].visible = tidy
-	for i in 3:
-		var row: Array = _check_rows[i]
-		row[0].text = "☑" if done[i] else ("☒" if i == 2 and st in ["CLEANUP_FAILED"] else "☐")
-		row[0].add_theme_color_override("font_color", GREEN if done[i] else INK)
-		row[1].add_theme_color_override("font_color", GREEN if done[i] else INK)
-	_count.text = "宿題 %d / %d 問" % [t.filled_count(), t.count]
-	_bar.value = t.filled_count()
+	# the mission: which step we are on (done ✓ / now ▶)
+	var step := mission_step(st)
+	for i in mission_rows.size():
+		var row: Array = mission_rows[i]
+		row[0].text = "✓" if i < step else ("▶" if i == step else "")
+		var col := GREEN if i < step else (ORANGE if i == step else Color("8a93a6"))
+		row[0].add_theme_color_override("font_color", col)
+		row[1].add_theme_color_override("font_color", col)
+		row[1].text = "%s %s%s" % ["①②③④"[i], MISSION[i], " ←いまここ" if i == step else ""]
+	# each problem: written or not while studying; the verdict once the check has begun
+	var checking := ctl.completion_fired
+	if checking:
+		_count.text = "答え合わせ ○ %d / %d" % [ctl.grading.count(StudyGrading.CORRECT), ctl.grading.numbers.size()]
+		_bar.value = ctl.grading.count(StudyGrading.CORRECT)
+	else:
+		_count.text = "宿題 %d / %d 問" % [t.filled_count(), t.count]
+		_bar.value = t.filled_count()
 	for i in _chips.size():
-		var s := t.shown_state(i + 1)
+		var n := i + 1
+		if checking:
+			var v: String = ctl.grading.verdicts.get(n, StudyGrading.PENDING) if ctl.shown.has(n) else StudyGrading.PENDING
+			var look: Array = StudyGrading.shown(v)
+			var vcol: Color = {StudyGrading.CORRECT: Color("c9f2d4"), StudyGrading.REVIEW: Color("fff0a8"),
+				StudyGrading.UNCLEAR: Color("e6e9f0")}.get(v, Color("eef1f7"))
+			if n == ctl.reveal_current and not ctl.shown.has(n):
+				vcol = Color("d8ecff")
+			_chips[i][1].text = "%dばん %s\n%s" % [n, look[0], chip_word(v)]
+			(_chips[i][0].get_theme_stylebox("panel") as StyleBoxFlat).bg_color = vcol
+			continue
+		var s := t.shown_state(n)
 		var icon: String = {StudyQuestionTracker.EMPTY: "○", StudyQuestionTracker.WRITING: "✎",
 			StudyQuestionTracker.FILLED: "✓", StudyQuestionTracker.HELD: "？"}.get(s, "○")
 		var col: Color = {StudyQuestionTracker.EMPTY: Color("e8ecf4"), StudyQuestionTracker.WRITING: Color("ffe9a8"),
 			StudyQuestionTracker.FILLED: Color("c9f2d4"), StudyQuestionTracker.HELD: Color("d6dcf0")}.get(s, Color.WHITE)
-		var star := "★" if i + 1 == ctl.help_problem else ""
-		_chips[i][1].text = "%s%d %s\n%s" % [star, i + 1, icon, StudyQuestionTracker.label(s)]
+		var star := "★" if n == ctl.help_problem else ""
+		_chips[i][1].text = "%s%d %s\n%s" % [star, n, icon, StudyQuestionTracker.label(s)]
 		(_chips[i][0].get_theme_stylebox("panel") as StyleBoxFlat).bg_color = col
+	var e := ctl.energy()
+	_energy.text = ("ゲームエネルギー " + "⚡".repeat(e)) if checking and e > 0 else ""
 	_timer.text = "べんきょう " + HomeworkClient.format_elapsed(ctl.elapsed_s())
 	_notice.text = ctl.notice
 	# the bubble
@@ -435,7 +484,8 @@ func refresh() -> void:
 	# the worksheet
 	sheet.worksheet = ctl.worksheet
 	sheet.tracker = ctl.tracker
-	sheet.highlight = ctl.help_problem if st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING" else 0
+	sheet.highlight = ctl.help_problem if st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING" else \
+		(ctl.reveal_current if st == "GRADING_QUESTION" else 0)
 	sheet.marks = ctl.services.sheet_marks() if ctl.services.mode == "camera" else {}
 	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
 	sheet.photo_texture = cams.texture("overview") if cams != null and cams.has_feed("overview") else null
@@ -445,7 +495,7 @@ func refresh() -> void:
 	else:
 		sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
 			("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
-	sheet.visible = st not in ["CELEBRATION", "GAME_UNLOCKED", "HOMEWORK_COMPLETE"]
+	sheet.visible = st not in ["REWARD_REVEAL", "POWERUP_SELECT", "GAME_READY_WITH_REWARD"]
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)
 	var stage := ctl.capture_stage()
@@ -456,20 +506,29 @@ func refresh() -> void:
 	scope.position = Vector2(210.0, EXPLAIN_Y + 10.0)  # under the sheet and the checklist, in the middle
 	scope.queue_redraw()
 	# banners
-	var celebrate := st in ["CELEBRATION", "HOMEWORK_COMPLETE"]
-	var unlocked := st == "GAME_UNLOCKED"
-	_banner.visible = celebrate or unlocked
-	_banner.text = "宿題完了！！" if celebrate else "MISSION COMPLETE!"
+	var revealing := st in ["REWARD_REVEAL", "POWERUP_SELECT"]
+	var unlocked := st == "GAME_READY_WITH_REWARD"
+	_banner.visible = revealing or unlocked
+	_banner.text = banner_text(st, ctl.reward)
+	_banner.add_theme_font_size_override("font_size", 84 if _banner.text.length() <= 14 else 60)
 	_banner.size = Vector2(vs.x, 110)
 	_banner.position = Vector2(0, EXPLAIN_Y + 20.0)
 	_banner.pivot_offset = _banner.size * 0.5
-	_sub_banner.visible = unlocked
-	_sub_banner.text = "GAME MODE UNLOCKED!" + ("" if ctl.cleanup_ok or not StudyModeController.cleanup_enabled()
+	_sub_banner.visible = revealing or unlocked
+	_sub_banner.text = reward_text(st, ctl.reward) + ("" if not unlocked or ctl.cleanup_ok or not StudyModeController.cleanup_enabled()
 		else "\n（お片付けは大人の人と確認してね）")
-	_sub_banner.size = Vector2(vs.x, 120)
-	_sub_banner.position = Vector2(0, EXPLAIN_Y + 130.0)
+	_sub_banner.size = Vector2(vs.x - 40, 150)
+	_sub_banner.position = Vector2(20, EXPLAIN_Y + 125.0)
+	_sub_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_sub_banner.add_theme_font_size_override("font_size", 34)
+	_powers.visible = st == "POWERUP_SELECT"
+	_powers.position = Vector2(vs.x * 0.5 - 330, EXPLAIN_Y + 300.0)
+	for i in _power_buttons.size():
+		var chosen: bool = StudyModeController.POWERUPS[i][0] in ctl.selected_powerups
+		_power_buttons[i].disabled = not ctl.selected_powerups.is_empty() and not chosen
+		_power_buttons[i].modulate = Color("ffe03c") if chosen else Color.WHITE
 	_play.visible = unlocked
-	_play.position = Vector2(48, EXPLAIN_Y + 250.0)
+	_play.position = Vector2(48, EXPLAIN_Y + 300.0)
 	_time_panel.visible = st in ["CLEANUP", "CLEANUP_FAILED"]
 	_time_label.text = study_time_text(ctl.elapsed_s())
 	_time_panel.position = Vector2(vs.x * 0.5 - 200, EXPLAIN_Y)
@@ -482,6 +541,55 @@ func refresh() -> void:
 	_error.position = Vector2(40, vs.y * 0.5)
 	_keys.text = key_help(st, ctl.services.mode)
 
+## #237: the mission's step now: 0 write, 1 check with UFOくん, 2 take the power, 3 play.
+static func mission_step(st: String) -> int:
+	if st in StudyModeController.CHECK_STATES:
+		return 1
+	if st in StudyModeController.REWARD_STATES:
+		return 2
+	if st in ["CLEANUP", "CLEANUP_FAILED", "GAME_READY_WITH_REWARD"]:
+		return 3
+	return 0
+
+## A chip is narrow: the verdict in a few letters (the long words are in UFOくん's line).
+static func chip_word(v: String) -> String:
+	return {StudyGrading.CORRECT: "せいかい！", StudyGrading.REVIEW: "見てみよう", StudyGrading.UNCLEAR: "見えにくい"}.get(v, "かくにん中")
+
+static func banner_text(st: String, r: Dictionary) -> String:
+	if st == "GAME_READY_WITH_REWARD":
+		return "STUDY POWER LOADED!"
+	return "PERFECT!" if bool(r.get("perfect", false)) else "MISSION COMPLETE!"
+
+static func power_name(kind: String) -> String:
+	for pw in StudyModeController.POWERUPS:
+		if pw[0] == kind:
+			return pw[1]
+	return kind.to_upper()
+
+## The reward in words: the counts, then what the game gets.
+static func reward_text(st: String, r: Dictionary) -> String:
+	if r.is_empty():
+		return ""
+	var lines: Array[String] = []
+	if st != "GAME_READY_WITH_REWARD":
+		var parts := ["%dもん かくにん" % int(r.get("question_count", 0)), "%dもん せいかい" % int(r.get("confirmed_correct", 0))]
+		var review := (r.get("needs_review", []) as Array).size() + (r.get("unclear", []) as Array).size()
+		if review > 0:
+			parts.append("%dもん みなおし" % review)
+		lines.append("  ".join(parts))
+	var gets := []
+	if int(r.get("time_bonus_s", 0)) > 0:
+		gets.append("TIME +%d" % int(r.time_bonus_s))
+	var chosen: Array = r.get("selected_powerups", [])
+	if not chosen.is_empty():
+		for k in chosen:
+			gets.append("%s READY" % power_name(str(k)))
+	elif int(r.get("power_tickets", 0)) > 0:
+		gets.append("POWER TICKET ×%d" % int(r.power_tickets))
+	if not gets.is_empty():
+		lines.append("  ".join(gets))
+	return "\n".join(lines)
+
 static func study_time_text(secs: float) -> String:
 	var s := int(maxf(secs, 0.0))
 	if s >= 3600:
@@ -492,7 +600,11 @@ static func key_help(state: String, mode: String) -> String:
 	var parts := ["Enter 次へ/確認", "指 1・2・3 → いいね 解説（Y も）", "Space 止める"]
 	if state in ["INTRO", "WAITING_FOR_WORKSHEET"]:
 		parts.append(", . 学年")
-	if mode == "simulated":
+	if state == "POWERUP_SELECT":
+		parts.append("1/2/3（指でも）パワーを えらぶ")  # #237
+	elif state == "REVIEW_SUMMARY":
+		parts.append("R もう一度読む")
+	elif mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
 	elif state in StudyVoice.TALK_STATES:
 		parts.append("V 押して話す")  # #233

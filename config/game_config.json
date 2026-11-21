@@ -576,6 +576,14 @@
       "open_claw": false,
       "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
     },
+    "answer_check": {
+      "checking_s": 0.9,
+      "reveal_s": 2.5,
+      "time_per_correct_s": 10,
+      "time_max_s": 30,
+      "demo_results": ["correct", "incorrect", "correct"],
+      "_note": "#236 / #237: when every problem is written, UFOくん checks the answers with the child: the sheet is read once and the problems are shown one at a time from 1 (checking_s of \"かくにん中\", reveal_s per problem). correct (the server checked the sum) = ○ せいかい and a game energy; incorrect / partial = ？ いっしょに見よう with the worksheet's first hint (never a red cross: the reader can be wrong); unreadable / cut off / not read = 見えにくかった (no verdict, never wrong). R reads the sheet again after a rewrite (a problem once right stays right; the reward is worked out again, never twice); Enter goes on. The reward: time_per_correct_s per right problem up to time_max_s, one power ticket once every problem was checked (a HELP never takes anything away; all right = only the PERFECT! show); the ticket picks SPEED UP / DOUBLE SCORE / MULTI BALL (1 / 2 / 3, a click, or fingers). The game takes the reward over in #239. demo_results: the simulated mode's reading of each problem the first time (a rescan finds them rewritten right; unreadable stays)."
+    },
     "voice": {
       "enabled": true,
       "key": "V",

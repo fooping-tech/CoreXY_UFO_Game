@@ -35,6 +35,9 @@ signal explain_failed(reason: String, fallback: Dictionary)
 ## The tutor AI's "look d_mm further" turned into the next target (#104; nothing moves yet)
 signal navigated(target: Dictionary)
 signal navigate_failed(reason: String)
+## #237: the answer check's reading of the whole sheet ([{number, answer_status, student_answer?, visible?}])
+signal graded(problems: Array)
+signal grade_failed(reason: String)
 
 const MODES := ["simulated", "camera"]
 ## the earlier study_mode.demo.mode values (#86), read as the new ones
@@ -68,6 +71,12 @@ var seen := false
 var _locate_rid := ""
 ## #232: how the last located frame was cut and turned ({rotation, region, size}; {} = as it was)
 var _locate_prep := {}
+## #237: the last per-problem reading the watch brought (camera mode: its answer states)
+var last_answers: Array = []
+## the simulated mode's answer check: the result of each problem the first time (study_mode.answer_check.demo_results);
+## a rescan finds the ones to look at again written right (the child rewrote them)
+var demo_results: Array = ["correct", "incorrect", "correct"]
+var _grade_token := 0
 var _explain_rid := ""
 var _help_rid := ""
 var _nav_rid := ""
@@ -197,6 +206,8 @@ func begin(ws: Dictionary, label: String) -> void:
 	_mock_next_reading = 0.0
 	_mock_seen_at = -1.0
 	_occlude_left = 0
+	last_answers = []
+	_grade_token += 1
 	if homework != null:
 		homework._ensure_link()  # the voice and the answers come over its aux link
 
@@ -403,7 +414,42 @@ func _on_progress(data: Dictionary) -> void:
 	var probs: Array = []
 	for q in data.get("questions", []) if data.get("questions") is Array else []:
 		probs.append(q.get("filled_prob"))
+	if data.get("answers") is Array and not (data.answers as Array).is_empty():
+		last_answers = (data.answers as Array).duplicate(true)
 	reading.emit(probs, bool(data.get("held", false)), reason)
+
+# ------------------------------------------------------------------ the answer check (#237)
+## Read the whole sheet once for the answer check -> graded(problems) / grade_failed(reason).
+## `rescan`: after the child rewrote what was to be looked at again.
+func grade(rescan := false) -> void:
+	_grade_token += 1
+	var tok := _grade_token
+	if inject_fail == "grade":
+		inject_fail = ""
+		_after(1.0, func(): if tok == _grade_token: grade_failed.emit("プリントを読めませんでした（失敗の注入）"))
+		return
+	if mode == "simulated":
+		var out: Array = []
+		var probs: Array = worksheet.get("problems", []) if worksheet.get("problems") is Array else []
+		for i in probs.size():
+			var st := str(demo_results[i]) if i < demo_results.size() else "correct"
+			if rescan and st != "unreadable":
+				st = "correct"  # rewritten
+			out.append({"number": int(probs[i].number), "answer_status": st, "visible": "full"})
+		_after(1.5, func(): if tok == _grade_token: graded.emit(out))
+		return
+	# camera (Phase 1): what the watch read last; Phase 2 reads the sheet for the check itself
+	var got := last_answers.duplicate(true)
+	_after(0.5, func():
+		if tok != _grade_token:
+			return
+		if got.is_empty():
+			grade_failed.emit("まだプリントを読めていません")
+		else:
+			graded.emit(got))
+
+func cancel_grade() -> void:
+	_grade_token += 1
 
 # ------------------------------------------------------------------ robot routing
 func backend_robot() -> bool:
