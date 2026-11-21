@@ -195,6 +195,12 @@ class HomeworkService:
     def _local(self, s: "_Session | None") -> bool:
         return self.study_local and s is not None and s.worksheet is not None
 
+    def _keep_local(self, s: "_Session | None", what: str) -> None:
+        """A local study session's images never go to the cloud (review on #234): what the
+        worksheet reader cannot do is refused, never sent to Claude / Codex / Jev instead."""
+        if self._local(s):
+            raise ValueError(f"{what}は勉強モード（ローカル LLM だけ、study.ai local）では使えません")
+
     def worksheet(self, worksheet_id: str) -> dict:
         if not worksheet_id:
             raise ValueError("worksheet_id is required")
@@ -336,8 +342,9 @@ class HomeworkService:
             raise ValueError("an advice is already being written")
         if not request_id:
             raise ValueError("request_id is required")
-        image = decode_jpeg(image_b64, self.config.max_image_bytes * 2)
         s = self.sessions.get(session_id)
+        self._keep_local(s, "アシスタントのアドバイス")
+        image = decode_jpeg(image_b64, self.config.max_image_bytes * 2)
         context: dict[str, Any] = {"composite": composite}
         if s is not None:
             t = s.elapsed()
@@ -389,6 +396,8 @@ class HomeworkService:
         {kind, problem, u, v, box, jev_box, verified, usable, page_check} or homework_locate_error.
         One at a time."""
         local = self.study_local and kind == "problem"
+        if not local:
+            self._keep_local(self.sessions.get(session_id), "止まっている問題・次の問題を探す機能")
         if self._advice_factory is None and not local:
             raise ValueError("no assistant to read the worksheet (study.provider)")
         if self._locate_task is not None and not self._locate_task.done():

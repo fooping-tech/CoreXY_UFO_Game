@@ -153,7 +153,7 @@ godot --headless --path game res://tests/test_runner.tscn
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
 #   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 537 件）
+# Python バックエンド（基準 538 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 

@@ -152,6 +152,23 @@ async def test_a_local_locate_reads_the_problem_box():
     await svc.close()
 
 
+async def test_a_local_study_session_refuses_what_would_go_to_the_cloud():
+    """Review on #234: the F1 helper's buttons with the study mode's session id never reach Claude / Jev."""
+    svc = local_service(FakeReader([prob(1, "blank")]))
+    sent = []
+
+    async def emit(m):
+        sent.append(m)
+    await svc.start("s", "mon-elem_1-01")
+    for kind in ("stuck", "next"):
+        with pytest.raises(ValueError, match="ローカル"):
+            await svc.locate("s", "l", kind, B64, emit)
+    with pytest.raises(ValueError, match="ローカル"):
+        await svc.advise("s", "a", B64, False, emit)
+    assert sent == [] and svc._locate_task is None and svc._advice_task is None
+    await svc.close()
+
+
 async def test_without_a_worksheet_the_assistant_watch_still_uses_jev():
     used = []
 
