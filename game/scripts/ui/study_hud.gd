@@ -50,6 +50,10 @@ var _error: PanelContainer
 var _error_text: Label
 var _flash: ColorRect
 var _keys: Label
+## #233: the voice dialogue: the microphone button (held) and what the child said / is happening
+var _voice_bar: PanelContainer
+var _mic: Button
+var _voice_text: Label
 var sheet: StudyWorksheetView
 var scope: StudyScopeView
 var crackers: StudyCrackers
@@ -67,8 +71,11 @@ func setup(controller: StudyModeController) -> void:
 	_build_header()
 	_build_checklist()
 	_build_bubble()
+	_build_voice()
 	_build_centre()
 	ctl.changed.connect(refresh)
+	if ctl.voice != null:
+		ctl.voice.changed.connect(refresh)
 	ctl.state_changed.connect(_on_state)
 	ctl.speech.line_started.connect(func(_t, _f): _typed = 0.0)
 	visible = false
@@ -226,6 +233,47 @@ func _build_bubble() -> void:
 	_keys.clip_text = true
 	root.add_child(_keys)
 
+## #233: over UFOくん's bubble: hold the microphone (or the talk key) and speak.
+func _build_voice() -> void:
+	_voice_bar = panel(Color("eaf6ff"), Color("5cb8ff"), 20, 3)
+	# portrait (#157): the left column, under the worksheet and over the bubble (the checklist is
+	# on the right down to about there)
+	_voice_bar.anchor_top = 1.0
+	_voice_bar.anchor_bottom = 1.0
+	_voice_bar.anchor_right = 1.0
+	_voice_bar.offset_left = 20
+	_voice_bar.offset_right = -(RIGHT_W + 26)
+	_voice_bar.offset_top = -378
+	_voice_bar.offset_bottom = -258
+	root.add_child(_voice_bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	_voice_bar.add_child(row)
+	_mic = Button.new()
+	_mic.text = "🎤"
+	_mic.custom_minimum_size = Vector2(52, 52)
+	_mic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_mic.add_theme_font_size_override("font_size", 24)
+	_mic.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
+	_mic.mouse_filter = Control.MOUSE_FILTER_STOP
+	_mic.button_down.connect(func(): if ctl.voice != null: ctl.voice.press())
+	_mic.button_up.connect(func(): if ctl.voice != null: ctl.voice.release())
+	row.add_child(_mic)
+	_voice_text = label("", 18, INK)
+	_voice_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_voice_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_voice_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(_voice_text)
+	_voice_bar.visible = false
+
+## What the voice bar says: the child's words, then how it goes.
+static func voice_line(heard: String, status: String) -> String:
+	if heard != "" and status != "":
+		return "きみ:「%s」\n%s" % [heard, status]
+	if heard != "":
+		return "きみ:「%s」" % heard
+	return status
+
 func _build_centre() -> void:
 	_explain = panel(Color("fff7d6"), ORANGE, 18, 4)
 	_explain.position = Vector2(20, EXPLAIN_Y)
@@ -365,6 +413,16 @@ func refresh() -> void:
 	if line != "":
 		_last_line = line
 	_bubble_text.text = _last_line
+	# #233: the voice dialogue
+	var vo := ctl.voice
+	if vo != null:
+		var status := vo.status_text()
+		var talking := vo.state != StudyVoice.IDLE
+		_voice_bar.visible = vo.enabled and ctl.services.mode != "simulated" and vo.in_talk_state() \
+			and (status != "" or vo.heard != "" or talking)
+		_voice_text.text = voice_line(vo.heard, status)
+		_mic.disabled = not (talking or vo.can_talk())
+		_mic.modulate = Color("ff8a8a") if vo.state == StudyVoice.LISTENING else Color.WHITE
 	var credit := ctl.services.voice_credit
 	_credit.text = credit if credit != "" else ("（声なし）" if not ctl.speech.voice_on else "")
 	# the explanation card
@@ -432,6 +490,8 @@ static func key_help(state: String, mode: String) -> String:
 		parts.append(", . 学年")
 	if mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
+	elif state in StudyVoice.TALK_STATES:
+		parts.append("V 押して話す")  # #233
 	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
 	return "  ".join(parts)
 

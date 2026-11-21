@@ -894,3 +894,117 @@ func _test_study_local_frames(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+
+## #233: the voice dialogue: hold V, speak, let go -> the text -> the tutor -> UFOくん says it.
+func _test_study_voice(rs: Node) -> void:
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	var vo := ctl.voice
+	var hud: StudyHud = game.study_hud
+	hw.sheet_settings_path = ""
+	var sent: Array = []
+	var real_link := hw.link
+	var spy := _VoiceLinkSpy.new()
+	spy.sent = sent
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.speech.clear()
+	# no voice in the backend: says why, sends nothing
+	hw.hello_seen = true
+	hw.voice_available = false
+	hw.voice_problem = "mlx-whisper を使えません"
+	var why := vo.blocker()
+	_ok(ctl.state == "STUDYING" and why.contains("mlx-whisper"), "study voice: without the backend's voice it says why", why)
+	hw.voice_available = true
+	hw.study_local = true
+	hw.worksheet_id = str(ctl.current_worksheet().get("worksheet_id", ""))
+	hw.link = spy  # what the study mode sends is recorded, nothing goes out
+	var overview := Image.create(320, 240, false, Image.FORMAT_RGB8)
+	vo.overview_source = func() -> Image: return overview
+	_ok(vo.can_talk() and vo.status_text().contains("V を おしながら"), "study voice: while studying it invites to talk",
+		vo.status_text())
+	ctl.handle_key(KEY_V)
+	var listening: bool = vo.state == StudyVoice.LISTENING and sent.size() == 1 and sent[0].type == "homework_listen_start"
+	ctl.handle_key_release(KEY_V)
+	var stop_rid := str(sent[-1].get("request_id", ""))
+	var hearing: bool = vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop"
+	hw._on_message({"type": "homework_heard", "request_id": stop_rid, "data": {"text": "3ばんが わからない"}})
+	var talk: Dictionary = sent[-1]
+	var asked: bool = talk.type == "homework_talk" and talk.data.text == "3ばんが わからない" and int(talk.data.target_problem) == 0 \
+		and str(talk.data.image_jpeg_base64) != "" and vo.state == StudyVoice.THINKING
+	hud.refresh()
+	var shown: bool = hud._voice_bar.visible and hud._voice_text.text.contains("「3ばんが わからない」") \
+		and hud._voice_text.text.contains("かんがえちゅう")
+	_ok(listening and hearing and asked and shown,
+		"study voice: held V listens, the release writes it down, the words and the worksheet go to the tutor",
+		str([listening, hearing, asked, shown, hud._voice_text.text]))
+	# the answer is spoken; the dialogue keeps its problem and turns
+	hw._on_message({"type": "homework_talk_result", "request_id": str(talk.request_id), "data": {
+		"message": "5こから2こ とると いくつかな？", "speech_lines": ["5こから2こ とると いくつかな？"], "action": "give_hint",
+		"target_problem": 3, "hint_level": 1, "need_recapture": false, "ufo_face": "normal"}})
+	var spoken: bool = ctl.speech.current.contains("5こから2こ") and vo.state == StudyVoice.IDLE and vo.target_problem == 3 \
+		and vo.history == [{"hint_level": 1, "message": "5こから2こ とると いくつかな？"}]
+	var busy_why := vo.blocker()
+	ctl.speech.clear()
+	ctl.handle_key(KEY_V)
+	ctl.handle_key_release(KEY_V)
+	hw._on_message({"type": "homework_heard", "request_id": str(sent[-1].request_id), "data": {"text": "もっと ヒント"}})
+	var follow: Dictionary = sent[-1]
+	_ok(spoken and busy_why.contains("話している") and int(follow.data.target_problem) == 3 and follow.data.history.size() == 1,
+		"study voice: the answer is said; not while UFOくん speaks; the next turn keeps the problem and the turns",
+		str([spoken, busy_why, follow.data.get("target_problem"), vo.history]))
+	# a closer look: the usual HELP for that problem after the answer
+	hw._on_message({"type": "homework_talk_result", "request_id": str(follow.request_id), "data": {
+		"message": "ちかくで みてみるね", "action": "ask_recapture", "target_problem": 2, "hint_level": 0,
+		"need_recapture": true}})
+	var reset_turns: bool = vo.target_problem == 2 and vo.history.size() == 1
+	var states: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): states.append(c))
+	_study_pump(game, 6.0)
+	_ok(reset_turns and "HELP_LOCATING" in states and ctl.help_problem == 2,
+		"study voice: another problem starts its own turns; a closer look starts the HELP for it", str(states))
+	# not heard, and Space while listening
+	ctl._set_state("STUDYING")
+	ctl.speech.clear()
+	ctl.handle_key(KEY_V)
+	ctl.handle_key_release(KEY_V)
+	hw._on_message({"type": "homework_heard_error", "request_id": str(sent[-1].request_id), "data": {"code": "not_heard",
+		"message": "声が聞こえませんでした"}})
+	var sorry: bool = ctl.speech.current.contains("きこえなかった") and vo.state == StudyVoice.IDLE
+	ctl.speech.clear()
+	ctl.handle_key(KEY_V)
+	ctl.on_stop_key()
+	var cancelled: bool = vo.state == StudyVoice.IDLE and sent[-1].type == "homework_listen_cancel"
+	_ok(sorry and cancelled, "study voice: not heard says so; Space drops the listening", str([sorry, cancelled]))
+	# through the game's own key handling: V down listens, V up ends it (the release reaches the study mode)
+	ctl.speech.clear()
+	game._unhandled_input(_key(KEY_V))
+	var down := vo.state == StudyVoice.LISTENING
+	var up_ev := _key(KEY_V)
+	up_ev.pressed = false
+	game._unhandled_input(up_ev)
+	_ok(down and vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop",
+		"study voice: the game's key handling gives the talk key's press and release", vo.state)
+	vo.cancel()
+	_ok(StudyVoice.mentions_number("3ばん") and StudyVoice.mentions_number("さんばん") and not StudyVoice.mentions_number("ヒントちょうだい"),
+		"study voice: a number said picks the problem itself")
+	ctl.stop()
+	hw.link = real_link
+	spy.free()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## A stand-in for the homework link (records what the study mode sends, sends nothing).
+class _VoiceLinkSpy:
+	extends UfoWebSocketClient
+	var sent: Array
+
+	func send_aux(msg: Dictionary) -> Error:
+		sent.append(msg)
+		return OK
