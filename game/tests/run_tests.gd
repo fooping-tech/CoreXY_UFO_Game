@@ -77,6 +77,7 @@ func _ready() -> void:
 	_s.study._test_study_voice(rs)
 	_s.study._test_study_answer_check(rs)
 	_s.study._test_study_real_print_problems(rs)
+	_s.study._test_study_power_items(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)

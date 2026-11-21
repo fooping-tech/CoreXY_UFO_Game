@@ -10,7 +10,7 @@ extends Node
 ##            -> REVIEW_SUMMARY (only when something is to be looked at again)
 ##                 --R: rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
 ##                 --Enter--> REWARD_CALCULATING
-##            -> REWARD_REVEAL -> POWERUP_SELECT (a power ticket) -> CLEANUP -> GAME_READY_WITH_REWARD
+##            -> REWARD_REVEAL -> POWERUP_SELECT (a power ticket: a roulette picks it) -> CLEANUP -> GAME_READY_WITH_REWARD
 ##            --"ゲームで遊ぶ"--> (off; the reward is handed over: StudyGrading.reward)
 ##   CLEANUP --fault--> CLEANUP_FAILED --Enter--> GAME_READY_WITH_REWARD (tidy-up left unchecked)
 ##   any motion fault / stop --> ERROR --Enter--> STUDYING (never moves again by itself)
@@ -74,6 +74,13 @@ var grade_reveal_s := 2.5  # one problem's whole turn
 var reveal_queue: Array[int] = []
 var reveal_current := 0  # the problem being shown now (0 = none)
 var shown := {}  # number -> true once its verdict was shown
+var combo := 0  # right answers shown in a row (the HUD's COMBO)
+## the power ticket's roulette: the light goes round the powers, slows down and stops on one
+var roulette_index := -1  # the power lit now (-1 = not turning)
+var roulette_spinning := false
+var roulette_force := ""  # tests / a demo: where it stops ("" = by chance)
+var roulette_rng := RandomNumberGenerator.new()
+const ROULETTE_STEPS := 22  # at least this many steps (then up to two more to stop on the pick)
 var used_help := false  # HELP never takes a reward away; only remembered
 var reward: Dictionary = {}  # the last check's reward (StudyGrading.reward), handed to the game
 var selected_powerups: Array = []
@@ -200,12 +207,14 @@ func start() -> void:
 		main._layout()
 	_set_state("INTRO")
 	sounds.play("appear")
+	sounds.music_start()  # #237: the study mode's own music (ending.mp3)
 	_say([{"text": "そろそろ勉強の時間だよ！", "face": "excited"},
 		{"text": "今日は%s！宿題をチェックしよう！" % weekday_label, "face": "happy"},
 		{"text": "席について、プリントを置いてね！", "face": "wink"}], _enter_waiting)
 
 func stop() -> void:
 	voice.reset()
+	sounds.music_stop()
 	services.abort("勉強モードを終えました")
 	services.watch_stop()
 	speech.clear()
@@ -217,6 +226,8 @@ func reset_story() -> void:
 	used_help = false
 	reward = {}
 	selected_powerups = []
+	roulette_spinning = false
+	roulette_index = -1
 	shown.clear()
 	reveal_queue.clear()
 	reveal_current = 0
@@ -363,7 +374,8 @@ func _complete() -> void:
 	grading.used_help = used_help
 	shown.clear()
 	reveal_current = 0
-	sounds.play("appear")
+	combo = 0
+	sounds.cue("check_start")
 	_say([{"text": "ぜんぶ書けたね！", "face": "excited"},
 		{"text": "UFOくんと答え合わせしよう！", "face": "happy"}], _scan.bind(false))
 
@@ -407,7 +419,7 @@ func _reveal_next() -> void:
 		_summary()
 		return
 	reveal_current = reveal_queue.pop_front()
-	sounds.play("tick")
+	sounds.cue("drum")  # the roll before the verdict
 	changed.emit()
 	_later(grade_checking_s, _show_verdict.bind(reveal_current))
 
@@ -418,14 +430,22 @@ func _show_verdict(n: int) -> void:
 	var v: String = grading.verdicts.get(n, StudyGrading.UNCLEAR)
 	match v:
 		StudyGrading.CORRECT:
-			sounds.play("chime")
+			combo += 1
+			sounds.cue("correct")
+			if combo >= 2:
+				sounds.cue("combo")
 			main.ufo.flash("happy", 1.5)
-			GameState.post_event("study_answer_correct", {"number": n})
+			GameState.post_event("study_answer_correct", {"number": n, "combo": combo})
 			speech.say([{"text": "%dばん、せいかい！" % n, "face": "excited"}])
 		StudyGrading.REVIEW:
+			combo = 0
+			sounds.cue("review")
 			GameState.post_event("study_answer_review", {"number": n})
 			speech.say([{"text": "%dばんは、もういちど 見てみよう。" % n, "face": "wink"}])
 		_:
+			combo = 0
+			sounds.cue("unclear")
+			GameState.post_event("study_answer_unclear", {"number": n})
 			speech.say([{"text": "%dばんは、紙が 見えにくかったみたい。" % n, "face": "worried"}])
 	changed.emit()
 	_later(maxf(grade_reveal_s - grade_checking_s, 0.1), _reveal_next)
@@ -471,7 +491,9 @@ func _reveal_reward() -> void:
 		return
 	celebrate_count += 1
 	_set_state("REWARD_REVEAL")
-	sounds.play("fanfare")
+	sounds.cue("reward")
+	if grading.all_correct():
+		sounds.cue("perfect")
 	GameState.post_event("study_celebrate", {"reward": reward.duplicate()})
 	var lines: Array = []
 	if grading.all_correct():
@@ -491,12 +513,42 @@ func _after_reveal() -> void:
 		return
 	if int(reward.get("power_tickets", 0)) > 0:
 		_set_state("POWERUP_SELECT")
-		_say([{"text": "パワーを ひとつ えらんでね！", "face": "wink"},
-			{"text": "1 スピードアップ、2 ダブルスコア、3 マルチボール！", "face": "happy"}])
+		sounds.cue("power_show")
+		_say([{"text": "パワールーレット、スタート！", "face": "excited"}])
+		_spin_roulette()
 	else:
 		_after_reward()
 
-## A power for the game (a key 1 / 2 / 3, a button, or 1 / 2 / 3 fingers): once per check.
+## The roulette: the light steps round the powers, each step a little slower, and stops on the
+## pick (roulette_force, else by chance): that power is chosen.
+func _spin_roulette() -> void:
+	var pick := -1
+	for i in POWERUPS.size():
+		if POWERUPS[i][0] == roulette_force:
+			pick = i
+	if pick < 0:
+		pick = roulette_rng.randi_range(0, POWERUPS.size() - 1)
+	var steps := ROULETTE_STEPS
+	while (steps - 1) % POWERUPS.size() != pick:
+		steps += 1
+	roulette_spinning = true
+	roulette_index = -1
+	var t := 0.0
+	for i in steps:
+		t += 0.045 + 0.32 * pow(float(i) / steps, 3.0)  # fast, then slower and slower
+		_later(t, _roulette_step.bind(i % POWERUPS.size(), i == steps - 1))
+
+func _roulette_step(index: int, last: bool) -> void:
+	if state != "POWERUP_SELECT" or not roulette_spinning:
+		return
+	roulette_index = index
+	sounds.play("pin" if not last else "tick")
+	changed.emit()
+	if last:
+		roulette_spinning = false
+		choose_powerup(POWERUPS[index][0])
+
+## The power for the game: where the roulette stopped (once per check).
 func choose_powerup(kind: String) -> void:
 	if state != "POWERUP_SELECT" or not selected_powerups.is_empty():
 		return
@@ -508,7 +560,7 @@ func choose_powerup(kind: String) -> void:
 		return
 	selected_powerups = [kind]
 	reward = grading.reward(str(worksheet.get("worksheet_id", "")), selected_powerups)
-	sounds.play("chime")
+	sounds.cue("power_pick")
 	GameState.post_event("study_powerup_selected", {"kind": kind})
 	_say([{"text": "%s に けってい！ ゲームに もっていこう！" % name, "face": "excited"}], _after_reward)
 
@@ -534,14 +586,6 @@ func hand_tick(pose: String, now_ms: float) -> void:
 		offer_problem = 0
 		services.trace("hand help: the offer timed out")
 		changed.emit()
-	if state == "POWERUP_SELECT" and COUNT_POSES.has(pose):
-		# #237: 1 / 2 / 3 fingers held pick the power (as the keys 1 / 2 / 3)
-		if pose != _hand_pose:
-			_hand_pose = pose
-			_hand_since_ms = now_ms
-		elif now_ms - _hand_since_ms >= hand_hold_ms:
-			choose_powerup(POWERUPS[int(COUNT_POSES[pose]) - 1][0])
-		return
 	if not hand_help_enabled or state not in ["STUDYING", "RESUME_STUDY"]:
 		_hand_pose = pose
 		_hand_since_ms = now_ms
@@ -831,7 +875,7 @@ func _cleanup_failed(reason: String) -> void:
 
 func _unlock() -> void:
 	_set_state("GAME_READY_WITH_REWARD")
-	sounds.play("fanfare")
+	sounds.cue("ready")
 	GameState.post_event("study_game_unlocked", {"cleanup_ok": cleanup_ok, "reward": reward.duplicate()})
 	_say([{"text": "お勉強おつかれさま！", "face": "happy"}, {"text": "STUDY POWER、じゅんび OK！", "face": "excited"},
 		{"text": "これからはゲームの時間だよ！", "face": "wink"}])
@@ -944,7 +988,7 @@ func handle_key(keycode: int) -> bool:
 	if not active():
 		return false
 	if state == "POWERUP_SELECT" and keycode in [KEY_1, KEY_2, KEY_3]:
-		choose_powerup(POWERUPS[{KEY_1: 0, KEY_2: 1, KEY_3: 2}[keycode]][0])
+		pass  # the roulette picks it (the fill keys do nothing here)
 	elif state == "REVIEW_SUMMARY" and keycode == keys.rescan:
 		_pending_adult = ""
 		adult_prompt = ""
@@ -1096,8 +1140,9 @@ func debug_skip() -> void:
 			speech.clear()
 			_after_reveal()
 		"POWERUP_SELECT":
-			if selected_powerups.is_empty():
-				choose_powerup(POWERUPS[0][0])
+			if selected_powerups.is_empty():  # stop the roulette where it is (or on the first)
+				roulette_spinning = false
+				choose_powerup(POWERUPS[maxi(roulette_index, 0)][0])
 			speech.clear()
 			_after_reward()
 		"CLEANUP":

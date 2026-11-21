@@ -79,6 +79,8 @@ var last_answers: Array = []
 var demo_results: Array = ["correct", "incorrect", "correct"]
 var _grade_token := 0
 var _grade_rid := ""
+## #237: the picture the answer check read (cut out, upright): the ○ go on it (null = the drawn sheet)
+var graded_image: Image
 const GRADE_WAIT_S := 120.0  # the reader: ~10 s, more when busy
 var _explain_rid := ""
 var _help_rid := ""
@@ -437,6 +439,7 @@ func reads_whole_sheet() -> bool:
 func grade(rescan := false) -> void:
 	_grade_token += 1
 	var tok := _grade_token
+	graded_image = null
 	if inject_fail == "grade":
 		inject_fail = ""
 		_after(1.0, func(): if tok == _grade_token: grade_failed.emit("プリントを読めませんでした（失敗の注入）"))
@@ -457,7 +460,8 @@ func grade(rescan := false) -> void:
 		var img := _overview_image()
 		if img != null and not img.is_empty():
 			img.convert(Image.FORMAT_RGB8)
-			var jpeg := StudyClient.encode_jpeg(homework.watch_image(img), 1600, 600000)
+			graded_image = homework.watch_image(img)  # the ○ are drawn on this very picture
+			var jpeg := StudyClient.encode_jpeg(graded_image, 1600, 600000)
 			if not jpeg.is_empty():
 				_grade_rid = main.ws.send_command("sheet_read", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
 				if main.ws.last_send_error == OK:
@@ -499,7 +503,8 @@ func _on_graded_by_reader(ok: bool, payload: Dictionary) -> void:
 	for p in probs:  # the state and what was written only: the right answer stays out
 		if p is Dictionary and p.get("number") != null:
 			out.append({"number": int(p.number), "answer_status": str(p.get("answer_status", "")),
-				"student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full"))})
+				"student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full")),
+				"answer_box": p.get("answer_box"), "box": p.get("box")})
 	graded.emit(out)
 
 # ------------------------------------------------------------------ robot routing

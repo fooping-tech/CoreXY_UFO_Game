@@ -576,6 +576,11 @@
       "open_claw": false,
       "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
     },
+    "bgm": {
+      "file": "ending.mp3",
+      "gain_db": -6.0,
+      "_note": "#237: the study mode's music: this file from game/assets/audio/bgm/ (each machine's own, never in Git, as the score game's music) loops on the BGM bus from the study mode's start to its end. No file, or audio.bgm_enabled false: silence. gain_db on top of audio.bgm_volume_db."
+    },
     "answer_check": {
       "checking_s": 0.9,
       "reveal_s": 2.5,

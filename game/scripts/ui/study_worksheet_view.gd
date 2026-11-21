@@ -15,6 +15,14 @@ var marks: Dictionary = {}
 ## #232: read by the local LLM server, the sheet is shown as it is sent: the overview camera's
 ## frame cut out and turned upright (SheetFrame, the プリント tab's settings). Over the drawing.
 var crop_texture: Texture2D
+## #237: the answer check's marks, drawn on the picture: number -> {"verdict", "t" (msec shown)}.
+## On a photo (crop_texture) a problem's place is mark_boxes[number] ([x1, y1, x2, y2], 0..1000 of
+## the picture read); on the drawn sheet it is the worksheet's answer box.
+var answer_marks := {}
+var mark_boxes := {}
+const MARK_GROW_MS := 420.0
+const RED := Color("ff2d2d")
+const YELLOW := Color("ffd21f")
 const PAGE := Vector2(210.0, 297.0)
 const MARKS_MM := {"tl": Vector2(14, 14), "tr": Vector2(196, 14), "bl": Vector2(14, 283), "br": Vector2(196, 283)}
 const RECTIFY := preload("res://shaders/sheet_rectify.gdshader")
@@ -92,6 +100,7 @@ func _draw() -> void:
 		var shown := Rect2(Vector2((size.x - tex.x * k) * 0.5, top), tex * k)
 		draw_texture_rect(crop_texture, shown, false)
 		draw_rect(shown, Color("5cb8ff"), false, 2.0)
+		_draw_marks(func(n: int) -> Rect2: return box_on(shown, mark_boxes.get(n)))
 		return
 	var s := minf(size.x / page.x, (size.y - top) / page.y)
 	var o := Vector2((size.x - page.x * s) * 0.5, top)
@@ -134,6 +143,81 @@ func _draw() -> void:
 				draw_string(font, box.position + Vector2(4, box.size.y * 0.65), ans, HORIZONTAL_ALIGNMENT_LEFT, box.size.x - 6, 13, Color("3a3f9e"))
 			if st == StudyQuestionTracker.HELD:
 				draw_rect(box, Color(0.85, 0.65, 0.5, 0.75))
+	_draw_marks(func(n: int) -> Rect2: return sheet_box(o, s, n))
+
+## A [x1, y1, x2, y2] box (0..1000 of a picture) on the picture as shown; no box: Rect2().
+static func box_on(shown: Rect2, b) -> Rect2:
+	if not b is Array or (b as Array).size() != 4:
+		return Rect2()
+	var a := Vector2(float(b[0]), float(b[1])) / 1000.0
+	var c := Vector2(float(b[2]), float(b[3])) / 1000.0
+	return Rect2(shown.position + a * shown.size, (c - a) * shown.size).abs()
+
+## Problem n's answer box on the drawn sheet (page origin o, scale s).
+func sheet_box(o: Vector2, s: float, n: int) -> Rect2:
+	var p := WorksheetCatalog.problem(worksheet, n)
+	if p.is_empty() or not p.get("answer_box_mm") is Array:
+		return Rect2()
+	var b: Array = p.answer_box_mm
+	return Rect2(o + Vector2(b[0], b[1]) * s, Vector2(b[2] - b[0], b[3] - b[1]) * s)
+
+## Where problem n's mark is, in the HUD's (the viewport's) coordinates: the VFX go there.
+var _mark_rects := {}
+func mark_point(n: int) -> Vector2:
+	var r: Rect2 = _mark_rects.get(n, Rect2())
+	return global_position + (r.get_center() if r.has_area() else size * 0.5)
+
+## Still drawing a mark: the HUD keeps redrawing.
+func animating() -> bool:
+	var now := Time.get_ticks_msec()
+	for n in answer_marks:
+		if now - int(answer_marks[n].get("t", 0)) < MARK_GROW_MS + 50:
+			return true
+	return false
+
+func _draw_marks(rect_of: Callable) -> void:
+	_mark_rects.clear()
+	var font := get_theme_default_font()
+	var now := Time.get_ticks_msec()
+	for n in answer_marks:
+		var r: Rect2 = rect_of.call(int(n))
+		_mark_rects[n] = r
+		if not r.has_area():
+			continue
+		var k := clampf(float(now - int(answer_marks[n].get("t", now))) / MARK_GROW_MS, 0.0, 1.0)
+		match str(answer_marks[n].get("verdict", "")):
+			StudyGrading.CORRECT:
+				_hand_circle(r, k, int(n))
+			StudyGrading.REVIEW:
+				draw_dashed_line(r.position, r.position + Vector2(r.size.x, 0), YELLOW, 3.0, 8.0)
+				draw_dashed_line(r.end, r.position + Vector2(r.size.x, 0), YELLOW, 3.0, 8.0)
+				draw_dashed_line(r.end, r.position + Vector2(0, r.size.y), YELLOW, 3.0, 8.0)
+				draw_dashed_line(r.position, r.position + Vector2(0, r.size.y), YELLOW, 3.0, 8.0)
+				var fs := int(clampf(r.size.y * 1.4, 28.0, 72.0) * (0.4 + 0.6 * ease(k, -2.0)))
+				var at := r.get_center() + Vector2(-fs * 0.3, fs * 0.35)
+				draw_string_outline(font, at, "？", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 8, Color("3a2a00"))
+				draw_string(font, at, "？", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, YELLOW)
+			_:
+				var fs2 := int(clampf(r.size.y, 20.0, 40.0))
+				draw_string(font, r.get_center() + Vector2(-fs2 * 0.3, fs2 * 0.35), "？", HORIZONTAL_ALIGNMENT_LEFT, -1, fs2,
+					Color(0.6, 0.65, 0.75, 0.9))
+
+## A big ○ as if drawn by hand: a slightly wobbly ellipse a little more than once round, growing
+## along its stroke while k goes 0 -> 1.
+func _hand_circle(r: Rect2, k: float, seed: int) -> void:
+	var c := r.get_center()
+	var rad := Vector2(maxf(r.size.x * 0.62, 18.0), maxf(r.size.y * 0.75, 18.0))
+	var turns := 1.15 * ease(k, 0.4)
+	var steps := maxi(int(56 * turns), 2)
+	var start := -2.3 + 0.4 * float(seed % 3)
+	var pts := PackedVector2Array()
+	for i in steps + 1:
+		var a := start + TAU * turns * float(i) / steps
+		var w := 1.0 + 0.07 * sin(2.0 * a + seed) + 0.035 * sin(5.0 * a + 1.7 * seed)
+		w *= 1.0 - 0.06 * float(i) / max(steps, 1)  # the pen ends a little inside where it began
+		pts.append(c + Vector2(cos(a) * rad.x, sin(a) * rad.y) * w)
+	draw_polyline(pts, Color(1, 1, 1, 0.85), 13.0, true)
+	draw_polyline(pts, RED, 8.0, true)
 
 ## Over the real sheet: only what the game knows (the problem looked at, a covered answer box).
 func _draw_marks_only(o: Vector2, s: float) -> void:

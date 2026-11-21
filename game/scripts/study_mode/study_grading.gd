@@ -20,6 +20,9 @@ const PENDING := "pending"  # not shown yet
 var numbers: Array[int] = []
 var verdicts := {}  # number -> CORRECT / REVIEW / UNCLEAR / PENDING
 var answers := {}  # number -> what the child wrote, as read ("" when not read)
+## number -> where its answer box is in the picture read ([x1, y1, x2, y2], 0..1000; the problem's
+## box when there is no answer box): the ○ is drawn there (#237). Positions only, no answers.
+var boxes := {}
 var used_help := false
 var checked := false  # every problem has been through the check (its summary was reached)
 var time_per_correct_s := 10
@@ -33,6 +36,7 @@ func reset(problem_numbers: Array) -> void:
 	numbers.clear()
 	verdicts.clear()
 	answers.clear()
+	boxes.clear()
 	for n in problem_numbers:
 		numbers.append(int(n))
 		verdicts[int(n)] = PENDING
@@ -72,6 +76,10 @@ func apply(problems: Array, grow := false) -> Array[int]:
 		var v := classify(str(p.get("answer_status", "")), str(p.get("visible", "full"))) if not p.is_empty() else UNCLEAR
 		if p.has("student_answer"):
 			answers[n] = str(p.student_answer)
+		for key in ["answer_box", "box"]:
+			if p.get(key) is Array and (p[key] as Array).size() == 4:
+				boxes[n] = (p[key] as Array).duplicate()
+				break
 		if v != verdicts.get(n):
 			verdicts[n] = v
 			changed.append(n)
