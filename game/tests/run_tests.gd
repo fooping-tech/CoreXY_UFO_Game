@@ -72,6 +72,7 @@ func _ready() -> void:
 	_s.study._test_study_mode_without_tidy_up(rs)
 	_s.study._test_study_sheet_photo(rs)
 	_s.study._test_focus_stream()
+	_s.study._test_study_hand_help(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)

@@ -444,6 +444,7 @@ static func blocker_for(route: String, real: bool, demo_source: String) -> Strin
 # ------------------------------------------------------------------ HELP: where is problem n
 func locate_help(problem: int) -> void:
 	_help_problem = problem
+	captures.clear()  # #136: another problem's photos are not this one's
 	var tok := _token
 	if inject_fail == "locate":
 		inject_fail = ""

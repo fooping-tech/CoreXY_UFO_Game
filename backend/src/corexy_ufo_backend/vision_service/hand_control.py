@@ -29,7 +29,8 @@ Rules (all thresholds from config `gesture.*`):
     `palm_invert` for a left one (the game uses it: palm up = XY, down = Z)
   - `pose`: "fist" (index..pinky folded, thumb tucked), "thumb" (index..pinky
     folded, the thumb sticking out: a thumbs-up), "peace" (index + middle out,
-    ring + pinky folded), "point" (only the index out), "open", or "other". A
+    ring + pinky folded), "three" (index + middle + ring out, pinky folded), "point"
+    (only the index out), "open", or "other". A
     finger is folded when its tip is nearer the wrist than its PIP joint; the
     thumb sticks out when its tip is more than THUMB_OUT hand sizes from the
     middle finger's MCP (a tucked thumb lies over the folded fingers).
@@ -203,13 +204,15 @@ def finger_straight(lm: list[Landmark], finger: str, w: int, h: int) -> bool:
 
 
 def hand_pose(lm: list[Landmark], w: int, h: int) -> str:
-    """"fist" / "thumb" / "peace" / "point" / "open" / "other" from which fingers
+    """"fist" / "thumb" / "peace" / "three" / "point" / "open" / "other" from which fingers
     are folded (the thumb only tells a fist from a thumbs-up)."""
     f = {k: finger_folded(lm, k, w, h) for k in FINGERS}
     if all(f.values()):
         return "thumb" if thumb_out(lm, w, h) else "fist"
     if not f["index"] and not f["middle"] and f["ring"] and f["pinky"]:
         return "peace"
+    if not f["index"] and not f["middle"] and not f["ring"] and f["pinky"]:
+        return "three"  # #136: 3 fingers (index, middle, ring) for the study mode's problem 3
     if not f["index"] and f["middle"] and f["ring"] and f["pinky"]:
         return "point"
     if not any(f.values()):

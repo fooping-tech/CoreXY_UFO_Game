@@ -3,7 +3,7 @@ extends Node
 ## UFOくん 勉強モード (#86): the experience as one state machine.
 ##
 ##   INTRO -> WAITING_FOR_WORKSHEET -> STUDYING
-##   STUDYING --HELP (Y)--> HELP_LOCATING -> HELP_MOVING -> CAPTURE_10CM -> CAPTURE_5CM
+##   STUDYING --HELP (Y, or 1 / 2 / 3 fingers then a thumbs-up: #136)--> HELP_LOCATING -> HELP_MOVING -> CAPTURE_10CM -> CAPTURE_5CM
 ##            -> CAPTURE_LANDING -> AI_EXPLAINING -> RESUME_STUDY -> STUDYING
 ##   STUDYING --3 problems stably filled / grown-up's Enter--> HOMEWORK_COMPLETE
 ##            -> CELEBRATION -> CLEANUP -> GAME_UNLOCKED --"ゲームで遊ぶ"--> (off)
@@ -38,8 +38,20 @@ var state := "OFF"
 var grade_index := 3
 var worksheet: Dictionary = {}
 var weekday_label := "月曜日"
-var help_problem := 3
+var help_problem := 3  # the problem the current / last HELP looks at
+var default_help_problem := 3  # Y's problem (study_mode.help.problem)
 var help_keycode := KEY_Y
+## #136: 1 / 2 / 3 fingers held to the overview camera offer help with that problem
+## ("教えてあげようか？"), a thumbs-up held then starts it. study_mode.hand_help.
+const COUNT_POSES := {"point": 1, "peace": 2, "three": 3}
+var hand_help_enabled := true
+var hand_hold_ms := 600.0
+var hand_offer_s := 12.0
+var offer_problem := 0  # offered and waiting for a thumbs-up (0 = none)
+var _offer_until_ms := 0.0
+var _hand_pose := ""
+var _hand_since_ms := -1.0
+var _hand_used := ""  # a pose already acted on: nothing more until the hand changes
 ## keys of the study mode (study_mode.keys); the game's own keys stay as they are
 var keys := {"advance": KEY_ENTER, "fill_1": KEY_1, "fill_2": KEY_2, "fill_3": KEY_3, "grade_prev": KEY_COMMA,
 	"grade_next": KEY_PERIOD, "skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5}
@@ -72,6 +84,8 @@ var _celebration_min_s := 6.0
 var _after_speech: Callable
 var _timers: Array = []  # [seconds_left, Callable, story]: dropped when the story restarts
 var _story := 0
+var _photo_src: Image
+var _photo_tex: ImageTexture
 
 func setup(m: Node, hw: HomeworkClient) -> void:
 	main = m
@@ -108,9 +122,15 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	_load_grade()
 	var h = GameConfig.get_value("study_mode", "help", {})
 	if h is Dictionary:
-		help_problem = int(h.get("problem", 3))
+		default_help_problem = int(h.get("problem", 3))
+		help_problem = default_help_problem
 		var code := OS.find_keycode_from_string(str(h.get("key", "Y")))
 		help_keycode = code if code != KEY_NONE else KEY_Y
+	var hh = GameConfig.get_value("study_mode", "hand_help", {})
+	if hh is Dictionary:
+		hand_help_enabled = bool(hh.get("enabled", hand_help_enabled))
+		hand_hold_ms = maxf(float(hh.get("hold_ms", hand_hold_ms)), 100.0)
+		hand_offer_s = maxf(float(hh.get("offer_s", hand_offer_s)), 2.0)
 	var k = GameConfig.get_value("study_mode", "keys", {})
 	if k is Dictionary:
 		for name in k:
@@ -156,6 +176,9 @@ func stop() -> void:
 
 func reset_story() -> void:
 	_story += 1
+	offer_problem = 0
+	_hand_used = ""
+	_hand_since_ms = -1.0
 	_pending_nav = []
 	nav_tries = 0
 	_timers.clear()
@@ -307,14 +330,62 @@ static func cleanup_enabled() -> bool:
 	var c = GameConfig.get_value("study_mode", "cleanup", {})
 	return c is Dictionary and bool(c.get("enabled", true))
 
+# ------------------------------------------------------------------ HELP by hand (#136)
+## The hand on the overview camera now: its pose ("" = no fresh hand). Called every frame
+## while the study mode runs. A pose counts after hand_hold_ms; once acted on, the same
+## pose does nothing more until the hand changes (a held thumb does not start twice).
+func hand_tick(pose: String, now_ms: float) -> void:
+	if offer_problem > 0 and now_ms > _offer_until_ms:
+		offer_problem = 0
+		services.trace("hand help: the offer timed out")
+		changed.emit()
+	if not hand_help_enabled or state not in ["STUDYING", "RESUME_STUDY"]:
+		_hand_pose = pose
+		_hand_since_ms = now_ms
+		return
+	if pose != _hand_pose:
+		_hand_pose = pose
+		_hand_since_ms = now_ms
+		if pose != _hand_used:
+			_hand_used = ""
+		return
+	if pose == "" or pose == _hand_used or now_ms - _hand_since_ms < hand_hold_ms:
+		return
+	if COUNT_POSES.has(pose):
+		_hand_used = pose
+		offer_help(int(COUNT_POSES[pose]), now_ms)
+	elif pose == "thumb" and offer_problem > 0:
+		_hand_used = pose
+		var n := offer_problem
+		offer_problem = 0
+		services.trace("hand help: thumbs-up for problem %d" % n)
+		request_help(n, true)
+
+## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
+func offer_help(problem: int, now_ms: float) -> void:
+	if WorksheetCatalog.problem(worksheet, problem).is_empty():
+		return
+	offer_problem = problem
+	_offer_until_ms = now_ms + hand_offer_s * 1000.0
+	services.trace("hand help: %d fingers, offer for problem %d" % [problem, problem])
+	notice = "問題 %d: いいね（親指を立てる）で解説をはじめるよ" % problem
+	sounds.play("appear")
+	_say([{"text": "問題 %d だね。教えてあげようか？" % problem, "face": "surprised"},
+		{"text": "いいね👍 を見せてくれたら、近くで見て解説するよ！", "face": "wink"}])
+	changed.emit()
+
 # ------------------------------------------------------------------ HELP
-func request_help() -> void:
+## HELP for problem (Y = default_help_problem). asked: the child asked for it by hand, so a
+## problem already filled is explained too.
+func request_help(problem := 0, asked := false) -> void:
 	if state not in ["STUDYING", "RESUME_STUDY"]:
 		if state in HELP_STATES or state == "AI_EXPLAINING":
 			notice = "いま見に行っているところだよ"
 			changed.emit()
 		return
-	if tracker.is_filled(help_problem):
+	offer_problem = 0
+	help_problem = problem if problem > 0 else default_help_problem
+	if tracker.is_filled(help_problem) and not asked:
 		notice = "問題 %d はもう書けているみたい（アームは動かしません）" % help_problem
 		_say([{"text": "問題 %d はもう書けているみたい！すごいね！" % help_problem, "face": "happy"}])
 		changed.emit()
@@ -328,7 +399,8 @@ func request_help() -> void:
 	_pending_nav = []
 	sounds.play("appear")
 	GameState.post_event("study_help", {"problem": help_problem})
-	_say([{"text": "困ったの？", "face": "surprised"}, {"text": "ぼくが近くで見てみるよ！", "face": "excited"}])
+	_say([{"text": "困ったの？" if not asked else "わかった！問題 %d だね。" % help_problem, "face": "surprised"},
+		{"text": "ぼくが近くで見てみるよ！", "face": "excited"}])
 	services.locate_help(help_problem)
 
 func _on_located(target: Dictionary) -> void:
@@ -695,8 +767,26 @@ func mood_override() -> String:
 	return ""
 
 ## The round close-up view is up (capturing).
+## #136: the arm camera from the arm's first move to the end of the explanation (then the
+## photo it took: explain_photo()).
 func wants_scope() -> bool:
-	return state in ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING", "HELP_MOVING"] and help_phase in ["LOWER", "SETTLE", "HOLD"]
+	return state in ["CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING", "HELP_MOVING", "AI_EXPLAINING"]
+
+## The arm camera's photo of the problem while it is explained (null = the live camera).
+func explain_photo() -> Texture2D:
+	if state != "AI_EXPLAINING":
+		return null
+	var img: Image = null
+	for stage in ["landing", "5cm", "10cm"]:
+		if services.captures.get(stage) is Image:
+			img = services.captures[stage]
+			break
+	if img == null or img.is_empty():
+		return null
+	if _photo_src != img:
+		_photo_src = img
+		_photo_tex = ImageTexture.create_from_image(img)
+	return _photo_tex
 
 func capture_stage() -> String:
 	for k in CAPTURE_STATE:

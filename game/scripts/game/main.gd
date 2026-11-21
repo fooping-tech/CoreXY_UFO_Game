@@ -728,6 +728,7 @@ func _update_scope(dt: float) -> void:
 	if study_mode != null and study_mode.active():
 		want = study_mode.wants_scope() and cameras.has_feed("focus") and study_mode.services.mode != "simulated"
 	scope.wanted = want
+	scope.still = study_mode.explain_photo() if study_mode != null and study_mode.active() else null
 	ufo.peering = want
 	if want and scope.open_amount == 0.0:
 		_place_scope()
@@ -1042,6 +1043,11 @@ func _handle_input(dt: float) -> void:
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
 	gv *= hand_boost_scale()  # SPEED UP: the same stick, faster in XY (never Z)
 	_tick_easy(dt, easy_on, base_gate, kb != Vector3.ZERO)
+	if study_mode != null and study_mode.active():
+		# #136: 1 / 2 / 3 fingers offer help with that problem, a thumbs-up starts it
+		var hand_age := gesture.age_ms(Time.get_ticks_msec())
+		var fresh := gesture.detected and hand_age >= 0.0 and hand_age <= gesture.stale_ms
+		study_mode.hand_tick(gesture.pose if fresh else "", Time.get_ticks_msec())
 	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
 		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)
@@ -1463,8 +1469,8 @@ func gesture_gate() -> String:
 	# the arm (a claw pose would otherwise still reach arm_goto)
 	if title_active():
 		return "タイトル画面（モードを選んでから）"
-	if study_mode != null and study_mode.blocks_manual_control():
-		return "勉強モードがアームを使用中"
+	if study_mode != null and study_mode.active():
+		return "勉強モード（手は 1・2・3 本の指といいねで使う）"
 	if RobotState.auto_catch_active():
 		return "自動キャッチ中"
 	if RobotState.machine_state in ["ALARM", "ESTOP"]:
