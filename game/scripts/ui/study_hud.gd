@@ -38,6 +38,8 @@ var _get_fx: Control
 var _get_kind := ""
 var _get_t := -1.0
 const GET_S := 2.6
+## the play button's top: below where UFOくん can hang (the crane lowers it), above the bubble
+const PLAY_Y := HEADER_H + 200.0
 var _count: Label
 var _timer: Label
 ## #237: the big moments: a giant word ("せいかい！"), COMBO, the effects' layer over the sheet
@@ -548,7 +550,8 @@ func _draw_get() -> void:
 		var tt := Time.get_ticks_msec() / 1000.0
 		var i := 0
 		for kind in ctl.selected_powerups:
-			PowerItemArt.draw(_get_fx, str(kind), Vector2(560 + 90 * i, EXPLAIN_Y + 340.0 + 6.0 * sin(tt * 3.0 + i)), 5.0)
+			var at := Vector2(vs.x * 0.5 + 90.0 * (i - (ctl.selected_powerups.size() - 1) * 0.5), PLAY_Y + 170.0)
+			PowerItemArt.draw(_get_fx, str(kind), at + Vector2(0, 6.0 * sin(tt * 3.0 + i)), 6.0)
 			i += 1
 
 ## A little bounce on a label (the energy when it grows).
@@ -621,6 +624,11 @@ func refresh() -> void:
 	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
 	sheet.photo_texture = cams.texture("overview") if cams != null and cams.has_feed("overview") else null
 	sheet.crop_texture = _crop if _crop_wanted() else null
+	# the camera mode never shows the sample sheet's drawing (it is not the child's print): the
+	# camera's picture instead, in its frame
+	if sheet.crop_texture == null and ctl.services.mode == "camera" and cams != null and cams.has_feed("overview") \
+			and not sheet.showing_photo():
+		sheet.crop_texture = cams.texture("overview")
 	# #237: the answer check: the very picture read, frozen, with its ○ / ？
 	var in_check := ctl.completion_fired and st in StudyModeController.CHECK_STATES
 	var img: Image = ctl.services.graded_image
@@ -648,7 +656,8 @@ func refresh() -> void:
 	else:
 		sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
 			("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
-	sheet.visible = st not in ["REWARD_REVEAL", "POWERUP_SELECT", "GAME_READY_WITH_REWARD"]
+	sheet.visible = st not in ["INTRO", "REWARD_REVEAL", "POWERUP_SELECT", "GAME_READY_WITH_REWARD"] \
+		and not (ctl.services.mode == "camera" and sheet.crop_texture == null and not sheet.guide and not sheet.showing_photo())
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)
 	var stage := ctl.capture_stage()
@@ -685,7 +694,9 @@ func refresh() -> void:
 		b.scale = Vector2(1.12, 1.12) if lit else Vector2.ONE
 		b.pivot_offset = b.size * 0.5
 	_play.visible = unlocked
-	_play.position = Vector2(48, EXPLAIN_Y + 300.0)
+	# under UFOくん wherever the arm holds it (it hangs lower with the real crane): the middle of
+	# the screen, where the sheet is when shown (hidden now)
+	_play.position = Vector2((vs.x - _play.size.x) * 0.5, PLAY_Y)
 	_time_panel.visible = st in ["CLEANUP", "CLEANUP_FAILED"]
 	_time_label.text = study_time_text(ctl.elapsed_s())
 	_time_panel.position = Vector2(vs.x * 0.5 - 200, EXPLAIN_Y)

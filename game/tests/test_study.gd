@@ -1313,6 +1313,14 @@ func _test_study_scenery(rs: Node) -> void:
 	ctl.services.worksheet_wait_s = 999.0
 	game.gesture_hud.hidden_by_study = false
 	ctl.start()
+	hud.refresh()
+	var intro_no_sheet: bool = ctl.state == "INTRO" and not hud.sheet.visible  # no sheet before it is asked for
+	ctl.services.set_mode("camera")
+	ctl.state = "STUDYING"
+	hud.refresh()
+	var camera_no_drawing: bool = not hud.sheet.visible  # no camera here: never the sample sheet's drawing
+	ctl.services.set_mode("simulated")
+	ctl.state = "INTRO"
 	var backdrop: Node2D = game.get_node("StudyBackdrop")
 	ctl.debug_skip()  # waiting for the sheet
 	hud.refresh()
@@ -1323,6 +1331,8 @@ func _test_study_scenery(rs: Node) -> void:
 	var found_ok: bool = ctl.state == "STUDYING" and not hud.sheet.guide and hud._pop.text == "みつけた！" \
 		and ctl.sounds.last_cue == "found"
 	ctl.stop()
+	_ok(intro_no_sheet and camera_no_drawing, "study scenery: no sheet at the start; the camera mode never draws the sample sheet",
+		str([intro_no_sheet, camera_no_drawing]))
 	_ok(waiting and found_ok and not backdrop.visible and not game.gesture_hud.hidden_by_study,
 		"study scenery: 'ここへおいてね！' until the sheet is found, then みつけた！; the warm room and no gesture camera only in the study mode",
 		str([waiting, found_ok, backdrop.visible]))
