@@ -1294,7 +1294,7 @@ func _test_study_real_print_problems(rs: Node) -> void:
 ## #237: the power items in dots, and the sounds added for the answer check.
 func _test_study_power_items(rs: Node) -> void:
 	var ok := true
-	for kind in ["speed", "double", "multiball"]:
+	for kind in ["speed", "double", "multiball", "clock", "ticket", "magnifier"]:
 		var rows: Array = PowerItemArt.SPRITES[kind]
 		ok = ok and rows.size() == PowerItemArt.SIZE
 		for row in rows:
@@ -1355,6 +1355,49 @@ func _test_study_scenery(rs: Node) -> void:
 	_ok(waiting and found_ok and not backdrop.visible and not game.gesture_hud.hidden_by_study,
 		"study scenery: 'ここへおいてね！' until the sheet is found, then みつけた！; the warm room and no gesture camera only in the study mode",
 		str([waiting, found_ok, backdrop.visible]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: the reward told line by line, its items got one after another, then the score game by itself.
+func _test_study_reward_show(rs: Node) -> void:
+	var r := {"question_count": 4, "confirmed_correct": 1, "needs_review": [2, 3], "unclear": [4], "time_bonus_s": 10,
+		"power_tickets": 1, "selected_powerups": []}
+	var text := StudyHud.reward_text("REWARD_REVEAL", r)
+	_ok(text == "4もん かくにん\n1もん せいかい　3もん みなおし\nTIME +10\nPOWER TICKET ×1",
+		"study reward: one thing a line (the counts, the TIME, the ticket)", text)
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false
+	ctl.services.demo_results = ["correct", "correct", "correct"]
+	ctl.roulette_force = "speed"
+	ctl.start()
+	for i in 6:
+		if ctl.state == "REWARD_REVEAL":
+			break
+		ctl.debug_skip()
+		_study_pump(game, 0.3)
+	_study_pump(game, 20.0, func(): return ctl.state == "REWARD_REVEAL")
+	var kinds: Array = []
+	_study_pump(game, 8.0, func():
+		hud._process(0.1)  # the HUD's own clock (the pump drives the study mode's)
+		if hud._get_t >= 0.0 and (kinds.is_empty() or kinds[-1] != hud._get_kind):
+			kinds.append(hud._get_kind)
+		return ctl.state != "REWARD_REVEAL")
+	_ok(kinds == ["clock", "ticket"], "study reward: the clock (TIME) is got, then the ticket", str(kinds))
+	_study_pump(game, 30.0, func(): return ctl.state == "GAME_READY_WITH_REWARD")
+	hud.refresh()
+	var counting: bool = hud._play.text.contains("5") or hud._play.text.contains("4")
+	_study_pump(game, 7.0, func(): return ctl.state == "OFF")
+	var to_score: bool = ctl.state == "OFF" and ctl.last_reward.selected_powerups == ["speed"] \
+		and (game.game_mode == null or game.game_mode.active())
+	_ok(counting and to_score, "study reward: 'ゲームで遊ぶ' counts down 5 s, then the score game's title by itself",
+		str([counting, hud._play.text, ctl.state, game.game_mode != null and game.game_mode.active()]))
+	if game.game_mode != null and game.game_mode.active():
+		game.game_mode.close()
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
 	remove_child(game)
 	game.free()
 	rs.clear_samples()

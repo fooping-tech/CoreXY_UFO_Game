@@ -505,9 +505,12 @@ func _reveal_reward() -> void:
 		lines.append({"text": "ゲームの じかんが %d びょう ふえるよ！" % int(reward.time_bonus_s), "face": "happy"})
 	if int(reward.power_tickets) > 0:
 		lines.append({"text": "パワーチケットも ゲット！", "face": "excited"})
+	# the HUD shows the items got one after another (the clock, the ticket): wait for them
+	var gets := (1 if int(reward.time_bonus_s) > 0 else 0) + (1 if int(reward.power_tickets) > 0 else 0)
+	var show_s := maxf(_celebration_min_s, 1.0 + 2.7 * gets + 0.4)
 	_say(lines, func():
 		if state == "REWARD_REVEAL":
-			_later(maxf(_celebration_min_s - _state_t, 0.0), _after_reveal))
+			_later(maxf(show_s - _state_t, 0.0), _after_reveal))
 
 func _after_reveal() -> void:
 	if state != "REWARD_REVEAL":
@@ -896,15 +899,22 @@ func _cleanup_failed(reason: String) -> void:
 	_say([{"text": "あれれ、お片付けがうまくいかなかったみたい。", "face": "worried"},
 		{"text": "大人の人に見てもらってね。", "face": "sad"}])
 
+## #237: the score game's title comes by itself this long after the game is ready.
+const AUTO_PLAY_S := 5.0
+
+func ready_left() -> int:
+	return maxi(int(ceil(AUTO_PLAY_S - _state_t)), 0) if state == "GAME_READY_WITH_REWARD" else 0
+
 func _unlock() -> void:
 	_set_state("GAME_READY_WITH_REWARD")
+	_later(AUTO_PLAY_S, play_game)
 	sounds.cue("ready")
 	GameState.post_event("study_game_unlocked", {"cleanup_ok": cleanup_ok, "reward": reward.duplicate()})
 	_say([{"text": "お勉強おつかれさま！", "face": "happy"}, {"text": "STUDY POWER、じゅんび OK！", "face": "excited"},
 		{"text": "これからはゲームの時間だよ！", "face": "wink"}])
 
-## "ゲームで遊ぶ": the reward is handed over once (last_reward; the score game takes it in #239)
-## and the study mode ends (the game's own readiness checks apply as before).
+## "ゲームで遊ぶ" (or AUTO_PLAY_S later): the reward is handed over once (last_reward; the score
+## game takes it in #239), the study mode ends and the score game's title opens (#237).
 func play_game() -> void:
 	if state != "GAME_READY_WITH_REWARD":
 		return
@@ -912,6 +922,8 @@ func play_game() -> void:
 	GameState.post_event("study_reward", last_reward.duplicate(true))
 	stop()
 	GameState.post_event("reset")
+	if main != null and main.has_method("open_score_game"):
+		main.open_score_game()
 
 # ------------------------------------------------------------------ grown-ups, keys, stop
 func _ask_adult(kind: String, text: String) -> void:

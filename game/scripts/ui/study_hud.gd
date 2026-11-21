@@ -36,10 +36,14 @@ var _power_buttons: Array[Control] = []  # the roulette's cards (a pixel-art ite
 ## #237: "GET!!": the item the roulette stopped on, big, with turning rays (time since it began)
 var _get_fx: Control
 var _get_kind := ""
+var _get_text := ""
 var _get_t := -1.0
+var _get_queue: Array = []  # [kind, words] still to show, one after another
+var _reward_gets_in := -1.0  # seconds until the reward's items are got (-1 = none to come)
 const GET_S := 2.6
+const GET_DELAY_S := 1.0  # the reward's banner first, then its items
 ## the play button's top: below where UFOくん can hang (the crane lowers it), above the bubble
-const PLAY_Y := HEADER_H + 200.0
+const PLAY_Y := HEADER_H + 250.0
 var _count: Label
 var _timer: Label
 ## #237: the big moments: a giant word ("せいかい！"), COMBO, the effects' layer over the sheet
@@ -396,7 +400,8 @@ func _on_state(prev: String, cur: String) -> void:
 			shake(1.0)
 			_time_shown = 0.0
 			_last_tick = -1
-			_burst_at(Vector2(360, 300), 4.0)
+			_burst_at(Vector2(360, HEADER_H + 60.0), 4.0)
+			_reward_gets_in = GET_DELAY_S
 			get_tree().create_timer(0.45).timeout.connect(func(): if visible: crackers.burst())
 		"POWERUP_SELECT":
 			shake(0.35)
@@ -497,12 +502,38 @@ func _on_event(name: String, data: Dictionary) -> void:
 		"study_powerup_selected":
 			flash(0.8, 0.45)
 			shake(0.9)
-			_get_kind = str(data.get("kind", ""))
-			_get_t = 0.0
+			var kind := str(data.get("kind", ""))
+			item_get(kind, "%s GET!!" % power_name(kind))
 			var vs := root.get_viewport_rect().size
 			_burst_at(get_centre(vs), 4.0)
 			get_tree().create_timer(0.5).timeout.connect(func(): if visible: _burst_at(get_centre(vs) + Vector2(-140, 40), 2.5))
 			get_tree().create_timer(0.8).timeout.connect(func(): if visible: _burst_at(get_centre(vs) + Vector2(150, -30), 2.5))
+
+## An item got (a pixel-art item, big, with turning rays); one after another when several.
+func item_get(kind: String, words: String) -> void:
+	if _get_t >= 0.0:
+		_get_queue.append([kind, words])
+	else:
+		_start_get(kind, words)
+
+func _start_get(kind: String, words: String) -> void:
+	_get_kind = kind
+	_get_text = words
+	_get_t = 0.0
+	flash(0.6, 0.35)
+	shake(0.6)
+	if ctl != null:
+		ctl.sounds.cue("power_pick")
+	var vs := root.get_viewport_rect().size
+	_burst_at(get_centre(vs), 3.5)
+
+## The reward's items: the clock for the TIME, then the ticket (the reveal waits for them).
+func reward_gets(r: Dictionary) -> void:
+	_get_queue.clear()
+	if int(r.get("time_bonus_s", 0)) > 0:
+		item_get("clock", "TIME +%d GET!!" % int(r.time_bonus_s))
+	if int(r.get("power_tickets", 0)) > 0:
+		item_get("ticket", "POWER TICKET GET!!")
 
 static func get_centre(vs: Vector2) -> Vector2:
 	return Vector2(vs.x * 0.5, HEADER_H + 150.0)  # over the roulette (under UFOくん)
@@ -538,7 +569,7 @@ func _draw_get() -> void:
 			_get_fx.draw_line(sp - Vector2(sz, 0), sp + Vector2(sz, 0), sc, 3.0)
 			_get_fx.draw_line(sp - Vector2(0, sz), sp + Vector2(0, sz), sc, 3.0)
 		var font: Font = UiFonts.title()
-		var text := "%s GET!!" % power_name(_get_kind)
+		var text := _get_text
 		var fs := int(58 * clampf((t - 0.25) / 0.2, 0.0, 1.0) * (1.0 + 0.15 * sin(clampf((t - 0.25) / 0.25, 0.0, 1.0) * PI)))
 		if fs > 4:
 			var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -550,7 +581,7 @@ func _draw_get() -> void:
 		var tt := Time.get_ticks_msec() / 1000.0
 		var i := 0
 		for kind in ctl.selected_powerups:
-			var at := Vector2(vs.x * 0.5 + 90.0 * (i - (ctl.selected_powerups.size() - 1) * 0.5), PLAY_Y + 170.0)
+			var at := Vector2(vs.x * 0.5 + 90.0 * (i - (ctl.selected_powerups.size() - 1) * 0.5), PLAY_Y + 150.0)
 			PowerItemArt.draw(_get_fx, str(kind), at + Vector2(0, 6.0 * sin(tt * 3.0 + i)), 6.0)
 			i += 1
 
@@ -644,6 +675,7 @@ func refresh() -> void:
 		sheet.guide_texture = cams.texture("overview") if cam_ok else null
 		var hw := ctl.services.homework
 		sheet.guide_region = SheetFrame.for_role("overview", hw.sheet_settings_path).region if hw != null else Rect2()
+	sheet.scanning = st in ["ANSWER_CHECK_READY", "SHEET_SCANNING", "RESCAN"]
 	sheet.mark_boxes = ctl.grading.boxes
 	var am := {}
 	for n in ctl.shown:
@@ -671,20 +703,25 @@ func refresh() -> void:
 	var revealing := st in ["REWARD_REVEAL", "POWERUP_SELECT"]
 	var unlocked := st == "GAME_READY_WITH_REWARD"
 	_banner.visible = revealing or unlocked
+	if unlocked:  # #237: then the score game by itself, a count-down on the button
+		_play.text = "  ゲームで遊ぶ ▶ %d  " % ctl.ready_left()
 	_banner.text = banner_text(st, ctl.reward)
-	_banner.add_theme_font_size_override("font_size", 84 if _banner.text.length() <= 14 else 60)
+	# a wide (Japanese) or long banner gets a smaller size: it must fit the narrow screen
+	var ascii := _banner.text.to_ascii_buffer().size() == _banner.text.to_utf8_buffer().size()
+	_banner.add_theme_font_size_override("font_size", 84 if ascii and _banner.text.length() <= 14 else (60 if ascii else 64))
 	_banner.size = Vector2(vs.x, 110)
-	_banner.position = Vector2(0, EXPLAIN_Y + 20.0)
+	_banner.position = Vector2(0, HEADER_H - 10.0)  # under UFOくん
 	_banner.pivot_offset = _banner.size * 0.5
 	_sub_banner.visible = revealing or unlocked
 	_sub_banner.text = reward_text(st, ctl.reward) + ("" if not unlocked or ctl.cleanup_ok or not StudyModeController.cleanup_enabled()
 		else "\n（お片付けは大人の人と確認してね）")
-	_sub_banner.size = Vector2(vs.x - 40, 150)
-	_sub_banner.position = Vector2(20, EXPLAIN_Y + 125.0)
+	_sub_banner.visible = _sub_banner.visible and st != "POWERUP_SELECT"
+	_sub_banner.size = Vector2(vs.x - 40, 220)
+	_sub_banner.position = Vector2(20, HEADER_H + 90.0)
 	_sub_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sub_banner.add_theme_font_size_override("font_size", 34)
 	_powers.visible = st == "POWERUP_SELECT"
-	_powers.position = Vector2(vs.x * 0.5 - 330, HEADER_H + 60.0)  # under UFOくん (the sheet is hidden then)
+	_powers.position = Vector2(vs.x * 0.5 - 330, HEADER_H + 110.0)  # under the banner, under UFOくん
 	for i in _power_buttons.size():
 		var chosen: bool = StudyModeController.POWERUPS[i][0] in ctl.selected_powerups
 		var lit: bool = chosen or (ctl.roulette_spinning and i == ctl.roulette_index)
@@ -712,6 +749,8 @@ func refresh() -> void:
 static func banner_text(st: String, r: Dictionary) -> String:
 	if st == "GAME_READY_WITH_REWARD":
 		return "STUDY POWER LOADED!"
+	if st == "POWERUP_SELECT":
+		return "パワールーレット！"
 	return "PERFECT!" if bool(r.get("perfect", false)) else "MISSION COMPLETE!"
 
 static func power_name(kind: String) -> String:
@@ -724,24 +763,21 @@ static func power_name(kind: String) -> String:
 static func reward_text(st: String, r: Dictionary, time_now := -1) -> String:
 	if r.is_empty():
 		return ""
+	# one thing a line (the screen is narrow): the counts, then what the game gets
 	var lines: Array[String] = []
 	if st != "GAME_READY_WITH_REWARD":
-		var parts := ["%dもん かくにん" % int(r.get("question_count", 0)), "%dもん せいかい" % int(r.get("confirmed_correct", 0))]
+		lines.append("%dもん かくにん" % int(r.get("question_count", 0)))
+		var right := "%dもん せいかい" % int(r.get("confirmed_correct", 0))
 		var review := (r.get("needs_review", []) as Array).size() + (r.get("unclear", []) as Array).size()
-		if review > 0:
-			parts.append("%dもん みなおし" % review)
-		lines.append("  ".join(parts))
-	var gets := []
+		lines.append(right + ("　%dもん みなおし" % review if review > 0 else ""))
 	if int(r.get("time_bonus_s", 0)) > 0:
-		gets.append("TIME +%d" % (int(r.time_bonus_s) if time_now < 0 else time_now))
+		lines.append("TIME +%d" % (int(r.time_bonus_s) if time_now < 0 else time_now))
 	var chosen: Array = r.get("selected_powerups", [])
 	if not chosen.is_empty():
 		for k in chosen:
-			gets.append("%s READY" % power_name(str(k)))
+			lines.append("%s READY" % power_name(str(k)))
 	elif int(r.get("power_tickets", 0)) > 0:
-		gets.append("POWER TICKET ×%d" % int(r.power_tickets))
-	if not gets.is_empty():
-		lines.append("  ".join(gets))
+		lines.append("POWER TICKET ×%d" % int(r.power_tickets))
 	return "\n".join(lines)
 
 static func study_time_text(secs: float) -> String:
@@ -803,10 +839,17 @@ func _process(dt: float) -> void:
 	_update_crop(dt)
 	if sheet.visible:  # the frame's bulbs, the magnifying glass, the ○ being drawn
 		sheet.queue_redraw()
+	if _reward_gets_in >= 0.0:
+		_reward_gets_in -= dt
+		if _reward_gets_in < 0.0 and ctl.state == "REWARD_REVEAL":
+			reward_gets(ctl.reward)
 	if _get_t >= 0.0:
 		_get_t += dt
 		if _get_t > GET_S:
 			_get_t = -1.0
+			if not _get_queue.is_empty():
+				var nx: Array = _get_queue.pop_front()
+				_start_get(str(nx[0]), str(nx[1]))
 	if _get_t >= 0.0 or ctl.state == "GAME_READY_WITH_REWARD":
 		_get_fx.queue_redraw()
 	# the reward: TIME counts up, a tick a second

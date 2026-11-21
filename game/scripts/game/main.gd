@@ -467,6 +467,12 @@ func hand_for_menus() -> Dictionary:
 func title_active() -> bool:
 	return title != null and title.active()
 
+## #237: the study mode is done: on to the score game's own title (as if chosen at the start), or
+## back to the claw game when there is no score game.
+func open_score_game() -> void:
+	if game_mode != null:
+		_on_title_chosen("score")
+
 func _on_title_chosen(mode: String) -> void:
 	debug_log.emit("title: " + mode)
 	if game_mode != null:

@@ -6,6 +6,8 @@ extends RefCounted
 ##   double    : a gold coin with "x2"
 ##   multiball : three balls
 ##   magnifier : a magnifying glass (the study mode looking for the sheet)
+##   clock     : an alarm clock (the reward's TIME)
+##   ticket    : a golden ticket (the reward's POWER TICKET)
 
 const SIZE := 16
 const PALETTE := {
@@ -74,6 +76,42 @@ const SPRITES := {
 		"OCCCCBCOOGGGGGGO",
 		".OCCBBO..OGGGGO.",
 		"..OOOO....OOOO..",
+		"................",
+		"................",
+		"................",
+	],
+	"clock": [
+		"..OO........OO..",
+		".ORRO......ORRO.",
+		".ORO.OOOOOO.ORO.",
+		"..O.ORRRRRRO.O..",
+		"...ORWWWWWWRO...",
+		"..ORWWWOWWWWRO..",
+		"..ORWWWOWWWWRO..",
+		".ORWWWWOWWWWWRO.",
+		".ORWWWWOOOOWWRO.",
+		".ORWWWWWWWWWWRO.",
+		"..ORWWWWWWWWRO..",
+		"..ORWWWWWWWWRO..",
+		"...ORRRRRRRRO...",
+		"..OO.OOOOOO.OO..",
+		".OO..........OO.",
+		"................",
+	],
+	"ticket": [
+		"................",
+		"................",
+		".OOOOOOOOOOOOOO.",
+		".OYYYYYYYYYYYYO.",
+		".OYDDDDDDDDDDYO.",
+		"OYYDYYYWYYYYDYYO",
+		"O.YDYYWWWYYYDY.O",
+		".OYDYWWWWWYYDYO.",
+		"O.YDYYWWWYYYDY.O",
+		"OYYDYYWYWYYYDYYO",
+		".OYDDDDDDDDDDYO.",
+		".OYYYYYYYYYYYYO.",
+		".OOOOOOOOOOOOOO.",
 		"................",
 		"................",
 		"................",

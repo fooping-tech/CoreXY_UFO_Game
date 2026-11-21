@@ -24,6 +24,8 @@ var guide := false
 var guide_texture: Texture2D
 var guide_region := Rect2()
 var answer_marks := {}
+## #237: the reader is checking the answers now: a scanning beam and "答案を確認中！"
+var scanning := false
 var mark_boxes := {}
 const MARK_GROW_MS := 420.0
 const RED := Color("ff2d2d")
@@ -110,6 +112,8 @@ func _draw() -> void:
 		_draw_pixel_frame(shown)
 		draw_texture_rect(crop_texture, shown, false)
 		_draw_marks(func(n: int) -> Rect2: return box_on(shown, mark_boxes.get(n)))
+		if scanning:
+			_draw_scanning(shown)
 		return
 	var s := minf(size.x / page.x, (size.y - top) / page.y)
 	var o := Vector2((size.x - page.x * s) * 0.5, top)
@@ -153,6 +157,8 @@ func _draw() -> void:
 			if st == StudyQuestionTracker.HELD:
 				draw_rect(box, Color(0.85, 0.65, 0.5, 0.75))
 	_draw_marks(func(n: int) -> Rect2: return sheet_box(o, s, n))
+	if scanning:
+		_draw_scanning(Rect2(o, page * s))
 
 ## #237: a pixel-art frame round a camera picture: a wooden marquee with blinking bulbs.
 const FRAME_PAD := 16.0
@@ -234,6 +240,25 @@ func _draw_guide(font: Font, top: float) -> void:
 	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30), ac + Vector2(26, -30), ac + Vector2(0, 6)]), Color("ff4fa3"))
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62), ac + Vector2(12, -62), ac + Vector2(12, -30), ac + Vector2(-12, -30)]), Color("ff4fa3"))
+
+## The answers being checked: a beam sweeping up and down the picture, a light veil over it, and
+## "答案を確認中！" bouncing at its top (the dots counting).
+func _draw_scanning(r: Rect2) -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	draw_rect(r, Color(0.3, 0.9, 1.0, 0.08))
+	var y := r.position.y + (0.5 + 0.5 * sin(t * 2.6)) * r.size.y
+	for i in 6:  # a soft band, brightest in its middle
+		var h := 4.0 + 6.0 * i
+		draw_rect(Rect2(r.position.x, y - h * 0.5, r.size.x, h), Color(0.45, 0.95, 1.0, 0.07))
+	draw_rect(Rect2(r.position.x, y - 2.0, r.size.x, 4.0), Color(0.75, 1.0, 1.0, 0.95))
+	var font := UiFonts.title()
+	var text := "答案を確認中！" + ".".repeat(1 + int(t * 3.0) % 3)
+	var fs := 40
+	var w := font.get_string_size("答案を確認中！...", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var at := Vector2(r.get_center().x - w * 0.5, r.position.y + fs + 14.0 + 6.0 * absf(sin(t * 5.0)))
+	draw_rect(Rect2(at + Vector2(-18, -fs - 4), Vector2(w + 36, fs + 22)), Color(0.1, 0.05, 0.2, 0.75))
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 10, Color("1a1030"))
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("7af0ff"))
 
 ## A [x1, y1, x2, y2] box (0..1000 of a picture) on the picture as shown; no box: Rect2().
 static func box_on(shown: Rect2, b) -> Rect2:
