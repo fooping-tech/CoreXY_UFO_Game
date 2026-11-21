@@ -922,6 +922,11 @@ func _rid(kind: String) -> String:
 	return "sm-%s-%d-%d" % [kind, Time.get_ticks_msec(), _seq]
 
 ## The voice for a line: the request id ("" = no voice now).
+## What the voice reads: the line as shown, but "UFO" as "ユーフォー" (VOICEVOX spells it out:
+## "ユーエフオー"). The bubble keeps "UFOくん".
+static func spoken(text: String) -> String:
+	return text.replace("ＵＦＯ", "ユーフォー").replace("UFO", "ユーフォー").replace("ufo", "ユーフォー")
+
 func voice_request(text: String) -> String:
 	if inject_fail == "voice":
 		return ""
@@ -929,7 +934,7 @@ func voice_request(text: String) -> String:
 		voice_status = "声なし（文字で表示）" if homework == null or not homework.speech_available else "声: バックエンドに接続中"
 		return ""
 	var rid := _rid("say")
-	if homework.link.send_aux({"type": "homework_say", "request_id": rid, "data": {"text": text}}) != OK:
+	if homework.link.send_aux({"type": "homework_say", "request_id": rid, "data": {"text": spoken(text)}}) != OK:
 		return ""
 	return rid
 

@@ -5,6 +5,7 @@ extends RefCounted
 ##   speed     : a lightning bolt
 ##   double    : a gold coin with "x2"
 ##   multiball : three balls
+##   magnifier : a magnifying glass (the study mode looking for the sheet)
 
 const SIZE := 16
 const PALETTE := {
@@ -18,6 +19,9 @@ const PALETTE := {
 	"C": Color("3ff0ff"),
 	"B": Color("1f8fff"),
 	"G": Color("7cff6b"),
+	"K": Color("8a93a6"),  # the lens' metal rim
+	"E": Color("c8f6ff"),  # glass
+	"M": Color("a0522d"),  # a wooden handle
 }
 const SPRITES := {
 	"speed": [
@@ -73,6 +77,24 @@ const SPRITES := {
 		"................",
 		"................",
 		"................",
+	],
+	"magnifier": [
+		"...OOOOO........",
+		"..OKKKKKO.......",
+		".OKEEWWEKO......",
+		"OKEEWEEEEKO.....",
+		"OKEWEEEEEKO.....",
+		"OKEEEEEEEKO.....",
+		"OKEEEEEEEKO.....",
+		"OKEEEEEEEKO.....",
+		".OKEEEEEKO......",
+		"..OKKKKKOO......",
+		"...OOOOOMMO.....",
+		"........OMMO....",
+		".........OMMO...",
+		"..........OMMO..",
+		"...........OMO..",
+		"............OO..",
 	],
 }
 

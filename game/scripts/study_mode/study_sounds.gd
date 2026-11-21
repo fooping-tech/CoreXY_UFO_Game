@@ -20,19 +20,23 @@ var _streams: Dictionary = {}
 var _players: Array[AudioStreamPlayer] = []
 var last_played := ""
 var music_file := "ending.mp3"
-var music_gain_db := -6.0
+## the track's own level, as the score game's music: audio.volume_db + GameModeSounds.BGM_DB +
+## this (the same ending.mp3 plays at -13 there)
+var music_gain_db := -13.0
 var music: AudioStreamPlayer  # null when there is no music file
 var _files: Dictionary = {}  # manifest key -> AudioStream
 var last_cue := ""
-## the project's own effects in assets/audio/ (added for the answer check): key -> file. Read
-## from the disk when there (no import needed); a missing one leaves its stand-in ("a|b").
+## the study mode's own effects in assets/audio/se/ (効果音ラボ, see se/README.md): key -> file.
+## Read from the disk when there (no import needed); a missing one leaves its stand-in ("a|b").
+const SE_DIR := "res://assets/audio/se/"
 const OWN_FILES := {"pico": "pico.mp3", "don": "don.mp3", "jan": "jan.mp3"}
 ## a moment -> the sounds played together (a manifest key, an own file, or a synthesised one;
 ## "a|b" = a, or b when there is no a)
 const CUES := {
+	"found": ["don|boom", "pico|pinpon", "combo", "sparkle"],
 	"check_start": ["go", "appear"],
 	"drum": ["drum"],
-	"correct": ["don|boom", "pico|star", "gem"],
+	"correct": ["don|boom", "pico|pinpon", "gem"],
 	"combo": ["combo", "sparkle"],
 	"review": ["pop", "switch"],
 	"unclear": ["tick"],
@@ -53,7 +57,8 @@ func _ready() -> void:
 		"fanfare": _tones([[523.3, 0.13], [659.3, 0.13], [784.0, 0.13], [1046.5, 0.5], [784.0, 0.12], [1046.5, 0.7]], 0.4),
 		"pop": _noise(0.12, 0.6, true),
 		"tick": _tones([[880.0, 0.05]], 0.25),
-		"drum": _roll(0.75, 0.45),
+		"drum": _roll(0.9, 0.85),
+		"pinpon": _bell([[1318.5, 0.16], [1046.5, 0.7]], 0.55),
 		"boom": _boom(0.55, 0.9),
 		"sparkle": _tones([[1318.5, 0.05], [1568.0, 0.05], [2093.0, 0.05], [2637.0, 0.16]], 0.3),
 	}
@@ -79,8 +84,12 @@ func _load_music() -> void:
 	music.name = "StudyMusic"
 	music.bus = AudioBuses.BGM
 	music.stream = stream
-	music.volume_db = music_gain_db
+	music.volume_db = music_volume_db()
 	add_child(music)
+
+## The music's level, worked out as the score game's (so the two sound alike).
+func music_volume_db() -> float:
+	return float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB + music_gain_db
 
 func music_start() -> void:
 	if music == null:
@@ -94,7 +103,7 @@ func music_stop() -> void:
 
 func _load_files() -> void:
 	for key in OWN_FILES:
-		var own := GameModeSounds.load_music_stream(GameModeSounds.AUDIO_DIR + str(OWN_FILES[key]), false)
+		var own := GameModeSounds.load_music_stream(SE_DIR + str(OWN_FILES[key]), false)
 		if own != null:
 			_files[key] = own
 	if not FileAccess.file_exists(GameModeSounds.MANIFEST):
@@ -171,23 +180,37 @@ static func _sweep(f0: float, f1: float, secs: float, amp: float) -> AudioStream
 		s.append(amp * sin(phase) * sin(PI * k))
 	return _wav(s)
 
-## A snare roll getting faster and louder (the moment before a verdict).
+## A snare drum roll (the moment before a verdict): ~28 strokes a second, each a crack of noise
+## on a low drum body, louder and louder to the end (the verdict lands right after it).
 static func _roll(secs: float, amp: float) -> AudioStreamWAV:
 	var s := PackedFloat32Array()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 237
 	var count := int(secs * RATE)
-	var next := 0
-	var gap := int(0.07 * RATE)
-	var hit := 0
+	var stroke := int(RATE / 28.0)
 	for i in count:
-		if i >= next:
-			hit = i
-			gap = maxi(int(gap * 0.88), int(0.025 * RATE))
-			next = i + gap
+		var since := float(i % stroke) / RATE
 		var k := float(i) / count
-		var env := exp(-40.0 * float(i - hit) / RATE)
-		s.append(amp * (0.4 + 0.6 * k) * env * rng.randf_range(-1.0, 1.0))
+		var swell := 0.25 + 0.75 * k * k  # a crescendo
+		var crack := rng.randf_range(-1.0, 1.0) * exp(-55.0 * since)
+		var body := sin(TAU * 185.0 * since) * exp(-30.0 * since)
+		var v := (0.75 * crack + 0.55 * body) * swell
+		if i > count - int(0.08 * RATE):  # the last stroke rings a little
+			v *= 1.25
+		s.append(amp * clampf(v, -1.0, 1.0))
+	return _wav(s)
+
+## A bell "ピンポーン": each note a sine with its overtones, ringing out.
+static func _bell(notes: Array, amp: float) -> AudioStreamWAV:
+	var s := PackedFloat32Array()
+	for n in notes:
+		var f: float = n[0]
+		var count := int(float(n[1]) * RATE)
+		for i in count:
+			var t := float(i) / RATE
+			var env := minf(t / 0.004, 1.0) * exp(-4.5 * t / maxf(float(n[1]), 0.05))
+			var v := sin(TAU * f * t) + 0.45 * sin(TAU * f * 2.0 * t) + 0.2 * sin(TAU * f * 3.01 * t)
+			s.append(amp * env * v / 1.65)
 	return _wav(s)
 
 ## A deep hit: a falling sine and a thud of noise.

@@ -314,6 +314,16 @@ func _setup_study_mode() -> void:
 	study_hud.name = "StudyHud"
 	add_child(study_hud)
 	study_hud.setup(study_mode)
+	# #237: the study mode's warm pixel-art room behind the UFO (over the stars), and no gesture
+	# mini camera meanwhile (the study mode shows its own camera picture)
+	var backdrop := StudyBackdrop.new()
+	backdrop.name = "StudyBackdrop"
+	add_child(backdrop)
+	backdrop.visible = false
+	study_mode.state_changed.connect(func(_p, c):
+		backdrop.visible = c != "OFF"
+		if gesture_hud != null:
+			gesture_hud.hidden_by_study = c != "OFF")
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 

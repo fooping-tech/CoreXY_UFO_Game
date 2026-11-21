@@ -326,7 +326,7 @@ func _on_worksheet_seen() -> void:
 		return
 	_set_state("STUDYING")
 	study_started_ms = Time.get_ticks_msec()
-	sounds.play("chime")
+	sounds.cue("found")
 	GameState.post_event("study_started", {"worksheet_id": worksheet.get("worksheet_id", "")})
 	_say([{"text": "プリントを見つけたよ！", "face": "happy"},
 		{"text": "宿題スタート！むずかしかったら %s キーでぼくを呼んでね。" % OS.get_keycode_string(help_keycode), "face": "normal"}])

@@ -382,8 +382,10 @@ func flash(strength := 0.8, secs := 0.5) -> void:
 	var tw := create_tween()
 	tw.tween_property(_flash, "color:a", 0.0, secs)
 
-func _on_state(_prev: String, cur: String) -> void:
+func _on_state(prev: String, cur: String) -> void:
 	visible = cur != "OFF"
+	if prev == "WAITING_FOR_WORKSHEET" and cur == "STUDYING":
+		found()
 	match cur:
 		"REWARD_REVEAL":
 			flash(1.0, 0.9)
@@ -409,6 +411,19 @@ func _on_state(_prev: String, cur: String) -> void:
 			flash(0.7, 0.25)
 			scope.shutter()
 	refresh()
+
+## #237: the sheet found: a giant word, a shake, a flash, crackers and bursts round the sheet.
+func found() -> void:
+	pop("みつけた！", Color("ff7a2f"), 110)
+	flash(0.8, 0.5)
+	shake(0.8)
+	crackers.burst()
+	var c := sheet.global_position + sheet.size * 0.5
+	_burst_at(c, 4.0)
+	for i in 6:
+		var a := TAU * i / 6.0
+		var p := c + Vector2(cos(a) * 250.0, sin(a) * 160.0)
+		get_tree().create_timer(0.08 * i).timeout.connect(func(): if visible: _burst_at(p, 2.2))
 
 ## #237: the big moments.
 func shake(amount: float) -> void:
@@ -488,7 +503,7 @@ func _on_event(name: String, data: Dictionary) -> void:
 			get_tree().create_timer(0.8).timeout.connect(func(): if visible: _burst_at(get_centre(vs) + Vector2(150, -30), 2.5))
 
 static func get_centre(vs: Vector2) -> Vector2:
-	return Vector2(vs.x * 0.5, HEADER_H + 40.0)
+	return Vector2(vs.x * 0.5, HEADER_H + 150.0)  # over the roulette (under UFOくん)
 
 ## The item get: the screen dims, rays turn behind the item, it bounces in big, "GET!!" under it;
 ## then, on the game's ready screen, the items got float by the play button.
@@ -614,6 +629,13 @@ func refresh() -> void:
 			_frozen_src = img
 			_crop_frozen = ImageTexture.create_from_image(img)
 		sheet.crop_texture = _crop_frozen
+	# #237: until the sheet is found: where to put it, over the camera's whole picture
+	sheet.guide = st == "WAITING_FOR_WORKSHEET"
+	if sheet.guide:
+		var cam_ok := ctl.services.mode == "camera" and cams != null and cams.has_feed("overview")
+		sheet.guide_texture = cams.texture("overview") if cam_ok else null
+		var hw := ctl.services.homework
+		sheet.guide_region = SheetFrame.for_role("overview", hw.sheet_settings_path).region if hw != null else Rect2()
 	sheet.mark_boxes = ctl.grading.boxes
 	var am := {}
 	for n in ctl.shown:
@@ -653,7 +675,7 @@ func refresh() -> void:
 	_sub_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_sub_banner.add_theme_font_size_override("font_size", 34)
 	_powers.visible = st == "POWERUP_SELECT"
-	_powers.position = Vector2(vs.x * 0.5 - 330, EXPLAIN_Y + 300.0)
+	_powers.position = Vector2(vs.x * 0.5 - 330, HEADER_H + 60.0)  # under UFOくん (the sheet is hidden then)
 	for i in _power_buttons.size():
 		var chosen: bool = StudyModeController.POWERUPS[i][0] in ctl.selected_powerups
 		var lit: bool = chosen or (ctl.roulette_spinning and i == ctl.roulette_index)
@@ -768,7 +790,7 @@ func _process(dt: float) -> void:
 	if not visible or ctl == null:
 		return
 	_update_crop(dt)
-	if sheet.animating():
+	if sheet.visible:  # the frame's bulbs, the magnifying glass, the ○ being drawn
 		sheet.queue_redraw()
 	if _get_t >= 0.0:
 		_get_t += dt

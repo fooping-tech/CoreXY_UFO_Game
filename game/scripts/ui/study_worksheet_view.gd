@@ -18,6 +18,11 @@ var crop_texture: Texture2D
 ## #237: the answer check's marks, drawn on the picture: number -> {"verdict", "t" (msec shown)}.
 ## On a photo (crop_texture) a problem's place is mark_boxes[number] ([x1, y1, x2, y2], 0..1000 of
 ## the picture read); on the drawn sheet it is the worksheet's answer box.
+## #237: until the sheet is found: the camera's whole picture (or a desk without one) and where
+## to put the sheet (0..1 of the picture; no area = the middle), "ここへおいてね！"
+var guide := false
+var guide_texture: Texture2D
+var guide_region := Rect2()
 var answer_marks := {}
 var mark_boxes := {}
 const MARK_GROW_MS := 420.0
@@ -92,14 +97,18 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	var page := PAGE
 	var top := 22.0
+	if guide:
+		_photo.visible = false
+		_draw_guide(font, top)
+		return
 	if crop_texture != null:
 		_photo.visible = false
-		draw_string(font, Vector2(0, 16), caption, HORIZONTAL_ALIGNMENT_LEFT, size.x, 14, Color("c8d6f0"))
+		draw_string(font, Vector2(0, 16), caption, HORIZONTAL_ALIGNMENT_LEFT, size.x, 14, Color("5a2e1a"))
 		var tex := Vector2(crop_texture.get_size())
-		var k := minf(size.x / tex.x, (size.y - top) / tex.y)
-		var shown := Rect2(Vector2((size.x - tex.x * k) * 0.5, top), tex * k)
+		var k := minf((size.x - 2 * FRAME_PAD) / tex.x, (size.y - top - 2 * FRAME_PAD) / tex.y)
+		var shown := Rect2(Vector2((size.x - tex.x * k) * 0.5, top + FRAME_PAD), tex * k)
+		_draw_pixel_frame(shown)
 		draw_texture_rect(crop_texture, shown, false)
-		draw_rect(shown, Color("5cb8ff"), false, 2.0)
 		_draw_marks(func(n: int) -> Rect2: return box_on(shown, mark_boxes.get(n)))
 		return
 	var s := minf(size.x / page.x, (size.y - top) / page.y)
@@ -144,6 +153,87 @@ func _draw() -> void:
 			if st == StudyQuestionTracker.HELD:
 				draw_rect(box, Color(0.85, 0.65, 0.5, 0.75))
 	_draw_marks(func(n: int) -> Rect2: return sheet_box(o, s, n))
+
+## #237: a pixel-art frame round a camera picture: a wooden marquee with blinking bulbs.
+const FRAME_PAD := 16.0
+const FRAME_DOT := 4.0
+func _draw_pixel_frame(shown: Rect2) -> void:
+	var d := FRAME_DOT
+	var outer := shown.grow(FRAME_PAD)
+	draw_rect(outer.grow(d), Color("4a2412"))  # the dark rim
+	draw_rect(outer, Color("c8692a"))  # wood
+	for i in range(0, int(outer.size.x / d), 3):  # grain dots along the top and bottom
+		draw_rect(Rect2(outer.position + Vector2(i * d, d), Vector2(d, d)), Color("e08a45"))
+		draw_rect(Rect2(outer.position + Vector2(i * d + d, outer.size.y - 2 * d), Vector2(d, d)), Color("a9521f"))
+	draw_rect(Rect2(outer.position, Vector2(outer.size.x, d)), Color("ffb36b"))  # light on the top edge
+	draw_rect(shown.grow(d), Color("2a140a"))  # the picture's inner edge
+	# bulbs round the frame, blinking in turn
+	var t := Time.get_ticks_msec() / 1000.0
+	var step := 26.0
+	var n := 0
+	var cols := [Color("fff07a"), Color("ff7ab8"), Color("7af0ff")]
+	for side in 4:
+		var a: Vector2 = [outer.position, outer.position + Vector2(outer.size.x, 0), outer.end, outer.position + Vector2(0, outer.size.y)][side]
+		var b: Vector2 = [outer.position + Vector2(outer.size.x, 0), outer.end, outer.position + Vector2(0, outer.size.y), outer.position][side]
+		var len := a.distance_to(b)
+		var inward := (Vector2(-(b - a).y, (b - a).x).normalized()) * (FRAME_PAD * 0.5)
+		var count := int(len / step)
+		for j in count:
+			var p := a.lerp(b, (j + 0.5) / count) + inward
+			var on := int(t * 6.0 + n) % 3 == 0
+			var col: Color = cols[n % cols.size()]
+			draw_rect(Rect2(p - Vector2(d, d), Vector2(2 * d, 2 * d)), col if on else col.darkened(0.55))
+			if on:
+				draw_rect(Rect2(p - Vector2(d * 0.5, d * 0.5), Vector2(d, d)), Color.WHITE)
+			n += 1
+	for c in [outer.position, outer.position + Vector2(outer.size.x, 0), outer.end, outer.position + Vector2(0, outer.size.y)]:
+		draw_rect(Rect2(c - Vector2(2 * d, 2 * d), Vector2(4 * d, 4 * d)), Color("ffd21f"))  # gold corners
+		draw_rect(Rect2(c - Vector2(d, d), Vector2(2 * d, 2 * d)), Color("fff3a0"))
+
+## Until the sheet is found: the camera's picture in the frame and, over it, where to put the sheet.
+func _draw_guide(font: Font, top: float) -> void:
+	var tex := Vector2(guide_texture.get_size()) if guide_texture != null else Vector2(4, 3)
+	var k := minf((size.x - 2 * FRAME_PAD) / tex.x, (size.y - top - 2 * FRAME_PAD) / tex.y)
+	var shown := Rect2(Vector2((size.x - tex.x * k) * 0.5, top + FRAME_PAD), tex * k)
+	_draw_pixel_frame(shown)
+	if guide_texture != null:
+		draw_texture_rect(guide_texture, shown, false)
+	else:  # no camera (the simulated mode): a desk
+		draw_rect(shown, Color("e0a061"))
+		for y in range(0, int(shown.size.y), 18):
+			draw_rect(Rect2(shown.position + Vector2(0, y), Vector2(shown.size.x, 2)), Color("c98549"))
+	var r := guide_region if guide_region.has_area() else Rect2(0.18, 0.12, 0.64, 0.76)
+	var target := Rect2(shown.position + r.position * shown.size, r.size * shown.size)
+	var t := Time.get_ticks_msec() / 1000.0
+	var pulse := 0.5 + 0.5 * sin(t * 5.0)
+	draw_rect(target, Color(1.0, 0.95, 0.55, 0.18 + 0.12 * pulse))
+	var col := Color("ff4fa3").lerp(Color("ffd21f"), pulse)
+	var w := 6.0
+	var corners := [target.position, target.position + Vector2(target.size.x, 0), target.end, target.position + Vector2(0, target.size.y)]
+	for i in 4:
+		draw_dashed_line(corners[i], corners[(i + 1) % 4], col, w, 14.0)
+	var arm := minf(target.size.x, target.size.y) * 0.18
+	for i in 4:  # brackets at the corners
+		var c: Vector2 = corners[i]
+		var sx := 1.0 if i in [0, 3] else -1.0
+		var sy := 1.0 if i in [0, 1] else -1.0
+		draw_line(c, c + Vector2(arm * sx, 0), Color.WHITE, w + 4.0)
+		draw_line(c, c + Vector2(0, arm * sy), Color.WHITE, w + 4.0)
+	var bob := 8.0 * sin(t * 4.0)
+	var text := "ここへおいてね！"
+	var fs := 40
+	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var at := Vector2(target.get_center().x - tw * 0.5, target.position.y - 18.0 + bob)
+	at.y = maxf(at.y, top + fs)
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 12, Color("5a1a3a"))
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("fff3a0"))
+	# a magnifying glass wanders over the picture, looking for the sheet
+	var wander := shown.get_center() + Vector2(sin(t * 0.9) * 0.36 * shown.size.x, sin(t * 1.37 + 1.0) * 0.32 * shown.size.y)
+	draw_circle(wander + Vector2(-12, -12), 34.0, Color(1, 1, 1, 0.12 + 0.08 * pulse))
+	PowerItemArt.draw(self, "magnifier", wander, 6.0)
+	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
+	draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30), ac + Vector2(26, -30), ac + Vector2(0, 6)]), Color("ff4fa3"))
+	draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62), ac + Vector2(12, -62), ac + Vector2(12, -30), ac + Vector2(-12, -30)]), Color("ff4fa3"))
 
 ## A [x1, y1, x2, y2] box (0..1000 of a picture) on the picture as shown; no box: Rect2().
 static func box_on(shown: Rect2, b) -> Rect2:

@@ -578,8 +578,8 @@
     },
     "bgm": {
       "file": "ending.mp3",
-      "gain_db": -6.0,
-      "_note": "#237: the study mode's music: this file from game/assets/audio/bgm/ (each machine's own, never in Git, as the score game's music) loops on the BGM bus from the study mode's start to its end. No file, or audio.bgm_enabled false: silence. gain_db on top of audio.bgm_volume_db."
+      "gain_db": -13.0,
+      "_note": "#237: the study mode's music: this file from game/assets/audio/bgm/ (each machine's own, never in Git, as the score game's music) loops on the BGM bus from the study mode's start to its end. No file, or audio.bgm_enabled false: silence. The level is worked out as the score game's music: audio.volume_db + the music's -8 dB + gain_db (the score game plays the same ending.mp3 at gain -13), then the BGM bus (audio.bgm_volume_db)."
     },
     "answer_check": {
       "checking_s": 0.9,

@@ -1152,7 +1152,8 @@ func _test_study_answer_check(rs: Node) -> void:
 			var got := snd.pick(str(k))
 			layered = layered and (snd._files.has(got) or snd._streams.has(got))
 	snd.music_start()  # tests never load this machine's music files
-	_ok(layered and snd.music == null and snd.music_file == "ending.mp3",
+	var game_level := float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB - 13.0
+	_ok(layered and snd.music == null and snd.music_file == "ending.mp3" and is_equal_approx(snd.music_volume_db(), game_level),
 		"answer check: every cue's sounds exist (files and synthesised); the study music is ending.mp3", str(snd._files.keys()))
 	snd.free()
 	# the reading fails in the study mode: unclear, a hint to look again, and the story goes on
@@ -1294,3 +1295,36 @@ func _test_study_power_items(rs: Node) -> void:
 		"answer check: don / pico at a right answer and jan as the fanfare when their files are there (else the stand-ins)",
 		str([don_or_stand_in, jan_or_stand_in, snd._files.keys()]))
 	snd.free()
+
+
+## #237: the warm pixel-art room, the "put it here" guide, the found show, the voice's "ユーフォー".
+func _test_study_scenery(rs: Node) -> void:
+	var img := StudyBackdrop.paint()
+	var top := img.get_pixel(StudyBackdrop.W / 2, 2)
+	var desk := img.get_pixel(StudyBackdrop.W / 2, StudyBackdrop.H - 4)
+	_ok(img.get_size() == Vector2i(StudyBackdrop.W, StudyBackdrop.H) and top.r > top.b and top.g > 0.8 and desk.r > desk.b,
+		"study scenery: the background is a warm pixel-art scene (light yellow sky, a wooden desk)", str([top, desk]))
+	_ok(StudyServices.spoken("UFOくん、こんにちは") == "ユーフォーくん、こんにちは" and StudyServices.spoken("ＵＦＯ") == "ユーフォー",
+		"study scenery: the voice says ユーフォー (the bubble keeps UFOくん)")
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	ctl.services.worksheet_wait_s = 999.0
+	game.gesture_hud.hidden_by_study = false
+	ctl.start()
+	var backdrop: Node2D = game.get_node("StudyBackdrop")
+	ctl.debug_skip()  # waiting for the sheet
+	hud.refresh()
+	var waiting: bool = ctl.state == "WAITING_FOR_WORKSHEET" and hud.sheet.guide and backdrop.visible \
+		and game.gesture_hud.hidden_by_study
+	ctl.services.mark_seen()
+	hud.refresh()
+	var found_ok: bool = ctl.state == "STUDYING" and not hud.sheet.guide and hud._pop.text == "みつけた！" \
+		and ctl.sounds.last_cue == "found"
+	ctl.stop()
+	_ok(waiting and found_ok and not backdrop.visible and not game.gesture_hud.hidden_by_study,
+		"study scenery: 'ここへおいてね！' until the sheet is found, then みつけた！; the warm room and no gesture camera only in the study mode",
+		str([waiting, found_ok, backdrop.visible]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
