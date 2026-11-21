@@ -55,6 +55,8 @@ VFXManager.stop_fx(sprite); VFXManager.stop_all(); VFXManager.enabled = false
 | 失敗 | `RESULT` かつ失敗 | `fail_poof`（UFO の下。顔を隠さない） |
 | ラウンド終了 | `RESULT` を抜けたとき | `end_fade` |
 
+スコアゲーム（#138）の転送の演出は別の持ち主: `game/scripts/game_mode/game_mode_vfx.gd`（`GameModeVFX`。`capsule_*` の 6 シート。灰色で焼き、Dial ごとの色を `color` で掛ける。スコアゲームの CanvasLayer に出すので `spawn_fx` の `parent` を使う）。対応は `docs/game_mode_spec.md` §11。
+
 守ること:
 - 状態は GameState から取る（GameState は実機の報告に従う）。演出側で状態を推定しない。
 - ループは状態ごとに 1 枠。同じ状態に入り直しても積み重ねない。
@@ -76,6 +78,6 @@ VFXManager.stop_fx(sprite); VFXManager.stop_all(); VFXManager.enabled = false
 
 ## 5. 確認とテスト
 
-- 自動テスト（`game/tests/run_tests.gd`）: `_test_vfx_manager`（全シートの読み込み・フレーム数・fps・pivot・オプション・自動解放・追従・無効化）、`_test_vfx_follows_the_game`（場面 → VFX、重複イベント 1 回、成功は結果イベントのみ、無効でも進む）。
+- 自動テスト（`game/tests/test_ui.gd`）: `_test_vfx_manager`（全シートの読み込み・フレーム数・fps・pivot・オプション・自動解放・追従・無効化）、`_test_vfx_follows_the_game`（場面 → VFX、重複イベント 1 回、成功は結果イベントのみ、無効でも進む）。
 - 目視: デバッグパネル（F1）の「VFX」タブで各エフェクトと場面を再生する。スクリーンショットが要るときは、一時的なシーンで `main.vfx.play(<moment>, 3.0, true)` を呼んで `get_viewport().get_texture().get_image().save_png()`（窓ありで起動。終わったら一時ファイルを消す）。
 - `config/game_config.json` の `render.vfx`（false で全 VFX 無効。ゲームはそのまま動く）。

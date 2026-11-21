@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 
 # this machine's config/local_settings.json (the settings screen, #93) must not change the tests
 os.environ["CXUFO_NO_LOCAL_SETTINGS"] = "1"
+# nor is this machine's cache of made voice lines read or written (#171)
+os.environ["CXUFO_NO_SPEECH_CACHE"] = "1"
 
 from corexy_ufo_backend.serial_service.transport import SerialTransport
 
@@ -26,6 +27,7 @@ class FakeFirmware(SerialTransport):
         self.alarm_reason = "none"
         self.test_mode = False
         self.servo_abs = {1: 1000, 2: 0}
+        self.servo_stop_short: dict[int, tuple[int, str]] = {}  # sid -> (counts short, "ON" / "OFF")
         # multi-turn tracking per servo: the firmware's flag and the servo's limits
         self.servo_tracking = {1: True, 2: True}
         self.servo_limits = {1: "0/0", 2: "0/0"}
@@ -41,6 +43,8 @@ class FakeFirmware(SerialTransport):
         self._xy_task: asyncio.Task | None = None
         self._open = False
         self._tasks: list[asyncio.Task] = []
+        # #161: the USB link's reading side died: writes still arrive, nothing comes back
+        self.rx_dead = False
 
     def cut_servo_power(self, sid: int = 1) -> None:
         """The servo alone lost power: back to one turn. The older firmware does not
@@ -84,7 +88,8 @@ class FakeFirmware(SerialTransport):
             t.cancel()
 
     def _emit(self, line: str) -> None:
-        self.lines.put_nowait(line)
+        if not self.rx_dead:
+            self.lines.put_nowait(line)
 
     def _later(self, delay: float, *lines: str, then=None) -> asyncio.Task:
         async def go() -> None:
@@ -213,6 +218,16 @@ class FakeFirmware(SerialTransport):
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over")
             else:
                 target = self.servo_abs[sid] + int(turns * 4096)
+                short = self.servo_stop_short.get(sid)
+                if short:
+                    # #192: something in the way: it stops `counts` short of the target and the
+                    # firmware gives up waiting (TIMEOUT), the torque as told (ON = still pressing)
+                    counts, torque = short
+                    actual = target - counts if turns > 0 else target + counts
+                    self.servo_abs[sid] = actual
+                    self._later(self.move_delay, f"SERVO_TURN id={sid} value={turns:.2f} result=TIMEOUT "
+                                                 f"target={target} actual={actual} ms=2233 torque={torque}")
+                    return
                 self.servo_abs[sid] = target
                 self._later(self.move_delay, f"SERVO_TURN id={sid} value={turns:.2f} result=PASS target={target} actual={target} error=+0 ms=120")
         elif name == "SERVO_STATUS":

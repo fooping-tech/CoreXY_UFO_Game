@@ -31,6 +31,8 @@ var homework: Node
 ## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
 var study_mode: StudyModeController
 var study_hud: StudyHud
+## SUMMON THE UFO, the 150 s score game (#138): its own screen over the crane's, its own state
+var game_mode: GameModeController
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
@@ -53,6 +55,16 @@ var _sim_seq := 0
 var gesture_allow_real := false
 ## Why the gesture may not move the robot now ("" = it may).
 var gesture_gate_reason := ""
+## The score game's easy mode (#169): what the hand's shapes mean there (a fist = catch by
+## itself, one / two fingers = carry to Dial 1 / 2). Its own state; it only asks the backend
+## for the sequence (`_easy_send`) and follows the backend's report.
+var easy := EasyModeControl.new()
+## The backend's link is open, as the hand control's gate and the easy mode see it (the
+## tests put a stand-in here; commands still go out through `ws` only).
+var backend_link: Callable = func() -> bool: return RobotState.source == "websocket" and ws.enabled and ws.is_open()
+const GATE_GESTURE_OFF := "ハンドジェスチャーが オフ（H で オン）"
+const GATE_EASY_BUSY := "かんたんモード: じどうで うごいているよ"
+const GATE_EASY_FAULT := "かんたんモード: とまっているよ（かかりの ひとを よんでね）"
 ## Who drove the crane on the last tick (ControlArbiter source).
 var control_source := "none"
 var _lost_since_ms := -1.0
@@ -226,6 +238,14 @@ func _ready() -> void:
 		homework.setup(cameras, ws)
 	gesture.state_changed.connect(_on_gesture_state)
 	gesture.claw_requested.connect(_on_gesture_claw)
+	var easy_cfg = GameConfig.value("game_mode.easy", {})
+	easy.configure(easy_cfg if easy_cfg is Dictionary else {})
+	easy.send = _easy_send
+	ws.ack.connect(easy.on_ack)
+	easy.delivered.connect(_on_easy_delivered)
+	easy.cue.connect(_on_easy_cue)
+	easy.state_changed.connect(func(from: String, to: String): debug_log.emit("easy mode: %s -> %s%s" % [from, to,
+		(" (%s)" % easy.note) if easy.note != "" else ""]))
 	var hud_layer := CanvasLayer.new()
 	hud_layer.name = "GestureHudLayer"
 	hud_layer.layer = 4
@@ -245,10 +265,20 @@ func _ready() -> void:
 	debug_ui.setup(self)
 	if bool(GameConfig.get_value("study_mode", "enabled", false)):
 		_setup_study_mode()
+	if bool(GameConfig.value("game_mode.enabled", true)):
+		game_mode = GameModeController.new()
+		game_mode.name = "GameMode"
+		add_child(game_mode)
+		game_mode.setup(self)
+		game_mode.phase_changed.connect(_on_game_mode_phase)
+		game_mode.tutorial_claw.connect(_on_tutorial_claw)
+		game_mode.tutorial_goto.connect(_on_tutorial_goto)
+		var hand_cam = GameConfig.get_value("camera", "overview", {})  # #183: the practice shows the hand camera
+		game_mode.tutorial_hud.attach(cameras, gesture, hand_cam is Dictionary and bool(hand_cam.get("flip_h", false)), hand_cam is Dictionary and bool(hand_cam.get("flip_v", false)))
 	title = TitleScreen.new()
 	title.name = "TitleScreen"
 	add_child(title)
-	title.setup()
+	title.setup(game_mode != null)
 	title.chosen.connect(_on_title_chosen)
 	title.settings_requested.connect(open_settings)
 	settings = SettingsScreen.new()
@@ -257,13 +287,14 @@ func _ready() -> void:
 	settings.setup()
 	settings.setup_calibration(self)
 	settings.setup_tests(self)
+	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	set_gesture_enabled(bool(GameConfig.get_value("gesture", "enabled", false)))
-	_apply_cmdline()
+	dev.apply_cmdline()
 
 ## The study mode reuses the homework watch (HomeworkClient); without the F1 panel's
 ## one (homework.enabled false) it gets its own, kept out of the game's helper keys.
@@ -286,6 +317,27 @@ func _setup_study_mode() -> void:
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 
+## Full screen or a window (#157: the exhibit's monitor stands on end; the OS turns the
+## picture, the game only fills it). config render.fullscreen, --fullscreen / --windowed on
+## the command line (these win), F11 while it runs. Nothing to do with no window (headless).
+var fullscreen_override := ""  # "" (the config decides) / "on" / "off"
+
+func fullscreen_wanted() -> bool:
+	if fullscreen_override != "":
+		return fullscreen_override == "on"
+	return bool(GameConfig.value("render.fullscreen", false))
+
+## how many times the window mode was decided (at start, on a saved setting, on F11): tests
+var window_mode_applied := 0
+
+func apply_window_mode() -> void:
+	window_mode_applied += 1
+	if DisplayServer.get_name() == "headless" or not is_inside_tree():
+		return
+	var want := Window.MODE_FULLSCREEN if fullscreen_wanted() else Window.MODE_WINDOWED
+	if get_window().mode != want:
+		get_window().mode = want
+
 ## The title at start unless the start is already decided (a scenario, a capture, the study
 ## mode by argument or by study_mode.autostart) or nobody looks (headless: the tests and CI).
 ## --title shows it anyway, --no-title never.
@@ -294,13 +346,15 @@ static func title_on_start(args: PackedStringArray, enabled: bool, headless: boo
 		return true
 	if not enabled or headless or study_autostart:
 		return false
-	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo"]:
+	for a in ["--no-title", "--scenario", "--capture", "--log-motion", "--gesture-demo", "--study-mode", "--study-demo", "--game-mode", "--game-mode-title", "--game-mode-tutorial"]:
 		if args.has(a):
 			return false
 	return true
 
 var _debug_layer := 1
 var _debug_before_title := false
+## the score game closed the debug panel when it opened (#171: nobody wants it beside the game)
+var _score_hid_debug := false
 
 ## Back to the title (Esc, and at start): the study mode stops (its backend sequence too),
 ## the hand stick lets go, and main holds the manual controls while it shows. The debug
@@ -308,7 +362,8 @@ var _debug_before_title := false
 ## #114: at start the settings screen's 校正 tab comes first (the Z top, the heights, the AI's
 ## reachability); closing it shows the title. title_screen.calibration_first false = the title.
 func open_startup_screen() -> void:
-	if settings == null or not bool(GameConfig.get_value("title_screen", "calibration_first", true)):
+	if settings == null or not bool(GameConfig.get_value("title_screen", "calibration_first", true)) \
+			or OS.get_cmdline_user_args().has("--title-only"):  # (a capture of the title itself)
 		return
 	open_settings()
 	settings.show_tab(SettingsScreen.CALIBRATION_TAB)
@@ -316,11 +371,15 @@ func open_startup_screen() -> void:
 func show_title() -> void:
 	if study_mode != null and study_mode.active():
 		study_mode.stop()
+	if game_mode != null and game_mode.active():
+		game_mode.close()  # a running round is stopped (STOP_ALL to the peripherals)
 	if gesture.is_active():
 		gesture.stop("title")
 	if not title.active():
 		_debug_layer = debug_ui.layer
-		_debug_before_title = debug_ui.visible
+		# (the score game closed it for itself: it was open before, and is again afterwards)
+		_debug_before_title = debug_ui.visible or _score_hid_debug
+		_score_hid_debug = false
 	debug_ui.layer = title.layer + 2  # above the title and the settings screen
 	_set_debug_visible(false)
 	title.open()
@@ -367,7 +426,13 @@ func _on_settings_closed(saved: bool) -> void:
 func apply_live_settings() -> void:
 	sfx.enabled = bool(GameConfig.value("audio.enabled", true))
 	sfx.volume_db = float(GameConfig.value("audio.volume_db", -8.0))
+	AudioBuses.apply(GameConfig.data.get("audio", {}) if GameConfig.data.get("audio") is Dictionary else {})
+	if game_mode != null:
+		game_mode.sounds.enabled = sfx.enabled
+		game_mode.sounds.volume_db = sfx.volume_db
+		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
+	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))
 	var sch := str(GameConfig.value("gesture.scheme", gesture.scheme.id()))
 	if sch != gesture.scheme.id():
@@ -381,11 +446,21 @@ func _set_debug_visible(on: bool) -> void:
 		debug_ui.study_panel_visibility_changed(on)
 		_layout()
 
+## #183: what the menus read of the hand (the title's choice, the game mode's start and
+## difficulty): only whether a fresh hand is seen, and its shape. No steering here.
+func hand_for_menus() -> Dictionary:
+	if gesture == null or not gesture.enabled:
+		return {}
+	var age := gesture.age_ms(float(Time.get_ticks_msec()))
+	return {"fresh": age >= 0.0 and age <= gesture.stale_ms and gesture.camera_ok, "detected": gesture.detected, "pose": gesture.pose}
+
 func title_active() -> bool:
 	return title != null and title.active()
 
 func _on_title_chosen(mode: String) -> void:
 	debug_log.emit("title: " + mode)
+	if game_mode != null:
+		game_mode.sounds.play_jingle()  # #181
 	debug_ui.layer = _debug_layer
 	_set_debug_visible(_debug_before_title or debug_ui.visible)
 	if mode == "study":
@@ -395,6 +470,15 @@ func _on_title_chosen(mode: String) -> void:
 			study_mode.start()
 	elif study_mode != null and study_mode.active():
 		study_mode.stop()
+	if game_mode != null:
+		if mode == "score":
+			debug_ui.layer = maxi(debug_ui.layer, GameModeController.LAYER + 1)  # F1 opens it above the field
+			if not game_mode.debug_panel and debug_ui.visible:
+				_score_hid_debug = true
+				_set_debug_visible(false)  # the score game has the whole screen; F1 / Tab opens the panel
+			game_mode.open()
+		elif game_mode.active():
+			game_mode.close()
 
 func _title_status() -> String:
 	if RobotState.source != "websocket":
@@ -403,113 +487,11 @@ func _title_status() -> String:
 		return "アーム: バックエンドにつながっていない"
 	return "アーム: バックエンド（%s）  モーターは「実機」タブで有効にするまで動かない" % RobotState.machine_state
 
-## `godot --path game -- --scenario x_sweep --source websocket --hide-debug`
-func _apply_cmdline() -> void:
-	var args := OS.get_cmdline_user_args()
-	if title_on_start(args, bool(GameConfig.get_value("title_screen", "enabled", true)),
-			DisplayServer.get_name() == "headless",
-			study_mode != null and bool(GameConfig.get_value("study_mode", "autostart", false))):
-		show_title()
-		open_startup_screen()
-	for i in range(args.size()):
-		match args[i]:
-			"--scenario":
-				if i + 1 < args.size():
-					mock.run_scenario(args[i + 1])
-			"--source":
-				if i + 1 < args.size():
-					use_source(args[i + 1])
-			"--hide-debug":
-				debug_ui.visible = false
-				_layout()
-			"--capture":
-				# Save a viewport PNG every 0.5 s into <dir> for 8 s, print FPS, quit.
-				if i + 1 < args.size():
-					_capture_dir = args[i + 1]
-					_capture_left = 16
-			"--log-motion":
-				# CSV of every physics tick (P) and render frame (R) for debugging
-				# jitter: robot samples, playback pose, anchor, UFO, character cues.
-				if i + 1 < args.size():
-					_open_motion_log(args[i + 1])
-			"--gesture":
-				set_gesture_enabled(true)
-			"--no-gesture":
-				# start.sh always says --gesture or --no-gesture; the config's gesture.enabled
-				# is only the default of a game started without it
-				set_gesture_enabled(false)
-			"--gesture-scheme":
-				# how the hand is read: pinch_joystick / pose_direction (config gesture.scheme)
-				if i + 1 < args.size():
-					gesture.set_scheme(args[i + 1])
-			"--gesture-demo":
-				# a scripted hand (pinch, steer, release, lose it) through the gesture path
-				_gesture_demo_t = 0.0
-				set_gesture_enabled(true)
-				gesture_require_focus = false
-			"--study-mode", "--study-demo":
-				# the study mode right away; --study-demo <simulated|camera> also picks what it
-				# uses (mock / real still read: mock = simulated, real = camera)
-				if study_mode == null:
-					_setup_study_mode()
-				if args[i] == "--study-demo" and i + 1 < args.size():
-					study_mode.services.set_mode(args[i + 1])
-				study_mode.call_deferred("start")
-			"--quit-after":
-				if i + 1 < args.size():
-					get_tree().create_timer(float(args[i + 1])).timeout.connect(get_tree().quit)
-
-var _motion_log: FileAccess
-
-func _open_motion_log(path: String) -> void:
-	_motion_log = FileAccess.open(path, FileAccess.WRITE)
-	if _motion_log == null:
-		push_warning("cannot open motion log " + path)
-		return
-	_motion_log.store_line("kind,usec,dt,src,raw_x,raw_y,raw_z,pose_x,pose_y,pose_z,anchor_x,anchor_z,accel_x,accel_z,rope_target,rope_len,ufo_x,ufo_y,ufo_z,screen_x,screen_y,screen_vel_x,anchor_screen_accel,rotation_deg,face,game_state,play_ms,newest_ms,recv_ms,delay_ms")
-
-func _log_motion(kind: String, dt: float, pose: Vector3) -> void:
-	if _motion_log == null:
-		return
-	var u := sim.ufo_position()
-	var acc := sim.anchor_acceleration()
-	_motion_log.store_line("%s,%d,%.5f,%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1f,%.1f,%.3f,%.3f,%.3f,%.3f,%.3f,%.2f,%.2f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.1f,%.1f,%.1f" % ([
-		kind, Time.get_ticks_usec(), dt, RobotState.source,
-		RobotState.x_mm, RobotState.y_mm, RobotState.z_mm, pose.x, pose.y, pose.z,
-		sim.anchor.x, sim.anchor.z, acc.x, acc.z, sim.target_rope_length, sim.rope_length,
-		u.x, u.y, u.z, ufo.position.x, ufo.position.y, _ufo_screen_vel.x, _anchor_screen_accel.length(),
-		rad_to_deg(ufo.rotation), ufo.current_face(), GameState.state] + RobotState.playback_debug()))
+## The startup options, the motion log and the frame capture (MainDevTools, #223).
+var dev := MainDevTools.new(self)
 
 func _exit_tree() -> void:
-	if _motion_log != null:
-		_motion_log.close()
-
-var _capture_dir := ""
-var _capture_left := 0
-var _capture_timer := 0.0
-var _capture_index := 0
-var _fps_samples: Array[float] = []
-
-func _capture_tick(dt: float) -> void:
-	if _capture_dir == "":
-		return
-	_capture_timer += dt
-	if Engine.get_frames_per_second() > 0:
-		_fps_samples.append(Engine.get_frames_per_second())
-	if _capture_timer >= 0.5:
-		_capture_timer = 0.0
-		var img := get_viewport().get_texture().get_image()
-		img.save_png(_capture_dir.path_join("frame_%02d.png" % _capture_index))
-		_capture_index += 1
-		_capture_left -= 1
-		if _capture_left <= 0:
-			var sum := 0.0
-			var lo := 9999.0
-			for f in _fps_samples:
-				sum += f
-				lo = minf(lo, f)
-			print("[capture] frames saved to %s; avg FPS %.1f min FPS %.1f physics %d us" % [_capture_dir, sum / maxf(_fps_samples.size(), 1), lo, physics_usec])
-			get_tree().quit()
+	dev.close()
 
 func _apply_config() -> void:
 	var p: Dictionary = GameConfig.data["physics"]
@@ -644,7 +626,7 @@ func _physics_process(dt: float) -> void:
 	sim.step(dt)
 	physics_usec = sim.last_step_usec
 	_store_tick(dt)
-	_log_motion("P", dt, pose)
+	dev.log_motion("P", dt, pose)
 
 ## Start the render/cue history from the current rope (no blend, no velocity).
 func _reset_render_history() -> void:
@@ -690,9 +672,18 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 	return Vector3(move, rise, sink)
 
 func _process(dt: float) -> void:
-	_capture_tick(dt)
+	dev.capture_tick(dt)
+	if game_mode != null:
+		# the menu's music (#173): the title screen, and the score game's own title
+		# #181: the title screen at start has its own (top), the practice too; none in the 校正 tab
+		game_mode.sounds.top_on = title_active()
+		game_mode.sounds.menu_on = game_mode.active() and game_mode.phase == "IDLE"
+		game_mode.sounds.tutorial_on = game_mode.active() and game_mode.phase == "TUTORIAL"
+		game_mode.sounds.silent = calibrating()
 	if title_active():
 		title.set_status(_title_status())
+		if not settings_active():  # #183: one finger / two fingers pick a mode
+			title.hand_tick(dt, hand_for_menus())
 	_update_origin()
 	if _cur_points.is_empty():
 		return
@@ -723,7 +714,7 @@ func _process(dt: float) -> void:
 	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
 	_update_scope(dt)
 	_update_gesture_presentation(dt)
-	_log_motion("R", dt, Vector3.ZERO)
+	dev.log_motion("R", dt, Vector3.ZERO)
 
 ## The telescope moment: the trigger decides, the UFO peers through its
 ## spyglass and the round focus-camera view opens on the right.
@@ -812,6 +803,8 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if _on_recover_ack(rid, ok):
+		return
 	if rid != "" and rid == _auto_catch_rid:
 		_auto_catch_rid = ""
 		auto_catch_hint = "" if ok else auto_catch_hint_for(str(data.get("reason", "")))
@@ -825,23 +818,15 @@ func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
 	elif moving:
 		jog_hint = ""
 
-## A refused jog, said as what to do next (the backend refuses before anything
-## reaches the serial line, so otherwise the keys just seem dead).
+## The operator's lines (OperatorHints, #223), under the names their callers know.
 static func jog_hint_for(reason: String) -> String:
-	var r := reason.to_lower()
-	if r.is_empty():
-		return ""
-	if r.contains("not connected"):
-		return "実機に未接続（バックエンドとシリアルを確認）"
-	if r.contains("motors not enabled"):
-		return "モーターが無効:「実機」タブの「モーター有効」を押す"
-	if r.contains("alarm"):
-		return "アラーム中:「アラーム解除」→「原点復帰 (home)」を押す"
-	if r.contains("not homed") or r.contains("not_homed"):
-		return "原点復帰が必要:「原点復帰 (home)」を押す"
-	if r.contains("busy"):
-		return "ほかの移動を実行中: 終わるまで待つか Space で止める"
-	return "JOG が拒否された: " + reason
+	return OperatorHints.jog_hint_for(reason)
+
+static func auto_catch_status_text(ac: Dictionary) -> String:
+	return OperatorHints.auto_catch_status_text(ac)
+
+static func auto_catch_hint_for(reason: String) -> String:
+	return OperatorHints.auto_catch_hint_for(reason)
 
 ## A moving jog's parameters. On the settings screen's 校正 tab, z_free: Z goes past the
 ## measured top / bottom, to measure them again (#102; still hold-to-move, Space stops).
@@ -889,53 +874,6 @@ func request_auto_catch() -> void:
 		return
 	auto_catch_hint = ""
 	_auto_catch_rid = ws.send_command("auto_catch")
-
-## Phase names for the status line.
-const AUTO_CATCH_PHASE_JA := {
-	"IDLE": "待機", "OPEN_CLAW": "爪を開く", "LOWER_TO_CATCH": "キャッチ位置へ下降", "CLOSE_CLAW": "爪を閉じる",
-	"RAISE_WITH_ITEM": "安全高さへ上昇", "MOVE_TO_BOX": "救出ボックスへ移動", "LOWER_TO_RELEASE": "リリース高さへ下降",
-	"RELEASE": "爪を開いて落とす", "RAISE_EMPTY": "安全高さへ戻る", "CLAW_STANDBY": "爪を待機位置へ", "FAULT": "異常停止",
-}
-
-## One line (or two) about the auto catch for the debug panel: what it is doing, or why it stopped.
-static func auto_catch_status_text(ac: Dictionary) -> String:
-	if ac.is_empty():
-		return "自動キャッチ: 状態なし（バックエンド未接続）"
-	var phase := str(ac.get("phase", ""))
-	var name := str(AUTO_CATCH_PHASE_JA.get(phase, phase))
-	var prof := "ドライラン" if str(ac.get("profile", "")) == "dry_run" else "実機"
-	if bool(ac.get("active", false)):
-		return "自動キャッチ [%s] %d/%d %s（%s）  %.1f s" % [prof, int(ac.get("step", 0)), int(ac.get("steps", 0)), name, phase,
-			float(ac.get("elapsed_s", 0.0))]
-	match str(ac.get("last_result", "")):
-		"done":
-			return "自動キャッチ [%s]: 完了（手動操作に戻った）" % prof
-		"fault":
-			return "自動キャッチ [%s]: 異常停止 — %s\n→ ABORT 済み。原因を確かめてから「アラーム解除」→「原点復帰」" % [prof, str(ac.get("error", ""))]
-	return "自動キャッチ [%s]: 待機（C で開始）" % prof
-
-## A refused auto catch, said as what to do next.
-static func auto_catch_hint_for(reason: String) -> String:
-	var r := reason.to_lower()
-	if r.is_empty() or r.contains("debounced"):
-		return ""
-	if r.contains("not confirmed") or r.contains("is not set"):
-		return "自動キャッチ: 校正値が未設定・未確認（config/game_config.json の auto_catch.real）。実機では動かさない"
-	if r.contains("alarm"):
-		return "自動キャッチ: アラーム中 →「アラーム解除」→「原点復帰 (home)」"
-	if r.contains("not homed"):
-		return "自動キャッチ: 先に「原点復帰 (home)」"
-	if r.contains("motors not enabled"):
-		return "自動キャッチ: 先に「モーター有効」"
-	if r.contains("z reference"):
-		return "自動キャッチ: Z の基準が未設定（アームを一番上にして「巻き上げ点（上）に」）"
-	if r.contains("claw open / closed"):
-		return "自動キャッチ: 爪の開き / 閉じ位置を記録する（実機タブ 4）"
-	if r.contains("below safe_z"):
-		return "自動キャッチ: アームを安全高さまで上げてから（W）"
-	if r.contains("busy") or r.contains("already running"):
-		return "自動キャッチ: ほかの動作中"
-	return "自動キャッチ拒否: " + reason
 
 ## Velocity (mm/s, robot X/Y) for the arrow keys: diagonals keep the same speed.
 static func jog_velocity(dir: Vector2, speed: float) -> Vector2:
@@ -1023,12 +961,56 @@ func _send_jog(v: Vector3, dt: float) -> void:
 
 ## Every physics tick: keyboard and hand joystick -> ControlArbiter -> the one
 ## jog path (real robot) or the MockRobot target.
+## SPEED UP (#188). Without it everything is as outside the game: the hand's stick at its
+## own top speed (gesture.joystick.max_speed_mm_s, 60), the keys at theirs. While it lasts
+## both go up to game_mode.powerups.speed.boost_mm_s (100) in XY; Z never changes. It is
+## read from the game's phase and the power's timer every tick, so a stop, the round's end
+## or the title cannot leave it on. On the real crane the speed is the backend's to allow:
+## its jog cap is raised only by jog_boost, for the seconds asked, and falls back by itself.
+func speed_boost_on() -> bool:
+	return game_mode != null and game_mode.active() and game_mode.phase == "PLAYING" \
+		and game_mode.powerups.active("speed")
+
+func speed_boost_mm_s() -> float:
+	return clampf(float(GameConfig.value("game_mode.powerups.speed.boost_mm_s", 100.0)), 1.0, 300.0)
+
+## how many times the hand's top speed the boost is (1 = no boost, never below 1)
+func hand_boost_scale() -> float:
+	if not speed_boost_on():
+		return 1.0
+	return maxf(speed_boost_mm_s() / maxf(gesture.joystick.max_speed, 1.0), 1.0)
+
+## the keys' XY speed now
+func powerup_xy_speed(real: bool) -> float:
+	var usual := jog_speed_real_mm if real else jog_speed_mm
+	if not speed_boost_on():
+		return usual
+	return maxf(speed_boost_mm_s(), usual) if real else usual * hand_boost_scale()
+
+## The backend is told how long its jog cap may be the boost's: when the power starts, when
+## it was taken again (more seconds than it knows of), and 0 when it ended early.
+var _boost_told_s := 0.0
+## how jog_boost {seconds} reaches the backend (the tests put their own here)
+var jog_boost_sender: Callable = func(seconds: float) -> void: _easy_send("jog_boost", {"seconds": seconds})
+func _sync_jog_boost(real: bool) -> void:
+	var left := float(game_mode.powerups.left.get("speed", 0.0)) if speed_boost_on() else 0.0
+	if not real:
+		_boost_told_s = 0.0
+		return
+	if left > 0.0 and left > _boost_told_s + 0.25:
+		jog_boost_sender.call(snappedf(left, 0.01))
+	elif left <= 0.0 and _boost_told_s > 0.05:
+		jog_boost_sender.call(0.0)
+	_boost_told_s = left
+
 func _handle_input(dt: float) -> void:
 	var real := RobotState.source == "websocket"
+	var xy_speed := powerup_xy_speed(real)
+	_sync_jog_boost(real)
 	var keys := _latched_jog_input()
 	var kb := Vector3.ZERO
 	if keys != Vector3.ZERO:
-		var xy := jog_velocity(Vector2(keys.x, keys.y), jog_speed_real_mm if real else jog_speed_mm)
+		var xy := jog_velocity(Vector2(keys.x, keys.y), xy_speed)
 		kb = Vector3(xy.x, xy.y, keys.z * (jog_speed_real_z if real else jog_speed_z))
 	if kb != _kb_logged:
 		if kb == Vector3.ZERO:
@@ -1047,8 +1029,20 @@ func _handle_input(dt: float) -> void:
 		_sim_seq += 1
 		ev["sequence"] = _sim_seq
 		gesture.on_event(ev, float(Time.get_ticks_msec()))
-	gesture_gate_reason = gesture_gate()
+	# the easy mode (#169): the hand steers XY only and its shapes are not the claw's
+	var easy_on := easy_wanted()
+	gesture.xy_only = easy_on
+	gesture.claw_enabled = not easy_on
+	var base_gate := gesture_gate()
+	gesture_gate_reason = base_gate
+	if base_gate == "" and easy_on:
+		if easy.busy() or RobotState.easy_mode_active():
+			gesture_gate_reason = GATE_EASY_BUSY
+		elif easy.faulted():
+			gesture_gate_reason = GATE_EASY_FAULT  # the keys stay, for the staff
 	var gv := gesture.tick(Time.get_ticks_msec(), dt, gesture_gate_reason)
+	gv *= hand_boost_scale()  # SPEED UP: the same stick, faster in XY (never Z)
+	_tick_easy(dt, easy_on, base_gate, kb != Vector3.ZERO)
 	if study_mode != null and study_mode.active():
 		# #136: 1 / 2 / 3 fingers offer help with that problem, a thumbs-up starts it
 		var hand_age := gesture.age_ms(Time.get_ticks_msec())
@@ -1087,8 +1081,20 @@ func _handle_input(dt: float) -> void:
 			jog_hint = "自動キャッチ中は手動操作できない（Space で中断）"
 		if gesture.is_active():
 			gesture.stop("auto_catch")
+	# the easy mode's catch / wait / carry owns the crane (the backend holds the motion lock)
+	if easy.busy() or RobotState.easy_mode_active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "かんたんモードの自動の動きの間は手動操作できない（Space で中断）"
+		if gesture.is_active():
+			gesture.stop("easy_mode")
 	# gesture Z is "+ = arm up", like W: the same z_up_is_positive sign as the keys
 	var gz := gesture.velocity_z * (1.0 if GameConfig.robot().z_up_is_positive else -1.0)
+	# #185: the practice's "touch the fingers" steps only look at the pinch: the stick stays
+	# as it is (the next step moves with the same pinch) but moves nothing yet
+	if game_mode != null and game_mode.hand_holds_still():
+		gv = Vector2.ZERO
+		gz = 0.0
 	var d := ControlArbiter.decide(halt, _jog_latched, kb, Vector3(gv.x, gv.y, gz), gesture.is_active())
 	control_source = d.source
 	var v: Vector3 = d.v
@@ -1099,6 +1105,151 @@ func _handle_input(dt: float) -> void:
 		mock.set_target(mock.target + v * dt)
 		if debug_ui != null:
 			debug_ui.sync_targets_from_mock()
+
+# ------------------------------------------------------------ easy mode (#169)
+## Why the easy mode cannot be used at all here ("" = it can): then the score game stays
+## in its manual controls and says so. Not the link's state (that only holds a catch back).
+func easy_problem() -> String:
+	if gesture.scheme.id() != PinchJoystickScheme.ID:
+		return "かんたんモードは「つまんで動かす」だけ（手の形で方向を決める方式は未対応）"
+	if RobotState.source != "websocket":
+		return "かんたんモードはバックエンド接続時だけ（実機なしなら ./start.sh --mock）"
+	return ""
+
+## The easy mode is on: the score game is open with difficulty easy and it is usable.
+func easy_wanted() -> bool:
+	if game_mode == null:
+		return false
+	game_mode.easy_block = easy_problem()
+	return game_mode.active() and game_mode.easy_on()
+
+## a game just started: the easy mode asks the backend for the arm's start position (once)
+var _easy_start_reset := false
+
+func _tick_easy(dt: float, on: bool, gate: String, keys_held: bool) -> void:
+	var now := float(Time.get_ticks_msec())
+	var age := gesture.age_ms(now)
+	# the hand control switched off (H, --no-gesture): the camera's events still come in, but
+	# no shape of the hand asks for anything (review on #170)
+	if not gesture.enabled and gate == "":
+		gate = GATE_GESTURE_OFF
+	var hand := {"fresh": age >= 0.0 and age <= gesture.stale_ms, "camera_ok": gesture.camera_ok, "detected": gesture.detected,
+		"pose": gesture.pose, "pinch": gesture.pinch or gesture.sign_seen,
+		# a catch never starts on top of a steer: the pinch let go, the stick at rest, the zero jog out
+		"steering": gesture.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE] or _jog_active or keys_held}
+	easy.tick(dt, hand, {"enabled": on, "taking": game_mode != null and game_mode.taking(),
+		"link": bool(backend_link.call()), "gate": gate,
+		"status": RobotState.easy_mode})
+	if _easy_start_reset:
+		# only at the start itself: not later in the round (a run in the way, no link: not asked)
+		_easy_start_reset = false
+		if on and easy.state == "MANUAL_XY" and bool(backend_link.call()) and not keys_held:
+			easy.request_reset()
+
+## The easy mode's one way to the backend. "" = not sent. Never repeated by itself.
+func _easy_send(name: String, params: Dictionary) -> String:
+	if not bool(backend_link.call()):
+		return ""
+	if name == "soft_stop":
+		_jog_active = false
+	return ws.send_command(name, params)
+
+## The backend's carry ended over a Dial. The Dial's own BALL_RECEIVED is what counts; with
+## a simulated crane and simulated Dials the score game gives the mock Dial its capsule.
+func _on_easy_delivered(destination: int) -> void:
+	if game_mode != null and destination == 1:
+		game_mode.easy_delivered("left", ws.server_robot != "real")  # Dial 1 is the only one (#200)
+
+func _on_easy_cue(name: String) -> void:
+	match name:
+		"grab":
+			sfx.play_cue("pinch")
+			gesture_hud.flash("じどうキャッチ！", 0.9)
+		"caught":
+			sfx.play_cue("hand")
+		"deliver":
+			sfx.play_cue("pinch")
+			gesture_hud.flash("はこぶよ！", 0.9)
+		"done", "cancelled":
+			sfx.play_cue("release")
+		"refused", "fault":
+			sfx.play_cue("lost")
+
+# ------------------------------------------------------------ recovery from the game's screen (#179)
+## The arm cannot be used as it is (the backend's robot): an alarm (a stop that had to cut a
+## moving servo with ABORT, an emergency stop), or homing lost. "" = it can.
+func arm_recovery_reason() -> String:
+	if RobotState.source != "websocket" or not bool(backend_link.call()) or not RobotState.connected:
+		return ""
+	if RobotState.machine_state in ["ALARM", "ESTOP"]:
+		return "アラームちゅう"
+	if not RobotState.homed and RobotState.machine_state != "HOMING":
+		return "げんてんふっきが いる"
+	return ""
+
+## The recovery is running (the 校正 tab's preparation, started from here or there).
+func arm_recovering() -> bool:
+	return RobotState.source == "websocket" and bool(RobotState.calibration_prepare.get("active", false))
+
+## Staff, from the game's screen (F10, or the button on the score game's screen): the alarm
+## cleared, then the preparation (#167: motors, Z, the arm to the top, homing, the middle, the
+## claw open). The same two commands as the debug panel's 「アラーム解除」 and the 校正 tab's
+## 「準備をまとめて実行」, in that order; the backend refuses whatever is not in order. The
+## arm moves: a person decided it. Returns false when there is nothing to recover or no link.
+func recover_arm() -> bool:
+	if arm_recovery_reason() == "" or arm_recovering():
+		return false
+	if _recover_clear_rid != "" or _recover_prepare_rid != "":
+		return false  # already on its way
+	debug_log.emit("recover: clear_alarm, then calibration_prepare")
+	# one after the other, not queued together: the preparation (which moves the arm) is only
+	# asked for when the alarm's clearing was answered, and not at all when the stop key came
+	# in between (review on #180)
+	_recover_clear_rid = ws.send_command("clear_alarm")
+	if easy.faulted():
+		easy.reset()
+	return true
+
+## the recovery's two requests still without an answer ("" = none), and the preparation's
+## request the stop key overtook (if it starts after all, it is stopped again)
+var _recover_clear_rid := ""
+var _recover_prepare_rid := ""
+var _recover_stopped_rid := ""
+
+func _on_recover_ack(rid: String, ok: bool) -> bool:
+	if rid == "":
+		return false
+	if rid == _recover_clear_rid:
+		_recover_clear_rid = ""
+		if ok and bool(backend_link.call()):
+			_recover_prepare_rid = ws.send_command("calibration_prepare")
+		return true
+	if rid == _recover_prepare_rid:
+		_recover_prepare_rid = ""
+		return true
+	if rid == _recover_stopped_rid:
+		_recover_stopped_rid = ""
+		if ok and bool(backend_link.call()):
+			ws.send_command("soft_stop")  # it started behind the stop: stopped again
+		return true
+	return false
+
+## The stop key: a recovery on its way goes no further.
+func _stop_recovery() -> void:
+	_recover_clear_rid = ""  # its answer no longer starts the preparation
+	if _recover_prepare_rid != "":
+		_recover_stopped_rid = _recover_prepare_rid
+		_recover_prepare_rid = ""
+
+## A new round or practice: the easy mode leaves its FAULT (a person started it). The
+## backend still refuses whatever is not in order.
+func _on_game_mode_phase(p: String) -> void:
+	if p in ["COUNTDOWN", "TUTORIAL"]:
+		if easy.faulted():
+			easy.reset()
+		# #177: a game starts with the arm at its start (the claw open, the arm at the top):
+		# the easy mode has no way to raise it by hand. Asked on the next tick, when it is on.
+		_easy_start_reset = true
 
 # ------------------------------------------------------------ hand joystick
 func set_gesture_enabled(on: bool) -> void:
@@ -1119,6 +1270,25 @@ func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient
 	if gesture_sim or _gesture_demo_t >= 0.0 or (link == ws) != (RobotState.source == "websocket"):
 		return
 	gesture.on_event(data, recv_ms)
+
+## #183: the practice's finger steps (easy mode): the arm really goes over that Dial, at the
+## carry's speed. Asked of the backend (easy_goto: XY only, refused unless the easy mode's
+## values are usable and the arm is up); the virtual crane of --game-only does not move.
+func _on_tutorial_goto(destination: int) -> void:
+	debug_log.emit("tutorial: to Dial %d" % destination)
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
+		return
+	if RobotState.source == "websocket" and not ws.has_pending_motion():
+		_easy_send("easy_goto", {"destination": destination})
+
+## #183: the practice's fist step (easy mode): the claw closes as a show of what the fist
+## does, and opens again with the next step. The same request as the hand's own (arm_goto:
+## nothing while a sequence drives the claw, nothing while another motion is pending).
+func _on_tutorial_claw(which: String) -> void:
+	debug_log.emit("tutorial: claw %s" % which)
+	if which == "closed":
+		sfx.play_cue("pinch")
+	arm_goto(which)
 
 ## A held fist / peace sign: the claw to its recorded position (like A / Q).
 func _on_gesture_claw(which: String) -> void:
@@ -1224,7 +1394,7 @@ static func gesture_pose_demo_event(t: float) -> Dictionary:
 ## gets `arm_step` (SERVO_TURN 2; one step at a time, refused while another
 ## move runs); the game's own MockRobot just changes its angle.
 func arm_step(deg: float) -> void:
-	if RobotState.auto_catch_active():
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
 		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
@@ -1253,7 +1423,7 @@ func arm_set(which: String) -> void:
 
 ## Turn the claw to its recorded "closed" or "open" position.
 func arm_goto(which: String) -> void:
-	if RobotState.auto_catch_active():
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
 		return  # the sequence drives the claw
 	if RobotState.source == "websocket":
 		if ws.is_open() and not ws.has_pending_motion():
@@ -1307,7 +1477,7 @@ func gesture_gate() -> String:
 		return "アラーム中:「clear_alarm」→「home」"
 	if RobotState.source == "mock":
 		return "" if mock.enabled and RobotState.connected else "ロボットに未接続"
-	return real_gesture_gate(ws.is_open(), RobotState.connected, ws.server_robot, gesture_allow_real,
+	return real_gesture_gate(bool(backend_link.call()), RobotState.connected, ws.server_robot, gesture_allow_real,
 		RobotState.motors_enabled, RobotState.homed, RobotState.machine_state == "HOMING" or ws.has_pending_motion())
 
 ## The real (backend) robot checks, in the order they must be fixed.
@@ -1357,7 +1527,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 					_hand_cue_ms = now
 					sfx.play_cue("hand")
 	# control was cut (not a plain release, not a stop asked for by hand)
-	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled", "auto_catch"]:
+	if was_live and to == GestureControl.State.WAITING_RELEASE and why not in ["stop_key", "manual", "disabled", "auto_catch", "easy_mode"]:
 		sfx.play_cue("lost")
 	# lost track / stale / camera gone while driving the real robot: besides the
 	# zero jog, a decelerating STOP (no alarm)
@@ -1369,6 +1539,7 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 ## UFO cues and the HUD (render frame).
 func _update_gesture_presentation(dt: float) -> void:
 	gesture_hud.gate = gesture_gate_reason
+	gesture_hud.column = game_mode != null and game_mode.active()  # beside the pinball field, not over it
 	gesture_hud.place(_play_w, get_viewport_rect().size.y)
 	gesture_hud.step(dt)
 	var face := ""
@@ -1394,6 +1565,10 @@ func _update_gesture_presentation(dt: float) -> void:
 func stop_key() -> void:
 	if study_mode != null:
 		study_mode.on_stop_key()
+	if game_mode != null:
+		game_mode.on_stop_key()  # the score game stops and STOP_ALL goes to the peripherals (#138)
+	easy.on_stop()  # the easy mode's run is over (the soft_stop below ends the backend's sequence)
+	_stop_recovery()  # a recovery asked for from the game's screen goes no further
 	_jog_latched = _jog_input() != Vector3.ZERO
 	gesture.stop("stop_key")
 	if homework != null:
@@ -1423,6 +1598,10 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# debug panel (F1 / Tab); typing in a settings field never gets here
 		# the 校正 tab lets the claw keys through to the match below (#98)
 		var claw_key: bool = calibrating() and ev.keycode in CALIBRATION_KEYS
+		if ev.keycode == KEY_F11:  # full screen / a window, in any screen
+			fullscreen_override = "off" if fullscreen_wanted() else "on"
+			apply_window_mode()
+			return
 		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)
 			return
@@ -1432,9 +1611,21 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
 			show_title()
 			return
+		# staff: the arm out of an alarm / without homing, from the game's own screen (#179)
+		if ev.keycode == KEY_F10 and game_mode != null and game_mode.active():
+			recover_arm()
+			return
+		# staff: the easy mode out of its stop (#169), after the crane was put right by hand
+		if ev.keycode == KEY_F9 and easy.faulted():
+			easy.reset()
+			return
 		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
 		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
 				and study_mode.handle_key(ev.keycode):
+			return
+		# the score game's keys (Enter, the mock's Z / M); Space stays the stop
+		if game_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
+				and game_mode.handle_key(ev.keycode):
 			return
 		match ev.keycode:
 			KEY_SPACE:

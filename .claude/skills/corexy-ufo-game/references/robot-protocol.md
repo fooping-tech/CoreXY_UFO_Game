@@ -14,7 +14,7 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
    ─ USB シリアル 115200 → M5Stack Core2 ファームウェア
 ```
 
-戻り: `robot_state` を 30 Hz でブロードキャスト（`RobotSnapshot.to_message()`）。Godot は `connected homed motors_enabled state x y z measured error z_reference_set` を読む（`alarm test_mode` は今は読んでいない）。Z はバックエンドがサーボ ID1 を追跡して更新する: ジョグ中は `JOG_POS` の `Z_ABS`、それ以外は `SERVO_STATUS 1` を `backend.z_poll_hz`（3 Hz）で問い合わせる。ジョイスティックなどゲーム以外の操作も反映されるが、`z_zero`（アーム最上位で押す）までは Z は 100 のまま。
+戻り: `robot_state` を 30 Hz でブロードキャスト（`RobotSnapshot.to_message()`）。Godot は `connected homed motors_enabled state x y z measured error z_reference_set` を読む（`alarm test_mode` は今は読んでいない）。Z はバックエンドがサーボ ID1 を追跡して更新する: ジョグ中は `JOG_POS` の `Z_ABS`、それ以外は `SERVO_STATUS 1` を `backend.z_poll_hz`（3 Hz）で問い合わせる。ジョイスティックなどゲーム以外の操作も反映されるが、`z_set top`（アーム最上位で押す）までは Z は 100 のまま。
 
 ## 2. 安全上の制約と、それを壊さない設計
 
@@ -29,6 +29,7 @@ Godot UI/キー ─ UfoWebSocketClient.send_command(name, params)   # request_id
 | ACK/NACK・タイムアウト | `SerialService`（Python）、`_check_timeouts`（Godot、既定 3000 ms） | タイムアウトは「失敗」であって「止まった」ではない |
 | `request_id` による重複防止 | `GameServer._handled` | クライアントはモーションを自動再送しない。再送するなら同じ `request_id` を使う |
 | 切断検知 | `state_timeout_ms` 1500 ms で `connected=false`、シリアル切断で `motors_enabled=False` | 検知 ≠ 停止 |
+| 受信だけの停止（#161） | `SerialService.rx_stalled_for`（`send` の後に 1 行も読めない秒数）、`RealRobot.tick` → `_drop_silent_link`（`JOG 0` / `ABORT` を送りっぱなしで送ってから切断扱い）→ `_reopen`（`serial_reopen_s` ごとにポートを開き直す） | USB ハブの通信エラーで受信側だけ止まると、ポートは開いたまま・送信は届く（ジョグは動く、返事を待つ命令は全部 timeout）。停止の送信は確認できない。開き直してもモーターは無効のまま |
 | `stop` は常に受け付ける | `execute` でロックの外、`SerialService.abort` はロック外で即送信 | `stop` の前に条件チェックや確認ダイアログを足さない |
 | ABORT とアラーム解除 | `ABORT` → ALARM + HOMED 解除 → `ALARM_CLEAR` → `HOME` | 復帰手順を UI で案内する |
 | 実測と推定の区別 | `measured`（Python）→ `RobotState.position_is_measured` | 移動中 XY は smoothstep の推定。演出で「実測」と表示しない |

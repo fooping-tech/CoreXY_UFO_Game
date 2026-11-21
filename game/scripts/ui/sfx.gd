@@ -51,13 +51,6 @@ static func load_mp3(path: String) -> AudioStreamMP3:
 	s.loop = true
 	return s
 
-func loaded_count() -> int:
-	var n := 0
-	for v in VOICES:
-		if _players[v].stream != null:
-			n += 1
-	return n
-
 # ------------------------------------------------------------ one-shot cues
 ## Hand joystick cues: "hand" (an open hand is seen), "pinch" (the pinch is
 ## caught), "pinch_z" (a palm-down pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and

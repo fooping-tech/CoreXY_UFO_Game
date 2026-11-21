@@ -1,11 +1,10 @@
-import asyncio
-import json
 
 import pytest
 import websockets
 
 from corexy_ufo_backend.robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import cmd_kw as _cmd, recv_type as _recv_type
 
 
 @pytest.fixture
@@ -17,23 +16,6 @@ async def server():
     port = next(iter(srv._server.sockets)).getsockname()[1]
     yield srv, robot, port
     await srv.stop()
-
-
-async def _recv_type(ws, t, timeout=2.0):
-    end = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < end:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout))
-        if msg["type"] == t:
-            return msg
-    raise AssertionError(f"no {t}")
-
-
-async def _cmd(ws, rid, name, **params):
-    await ws.send(json.dumps({"type": "command", "request_id": rid, "data": {"name": name, "params": params}}))
-    while True:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), 2))
-        if msg["type"] in ("ack", "nack") and msg.get("request_id") == rid:
-            return msg
 
 
 async def test_hello_and_state_stream(server):

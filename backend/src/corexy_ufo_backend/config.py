@@ -53,9 +53,22 @@ class BackendConfig:
     z_counts_per_unit: float = 122.88
     z_sign: int = 1
     arm_open_turns: float = 0.5
+    # #192: a claw closing to its recorded closed angle that stops this near it (deg) with the
+    # torque still on has gripped something: not a failure. 0 = any TIMEOUT is a failure.
+    claw_grip_tolerance_deg: float = 3.0
     xy_feed_mm_min: float = 900.0
     # serial JOG speed cap (firmware recommends <= 50 mm/s = 3000 mm/min, see REPLY_FIRMWARE_JOG.md)
     jog_max_mm_s: float = 50.0
+    # #188 (SPEED UP): the jog's XY cap while the game's boost lasts (the jog_boost command),
+    # and the longest one request may last. None / not above jog_max_mm_s = no boost.
+    jog_boost_mm_s: float | None = None
+    jog_boost_max_s: float = 30.0
+    # #185: a jog (keys, the hand stick) stays this far inside the XY soft limits, and slows
+    # down towards that line (speed towards an edge <= distance / jog_edge_slow_s). The home
+    # corner's limit switches are pressed within about 1 mm of 0: a jog that reaches them is
+    # the firmware's ALARM. 0 = the firmware's own soft limit only (0.5 mm)
+    jog_edge_margin_mm: float = 5.0
+    jog_edge_slow_s: float = 0.25
     # Z (drum servo) jog speed cap; the servo itself tops out at 2400 counts/s
     jog_z_max_counts_s: int = 2400
     # how often the drum servo position is polled while idle (picks up joystick moves)
@@ -76,12 +89,41 @@ class BackendConfig:
     camera_xy_path: Any = None
     study_height_path: Any = None  # calibration.json#study_height (#110: the 校正 tab)
     focus_camera_path: Any = None  # calibration.json#focus_camera (#104, tools/calibrate_focus.py)
+    easy_dials_path: Any = None  # calibration.json#easy_dials (#169: the easy mode's drop points)
     # the real robot homes XY only with a Z reference and the arm wound up (within
     # home_z_tolerance of its top): a lowered arm would hit things on the way. On
     # when loaded from the config file (backend.home_requires_z_top, default true);
     # off for a bare BackendConfig (tests)
     home_requires_z_top: bool = False
     home_z_tolerance: float = 5.0
+    # #175: after XY homing the arm goes on to the middle of the stage (the soft limits'
+    # centre, or home_center_mm [x, y]) instead of staying in the home corner
+    home_then_center: bool = True
+    home_center_mm: tuple[float, float] | None = None
+    # #179: the feed (mm/min) of the automatic XY moves that are to be quick: to the middle
+    # after homing, and the easy mode's carry to a Dial. None = xy_feed_mm_min. The firmware
+    # clamps an XY feed to its MAX_FEED_MM_MIN (15909.9)
+    xy_fast_feed_mm_min: float | None = None
+
+    def fast_feed(self) -> float:
+        f = self.xy_fast_feed_mm_min
+        return f if f is not None and f > 0 else self.xy_feed_mm_min
+
+    def home_center(self) -> tuple[float, float] | None:
+        """Where the arm goes after homing (None = it stays at home). A configured point
+        outside the soft limits is not used: the middle is."""
+        if not self.home_then_center:
+            return None
+        lim = self.limits
+        c = self.home_center_mm
+        if c is not None and lim.xy_inside(c[0], c[1]):
+            return c
+        return ((lim.x_min + lim.x_max) / 2.0, (lim.y_min + lim.y_max) / 2.0)
+    # #161: a command sent and nothing at all read for this long = the link is dead even if
+    # the port looks open (a USB hiccup can stop the reading side alone); 0 = never
+    serial_rx_stall_s: float = 5.0
+    # #161: after the link was lost while running, reopen the port this often; 0 = never
+    serial_reopen_s: float = 3.0
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -179,6 +221,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.camera_xy_path = calibration_section(path.parent, "camera_xy")
     cfg.study_height_path = calibration_section(path.parent, "study_height")
     cfg.focus_camera_path = calibration_section(path.parent, "focus_camera")
+    cfg.easy_dials_path = calibration_section(path.parent, "easy_dials")
     if not path.exists():
         return cfg
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -211,12 +254,28 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.z_counts_per_unit = float(b.get("z_counts_per_unit", 122.88))
     cfg.z_sign = int(b.get("z_sign", 1))
     cfg.arm_open_turns = float(b.get("arm_open_turns", 0.5))
+    cfg.claw_grip_tolerance_deg = min(max(float(b.get("claw_grip_tolerance_deg", 3.0)), 0.0), 15.0)
     cfg.xy_feed_mm_min = float(b.get("xy_feed_mm_min", 900.0))
+    ff = b.get("xy_fast_feed_mm_min")
+    cfg.xy_fast_feed_mm_min = float(ff) if isinstance(ff, (int, float)) and not isinstance(ff, bool) and ff > 0 else None
     cfg.jog_max_mm_s = float(b.get("jog_max_mm_s", 50.0))
+    jb = b.get("jog_boost_mm_s")
+    cfg.jog_boost_mm_s = (float(jb) if isinstance(jb, (int, float)) and not isinstance(jb, bool)
+                          and jb > cfg.jog_max_mm_s else None)
+    cfg.jog_boost_max_s = min(max(float(b.get("jog_boost_max_s", 30.0)), 0.0), 60.0)
+    cfg.jog_edge_margin_mm = max(float(b.get("jog_edge_margin_mm", 5.0)), 0.0)
+    cfg.jog_edge_slow_s = max(float(b.get("jog_edge_slow_s", 0.25)), 0.0)
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
     cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))
     cfg.home_z_tolerance = float(b.get("home_z_tolerance", 5.0))
+    cfg.home_then_center = bool(b.get("home_then_center", True))
+    hc = b.get("home_center_mm")
+    if (isinstance(hc, list) and len(hc) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in hc)):
+        cfg.home_center_mm = (float(hc[0]), float(hc[1]))
+    cfg.serial_rx_stall_s = float(b.get("serial_rx_stall_s", 5.0))
+    cfg.serial_reopen_s = float(b.get("serial_reopen_s", 3.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))
     hostport = url.split("://", 1)[-1].rstrip("/")
     if ":" in hostport:

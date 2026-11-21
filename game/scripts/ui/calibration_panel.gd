@@ -7,15 +7,15 @@ extends VBoxContainer
 ## the game never writes RobotState. While this tab shows, main.gd lets the keys move the
 ## arm (arrows, W / S, [ ], Q / A); gestures and the auto catch stay off, Space stops.
 
-const YELLOW := Color("ffe03c")
-const CYAN := Color("7ae0ff")
-const MUTED := Color("8fa3c4")
-const BAD := Color("ff8a8a")
-const GOOD := Color("9ff0a8")
+const YELLOW := PanelKit.YELLOW
+const CYAN := PanelKit.CYAN
+const MUTED := PanelKit.MUTED
+const BAD := PanelKit.BAD
+const GOOD := PanelKit.GOOD
 const INK := Color("e8eefc")
 const CARD_BG := Color("1f2a44")
 const CARD_BORDER := Color("34446a")
-const WIDTH := 800.0  # wrapped text inside a card
+const WIDTH := 590.0  # wrapped text inside a card (portrait, #157: the settings panel is 690 wide)
 
 var main: Node
 var hw: HomeworkClient
@@ -33,6 +33,8 @@ var _services: Label  # the whole list as text (tests; hidden)
 var _services_box: VBoxContainer  # one coloured line per check
 var _services_shown := ""
 var _services_asking := false
+## the rows only an "ask" run adds (#230: the worksheet reader, POST /v1/sheet)
+const ASK_ROWS := ["ask", "sheet"]
 var _asked := false  # this opening's requests went out (the backend may connect later)
 ## #124: the backend's word on the robot's serial link (list_ports' "robot"), asked again
 ## every LINK_ASK_MS while the real robot is not connected.
@@ -44,6 +46,10 @@ var height_status: Dictionary = {}
 var _height: Label
 var _drum: SpinBox
 var _height_filled := false
+## #169: the easy mode's drop points over the two Dials, as the backend has them (easy_status)
+var easy_status: Dictionary = {}
+var _easy: Label
+var _prep_was_active := false
 var _z_restore: Label  # #106: the call-back's estimate, for a grown-up to check
 var _z_use: Button
 ## #126: to the recorded top / bottom (move_z), like the claw's 開く / 閉じる
@@ -62,13 +68,16 @@ var _cards := {}
 var _summary := {}
 var _next: Label
 var _summary_shown := ""
+## #167: the one-button preparation
+var _prepare: Button
+var _prepare_label: Label
 
 ## The sections in order (#120): key, title. The summary lists them; section_states() says how
 ## each one is.
 const SECTIONS := [
 	["link", "つながりとモーター"], ["z", "Z の上下と原点復帰"], ["claw", "爪の開き・閉じ"],
 	["spot", "宿題を見に行く位置"], ["camera", "俯瞰カメラ → XY"], ["height", "勉強モードの撮影の高さ"],
-	["services", "AI・外部サービス"],
+	["services", "AI・外部サービス"], ["easy", "かんたんモードの投入位置"],
 ]
 
 ## The commands this tab sends (directly or through main.gd / the homework client), with
@@ -79,7 +88,8 @@ const COMMANDS := {
 	"homework_spot_set": "宿題の位置の記録",
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
 	"camera_map_clear": "カメラの点を消す",
-	"study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
+	"calibration_prepare": "準備をまとめて実行", "study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
+	"easy_dial_set": "かんたんモードの投入位置の記録", "easy_dial_confirm": "かんたんモードの投入位置の確認",
 }
 
 func setup(m: Node) -> void:
@@ -99,6 +109,7 @@ func setup(m: Node) -> void:
 	var keys := StudyHud.label("キー: 矢印 = XY　W / S = 上下　[ ] = 爪を回す　Q / A = 開く / 閉じる　Space = 止める",
 		15, MUTED, 2)
 	keys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	keys.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	keys.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	th.add_child(keys)
@@ -106,6 +117,20 @@ func setup(m: Node) -> void:
 	_next.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_next.custom_minimum_size = Vector2(WIDTH, 0)
 	tv.add_child(_next)
+	# #167: everything done by hand after a start, one press (never on opening the tab)
+	var pc := StudyHud.label("起動したら: アームの周りに物がなく、アームの高さが前回止めたときと同じなら押す。"
+		+ "モーター有効 → 前回の Z の上下を呼び出す → アームを一番上へ → 爪を開いて閉じる → 原点復帰 → ステージの真ん中へ → 爪を開いておく。"
+		+ "Space でいつでも止まる。", 15, YELLOW, 2)
+	pc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pc.custom_minimum_size = Vector2(WIDTH, 0)
+	tv.add_child(pc)
+	var prow := HBoxContainer.new()
+	tv.add_child(prow)
+	_prepare = _ws_button(prow, "準備をまとめて実行", func(): main.ws.send_command("calibration_prepare"), "primary")
+	_prepare_label = StudyHud.label("", 15, MUTED, 2)
+	_prepare_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_prepare_label.custom_minimum_size = Vector2(WIDTH, 0)
+	tv.add_child(_prepare_label)
 	var grid := VBoxContainer.new()
 	grid.add_theme_constant_override("separation", 0)
 	tv.add_child(grid)
@@ -199,13 +224,13 @@ func setup(m: Node) -> void:
 	_overview = OverviewPicker.new()
 	_overview.hw = hw
 	_overview.clickable = true
-	_overview.custom_minimum_size = Vector2(440, 248)
+	_overview.custom_minimum_size = Vector2(336, 189)
 	_overview.picked.connect(_on_picked)
 	cams.add_child(_overview)
 	_focus = OverviewPicker.new()
 	_focus.hw = hw
 	_focus.center_cross = true
-	_focus.custom_minimum_size = Vector2(330, 248)
+	_focus.custom_minimum_size = Vector2(252, 189)
 	cams.add_child(_focus)
 	if main.cameras != null:
 		_overview.texture = main.cameras.texture(hw.camera_role if hw != null else "overview")
@@ -217,21 +242,17 @@ func setup(m: Node) -> void:
 	_ws_button(row, "全部消す", func(): if hw != null: hw.calib_clear(), "danger")
 
 	# --- 6. the study mode's capture height
-	_card("height", "HELP でアームを下ろして撮る高さ（爪先が机から 10cm）。2 の Z の上下から計算する"
-		+ "（机 = 2 の「下」の記録）。ロープが重なって巻かれると計算がずれるので、定規で 1 回だけ確かめる。")
+	_card("height", "HELP でアームを下ろして撮る高さ。2 の Z の「下」の記録を机として、そこから 10cm 巻き上げた所"
+		+ "（爪先が机から 10cm）。2 の上下を記録すれば、そのまま勉強モードで使う（保存・確認は要らない）。")
 	_height = _value()
-	_step("①", "巻き上げドラムの半径を入れて「保存」")
+	_step("（任意）", "巻き上げドラムの半径が 15mm でなければ、入れて「保存」")
 	row = _row()
 	_drum = _spin(row, "巻き上げドラムの半径 mm", 3.0, 100.0, 0.5, 15.0)
 	_ws_button(row, "保存（机 = Z の下の記録）", func(): save_height("bottom"), "primary")
 	_ws_button(row, "ここを机に記録して保存", func(): save_height("here"))
-	_step("②", "「10cm へ動かす（試す）」で、爪先と机の間を定規で測る")
+	_step("（任意）", "「10cm へ動かす（試す）」で高さを見る")
 	row = _row()
 	_ws_button(row, "10cm へ動かす（試す）", func(): try_height(StudyServices.stage_names()[0]), "primary")
-	_step("③", "10cm なら「確かめた」")
-	row = _row()
-	_ws_button(row, "確かめた（勉強モードで使う）", func(): main.ws.send_command("study_height_confirm", {"confirmed": true}), "primary")
-	_ws_button(row, "確認を外す", func(): main.ws.send_command("study_height_confirm", {"confirmed": false}))
 
 	# --- 7. the AI / outside services
 	_card("services", "勉強モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
@@ -243,6 +264,28 @@ func setup(m: Node) -> void:
 	var srow := _row()
 	_ws_button(srow, "もう一度確かめる", func(): check_services(false))
 	_ws_button(srow, "AI に試しに質問する", func(): check_services(true))
+
+	# --- 8. the easy mode's drop points (#169)
+	_card("easy", "スコアゲームのかんたんモードで自動で動く場所。ポータル（左の Dial 1）の真上（XY）、"
+		+ "カプセルをつかむ高さと、Dial の上で爪を開く高さ（Z）。実機でだけ記録する。2 の Z の上下と原点復帰のあとで。"
+		+ "一度記録して確かめた値は次の起動でもそのまま使う（記録し直すのは、置き場所を変えたときと Z を測り直したとき）。")
+	_easy = _value()
+	_easy.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_easy.custom_minimum_size = Vector2(WIDTH, 0)
+	_step("①", "矢印キーでアームを Dial 1（左）の受け口の真上へ動かして「Dial 1 に記録」")
+	_step("②", "カプセルの上で Q で爪を開き、S でつかめる高さまで下ろして「キャッチの高さに記録」")
+	_step("③", "Dial の受け口の上で、爪を開けばカプセルが入る高さまで S で下ろして「投入の高さに記録」")
+	_step("④", "カプセルなしで Dial の位置と 2 つの高さへ手で動かし、何にも当たらないことを見てから「確かめた」")
+	_caution("アームが届かない所に Dial があるときは記録しない（置き場所を直す）。値を変えると「確かめた」は取り消される。"
+		+ "移動の高さは Z の一番上。自動の動きは一番上まで巻き上げてある状態から始まる。")
+	row = _row()
+	_ws_button(row, "Dial 1（左）に記録", func(): main.ws.send_command("easy_dial_set", {"which": "dial_1"}), "primary")
+	row = _row()
+	_ws_button(row, "キャッチの高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "catch_z"}), "primary")
+	_ws_button(row, "投入の高さに記録", func(): main.ws.send_command("easy_dial_set", {"which": "release_z"}), "primary")
+	row = _row()
+	_ws_button(row, "確かめた", func(): main.ws.send_command("easy_dial_confirm", {"confirmed": true}))
+	_ws_button(row, "全部消す", func(): main.ws.send_command("easy_dial_set", {"which": "clear"}), "danger")
 	_box = self
 
 ## How each section is (#120): [{key, title, state: ok|todo|wait|na, text}], in order.
@@ -301,15 +344,18 @@ func section_states() -> Array[Dictionary]:
 			"height":
 				if bool(height_status.get("usable", false)):
 					st = "ok"
-					text = "確認済み（勉強モードで使う）"
-				elif height_status.get("saved") != null and not height_status.has("trial_problem"):
-					st = "wait"
-					text = "保存済み: 10cm を試して「確かめた」"
+					text = "使う（Z の下 + 10cm）"
 				elif height_status.is_empty():
 					st = "wait"
 					text = "問い合わせ中"
+				elif not bool(height_status.get("z_calibrated", true)):
+					text = "2 の Z の上と下を記録すると使える"
 				else:
-					text = "まだ保存していない"
+					text = "使えない: " + str(height_status.get("problem", ""))
+			"easy":
+				var es := easy_state(easy_status)
+				st = es.state
+				text = es.text
 			"services":
 				if services.is_empty():
 					st = "wait"
@@ -326,6 +372,54 @@ func section_states() -> Array[Dictionary]:
 						text = "つながらない: " + "、".join(ng)
 		out.append({"key": key, "title": str(sec[1]), "state": st, "text": text})
 	return out
+
+## The easy mode's drop points (#169) as a section state, from the backend's easy_status.
+## Not asked of the simulated crane (made-up values), and nothing to do until someone records
+## a point (the easy mode is a choice: an exhibit that plays hard only never needs it).
+static func easy_state(st: Dictionary) -> Dictionary:
+	if st.is_empty():
+		return {"state": "wait", "text": "問い合わせ中"}
+	var d: Dictionary = st.dials if st.get("dials") is Dictionary else {}
+	if str(d.get("profile", "")) != "real":
+		return {"state": "na", "text": "仮想クレーンは模擬の値を使う（記録は実機でだけ）"}
+	var missing: Array[String] = []
+	for k in EASY_VALUES:
+		if d.get(k[0]) == null:
+			missing.append(str(k[1]))
+	if missing.size() == EASY_VALUES.size():
+		return {"state": "na", "text": "まだ記録していない（かんたんモードを使うときだけ要る）"}
+	if bool(d.get("stale_z", false)):
+		return {"state": "todo", "text": "Z を測り直した: キャッチの高さと投入の高さを記録し直す"}
+	if not missing.is_empty():
+		return {"state": "todo", "text": "まだ: " + "、".join(missing)}
+	var problems: Array = st.problems if st.get("problems") is Array else []
+	if not bool(d.get("confirmed", false)):
+		# anything else wrong with the values is said before asking for the confirmation
+		for p in problems:
+			if not str(p).contains("not confirmed"):
+				return {"state": "todo", "text": "このままでは使えない: " + str(p)}
+		return {"state": "todo", "text": "記録済み。試してから「確かめた」"}
+	if not problems.is_empty():
+		return {"state": "todo", "text": "まだ動かせない: " + str(problems[0])}
+	return {"state": "ok", "text": "記録・確認済み（次の起動でもこの値を使う）"}
+
+## the easy mode's three recorded values (#200: Dial 1 only): key in easy_status.dials, its name
+const EASY_VALUES := [["dial_1", "Dial 1"], ["catch_z", "キャッチの高さ"], ["release_z", "投入の高さ"]]
+
+static func easy_text(st: Dictionary) -> String:
+	var d: Dictionary = st.dials if st.get("dials") is Dictionary else {}
+	if d.is_empty():
+		return "（バックエンドに問い合わせ中）"
+	var xy := func(v) -> String: return "X %.0f / Y %.0f" % [float(v[0]), float(v[1])] if v is Array and v.size() == 2 else "まだ"
+	if str(d.get("profile", "")) != "real":
+		return "仮想クレーン: 模擬の値を使う（Dial 1 %s　投入 Z %.0f）" % [xy.call(d.get("dial_1")),
+			float(d.release_z) if d.get("release_z") != null else 0.0]
+	var z := func(v) -> String: return ("Z %.1f" % float(v)) if v != null else "まだ"
+	var when := str(d.get("saved_at", "")).replace("T", " ")
+	return "Dial 1（左）: %s\nキャッチの高さ: %s　投入の高さ: %s\n%s%s\n→ %s" % [
+		xy.call(d.get("dial_1")), z.call(d.get("catch_z")), z.call(d.get("release_z")),
+		"確認済み" if bool(d.get("confirmed", false)) else "未確認", ("（%s に記録した値）" % when) if when != "" else "",
+		str(easy_state(st).text)]
 
 ## The first section not done, in words ("" when all are).
 static func next_text(states: Array) -> String:
@@ -354,14 +448,7 @@ func scroll_to(key: String) -> void:
 		(p as ScrollContainer).scroll_vertical = int(card.position.y)
 
 func _spin(parent: Control, label: String, lo: float, hi: float, step: float, v: float) -> SpinBox:
-	parent.add_child(StudyHud.label(label, 16, MUTED, 2))
-	var s := SpinBox.new()
-	s.min_value = lo
-	s.max_value = hi
-	s.step = step
-	s.value = v
-	parent.add_child(s)
-	return s
+	return PanelKit.spin(parent, label, lo, hi, step, v)
 
 ## #110: the entered values -> the backend (calibration.json#study_height), unconfirmed.
 ## desk: "bottom" = the Z calibration's bottom, "here" = the arm's Z now.
@@ -429,7 +516,7 @@ static func height_text(st: Dictionary) -> String:
 	if not bool(st.get("z_calibrated", true)):
 		lines.append("2 の Z の上下をまだ測っていない（1cm あたりの Z を計算できない）")
 	if bool(st.get("z_changed", false)):
-		lines.append("Z を測り直したので、撮影の高さを「保存」し直して、試してから「確かめた」")
+		lines.append("Z を測り直したので、記録した机の Z は使えない:「保存（机 = Z の下の記録）」か「ここを机に記録して保存」をやり直す")
 	if v.get("z_per_cm") != null:
 		lines.append("1cm = Z %.2f　机 = Z %s" % [float(v.z_per_cm), str(v.get("z_desk_tip", "?"))])
 	var stages: Array = st.get("stages", []) if not (st.get("stages", []) as Array).is_empty() else st.get("trial_stages", [])
@@ -440,13 +527,11 @@ static func height_text(st: Dictionary) -> String:
 	if not parts.is_empty():
 		lines.append("　".join(parts))
 	if bool(st.get("usable", false)):
-		lines.append("確認済み: 勉強モードで使う")
+		lines.append("勉強モードで使う（Z の下 + 10cm）")
 	elif st.has("trial_problem"):
 		lines.append("このままでは使えない: " + str(st.trial_problem))
-	elif st.get("saved") != null:
-		lines.append("まだ確認していない: 試してから「確かめた」")
-	else:
-		lines.append("まだ保存していない")
+	elif str(st.get("problem", "")) != "":
+		lines.append("このままでは使えない: " + str(st.problem))
 	return "\n".join(lines)
 
 func _card_panel() -> PanelContainer:
@@ -505,10 +590,7 @@ func _card(key: String, purpose: String) -> void:
 	_note(purpose)
 
 func _note(text: String) -> void:
-	var l := StudyHud.label(text, 16, MUTED, 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
+	PanelKit.wrapped(_box, text, 16, MUTED, 2, WIDTH)
 
 ## A small heading inside a card ("いつもは", "最後に").
 func _sub(text: String) -> void:
@@ -521,37 +603,20 @@ func _step(n: String, text: String) -> void:
 	h.add_theme_constant_override("separation", 6)
 	_box.add_child(h)
 	h.add_child(StudyHud.label(n, 18, YELLOW, 2))
-	var l := StudyHud.label(text, 17, INK, 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH - 30, 0)
-	h.add_child(l)
+	PanelKit.wrapped(h, text, 17, INK, 2, WIDTH - 30)
 
 func _caution(text: String) -> void:
-	var l := StudyHud.label("⚠ " + text, 15, Color("ffc87a"), 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
+	PanelKit.wrapped(_box, "⚠ " + text, 15, Color("ffc87a"), 2, WIDTH)
 
 func _value() -> Label:
-	var l := StudyHud.label("", 18, Color.WHITE, 3)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(WIDTH, 0)
-	_box.add_child(l)
-	return l
+	return PanelKit.wrapped(_box, "", 18, Color.WHITE, 3, WIDTH)
 
 func _row() -> HBoxContainer:
-	var r := HBoxContainer.new()
-	r.add_theme_constant_override("separation", 10)
-	_box.add_child(r)
-	return r
+	return PanelKit.row(_box)
 
 ## kind: "" (plain), "primary" (the step's main button), "danger" (it erases a record).
 func _button(parent: Control, text: String, cb: Callable, kind := "") -> Button:
-	var b := Button.new()
-	b.text = text
-	b.add_theme_font_size_override("font_size", 18)
-	b.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
-	b.pressed.connect(cb)
+	var b := PanelKit.button(text, 18, cb)
 	if kind != "":
 		var col := Color("2f6fb3") if kind == "primary" else Color("6a2a35")
 		for st in ["normal", "hover", "pressed", "disabled"]:
@@ -607,6 +672,12 @@ static func link_problem_text(info: Dictionary, short := false) -> String:
 			if short:
 				return "実機に未接続: シリアルポートが見つからない"
 			return "実機に未接続: シリアルポートが 1 つも見つからない。USB ケーブルと基板の電源を確かめる。" + again
+		"silent":  # #161: the link stopped answering while running; the backend reopens it
+			if short:
+				return "実機から返事が来ない: つなぎ直しています"
+			return ("実機から返事が来なくなった（ポート %s）。USB ハブかケーブルの不調で、実機からの受信だけが止まることがある。"
+				+ "バックエンドが数秒おきに自動でつなぎ直している。続くなら Core2 の USB をカメラと同じハブから外し、Mac に直接挿す。"
+				+ "つながったら「モーター有効」からやり直す（Z の上下の記録も消えている）") % str(info.get("port", ""))
 		"open_failed":
 			if short:
 				return "実機に未接続: ポートを開けない・返事がない"
@@ -626,12 +697,12 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	if cmd == "services_check":
 		_services_asking = false
 		if ok and data.get("results") is Array:
-			# an "ask" run adds its line to the last check
-			var asked: Array = (data.results as Array).filter(func(r): return r is Dictionary and r.get("name") == "ask")
+			# an "ask" run adds its lines (the question, and the worksheet reader #230) to the last check
+			var asked: Array = (data.results as Array).filter(func(r): return r is Dictionary and r.get("name") in ASK_ROWS)
 			if asked.is_empty() or services.is_empty():
 				services = data.results
 			else:
-				services = services.filter(func(r): return r is Dictionary and r.get("name") != "ask") + asked
+				services = services.filter(func(r): return r is Dictionary and not r.get("name") in ASK_ROWS) + asked
 		elif not ok:
 			services = [{"name": "backend", "label": "バックエンド", "status": "ng", "detail": str(data.get("reason", ""))}]
 		return
@@ -643,13 +714,26 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		if ok:
 			show_heights(data)
 		return
+	if cmd == "easy_status":  # asked when the tab opens: no message
+		if ok:
+			easy_status = data
+		return
+	if ok and cmd in ["z_set", "z_restore", "calibration_prepare"] and main != null and main.get("ws") != null \
+			and is_visible_in_tree():  # (only while the tab shows: it asks again when it opens)
+		main.ws.send_command("easy_status")  # the easy mode's heights follow the Z calibration
+	if ok and cmd in ["easy_dial_set", "easy_dial_confirm"]:
+		easy_status = data
 	if not COMMANDS.has(cmd) or not is_visible_in_tree():
 		return
 	if ok and cmd in ["study_height_set", "study_height_confirm"]:
 		show_heights(data)
+	if ok and cmd in ["z_set", "z_restore"] and main != null and main.get("ws") != null:
+		main.ws.send_command("study_height_status")  # #165: the heights follow the Z records
 	result_ok = ok
 	result_text = ("%s: できました" % COMMANDS[cmd]) if ok else \
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
+	if cmd == "calibration_prepare" and ok:
+		result_text = "準備を始めた（進み具合は上の「準備のようす」に出る）"
 	if cmd == "z_restore":
 		var r: Dictionary = data.restore if ok and data.get("restore") is Dictionary else {}
 		restore_estimate = {} if r.is_empty() or bool(r.get("applied", false)) or bool(r.get("too_far", false)) else r
@@ -669,6 +753,42 @@ static func restore_text(r: Dictionary) -> String:
 		return s + "。ずれが大きすぎる（電源を切っている間に回った）: 一番上まで巻き上げて「上を記録」"
 	return s + "。アームの高さが合っていれば「これを使う」"
 
+## #163: what to do when the firmware refuses a servo's jogs until its power is cut and
+## restored ("" when none is refused).
+static func servo_power_cycle_text(z: bool, arm: bool) -> String:
+	if not z and not arm:
+		return ""
+	var which := "巻き上げサーボと爪のサーボ" if z and arm else ("巻き上げサーボ" if z else "爪のサーボ")
+	var s := ("⚠ %sが動かない: Core2 だけが再起動して、サーボの回転数が分からなくなった（ファームウェアが拒否している）。"
+		+ "サーボの電源（Core2 の USB ではない）を一度切って入れ直す。") % which
+	if z:
+		s += "トルクが切れているので、アームが重みで下がることがある（下に物がないか確かめる）。入れ直したら Z の上と下を記録し直す"
+	else:
+		s += "入れ直したら爪の開き・閉じを確かめる"
+	return s
+
+## #167: the preparation's steps and, when it stopped, why ("" before the first run).
+static func prepare_text(st: Dictionary) -> String:
+	var steps: Array = st.get("steps", []) if st.get("steps") is Array else []
+	if steps.is_empty():
+		return ""
+	var marks := {"done": "✓", "skip": "－", "run": "…", "fail": "✗", "todo": "・"}
+	var lines: Array[String] = []
+	for s in steps:
+		if not s is Dictionary:
+			continue
+		var note := str(s.get("note", ""))
+		lines.append("%s %s%s" % [marks.get(str(s.get("state", "todo")), "・"), str(s.get("label", s.get("key", ""))),
+			("（%s）" % note) if note != "" else ""])
+	var text := "　".join(lines)
+	if bool(st.get("active", false)):
+		return "実行中: " + text
+	if str(st.get("last_result", "")) == "done":
+		return "準備できた: " + text
+	if str(st.get("last_result", "")) == "fault":
+		return "止まった: " + text + "\n理由: " + reason_text(str(st.get("error", "")))
+	return text
+
 ## A refusal's reason as what to do next (the backend's own words when it is not known).
 static func reason_text(reason: String) -> String:
 	var r := reason.to_lower()
@@ -676,6 +796,10 @@ static func reason_text(reason: String) -> String:
 		return "先に W でアームを一番上まで巻き上げる（Z の上を記録してから原点復帰）。" + reason
 	if r == "timeout":
 		return "バックエンドから返事がない"
+	if r.contains("no reply from the robot") or r.begins_with("timeout after") \
+			or r.begins_with("internal error: timeout after"):
+		# #161: the firmware did not answer (a USB hub / cable trouble can stop the replies alone)
+		return "実機から返事がない（USB ケーブル・ハブを確認。止まったままならバックエンドが数秒でつなぎ直す）。" + reason
 	if r == "socket_closed":
 		return "バックエンドとの接続が切れた"
 	if r.contains("not connected"):
@@ -713,6 +837,7 @@ func _ask_backend() -> void:
 	if hw != null:
 		hw.request_camera_map()
 	main.ws.send_command("study_height_status")
+	main.ws.send_command("easy_status")
 	check_services(false)
 
 func check_services(ask: bool) -> void:
@@ -750,6 +875,14 @@ func refresh() -> void:
 	_refresh_summary()
 	for b in _ws_buttons:
 		b.disabled = not ready
+	var prep := RobotState.calibration_prepare if RobotState.source == "websocket" else {}
+	_prepare.disabled = not ready or bool(prep.get("active", false))
+	if _prep_was_active and not bool(prep.get("active", false)) and ready:
+		main.ws.send_command("easy_status")  # the preparation ended: Z is back, the easy mode's values count again
+	_prep_was_active = bool(prep.get("active", false))
+	_prepare_label.text = prepare_text(prep)
+	_prepare_label.add_theme_color_override("font_color", BAD if str(prep.get("last_result", "")) == "fault"
+		else (GOOD if str(prep.get("last_result", "")) == "done" else MUTED))
 	if ready and not _asked and is_visible_in_tree():
 		_ask_backend()
 	if RobotState.connected or not ready:
@@ -790,13 +923,20 @@ func refresh() -> void:
 	_z.text = "上: %s　下: %s　換算: %s" % ["記録済" if RobotState.z_top_set or RobotState.z_reference_set else "まだ",
 		"記録済" if RobotState.z_bottom_set else "まだ",
 		"測った値（calibration.json）" if RobotState.z_calibrated else "設定ファイルの仮の値（まだ測っていない）"]
-	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated else BAD)
+	var power_cycle := servo_power_cycle_text(RobotState.z_servo_power_cycle, RobotState.arm_servo_power_cycle) \
+		if RobotState.source == "websocket" and RobotState.connected else ""
+	if power_cycle != "":
+		_z.text += "\n" + power_cycle
+	_z.add_theme_color_override("font_color", GOOD if RobotState.z_calibrated and power_cycle == "" else BAD)
 	_z_use.disabled = not ready or restore_estimate.is_empty()
 	_z_up.disabled = not ready or not z_range_recorded()
 	_z_down.disabled = _z_up.disabled
 	_z_up.tooltip_text = "" if z_range_recorded() else "Z の上と下を両方記録すると押せる"
 	_z_down.tooltip_text = _z_up.tooltip_text
 	_z_restore.add_theme_color_override("font_color", YELLOW)
+	_easy.text = easy_text(easy_status)
+	_easy.add_theme_color_override("font_color", GOOD if easy_state(easy_status).state == "ok" else
+		(MUTED if easy_state(easy_status).state in ["na", "wait"] else BAD))
 	_claw.text = "いま %s　開き: %s　閉じ: %s" % ["%.1f°" % RobotState.arm_deg if RobotState.arm_reference_set else "?",
 		deg_text(RobotState.arm_open_deg), deg_text(RobotState.arm_closed_deg)]
 	var claw_ok := not is_nan(RobotState.arm_open_deg) and not is_nan(RobotState.arm_closed_deg)

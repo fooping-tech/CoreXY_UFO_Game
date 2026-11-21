@@ -291,7 +291,7 @@ async def test_top_and_bottom_measure_counts_per_unit_and_are_saved(tmp_path):
     robot = await make_cal_robot(path)
     fw = robot.serial.transport
     try:
-        await robot.set_z_point("top")  # = z_zero
+        await robot.set_z_point("top")
         s = robot.snapshot()
         assert s.z == 100.0 and s.z_top_set and not s.z_bottom_set and not s.z_calibrated
         fw.servo_abs[1] -= 2 * 4096  # wound down two drum turns
@@ -382,7 +382,9 @@ async def test_server_z_set_reaches_the_robot():
                         return m
             assert (await cmd("b", "z_set", which="bottom"))["type"] == "ack"
             assert (await cmd("s", "z_set", which="side"))["type"] == "nack"
-            assert (await cmd("t", "z_zero"))["type"] == "ack"
+            assert (await cmd("t", "z_set", which="top"))["type"] == "ack"
+            gone = await cmd("z", "z_zero")  # #214: the old name of z_set top is no command any more
+            assert gone["type"] == "nack" and "unknown command" in gone["data"]["reason"]
     finally:
         await srv.stop()
 

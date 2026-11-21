@@ -38,7 +38,7 @@ var last_error: String = ""
 ## The backend's current `error` field, mirrored as-is (empty once it clears).
 var robot_error: String = ""
 ## The backend has a Z reference (z_set top = arm wound up, or bottom = lowered;
-## z_zero = top); without it Z is unknown.
+## z_set top); without it Z is unknown.
 var z_reference_set: bool = false
 ## Which Z points are recorded in this firmware session, and whether the counts
 ## per unit / drum direction are measured from both (or saved from before).
@@ -50,6 +50,10 @@ var z_calibrated: bool = false
 var z_servo_reset: bool = false
 ## with z_servo_reset: the firmware sets multi-turn again on the next Z jog (newer firmware, #64)
 var z_servo_jog_recovers: bool = false
+## #163: the firmware refuses this servo's jogs until its power is cut and restored
+## (Core2 restarted while the servo kept power; W / S or the claw keys do nothing)
+var z_servo_power_cycle: bool = false
+var arm_servo_power_cycle: bool = false
 ## Claw servo (ID 2): degrees from its arm_zero reference (the raw angle in its
 ## turn before one is set); NAN = not read yet.
 var arm_deg: float = NAN
@@ -67,9 +71,22 @@ var position_is_measured: bool = true
 ## The sequence itself runs in the backend; the game only shows it and locks its
 ## manual controls while it is active. {} = no backend / not reported.
 var auto_catch: Dictionary = {}
+## #167: the 校正 tab's one-button preparation, as the backend reports it
+## (robot_state.calibration_prepare / {"type": "calibration_prepare"}): active, step,
+## steps [{key, label, state: todo|run|done|skip|fail, note}], error, last_result.
+var calibration_prepare: Dictionary = {}
+
+## #169: the score game's easy mode, as the backend reports it (robot_state.easy_mode /
+## {"type": "easy_mode"}): active, state (MANUAL_XY / AUTO_GRAB / WAIT_DESTINATION /
+## DELIVER_DIAL_1 / EXPIRED / FAULT), step, destination, grab_id,
+## elapsed_s, wait_left_s, last_result, error. The sequence runs in the backend.
+var easy_mode: Dictionary = {}
 
 func auto_catch_active() -> bool:
 	return source == "websocket" and bool(auto_catch.get("active", false))
+
+func easy_mode_active() -> bool:
+	return source == "websocket" and bool(easy_mode.get("active", false))
 
 ## Playback runs behind the newest sample by a delay that covers the longest
 ## recent gap between samples, so it always interpolates between two real

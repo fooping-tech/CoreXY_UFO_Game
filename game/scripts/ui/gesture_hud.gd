@@ -17,10 +17,18 @@ const SIZE := Vector2(460, 100)
 const RING_R := 38.0
 ## The mini camera view (4:3).
 const CAM_RECT := Rect2(8, 6, 117, 88)
+## The compact form for the score game (#141; portrait since #157): it sits on the left of
+## the status row over the UFO's rail (the camera, the stick beside it, the state under
+## them), so nothing of it lies over the field, the goals or a Dial's port.
+const COLUMN_SIZE := GameModeLayout.GESTURE_RECT.size
+const COLUMN_POS := GameModeLayout.GESTURE_RECT.position
+const COLUMN_RING_R := 30.0
 
 var gesture: GestureControl
 ## Why the robot may not be moved now ("" = it may), from the main scene.
 var gate := ""
+## true: the tall form in the left column (the main scene sets it while the score game is up)
+var column := false
 var _flash := ""
 var _flash_left := 0.0
 var _t := 0.0
@@ -66,8 +74,17 @@ func flash(text: String, secs := 0.9) -> void:
 	_flash_left = secs
 
 func place(play_w: float, h: float) -> void:
-	position = Vector2(16.0, h - SIZE.y - 16.0)
-	size = SIZE
+	position = COLUMN_POS if column else Vector2(16.0, h - SIZE.y - 16.0)
+	size = panel_size()
+
+func panel_size() -> Vector2:
+	return COLUMN_SIZE if column else SIZE
+
+## The stick ring's centre and radius in the panel.
+func ring() -> Array:
+	if column:
+		return [Vector2(CAM_RECT.end.x + 16.0 + COLUMN_RING_R + 6.0, 8.0 + COLUMN_RING_R + 4.0), COLUMN_RING_R]
+	return [Vector2(CAM_RECT.end.x + 12.0 + RING_R, SIZE.y * 0.5), RING_R]
 
 func step(dt: float) -> void:
 	_t += dt
@@ -172,11 +189,12 @@ func _draw() -> void:
 	var live := g.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
 	var a := 1.0 if live else 0.7
 	# pixel-style panel: dark fill, 2 px border, notched corners
-	var r := Rect2(Vector2.ZERO, SIZE)
-	draw_rect(r, Color(NAVY, 0.78 * a))
+	var psize := panel_size()
+	var r := Rect2(Vector2.ZERO, psize)
+	draw_rect(r, Color(NAVY, (0.92 if column else 0.78) * a))
 	var border := Color(PINK if live else CYAN, (0.95 if live else 0.5))
 	draw_rect(r.grow(-1.0), border, false, 2.0)
-	for c in [Vector2(0, 0), Vector2(SIZE.x - 4, 0), Vector2(0, SIZE.y - 4), Vector2(SIZE.x - 4, SIZE.y - 4)]:
+	for c in [Vector2(0, 0), Vector2(psize.x - 4, 0), Vector2(0, psize.y - 4), Vector2(psize.x - 4, psize.y - 4)]:
 		draw_rect(Rect2(c, Vector2(4, 4)), Color(NAVY, 1.0))
 
 	# mini camera: a dark frame when there is no picture (the hand dot still shows)
@@ -189,25 +207,26 @@ func _draw() -> void:
 			draw_line(Vector2(CAM_RECT.position.x, y), Vector2(CAM_RECT.end.x, y), Color(CYAN, 0.15), 1.0)
 
 	# stick ring (only for a scheme that steers with a stick)
-	var c0 := Vector2(CAM_RECT.end.x + 12.0 + RING_R, SIZE.y * 0.5)
+	var c0: Vector2 = ring()[0]
+	var rr: float = ring()[1]
 	var ring_col := Color(PINK if live else CYAN, 0.9 if live else 0.45)
 	if g.scheme.uses_stick():
 		for i in range(24):  # dashed, chunky
 			var a0 := TAU * i / 24.0
-			draw_arc(c0, RING_R, a0, a0 + TAU / 48.0, 3, ring_col, 3.0 if live else 2.0)
-		draw_arc(c0, RING_R * g.joystick.deadzone, 0.0, TAU, 16, Color(CYAN, 0.35), 1.0)
-		draw_arc(c0, RING_R * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
+			draw_arc(c0, rr, a0, a0 + TAU / 48.0, 3, ring_col, 3.0 if live else 2.0)
+		draw_arc(c0, rr * g.joystick.deadzone, 0.0, TAU, 16, Color(CYAN, 0.35), 1.0)
+		draw_arc(c0, rr * g.joystick.full, 0.0, TAU, 32, Color(CYAN, 0.18), 1.0)
 	else:
-		draw_arc(c0, RING_R * 0.55, 0.0, TAU, 32, ring_col, 3.0 if live else 2.0)
+		draw_arc(c0, rr * 0.55, 0.0, TAU, 32, ring_col, 3.0 if live else 2.0)
 	# The ring is the hand's motion as the mini camera view shows it (the view's
 	# flips included), so the square and the arrow move like the hand on it.
 	var off := view_offset(g, _overlay.flip_h, _overlay.flip_v)
 	if not g.scheme.uses_stick():
 		off = point_view_dir(g, _overlay.flip_h, _overlay.flip_v) * 0.55  # the finger, on the small ring
-	var dot := c0 + off.limit_length(1.15) * RING_R
+	var dot := c0 + off.limit_length(1.15) * rr
 	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5 and off.length() > 1e-3:
 		var dir := off.normalized()
-		var tip := c0 + dir * RING_R * 0.85
+		var tip := c0 + dir * rr * 0.85
 		draw_line(c0, tip, Color(GOLD, 0.9), 3.0)
 		draw_colored_polygon(PackedVector2Array([tip + dir * 7.0, tip + dir.orthogonal() * 5.0, tip - dir.orthogonal() * 5.0]), Color(GOLD, 0.9))
 	var dot_col := GOLD if g.engaged else (CYAN if g.detected else Color(0.5, 0.55, 0.7))
@@ -215,19 +234,29 @@ func _draw() -> void:
 	draw_rect(Rect2(dot - Vector2(5, 5) * pulse, Vector2(10, 10) * pulse), Color(dot_col, a))
 
 	# texts
-	var f := ThemeDB.fallback_font
-	var tx := c0.x + RING_R + 14.0
+	var f := UiFonts.body()
 	var t := texts()
+	var frac := clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
+	var n := int(roundf(frac * 10.0))
+	var speed := "%2d mm/s" % int(roundf(g.velocity.length()))
+	if column:  # the gauge under the ring, the state along the bottom; the hint and the speed stay out
+		for i in range(10):
+			var on := i < n
+			var col := (GOLD if i >= 7 else CYAN) if on else Color(CYAN, 0.18)
+			draw_rect(Rect2(Vector2(c0.x - 44.0 + i * 9.0, c0.y + rr + 8.0), Vector2(7.0, 6.0)), Color(col, a if on else 0.6))
+		var ty := psize.y - 5.0
+		draw_string(f, Vector2(7, ty + 1.0), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(0, 0, 0, 0.7 * a))
+		draw_string(f, Vector2(6, ty), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(PINK if live else Color.WHITE, a))
+		return
+	var tx := c0.x + rr + 14.0
 	_text(f, Vector2(tx, 34), t[0], 18, Color(PINK if live else Color.WHITE, a))
 	_text(f, Vector2(tx, 56), t[1], 12, Color(CYAN, 0.85 * a))
 	# speed gauge: 10 chunky segments
-	var frac := clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
-	var n := int(roundf(frac * 10.0))
 	for i in range(10):
 		var on := i < n
 		var col := (GOLD if i >= 7 else CYAN) if on else Color(CYAN, 0.18)
 		draw_rect(Rect2(Vector2(tx + i * 15.0, 72.0), Vector2(11.0, 8.0)), Color(col, a if on else 0.6))
-	_text(f, Vector2(tx + 152.0, 81.0), "%2d mm/s" % int(roundf(g.velocity.length())), 11, Color(CYAN, 0.8 * a))
+	_text(f, Vector2(tx + 152.0, 81.0), speed, 11, Color(CYAN, 0.8 * a))
 
 ## Over the mini camera: its frame (cyan; yellow when the hand is near an edge;
 ## blinking red when it left the view, with an arrow at that edge pointing back in).

@@ -24,6 +24,7 @@ _process(dt)          ← 描画フレーム
 - Autoload の読み込み順は `GameConfig` → `RobotState` → `GameState`（`project.godot`）。`RobotState._ready` は `GameConfig` を使う。
 - `project.godot` の作業ツリーには `physics_ticks_per_second` がない（既定値の 60 を使う）。ロープの調整値は 60 Hz を前提にしている。tick を変えるなら物理テストと見た目を確認し直す。
 - `main.gd` がすべてを配線する唯一の場所。ノードはコードで生成し、`.tscn` は最小限（`main.tscn`, `ufo.tscn`, `debug.tscn`）。
+  - 起動オプション（`-- --scenario ...`）、`--log-motion` のログ、`--capture` の撮影は `game/scripts/game/main_dev_tools.gd`（`MainDevTools`、main が `dev` として持つ。#223）。ジョグ・自動キャッチを断られたときの文言は `game/scripts/game/operator_hints.gd`（`OperatorHints`。main の `jog_hint_for` などは転送）。
 
 ## 2. 状態の持ち主
 
@@ -56,7 +57,7 @@ Z に関わる値は 3 層あり、混同しやすい:
 | `robot.z_up_is_positive` | config（Godot と Python） | ゲームの Z 単位が大きいほどアームが高いか | 設計上の約束（true） |
 | `backend.z_sign` | config（Python） | `SERVO_TURN 1 +t` でアームが上がるなら 1 | **実機で未確認** |
 | `backend.z_counts_per_unit` | config（Python） | サーボの count / Z 単位（ドラム径で決まる） | **実機で未確認** |
-| Z 基準 | `RealRobot._z_top_counts` / `_z_bottom_counts` | `z_set top`（= `z_zero`）/ `bottom` 時の `abs=` カウント = アーム最上位 / 最下位。両方で `ZCalibration`（`z_counts_per_unit`・`z_sign` を実測、`config/calibration.json` の `z`） | ファームウェアの起動ごとに手で設定（換算は保存） |
+| Z 基準 | `RealRobot._z_top_counts` / `_z_bottom_counts` | `z_set top`/ `bottom` 時の `abs=` カウント = アーム最上位 / 最下位。両方で `ZCalibration`（`z_counts_per_unit`・`z_sign` を実測、`config/calibration.json` の `z`） | ファームウェアの起動ごとに手で設定（換算は保存） |
 
 実機の Z が逆に動くときに直すのは `z_sign`。`rope_length_for_z` や `z_up_is_positive` を反転させて辻褄を合わせない（MockRobot やテストと矛盾する）。
 

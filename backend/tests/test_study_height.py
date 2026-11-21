@@ -18,7 +18,7 @@ from corexy_ufo_backend.serial_service import SerialService
 from corexy_ufo_backend.study_mode.height import HeightCalibration, HeightError, z_per_cm_from_drum
 from corexy_ufo_backend.websocket import GameServer
 
-from test_homework_advice import _cmd
+from ws_helpers import cmd as _cmd
 
 LIM = RobotLimits(z_max=100.0, z_up_is_positive=True)
 VALUES = {"drum_radius_mm": 15.0, "camera_offset_cm": 3.0, "landing_tip_cm": 1.0, "allow_landing_contact": False}
@@ -53,8 +53,14 @@ def cfg_for(tmp_path) -> BackendConfig:
     return cfg
 
 
-async def real_server(tmp_path, measured=True):
+# the shipped config (#110): one 10 cm stage of the claw tips, no landing
+ONE_STAGE = {"study_mode": {"height": {"capture_heights_cm": [10.0], "landing": False}}}
+
+
+async def real_server(tmp_path, measured=True, raw=None):
     cfg = cfg_for(tmp_path)
+    if raw is not None:
+        cfg.raw = raw
     if measured:
         section(tmp_path, "z").write_text(json.dumps({"counts_per_unit": 80.42, "sign": 1, "span_counts": 8042}))
     robot = RealRobot(cfg, SerialService("fake", transport_factory=FakeFirmware))
@@ -64,63 +70,61 @@ async def real_server(tmp_path, measured=True):
     return srv, robot, next(iter(srv._server.sockets)).getsockname()[1]
 
 
-async def test_set_test_confirm_and_any_change_unconfirms(tmp_path):
-    srv, robot, port = await real_server(tmp_path)
+async def test_the_z_bottom_and_10_cm_are_used_with_nothing_saved_or_confirmed(tmp_path):
+    """#165: the desk is the Z bottom record, cm from the measured Z and the 15 mm drum,
+    the claw tips 10 cm above the desk: no 保存, no ruler check."""
+    srv, robot, port = await real_server(tmp_path, raw=ONE_STAGE)
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
             st = (await _cmd(ws, "study_height_status", rid="s0"))["data"]
-            assert not st["usable"] and st["saved"] is None and st["z_calibrated"] and st["default_drum_radius_mm"] == 15.0
-            m = await _cmd(ws, "study_height_set", {**VALUES, "desk": "bottom"}, rid="set")
+            assert st["usable"] and st["saved"] is None and st["z_calibrated"] and not st["z_changed"], st
+            assert st["values"]["z_desk_tip"] == 0.0 and st["values"]["camera_offset_cm"] == 0.0
+            assert st["values"]["z_per_cm"] == pytest.approx(z_per_cm_from_drum(80.42, 15.0), abs=1e-4)
+            stages = srv.height.stages(srv.approach.limits)
+            first = stages[0]
+            assert len(stages) == 1 and first.name == "10cm" and first.tip_cm == 10.0
+            assert first.z == pytest.approx(10.0 * z_per_cm_from_drum(80.42, 15.0), abs=0.01)
+    finally:
+        await srv.stop()
+    assert not section(tmp_path, "study_height").exists()  # nothing written
+
+
+async def test_saved_values_are_used_without_a_check(tmp_path):
+    srv, robot, port = await real_server(tmp_path)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            m = await _cmd(ws, "study_height_set", {**VALUES, "drum_radius_mm": 30.0, "desk": "bottom"}, rid="set")
             assert m["type"] == "ack", m
             d = m["data"]
-            assert not d["usable"] and "not confirmed" in d["problem"] and not d["values"]["confirmed"]
-            assert [s["name"] for s in d["trial_stages"]] == ["10cm", "5cm", "landing"]  # for the test moves
-            assert d["values"]["z_per_cm"] == pytest.approx(5.404, abs=0.001)
-            with pytest.raises(HeightError):
-                srv.height.stages(srv.approach.limits)  # the staged descent still refuses
-            m = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="ok")
-            assert m["type"] == "ack" and m["data"]["usable"] and m["data"]["values"]["confirmed"]
-            assert srv.height.stages(srv.approach.limits)[0].z == pytest.approx(7.0 * 5.404, abs=0.01)
-            m = await _cmd(ws, "study_height_set", {**VALUES, "camera_offset_cm": 3.5, "desk": "keep"}, rid="again")
-            assert not m["data"]["values"]["confirmed"] and m["data"]["saved"]["desk"] == "bottom"
+            assert d["usable"] and d["values"]["confirmed"] and d["saved"]["drum_radius_mm"] == 30.0
+            assert d["values"]["z_per_cm"] == pytest.approx(5.404 / 2, abs=0.001)
             bad = await _cmd(ws, "study_height_set", {**VALUES, "camera_offset_cm": 9.5}, rid="bad1")
-            assert bad["type"] == "ack"  # saved, but the 10 cm stage leaves no clearance
-            no = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="no")
-            assert no["type"] == "nack" and "使えない" in no["data"]["reason"]
+            assert bad["type"] == "ack" and not bad["data"]["usable"]  # saved, but the 10 cm stage leaves no clearance
             out = await _cmd(ws, "study_height_set", {**VALUES, "drum_radius_mm": 0.5}, rid="range")
             assert out["type"] == "nack" and "drum_radius_mm" in out["data"]["reason"]
             here = await _cmd(ws, "study_height_set", {**VALUES, "desk": "here"}, rid="here")
             assert here["type"] == "nack" and "上を記録" in here["data"]["reason"]  # no Z reference yet
     finally:
         await srv.stop()
-    saved = json.loads(section(tmp_path, "study_height").read_text())
-    assert saved["drum_radius_mm"] == 15.0 and saved["confirmed"] is False
 
 
-async def test_a_new_z_calibration_unconfirms_the_heights(tmp_path):
-    """Review on #111: measuring Z again changes cm per Z: the heights need a new check, and a
-    desk recorded as a Z in the old units must be recorded again."""
+async def test_a_new_z_calibration_keeps_the_bottom_but_not_a_recorded_desk(tmp_path):
+    """Review on #111: measuring Z again changes cm per Z. The Z bottom follows it (#165); a desk
+    recorded as a Z in the old units must be recorded again."""
     srv, robot, port = await real_server(tmp_path)
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
             await _cmd(ws, "study_height_set", {**VALUES, "desk": "bottom"}, rid="set")
-            assert (await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="ok"))["data"]["usable"]
             from corexy_ufo_backend.robot.z_calibration import ZCalibration
             robot.z_cal = ZCalibration(counts_per_unit=120.0, sign=1, span_counts=12000)  # measured again
             st = (await _cmd(ws, "study_height_status", rid="st"))["data"]
-            assert not st["usable"] and st["z_changed"] and "not confirmed" in st["problem"]
-            with pytest.raises(HeightError):
-                srv.height.stages(srv.approach.limits)
-            no = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="no")
-            assert no["type"] == "nack" and "保存" in no["data"]["reason"]
-            await _cmd(ws, "study_height_set", {**VALUES, "desk": "bottom"}, rid="again")
-            ok = await _cmd(ws, "study_height_confirm", {"confirmed": True}, rid="ok2")
-            assert ok["type"] == "ack" and ok["data"]["usable"] and not ok["data"]["z_changed"]
+            assert st["usable"] and not st["z_changed"]
+            assert st["values"]["z_per_cm"] == pytest.approx(z_per_cm_from_drum(120.0, 15.0), abs=1e-4)
             saved = json.loads(section(tmp_path, "study_height").read_text())
-            saved.update({"desk": 12.5, "z_counts_per_unit": 80.42, "confirmed": True})  # a desk Z in old units
+            saved.update({"desk": 12.5, "z_counts_per_unit": 80.42})  # a desk Z in old units
             section(tmp_path, "study_height").write_text(json.dumps(saved))
             st = (await _cmd(ws, "study_height_status", rid="st2"))["data"]
-            assert not st["usable"] and "z_desk_tip" in st["problem"]
+            assert not st["usable"] and st["z_changed"] and "z_desk_tip" in st["problem"]
     finally:
         await srv.stop()
 

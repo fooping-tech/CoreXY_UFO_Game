@@ -80,17 +80,23 @@ test_start_ps1() {
 }
 
 if want tooling; then
-  step "dev tooling (guard hook + dev_state + start.sh + start.ps1)"
+  step "dev tooling (guard hook + dev_state + start.sh + start.ps1 + setup_devicehub)"
   python3 "$ROOT/.claude/hooks/guard_git.py" --self-test && \
     python3 -m unittest discover -s "$ROOT/.claude/skills/dev/scripts" -p 'test_*.py' && \
     "$ROOT/tools/test_start_sh.sh" && \
-    test_start_ps1
+    test_start_ps1 && \
+    "$ROOT/tools/test_setup_devicehub.sh"
   record $? "tooling"
 fi
 
 if want backend; then
   step "backend: pytest"
-  if command -v uv >/dev/null 2>&1; then
+  if [[ ! -f "$ROOT/external/UFO-DeviceHub/pyproject.toml" ]]; then
+    # the backend's dependency ufo-devicehub is that clone (#159): uv cannot resolve without it
+    echo "external/UFO-DeviceHub がない: tools/setup_devicehub.sh を実行する（CI は --pinned）"; record 1 "backend"
+  elif command -v uv >/dev/null 2>&1; then
+    # which UFO-DeviceHub commit the tests ran against (CI: the verified one, tools/devicehub.pin)
+    "$ROOT/tools/setup_devicehub.sh" --status
     (cd "$ROOT/backend" && unset VIRTUAL_ENV && uv run pytest -q)
     record $? "backend"
   else
@@ -104,9 +110,7 @@ if want godot; then
   if [[ -z "$GODOT_BIN" ]]; then
     echo "Godot が見つからない (GODOT=... で指定)"; record 1 "godot"
   else
-    if [[ ! -d "$ROOT/game/.godot/imported" ]]; then
-      "$GODOT_BIN" --headless --path "$ROOT/game" --import >/dev/null 2>&1
-    fi
+    "$ROOT/tools/godot_refresh.sh" "$GODOT_BIN" "$ROOT/game"  # a stale class cache stops the tests
     run_godot_tests
     record $? "godot"
   fi

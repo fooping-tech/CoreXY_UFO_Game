@@ -51,6 +51,10 @@ class RobotSnapshot:
     z_servo_reset: bool = False
     # with z_servo_reset: the firmware sets multi-turn again on the next Z jog (no recovery needed)
     z_servo_jog_recovers: bool = False
+    # #163: the firmware refuses this servo's jogs until its power is cut and restored
+    # (Core2 restarted with the servo still powered and its turn count unknown)
+    z_servo_power_cycle: bool = False
+    arm_servo_power_cycle: bool = False
     # claw servo (ID 2): degrees from the arm_zero reference (or the raw angle in
     # its turn, 0..360, before one is set); None = not read yet
     arm_deg: float | None = None

@@ -3,13 +3,14 @@
 ## 1. コマンド
 
 ```bash
-# Godot（リポジトリ直下から）。基準 116 件。終了コード 0 = 全件成功
+# Godot（リポジトリ直下から）。基準 509 件。終了コード 0 = 全件成功
 godot --headless --path game res://tests/test_runner.tscn
 # godot が PATH にない場合: /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
-# クリーンなチェックアウト（game/.godot/ がない）では先に:
+# クリーンなチェックアウト（game/.godot/ がない）や、class_name を持つスクリプトが増えた pull の後は先に
+# （tools/verify.sh と ./start.sh は tools/godot_refresh.sh で自動。#228）:
 godot --headless --path game --import
 
-# Python。基準 150 件（約 70 秒。うち自動キャッチ 50 件が約 40 秒）
+# Python。基準 502 件（約 4 分）
 cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 ```
 
@@ -19,7 +20,20 @@ cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 
 ## 2. 現在のテストの範囲
 
-**Godot `game/tests/run_tests.gd`**（Node シーンの runner。`_ok(cond, name, detail)` で数え、最後に `get_tree().quit(1 if 失敗)`）
+**Godot `game/tests/`**（Node シーンの runner `run_tests.gd` が、分野ごとのファイル `test_<分野>.gd` の `_test_*` を決まった順に呼ぶ。順番もテストの一部なので変えない。`_ok(cond, name, detail)` で数え、最後に `get_tree().quit(1 if 失敗)`）
+
+| ファイル | 分野 |
+|---|---|
+| `test_base.gd` | 共通の補助関数と件数の集計（全ファイルの土台） |
+| `test_rope_robot.gd` | ロープの物理、ロボットの再生とマッピング、アセット、UFO |
+| `test_gesture.gd` | 手の操作（ジョイスティック、ジェスチャー、ポーズ） |
+| `test_study.gd` | 勉強モード、宿題の手伝い |
+| `test_ui.gd` | タイトル、設定、校正、機器テスト、デバッグパネル、VFX、フォント |
+| `test_game_mode.gd` | スコアゲームのルールと機器（得点、パワーアップ、Dial、異常、時計、物理） |
+| `test_game_mode_show.gd` | スコアゲームの見せ方（演出、リザルト、ランキング、縦画面、音） |
+| `test_tutorial_easy.gd` | 練習、タイトルの手、かんたんモード |
+
+新しいテストは、その分野のファイルに `_test_*` を足し、`run_tests.gd` の `_ready` に呼び出しを 1 行足す。
 
 | 関数 | 検証内容 |
 |---|---|
@@ -98,7 +112,7 @@ godot --path . -- --source websocket --hide-debug
 ./start.sh --mock --no-gesture   # Python --mock バックエンド + Godot（--source websocket）
 ```
 
-パネルで `Backend: enable motors` → `home` → `z_zero` → スライダー → `E-STOP` → ALARM 表示を確認。ログに `ack` / `nack` が出る。
+パネルで `Backend: enable motors` → `home` → `z_set top` → スライダー → `E-STOP` → ALARM 表示を確認。ログに `ack` / `nack` が出る。
 
 ## 6. 報告のテンプレート
 

@@ -46,6 +46,27 @@ require_uv() {
   command -v uv >/dev/null 2>&1 || { echo "uv が見つかりません: brew install uv" >&2; exit 1; }
 }
 
+# The backend depends on UFO-DeviceHub's Python package, an ordinary clone in external/ (#159).
+# Without it uv cannot resolve the backend at all: say what to do instead of uv's error.
+DEVICEHUB_DIR="${START_SH_DEVICEHUB_DIR:-$ROOT/external/UFO-DeviceHub}"  # START_SH_DEVICEHUB_DIR: tests only
+require_devicehub() {
+  # the dry run starts nothing, so it does not need the clone (the tests name a directory to check)
+  [[ "${START_SH_DRY_RUN:-}" == "1" && -z "${START_SH_DEVICEHUB_DIR:-}" ]] && return 0
+  [[ -f "$DEVICEHUB_DIR/pyproject.toml" ]] && return 0
+  {
+    if [[ -d "$DEVICEHUB_DIR" ]]; then
+      echo "external/UFO-DeviceHub が古いか、clone が途中です（pyproject.toml がありません）。"
+      echo "  確認済みのコミットにする: tools/setup_devicehub.sh --pinned"
+    else
+      echo "UFO-DeviceHub（周辺機器のハブの Python コード）がまだありません。バックエンドの起動に必要です。"
+      echo "  最初に 1 回だけ実行してください（ネットワークが必要）: tools/setup_devicehub.sh"
+    fi
+    echo "  ゲームだけなら今のままで起動できます: ./start.sh --game-only"
+    echo "  説明: README「UFO-DeviceHub のコードを使う」"
+  } >&2
+  exit 1
+}
+
 # Same rule as the backend (config.py::load_config, then --ws-host / --ws-port).
 # Plain shell on purpose: uv-only installations may have no python3 on PATH.
 resolve_ws_endpoint() {
@@ -267,10 +288,15 @@ run_game() {
     echo "[START_SH_NO_GAME] godot --path $GAME_DIR -- $*$backend"
     return 0
   fi
-  "$(find_godot)" --path "$GAME_DIR" -- "$@"
+  local godot_bin
+  godot_bin="$(find_godot)"
+  # after a pull that adds a class_name, Godot's cache must be rebuilt before the game starts
+  "$ROOT/tools/godot_refresh.sh" "$godot_bin" "$GAME_DIR"
+  "$godot_bin" --path "$GAME_DIR" -- "$@"
 }
 
 start_backend() {
+  require_devicehub
   start_voicevox  # the voice in its own container (#112), stopped when start.sh ends
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "[START_SH_DRY_RUN] backend: corexy-ufo-backend $*"
@@ -291,6 +317,7 @@ start_backend() {
 }
 
 run_backend_only() {  # in the foreground (no game)
+  require_devicehub
   # the voice for a game started on its own (review on #113), not for a one-shot listing
   local a oneshot=0
   for a in "$@"; do

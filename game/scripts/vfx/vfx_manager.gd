@@ -15,6 +15,7 @@ extends Node
 ##   alpha: float, color: Color (multiplied), layer: "front" / "back",
 ##   flip_h: bool, duration: float (seconds, then freed),
 ##   follow: Node2D + offset: Vector2 (kept at follow's position + offset)
+##   parent: Node (instead of `layer`: the game mode's own canvas layer, #138)
 
 const DIR := "res://assets/vfx/"
 ## Draw order: behind the rope and the UFO (above the starfield) / in front of
@@ -90,7 +91,8 @@ func spawn_fx(id: String, position: Vector2, options: Dictionary = {}) -> Animat
 	s.follow_offset = options.get("offset", Vector2.ZERO)
 	s.position = position if s.follow == null else s.follow.global_position + s.follow_offset
 	s.add_to_group("vfx")
-	(layer if is_instance_valid(layer) else self).add_child(s)
+	var parent = options.get("parent", null)
+	(parent if is_instance_valid(parent) else (layer if is_instance_valid(layer) else self)).add_child(s)
 	if s.follow != null:
 		s.global_position = s.follow.global_position + s.follow_offset
 	if not loop:

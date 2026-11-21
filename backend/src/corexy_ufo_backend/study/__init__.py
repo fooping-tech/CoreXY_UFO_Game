@@ -3,7 +3,7 @@
 from .claude_adapter import ClaudeCodeStudyAdapter
 from .codex_adapter import CodexStudyAdapter
 from .errors import StudyAdapterError
-from .service import PROVIDERS, StudyConfig, StudyService, make_adapter
+from .service import PROVIDERS, StudyConfig, StudyService, make_adapter, make_sheet_client
 
 __all__ = ["PROVIDERS", "ClaudeCodeStudyAdapter", "CodexStudyAdapter", "StudyAdapterError", "StudyConfig",
-           "StudyService", "make_adapter"]
+           "StudyService", "make_adapter", "make_sheet_client"]

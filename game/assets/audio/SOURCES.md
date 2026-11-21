@@ -23,3 +23,7 @@
 別の音にするときは、同じサイトからダウンロードしてこのフォルダに置き、`config/game_config.json` の
 `audio.move` / `audio.up` / `audio.down` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
+
+## スコアゲームの音（`sfx/`）は別
+
+`sfx/` の OGG は Kenney（kenney.nl）の CC0 の音源で、上の効果音ラボの規約とは関係がない（制限なく使える）。出典は `manifest.json`、`licenses/kenney_cc0.md`、`docs/audio_sources.md`。

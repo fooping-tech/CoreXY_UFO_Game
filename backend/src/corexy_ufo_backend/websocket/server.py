@@ -6,7 +6,7 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home, move_xy {x,y,feed?}, move_z {z}, z_zero (= z_set top),
+  home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z},
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
   measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
   last session's top / bottom after a power cycle; apply false = the estimate only, true =
@@ -19,6 +19,9 @@ Command names and safety rules:
   jog_expiry_s), clear_alarm,
   worksheet_find {image_jpeg_base64} (#116: the study worksheet's corner marks in the overview
   frame -> {found, corners: {tl, tr, bl, br: [u, v]}, score}; OpenCV only, nothing kept),
+  sheet_read {image_jpeg_base64, calc?, crop?} (#230: the 設定 screen's プリント tab: a camera frame
+  -> the learning support AI's worksheet reader, POST /v1/sheet -> {problems, counts, summary, ...};
+  ~10 s; never the robot, never queued, nothing kept),
   services_check {ask?} (#114: Jev / the tutor AI / Claude Code / Codex / VOICEVOX reachable? ask =
   one short question with the sample worksheet; never the robot, never queued),
   get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
@@ -37,6 +40,8 @@ Command names and safety rules:
   devicehub_command {device, name, params} / devicehub_stop_all (#108): the peripherals' hub
   (UFO-DeviceHub) for the settings screen's テスト tab; never the robot, never queued behind
   its commands, accepted during the sequences. Its events come as {"type": "devicehub_event"}.
+  devicehub_mock_ball {device} (#138): with the simulated hub (devicehub.port "mock") only, a
+  capsule lands in that Dial (BALL_RECEIVED when it is armed); the real hub refuses it.
   homework_approach {u, v, camera} (#78) looks at the overview image point (u, v: 0..1)
   instead: mapped to XY by the camera calibration, at the recorded spot's height.
   homework_navigate {u, v, camera | xy (mock only), d_mm: [dx, dy]} (#104): the tutor AI's "the
@@ -67,6 +72,29 @@ study_cleanup_start (ACK = started; progress in robot_state.study_cleanup and
 {"type": "study_cleanup"} messages; holds the motion lock), study_cleanup_confirm (a grown-up
 saw the claw hold the jig), study_cleanup_status. Off on the real robot until
 study_mode.cleanup.enabled_real and its confirmed items are set.
+
+The 校正 tab's preparation (#167): calibration_prepare (ACK = started; progress in
+robot_state.calibration_prepare and {"type": "calibration_prepare"} messages; holds the motion
+lock): motors on, the drum's tracking, the last session's Z points, the arm to the top, the claw
+open / closed, home. Stops at the first refusal; stop / soft_stop / motors off abort it.
+calibration_prepare_status.
+
+The score game's easy mode (#169): easy_grab (catch where the arm is: claw open, down, claw
+closed, up to the safe height; ACK = started; progress in robot_state.easy_mode and
+{"type": "easy_mode"} messages; holds the motion lock until the delivery ended), easy_deliver
+{destination: 1, grab_id} (only while that catch waits for its destination, once: carry to
+Dial 1, the only portal since #200, at the safe height, lower, open, up), easy_status. #177: easy_grab with the arm
+below the safe height closes the claw where it is and raises it (nothing goes down); easy_reset
+(the start of a game) opens the claw and raises the arm to the top from any height. #179:
+easy_cancel {grab_id} (only while that catch waits for its destination, once): the claw opens
+where it is and the run ends (last_result "cancelled"); nothing is carried. Nothing chosen within
+game_mode.easy.wait_destination_s: the run ends EXPIRED with the claw still closed (nothing
+moved, nothing released, no ABORT). The Dial's drop point of the real crane: easy_dial_set
+{which: dial_1 (the arm's XY now) | release_z | catch_z (its Z now) | clear} saves
+them unconfirmed in calibration.json#easy_dials, easy_dial_confirm {confirmed} after a person
+watched a test; unrecorded or unconfirmed = easy_grab refused on the real robot. The saved
+values are the next session's too (no recording again), unless Z was measured again since.
+The preparation (calibration_prepare) ends with a step that says whether they are in use.
 
 Homework messages (type homework_*, never the robot): start / frame / advice / stop, and
 (#79) homework_locate {session_id, kind: stuck|next, image_jpeg_base64} ->
@@ -100,53 +128,17 @@ from ..homework.approach import ApproachParams, ApproachSequencer
 from ..homework.camera_map import CameraMapError, CameraMapParams, CameraXYMap, camera_signature
 from ..sequence import AutoCatchConfig, AutoCatchSequencer
 from ..sequence.cleanup import CleanupProfile, CleanupSequencer
-from ..study_mode.height import DRUM_RADIUS_MM, HeightCalibration, HeightError
+from ..sequence.easy import EasyParams, EasySequencer
+from ..sequence.prepare import PrepareSequencer
+from ..study_mode.height import HeightCalibration, HeightError
 
 log = logging.getLogger(__name__)
 
-# Serial lines not forwarded to the game's log (periodic position reports).
-SERIAL_LOG_SKIP = ("TX POS", "RX POS ", "RX JOG_POS ")
-LOG_QUEUE_MAX = 500
-
-# The device hub (#108): never the robot, never waits behind its commands, its STOP ALL always goes
-DEVICEHUB_COMMANDS = ("devicehub_meta", "devicehub_devices", "devicehub_status", "devicehub_diag",
-                      "devicehub_command", "devicehub_stop_all")
-COMMANDS = ("enable_motors", "home", "move_xy", "move_z", "z_zero", "z_set", "z_restore", "z_servo_recover", "grab", "stop", "soft_stop", "jog",
-            "clear_alarm", "get_state", "list_ports", "gesture_config", "arm_step", "arm_zero",
-            "arm_set", "arm_goto", "auto_catch", "auto_catch_status",
-            "homework_spot_set", "homework_approach", "homework_approach_release", "homework_approach_status",
-            "homework_navigate",
-            "camera_map_add", "camera_map_undo", "camera_map_clear", "camera_map_status",
-            "study_height_status", "study_height_set", "study_height_confirm",
-            "study_cleanup_start", "study_cleanup_confirm", "study_cleanup_status",
-            *DEVICEHUB_COMMANDS, "services_check", "worksheet_find")
-MOTION_COMMANDS = ("home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "z_servo_recover")
-# Never queued behind another command of the same connection: a stop must reach
-# the robot while a move_xy of that connection is still running.
-# Out-of-band commands that only read: cancelled at once when their client disconnects, so
-# the disconnect's safety aborts never wait for them (review on #115: services_check can wait
-# 90 s for an AI). Anything that stops something (stop, devicehub_stop_all, ...) is let finish.
-CANCEL_ON_DISCONNECT = ("services_check", "worksheet_find", "devicehub_meta", "devicehub_devices", "devicehub_status",
-                        "devicehub_diag")
-PRIORITY_COMMANDS = (*DEVICEHUB_COMMANDS, "services_check", "worksheet_find", "stop", "soft_stop", "jog", "get_state", "auto_catch_status",
-                     "homework_approach_release", "homework_approach_status",
-                     "study_cleanup_confirm", "study_cleanup_status")
-# Accepted while the auto catch runs (anything else is refused as busy).
-AUTO_CATCH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch", "auto_catch_status", "list_ports",
-                      "gesture_config", "homework_approach_status", "camera_map_status", "study_cleanup_status",
-                      "study_height_status")
-# Accepted while the arm approaches the homework (anything else is refused as busy).
-APPROACH_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                    "homework_approach", "homework_approach_release", "homework_approach_status",
-                    "camera_map_status", "study_cleanup_status", "study_height_status")
-# Accepted while the study mode tidies up (anything else is refused as busy).
-CLEANUP_ALLOWED = ("stop", "soft_stop", "get_state", "auto_catch_status", "list_ports", "gesture_config",
-                   "homework_approach_status", "camera_map_status", "study_cleanup_start", "study_cleanup_confirm",
-                   "study_cleanup_status", "study_height_status")
-
-
-def now_ms() -> int:
-    return int(time.time() * 1000)
+from .easy_calibration import EasyCalibrationMixin
+from .log_feed import LogFeedMixin
+from .study_height import StudyHeightMixin
+from .wire import (APPROACH_ALLOWED, AUTO_CATCH_ALLOWED, CANCEL_ON_DISCONNECT, CLEANUP_ALLOWED, COMMANDS,
+                   DEVICEHUB_COMMANDS, EASY_ALLOWED, MOTION_COMMANDS, PREPARE_ALLOWED, PRIORITY_COMMANDS, now_ms)
 
 
 @dataclass
@@ -163,19 +155,20 @@ class RunningSequence:
     busy: str  # the refusal of other commands while it runs
     allowed: tuple[str, ...]  # the commands accepted while it runs
     owner: ServerConnection | None = None
+    also_starts: tuple[str, ...] = ()  # other commands that start it (their client owns it too)
 
     @property
     def the(self) -> str:
         return self.during if self.during.startswith("the ") else "the " + self.during
 
 
-class GameServer:
+class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
     def __init__(self, robot: RobotInterface, host: str = "127.0.0.1", port: int = 8765, *,
                  state_hz: float = 30.0, vision: Any | None = None,
                  auto_catch: AutoCatchConfig | None = None, backend_cfg: BackendConfig | None = None,
                  study: Any | None = None, homework: Any | None = None,
                  approach: ApproachParams | None = None, camera_map: CameraMapParams | None = None,
-                 devicehub: Any | None = None) -> None:
+                 devicehub: Any | None = None, easy: EasyParams | None = None) -> None:
         self.robot = robot
         self.devicehub = devicehub  # #108: the peripherals' hub (DeviceHubService), or None
         self.connect_error = ""  # #124: why the robot's connect at start failed (main.py), for list_ports
@@ -218,7 +211,7 @@ class GameServer:
         self.approach = ApproachSequencer(
             robot, limits, approach, spot_path=backend_cfg.homework_spot_path if backend_cfg is not None else None,
             lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
-            other_active=lambda: self.auto.active or self.cleanup.active,
+            other_active=lambda: self.auto.active or self.cleanup.active or self.easy.active,
             on_change=lambda status: self._on_sequence_change("homework_approach", status))
         # Study mode (#86): capture heights and the tidy-up. The real robot uses the "real"
         # profiles (refused until measured and confirmed), anything else the "dry_run" ones.
@@ -231,8 +224,28 @@ class GameServer:
         self.cleanup = CleanupSequencer(
             robot, limits, CleanupProfile.from_raw(raw, self.study_profile), lock=self._motion_lock,
             is_jogging=lambda: self._jog_owner is not None,
-            other_active=lambda: self.auto.active or self.approach.active,
+            other_active=lambda: self.auto.active or self.approach.active or self.easy.active,
             on_change=lambda status: self._on_sequence_change("study_cleanup", status))
+        # #167: the 校正 tab's one-button preparation
+        self.prepare = PrepareSequencer(
+            robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            easy_check=lambda: self._easy_prepare_note(),
+            center=lambda: self.backend_cfg.home_center() if self.backend_cfg is not None else None,
+            center_feed=lambda: self.backend_cfg.fast_feed() if self.backend_cfg is not None else None,
+            on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
+        # #169: the score game's easy mode (catch here, wait for the destination, carry to a Dial).
+        # The catch uses the auto catch's profile; the Dials' drop points are the real crane's own
+        # measurements (calibration.json#easy_dials) or the dry run's made-up ones.
+        self._easy_path = getattr(backend_cfg, "easy_dials_path", None) if backend_cfg is not None else None
+        self._easy_fixed = easy  # the tests' own values
+        self._easy_limits = limits
+        self._easy_dry = ac.dry_run
+        first = self._easy_params()
+        self.easy = EasySequencer(
+            robot, self._easy_catch(first), limits, backend_cfg, easy=first,
+            lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
+            other_active=lambda: any(q.seq.active for q in self.sequences if q.seq is not self.easy),
+            on_change=lambda status: self._on_sequence_change("easy_mode", status))
         self.sequences = (
             RunningSequence("auto_catch", self.auto, "auto_catch", "auto catch",
                             "busy: auto catch running (stop to abort)", AUTO_CATCH_ALLOWED),
@@ -240,6 +253,11 @@ class GameServer:
                             "busy: the arm is approaching the homework (stop to abort)", APPROACH_ALLOWED),
             RunningSequence("study_cleanup", self.cleanup, "study_cleanup_start", "the tidy-up",
                             "busy: the study mode is tidying up (stop to abort)", CLEANUP_ALLOWED),
+            RunningSequence("calibration_prepare", self.prepare, "calibration_prepare", "the preparation",
+                            "busy: preparing the robot (stop to abort)", PREPARE_ALLOWED),
+            RunningSequence("easy_mode", self.easy, "easy_grab", "the easy mode's catch and carry",
+                            "busy: the easy mode is catching / carrying (stop to abort)", EASY_ALLOWED,
+                            also_starts=("easy_reset",)),
         )
         # Overview camera -> XY calibration (#78): calibration.json's camera_xy section (#96).
         self.camera_map = CameraXYMap.load(backend_cfg.camera_xy_path if backend_cfg is not None else None,
@@ -279,59 +297,6 @@ class GameServer:
             self._server.close()
             await self._server.wait_closed()
             self._server = None
-
-    # ------------------------------------------------------------ log feed
-    def _start_log_feed(self) -> None:
-        self._log_loop_ref = asyncio.get_running_loop()
-        self._log_queue = asyncio.Queue(maxsize=LOG_QUEUE_MAX)
-        server = self
-
-        class _Forward(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                # may come from a vision thread: hand it to the event loop
-                server._queue_log_threadsafe(f"[backend] {record.levelname} {record.getMessage()}")
-
-        self._log_handler = _Forward(level=logging.INFO)
-        logging.getLogger("corexy_ufo_backend").addHandler(self._log_handler)
-        serial = getattr(self.robot, "serial", None)
-        if serial is not None and hasattr(serial, "log_listeners"):
-            serial.log_listeners.append(self._on_serial_log)
-        self._tasks.append(asyncio.create_task(self._log_loop()))
-
-    def _stop_log_feed(self) -> None:
-        if self._log_handler is not None:
-            logging.getLogger("corexy_ufo_backend").removeHandler(self._log_handler)
-            self._log_handler = None
-        serial = getattr(self.robot, "serial", None)
-        if serial is not None and self._on_serial_log in getattr(serial, "log_listeners", []):
-            serial.log_listeners.remove(self._on_serial_log)
-
-    def _on_serial_log(self, line: str) -> None:
-        # POS / JOG_POS come many times a second and say nothing new; a held key
-        # resends the same JOG line at 20 Hz: show a JOG only when it changes
-        if line.startswith(SERIAL_LOG_SKIP):
-            return
-        if line.startswith("TX JOG "):
-            if line == self._last_tx_jog:
-                return
-            self._last_tx_jog = line
-        self._queue_log_threadsafe("[serial] " + line)
-
-    def _queue_log(self, line: str) -> None:
-        if self._log_queue is not None and not self._log_queue.full():
-            self._log_queue.put_nowait(line)
-
-    def _queue_log_threadsafe(self, line: str) -> None:
-        try:
-            self._log_loop_ref.call_soon_threadsafe(self._queue_log, line)
-        except RuntimeError:  # pragma: no cover - loop closed
-            pass
-
-    async def _log_loop(self) -> None:
-        assert self._log_queue is not None
-        while True:
-            line = await self._log_queue.get()
-            await self.broadcast({"type": "log", "timestamp": now_ms(), "data": {"line": line}})
 
     # ------------------------------------------------------------ broadcast
     async def broadcast(self, msg: dict) -> None:
@@ -457,6 +422,8 @@ class GameServer:
                 if self.homework is not None:
                     await self.homework.stop(session_id)
             log.info("client disconnected (%d)", len(self.clients))
+            if not self.clients:
+                self.robot.jog_boost(0)  # #188: nobody left who asked for the SPEED UP
             if self._jog_owner is ws:
                 log.warning("the jogging client disconnected: stopping the jog")
                 await self._end_jog()
@@ -597,7 +564,7 @@ class GameServer:
             return
         reply = await self.execute(name, params)
         for s in self.sequences:
-            if name == s.start_command and reply.get("type") == "ack":
+            if name in (s.start_command, *s.also_starts) and reply.get("type") == "ack":
                 s.owner = ws
         if name == "jog" and reply.get("type") == "ack":
             moving = any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
@@ -619,6 +586,8 @@ class GameServer:
             return await self._devicehub(name, params)
         if name == "worksheet_find":  # #116: the sheet's corner marks in the overview frame; never the robot
             return await self._worksheet_find(params)
+        if name == "sheet_read":  # #230: a camera frame -> POST /v1/sheet; never the robot
+            return await self._sheet_read(params)
         if name == "services_check":  # #114: Jev / the tutor / Claude Code / VOICEVOX; never the robot
             from ..services_check import check_all
             cfg = self.backend_cfg
@@ -669,6 +638,35 @@ class GameServer:
                 return self._study_height_set(params)
             if name == "study_height_confirm":
                 return self._study_height_confirm(params)
+            if name == "calibration_prepare_status":
+                return self._ack(name, self.prepare.status())
+            if name == "calibration_prepare":
+                if any(q.seq.active for q in self.sequences):
+                    return self._nack(name, "busy: another sequence is running")
+                await self.prepare.start()
+                return self._ack(name, self.prepare.status())
+            if name == "easy_status":
+                return self._ack(name, self._easy_status())
+            if name == "easy_grab":
+                self._easy_refresh()  # the Z calibration may have been measured again since
+                await self.easy.start_grab()
+                return self._ack(name, self.easy.status())
+            if name == "easy_reset":
+                self._easy_refresh()
+                await self.easy.start_reset()
+                return self._ack(name, self.easy.status())
+            if name == "easy_deliver":
+                self.easy.choose(params.get("destination"), params.get("grab_id"))
+                return self._ack(name, self.easy.status())
+            if name == "easy_cancel":
+                self.easy.cancel(params.get("grab_id"))
+                return self._ack(name, self.easy.status())
+            if name == "easy_goto":
+                return await self._easy_goto(params)
+            if name == "easy_dial_set":
+                return self._easy_dial_set(params)
+            if name == "easy_dial_confirm":
+                return self._easy_dial_confirm(params)
             if name == "study_cleanup_status":
                 return self._ack(name, self.cleanup.status())
             if name == "study_cleanup_start":
@@ -707,17 +705,29 @@ class GameServer:
                 if not bool(params.get("enable", False)):
                     for s in self.sequences:
                         await s.seq.abort(f"motors disabled during {s.during}")
+                if not bool(params.get("enable", False)):
+                    self.robot.jog_boost(0)
                 await self.robot.enable_motors(bool(params.get("enable", False)))
             elif name == "stop":
                 self._jog_owner = None  # stopped: nothing left for the jog expiry to stop
+                self.robot.jog_boost(0)  # #188: a stop ends the SPEED UP too
                 # flag first (no new step can start), then ABORT without any wait in between
                 for s in self.sequences:
                     await s.seq.abort("emergency stop (stop)", send_stop=False)
                 await self.robot.stop()
             elif name == "soft_stop":
                 self._jog_owner = None
+                # #188: the SPEED UP's cap is NOT ended here. The game sends soft_stop whenever
+                # the hand is lost or the window loses focus, and goes on with the same power
+                # when the hand is back: ending it here left the screen saying SPEED UP while
+                # the crane was at its usual cap. Its deadline still ends it; so do the
+                # emergency stop, motors off, the game's jog_boost 0 and the last client leaving.
                 for s in self.sequences:
                     if s.seq.active:
+                        if s.seq is self.easy and self.easy.stop_waiting("stopped (soft_stop)"):
+                            # #179: it only waits for the destination: nothing moves, so there is
+                            # nothing ABORT would have to cut. The run ends there, with no alarm.
+                            continue
                         # STOP does not stop the servos (Z drum, claw): end the sequence with ABORT
                         await s.seq.abort(f"stopped (soft_stop) during {s.during}")
                         return self._ack(name, self.robot.snapshot().to_message()["data"])
@@ -732,10 +742,26 @@ class GameServer:
                     return self._nack(name, "busy: another motion command is running")
                 # z_free: the game's 校正 tab measuring Z again (#102), past the measured range
                 await self.robot.jog(vx, vy, vz, z_free=params.get("z_free") is True)
+            elif name == "jog_boost":
+                # #188 (SPEED UP): the jog's XY cap is backend.jog_boost_mm_s for `seconds`
+                # (at most backend.jog_boost_max_s), then the usual one again by itself: the
+                # deadline is kept here, so a game that dies cannot leave it raised. It moves
+                # nothing; the edge margin, the dead-man and the stops are as always. Ended at
+                # once by stop (the emergency stop), motors off, seconds 0 and the last client
+                # leaving; a soft_stop only stops the motion (the game sends 0 when the power ends).
+                try:
+                    seconds = float(params.get("seconds", 0.0))
+                except (TypeError, ValueError):
+                    return self._nack(name, "bad params: seconds must be a number")
+                if not math.isfinite(seconds):
+                    return self._nack(name, "bad params: seconds must be a number")
+                if seconds > 0 and self.robot.jog_boost_mm_s <= 0:
+                    return self._nack(name, "no jog boost is configured (backend.jog_boost_mm_s)")
+                lasts = self.robot.jog_boost(seconds)
+                return self._ack(name, {"seconds": round(lasts, 2),
+                                        "cap_mm_s": self.robot.jog_boost_mm_s if lasts > 0 else 0.0})
             elif name == "clear_alarm":
                 await self.robot.clear_alarm()
-            elif name == "z_zero":
-                await self.robot.set_z_zero()
             elif name == "z_set":
                 await self.robot.set_z_point(str(params.get("which", "")))
             elif name == "z_restore":
@@ -753,6 +779,7 @@ class GameServer:
                 async with self._motion_lock:
                     if name == "home":
                         await self.robot.home()
+                        await self._center_after_home()
                     elif name == "move_xy":
                         await self.robot.move_xy(float(params["x"]), float(params["y"]), params.get("feed"))
                     elif name == "move_z":
@@ -773,6 +800,17 @@ class GameServer:
         except Exception as e:  # pragma: no cover
             log.exception("command %s failed", name)
             return self._nack(name, f"internal error: {e}")
+
+    async def _center_after_home(self) -> None:
+        """#175: homed (in the home corner): on to the middle of the stage, with the usual XY
+        move and all its checks, still inside the motion lock. A stop ends it like any move."""
+        center = self.backend_cfg.home_center() if self.backend_cfg is not None else None
+        if center is None:
+            return
+        try:
+            await self.robot.move_xy(*center, self.backend_cfg.fast_feed())
+        except RobotCommandError as e:
+            raise RobotCommandError(f"homed, but the move to the middle of the stage did not finish: {e}") from e
 
     def _robot_link(self, available: list[str]) -> dict:
         """The robot's serial link for the 校正 tab (#124): connected, or why not. Read only."""
@@ -809,114 +847,7 @@ class GameServer:
             self.camera_map.clear()
         return self._ack(name, self.camera_map.status())
 
-    # ------------------------------------------------------------------ study heights (#110)
-    def _height_saved(self) -> dict | None:
-        path = self._height_path
-        if self.study_profile != "real" or path is None:
-            return None
-        try:
-            if not path.exists():
-                return None
-            d = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            log.warning("study heights not read: %s", e)
-            return None
-        return d if isinstance(d, dict) else None
 
-    def _z_counts_per_unit(self) -> float | None:
-        """The measured Z calibration only: the config's guess would give a wrong cm."""
-        cal = getattr(self.robot, "z_cal", None)
-        return float(cal.counts_per_unit) if cal is not None and cal.complete() else None
-
-    def _height_z_changed(self, saved: dict) -> bool:
-        """Review on #111: the Z calibration changed since the heights were saved: the recorded
-        desk Z and the ruler check no longer hold (counts per unit is what turns Z into cm)."""
-        then, now = saved.get("z_counts_per_unit"), self._z_counts_per_unit()
-        if not isinstance(then, (int, float)) or isinstance(then, bool) or now is None:
-            return then is not None or now is not None
-        return abs(float(then) - now) > 1e-6 * max(abs(now), 1.0)
-
-    @property
-    def height(self) -> HeightCalibration:
-        saved = self._height_saved()
-        if saved is None:
-            return self._height_base
-        if self._height_z_changed(saved):
-            saved = {**saved, "confirmed": False}
-            if saved.get("desk") != "bottom":
-                saved["desk"] = None  # a Z recorded in the old units: record the desk again
-        return self._height_base.with_measured(saved, self._z_counts_per_unit(), self.approach.limits)
-
-    def _height_status(self) -> dict:
-        data = self.height.status(self.approach.limits)
-        data["saved"] = self._height_saved()
-        data["z_calibrated"] = self._z_counts_per_unit() is not None
-        data["z_changed"] = data["saved"] is not None and self._height_z_changed(data["saved"])
-        data["default_drum_radius_mm"] = DRUM_RADIUS_MM
-        return data
-
-    def _study_height_set(self, params: dict) -> dict:
-        """The 校正 tab's values -> calibration.json#study_height, unconfirmed (#110)."""
-        name = "study_height_set"
-        if self.study_profile != "real" or self._height_path is None:
-            return self._nack(name, "仮想クレーンでは模擬の値（study_mode.height.dry_run）を使う。実機でだけ測る")
-
-        def num(key: str, lo: float, hi: float) -> float:
-            v = params.get(key)
-            if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) or not lo <= v <= hi:
-                raise ValueError(f"{key} must be a number in {lo:g}..{hi:g}")
-            return round(float(v), 3)
-        try:
-            out: dict[str, Any] = {"drum_radius_mm": num("drum_radius_mm", 3.0, 100.0)}
-            # optional: the lens above the tips and the closest stage (#110: one 10 cm stage of the tips)
-            if params.get("camera_offset_cm") is not None:
-                out["camera_offset_cm"] = num("camera_offset_cm", 0.0, 30.0)
-            if params.get("landing_tip_cm") is not None:
-                out["landing_tip_cm"] = num("landing_tip_cm", 0.0, 20.0)
-                out["allow_landing_contact"] = params.get("allow_landing_contact") is True
-        except ValueError as e:
-            return self._nack(name, str(e))
-        desk = params.get("desk", "bottom")
-        if desk == "here":
-            s = self.robot.snapshot()
-            if not s.z_reference_set:
-                return self._nack(name, "Z の基準がない: W で一番上まで巻き上げて「上を記録」してから")
-            out["desk"] = round(float(s.z), 2)
-        elif desk == "bottom":
-            out["desk"] = "bottom"
-        else:
-            saved = self._height_saved() or {}
-            out["desk"] = saved.get("desk", "bottom")  # keep the recorded desk
-        out["confirmed"] = False  # every change is checked on the robot again
-        out["z_counts_per_unit"] = self._z_counts_per_unit()  # what these Z values mean (review on #111)
-        try:
-            self._height_path.write_text(json.dumps(out))
-        except (OSError, ValueError) as e:
-            return self._nack(name, f"保存できません: {e}")
-        log.info("study heights saved (not confirmed yet): %s", out)
-        return self._ack(name, self._height_status())
-
-    def _study_height_confirm(self, params: dict) -> dict:
-        """A grown-up checked the test moves with a ruler: the staged descent may use them."""
-        name = "study_height_confirm"
-        saved = self._height_saved()
-        if saved is None:
-            return self._nack(name, "まだ保存していない（値を入れて「保存」）")
-        on = params.get("confirmed") is not False
-        if on and self._height_z_changed(saved):
-            return self._nack(name, "Z を測り直したので、撮影の高さを「保存」し直して、試してから確かめる")
-        if on:
-            try:
-                self._height_base.with_measured({**saved, "confirmed": True}, self._z_counts_per_unit(),
-                                                self.approach.limits).stages(self.approach.limits)
-            except HeightError as e:
-                return self._nack(name, f"このままでは使えない: {e}")
-        try:
-            self._height_path.write_text(json.dumps({**saved, "confirmed": on}))
-        except (OSError, ValueError) as e:
-            return self._nack(name, f"保存できません: {e}")
-        log.info("study heights %s", "confirmed" if on else "unconfirmed")
-        return self._ack(name, self._height_status())
     WORKSHEET_FIND_MAX_BYTES = 1_500_000
 
     async def _worksheet_find(self, params: dict) -> dict:
@@ -941,6 +872,37 @@ class GameServer:
             return self._nack(name, str(e))
         return self._ack(name, {"found": found is not None, **(found or {})})
 
+    SHEET_READ_MAX_BYTES = 4 * 1024 * 1024
+
+    async def _sheet_read(self, params: dict) -> dict:
+        """The プリント tab's check (#230): one frame of a connected camera, read by the learning
+        support AI's worksheet reader with the study.tutor_* settings. The frame is not kept."""
+        import base64
+        import binascii
+        from dataclasses import replace
+        from ..config import REPO_ROOT
+        from ..study import StudyConfig, make_sheet_client
+        from ..study.sheet_client import SheetError, sheet_payload
+        name = "sheet_read"
+        b64 = params.get("image_jpeg_base64")
+        if not isinstance(b64, str) or not b64:
+            return self._nack(name, "image_jpeg_base64 is required")
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            return self._nack(name, "image_jpeg_base64 is not base64")
+        if len(data) > self.SHEET_READ_MAX_BYTES:
+            return self._nack(name, "the image is too large")
+        cfg = self.backend_cfg
+        study = replace(StudyConfig.from_raw(cfg.raw if cfg is not None else {}), root=str(REPO_ROOT))
+        try:
+            client = make_sheet_client(study)
+            res = await asyncio.to_thread(client.read, data, calc=params.get("calc") is not False,
+                                          crop=params.get("crop") is not False)
+        except SheetError as e:
+            return self._nack(name, str(e))
+        return self._ack(name, sheet_payload(res))
+
     async def _devicehub(self, name: str, params: dict) -> dict:
         """The settings screen's テスト tab (#108): UFO-DeviceHub's console commands."""
         from ..devicehub.service import DeviceHubError
@@ -959,6 +921,8 @@ class GameServer:
             if name == "devicehub_command":
                 result = await hub.command(params.get("device"), params.get("name"), params.get("params") or {})
                 return self._ack(name, {"result": result})
+            if name == "devicehub_mock_ball":  # the simulated hub only (#138)
+                return self._ack(name, await hub.mock_ball(params.get("device")))
             return self._ack(name, {"results": await hub.stop_all()})
         except (DeviceHubError, TypeError, ValueError) as e:
             return self._nack(name, str(e))
@@ -969,6 +933,8 @@ class GameServer:
             return not any(float(params.get(k, 0.0) or 0.0) for k in ("vx", "vy", "vz"))
         if name == "enable_motors":
             return not bool(params.get("enable", False))
+        if name == "jog_boost":  # #188: only a cap for the next jogs; it moves nothing
+            return True
         return False
 
     @staticmethod

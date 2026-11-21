@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 import websockets
@@ -176,3 +177,69 @@ async def test_after_a_firmware_reboot_re_marking_keeps_the_opening_direction(tm
         assert robot.snapshot().arm_span_deg == pytest.approx(60.0, abs=0.2)  # not -300
     finally:
         await robot.disconnect()
+
+
+async def _claw_ready(tmp_path, tolerance=None):
+    """A real robot whose claw is recorded closed at 0 and open at +60 deg, standing open."""
+    robot = await make_real(tmp_path / "grip.json")
+    if tolerance is not None:
+        robot.cfg.claw_grip_tolerance_deg = tolerance
+    await robot.enable_motors(True)
+    await robot.arm_set("closed")
+    await robot.arm_step(60.0)
+    await robot.arm_set("open")
+    return robot, robot.serial.transport
+
+
+async def test_a_claw_that_stops_just_short_of_closed_with_the_torque_on_has_gripped(tmp_path):
+    # #192: SERVO_TURN id=2 ... result=TIMEOUT target=-333 actual=-326 ... torque=ON on a capsule
+    robot, fw = await _claw_ready(tmp_path)
+    try:
+        fw.servo_stop_short[2] = (7, "ON")
+        await robot.arm_goto("closed")  # no error: a grip
+        assert robot.snapshot().arm_deg == pytest.approx(7 * 360 / 4096, abs=0.2)  # where it stopped
+        fw.servo_stop_short.clear()
+        await robot.arm_goto("open")
+        fw.servo_stop_short[2] = (10, "ON")
+        await robot.arm_goto("closed")  # the other one seen on the machine
+    finally:
+        await robot.disconnect()
+
+
+@pytest.mark.parametrize("short,torque,tolerance", [
+    (60, "ON", None),   # farther than the tolerance (3 deg = 34 counts): stuck, not a grip
+    (7, "OFF", None),   # the torque is off: nothing holds it
+    (7, "ON", 0.0),     # the tolerance switched off: as before #192
+])
+async def test_a_claw_timeout_that_is_not_a_grip_still_fails(tmp_path, short, torque, tolerance):
+    robot, fw = await _claw_ready(tmp_path, tolerance)
+    try:
+        fw.servo_stop_short[2] = (short, torque)
+        with pytest.raises(RobotCommandError, match="result=TIMEOUT"):
+            await robot.arm_goto("closed")
+    finally:
+        await robot.disconnect()
+
+
+async def test_a_claw_that_stops_short_while_opening_still_fails(tmp_path):
+    robot, fw = await _claw_ready(tmp_path)
+    try:
+        await robot.arm_goto("closed")
+        fw.servo_stop_short[2] = (7, "ON")
+        with pytest.raises(RobotCommandError, match="result=TIMEOUT"):
+            await robot.arm_goto("open")
+        with pytest.raises(RobotCommandError, match="result=TIMEOUT"):
+            await robot.arm_step(-10.0)  # a manual turn is not "to the closed angle"
+    finally:
+        await robot.disconnect()
+
+
+def test_claw_grip_tolerance_is_loaded_and_bounded(tmp_path):
+    from corexy_ufo_backend.config import load_config
+    base = json.loads((Path(__file__).resolve().parents[2] / "config" / "game_config.json").read_text())
+    assert base["backend"]["claw_grip_tolerance_deg"] == 3.0
+    for given, want in ((1.5, 1.5), (-2, 0.0), (99, 15.0)):
+        base["backend"]["claw_grip_tolerance_deg"] = given
+        p = tmp_path / "game_config.json"
+        p.write_text(json.dumps(base))
+        assert load_config(p, local=False).claw_grip_tolerance_deg == want

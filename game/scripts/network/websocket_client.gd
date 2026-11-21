@@ -167,6 +167,8 @@ func _handle(msg: Dictionary) -> void:
 			RobotState.z_calibrated = bool(data.get("z_calibrated", false))
 			RobotState.z_servo_reset = bool(data.get("z_servo_reset", false))
 			RobotState.z_servo_jog_recovers = bool(data.get("z_servo_jog_recovers", false))
+			RobotState.z_servo_power_cycle = bool(data.get("z_servo_power_cycle", false))
+			RobotState.arm_servo_power_cycle = bool(data.get("arm_servo_power_cycle", false))
 			RobotState.arm_deg = float(data.arm_deg) if data.get("arm_deg") != null else NAN
 			RobotState.arm_reference_set = bool(data.get("arm_reference_set", false))
 			for k in ["arm_closed_deg", "arm_open_deg", "arm_span_deg"]:
@@ -175,6 +177,10 @@ func _handle(msg: Dictionary) -> void:
 				RobotState.last_error = str(data.error)
 			if data.get("auto_catch") is Dictionary:
 				RobotState.auto_catch = data.auto_catch
+			if data.get("calibration_prepare") is Dictionary:
+				RobotState.calibration_prepare = data.calibration_prepare
+			if data.get("easy_mode") is Dictionary:
+				RobotState.easy_mode = data.easy_mode
 			RobotState.push_pose(float(data.get("x", 0.0)), float(data.get("y", 0.0)), float(data.get("z", 0.0)),
 				str(data.get("state", "UNKNOWN")), int(msg.get("timestamp", 0)), bool(data.get("measured", true)))
 			if not was and RobotState.connected:
@@ -203,6 +209,16 @@ func _handle(msg: Dictionary) -> void:
 				GameState.post_event(str(data.get("event", "vision")), data)
 		"log":
 			log_line.emit(str(data.get("line", "")))
+		"calibration_prepare":
+			if not listen_only:
+				RobotState.calibration_prepare = data
+				if str(data.get("error", "")) != "" and not bool(data.get("active", false)):
+					log_line.emit("calibration_prepare: stopped at %s (%s)" % [str(data.get("step", "")), str(data.error)])
+		"easy_mode":
+			if not listen_only:
+				RobotState.easy_mode = data
+				log_line.emit("easy_mode: %s / %s%s" % [str(data.get("state", "")), str(data.get("step", "")),
+					(" (%s)" % str(data.error)) if str(data.get("error", "")) != "" else ""])
 		"auto_catch":
 			if not listen_only:
 				RobotState.auto_catch = data
@@ -226,7 +242,7 @@ func send_aux(msg: Dictionary) -> Error:
 ## A home / move / grab command is still waiting for its answer.
 func has_pending_motion() -> bool:
 	for rid in _pending.keys():
-		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step", "arm_goto"]:
+		if str(_pending[rid].type) in ["home", "move_xy", "move_z", "grab", "arm_step", "arm_goto", "easy_goto"]:
 			return true
 	return false
 

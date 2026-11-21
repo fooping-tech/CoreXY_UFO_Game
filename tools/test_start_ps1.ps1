@@ -18,7 +18,7 @@ $script:CODE = 0
 
 # Run @{ENV = value} start.ps1-args...: output in $OUT, exit code in $CODE
 function Run([hashtable]$envs, [string[]]$a = @(), [switch]$Command) {
-  $set = @{ START_SH_DRY_RUN = '1'; START_SH_ENV_FILE = $DOTENV; CXUFO_START_MODE = $null; CXUFO_START_ARGS = $null; START_SH_CONFIG = $null }
+  $set = @{ START_SH_DRY_RUN = '1'; START_SH_ENV_FILE = $DOTENV; CXUFO_START_MODE = $null; CXUFO_START_ARGS = $null; START_SH_CONFIG = $null; START_SH_DEVICEHUB_DIR = $null }
   foreach ($k in $envs.Keys) { $set[$k] = $envs[$k] }
   $saved = @{}
   foreach ($k in $set.Keys) {
@@ -192,6 +192,21 @@ try {
   Check '.env CXUFO_START_ARGS alone: the option form' ((Has '既定の引数で起動します（.env の CXUFO_START_ARGS）: --mock --no-gesture') -and (Line '[START_SH_DRY_RUN] backend: corexy-ufo-backend --mock'))
   Run @{} @('--game-only')
   Check 'arguments win over CXUFO_START_ARGS' ((Line "[START_SH_DRY_RUN] game: godot --path $GAME -- --no-gesture") -and -not (Has '既定の'))
+
+  # ---- UFO-DeviceHub's clone (#159): the backend cannot start without it, the game alone can
+  $hubNone = Join-Path $TMP 'hub_none'; $hubOld = Join-Path $TMP 'hub_old'; $hubOk = Join-Path $TMP 'hub_ok'
+  New-Item -ItemType Directory -Path $hubOld, $hubOk | Out-Null
+  Set-Content -Path (Join-Path $hubOk 'pyproject.toml') -Value ''
+  Run @{ START_SH_DEVICEHUB_DIR = $hubNone } @('--mock')
+  Check 'UFO-DeviceHub: not cloned: says how to get it, starts nothing' (($script:CODE -eq 1) -and (Has 'setup_devicehub.ps1') -and (Has 'まだありません') -and -not (Has 'backend:'))
+  Run @{ START_SH_DEVICEHUB_DIR = $hubNone } @('--backend-only', '--mock')
+  Check 'UFO-DeviceHub: not cloned: the backend alone too' (($script:CODE -eq 1) -and (Has 'setup_devicehub.ps1'))
+  Run @{ START_SH_DEVICEHUB_DIR = $hubOld } @('--mock')
+  Check 'UFO-DeviceHub: a clone without the package: says how to update it' (($script:CODE -eq 1) -and (Has 'setup_devicehub.ps1 -Pinned'))
+  Run @{ START_SH_DEVICEHUB_DIR = $hubNone } @('--game-only')
+  Check 'UFO-DeviceHub: the game alone does not need it' (($script:CODE -eq 0) -and (Has 'game: godot') -and -not (Has 'setup_devicehub'))
+  Run @{ START_SH_DEVICEHUB_DIR = $hubOk } @('--mock')
+  Check 'UFO-DeviceHub: cloned: the backend starts' (($script:CODE -eq 0) -and (Has 'backend: corexy-ufo-backend --mock'))
 } finally {
   Remove-Item -Recurse -Force $TMP -ErrorAction SilentlyContinue
 }

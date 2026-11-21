@@ -107,7 +107,7 @@ func _glow_line(a: Vector2, b: Vector2, col: Color, w: float) -> void:
 	_hud.draw_line(a, b, col, w, true)
 
 func _text(pos: Vector2, s: String, size: int, col: Color, align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0) -> void:
-	var f := ThemeDB.fallback_font
+	var f := UiFonts.body()
 	_hud.draw_string(f, pos + Vector2(1, 1), s, align, width, size, Color(0, 0, 0, col.a * 0.6))
 	_hud.draw_string(f, pos, s, align, width, size, col)
 

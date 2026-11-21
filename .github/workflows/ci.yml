@@ -35,6 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      # UFO-DeviceHub's Python package is a path dependency of the backend (#159): cloned to
+      # external/UFO-DeviceHub at the commit this game is verified with (tools/devicehub.pin),
+      # never at its moving main
+      - run: tools/setup_devicehub.sh --pinned --no-sync
       - run: tools/verify.sh --only backend
 
   game:

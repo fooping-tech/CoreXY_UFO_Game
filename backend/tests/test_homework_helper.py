@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
-import io
 import json
 import shutil
 import sys
@@ -21,6 +19,7 @@ from corexy_ufo_backend.homework.locate import (LocateError, agrees, jev_box, je
 from corexy_ufo_backend.homework.speech import SayEngine, Speech, SpeechError, VoicevoxEngine
 from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.websocket import GameServer
+from ws_helpers import recv_type as _recv_type
 
 
 def jpeg(width: int, height: int, tag: bytes = b"") -> bytes:
@@ -285,6 +284,65 @@ class FakeSay:
         return Speech(wav=WAV, engine="say", credit="")
 
 
+async def test_a_line_made_once_is_played_from_the_cache(tmp_path):
+    """#171: the same line is not made again, also after a restart and with the engine gone."""
+    from corexy_ufo_backend.homework.speech import SpeechCache
+    calls = []
+    cfg = SpeechConfig(cache_dir="cache/speech")
+    vv = VoicevoxEngine(cfg, opener=voicevox_opener(calls))
+    svc = SpeechService(cfg, voicevox=vv, say=FakeSay(), cache=SpeechCache(cfg, tmp_path))
+    first = await svc.synthesize("ベントラベントラスペースピープル！")
+    made = len(calls)
+    again = await svc.synthesize("ベントラベントラスペースピープル！")
+    assert made > 0 and len(calls) == made and again.wav == first.wav and again.credit == first.credit
+    assert again.engine == "voicevox" and svc.cache.hits == 1 and svc.cache.misses == 1
+    assert len(list((tmp_path / "cache" / "speech").glob("*.wav"))) == 1
+    await svc.synthesize("さあ、ぼくと ゲームを はじめよう！")  # another line is made
+    assert len(calls) > made
+
+    # a new backend (the files are all there is), VOICEVOX not running: still its voice, from the file
+    def down(req, timeout=0):
+        raise urllib.error.URLError("refused")
+
+    say = FakeSay()
+    later = SpeechService(cfg, voicevox=VoicevoxEngine(cfg, opener=down), say=say, cache=SpeechCache(cfg, tmp_path))
+    kept = await later.synthesize("ベントラベントラスペースピープル！")
+    assert kept.wav == first.wav and kept.engine == "voicevox" and say.texts == []
+    fresh = await later.synthesize("はじめての ことば")  # not cached, no VOICEVOX: say, cached as say's
+    assert fresh.engine == "say" and say.texts == ["はじめての ことば"]
+    await later.synthesize("はじめての ことば")
+    assert say.texts == ["はじめての ことば"]
+    # with VOICEVOX back, a line only `say` made is made by VOICEVOX (say's file is not its voice)
+    back = SpeechService(cfg, voicevox=vv, say=say, cache=SpeechCache(cfg, tmp_path))
+    assert (await back.synthesize("はじめての ことば")).engine == "voicevox"
+    # another speaker is another file; a damaged file is made again; a full cache drops the oldest
+    other = SpeechConfig(cache_dir="cache/speech", voicevox_speaker=8)
+    n = len(calls)
+    await SpeechService(other, voicevox=VoicevoxEngine(other, opener=voicevox_opener(calls)), say=say,
+                        cache=SpeechCache(other, tmp_path)).synthesize("ベントラベントラスペースピープル！")
+    assert len(calls) > n
+    for f in (tmp_path / "cache" / "speech").glob("*.wav"):
+        f.write_bytes(b"not a wav")
+    n = len(calls)
+    assert (await svc.synthesize("ベントラベントラスペースピープル！")).wav == first.wav and len(calls) > n
+    small = SpeechConfig(cache_dir="small", cache_max_files=2, engines=("say",))
+    tiny = SpeechService(small, say=FakeSay(), cache=SpeechCache(small, tmp_path))
+    for t in ("い", "ろ", "は"):
+        await tiny.synthesize(t)
+    assert len(list((tmp_path / "small").glob("*.wav"))) == 2 and len(list((tmp_path / "small").glob("*.json"))) == 2
+    # off, and a directory that cannot be written: the voice still comes
+    off = SpeechConfig(cache_enabled=False, engines=("say",))
+    quiet = FakeSay()
+    svc_off = SpeechService(off, say=quiet, cache=SpeechCache(off, tmp_path))
+    await svc_off.synthesize("い")
+    await svc_off.synthesize("い")
+    assert quiet.texts == ["い", "い"]
+    (tmp_path / "file").write_text("x")
+    bad = SpeechConfig(cache_dir="file/sub", engines=("say",))
+    assert (await SpeechService(bad, say=FakeSay(), cache=SpeechCache(bad, tmp_path)).synthesize("い")).engine == "say"
+    assert SpeechConfig.from_raw({"homework": {"speech": {"cache": {"enabled": False, "dir": "x", "max_files": 3}}}}).cache_dir == "x"
+
+
 async def test_speech_falls_back_and_checks_the_text():
     def down(req, timeout=0):
         raise urllib.error.URLError("refused")
@@ -311,13 +369,6 @@ async def test_say_engine_makes_a_wav():
 
 
 # ------------------------------------------------------------------ WebSocket
-async def _recv_type(ws, t):
-    while True:
-        m = json.loads(await asyncio.wait_for(ws.recv(), 3))
-        if m["type"] == t:
-            return m
-
-
 async def test_websocket_say_and_locate():
     jev = ScriptedJev([box_output(0.34, 0.57, 0.44, 0.61)])
     svc = HomeworkService(HomeworkConfig(enabled=True), client_factory=lambda: jev,

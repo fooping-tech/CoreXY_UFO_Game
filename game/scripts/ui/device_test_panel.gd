@@ -7,11 +7,11 @@ extends VBoxContainer
 ## Never the crane: no RobotState, no robot command. STOP ALL (and Space on this tab) stops
 ## every device (mist and relay off, effects stopped, a release aborted).
 
-const YELLOW := Color("ffe03c")
-const CYAN := Color("7ae0ff")
-const MUTED := Color("8fa3c4")
-const BAD := Color("ff8a8a")
-const GOOD := Color("9ff0a8")
+const YELLOW := PanelKit.YELLOW
+const CYAN := PanelKit.CYAN
+const MUTED := PanelKit.MUTED
+const BAD := PanelKit.BAD
+const GOOD := PanelKit.GOOD
 const ILL := 0x10
 const DIALS := [0x20, 0x21]
 const NAMES := {0x10: "Illumination", 0x20: "M5Dial 1", 0x21: "M5Dial 2"}
@@ -58,7 +58,7 @@ func setup(m: Node) -> void:
 	var top := _row()
 	_hub = StudyHud.label("", 18, YELLOW, 3)
 	_hub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_hub.custom_minimum_size = Vector2(600, 0)
+	_hub.custom_minimum_size = Vector2(400, 0)
 	top.add_child(_hub)
 	var stop := _button(top, "STOP ALL（Space）", stop_all)
 	stop.add_theme_color_override("font_color", BAD)
@@ -147,30 +147,16 @@ func _sub(text: String) -> void:
 	add_child(StudyHud.label(text, 18, Color.WHITE, 3))
 
 func _note(text: String) -> void:
-	var l := StudyHud.label(text, 16, MUTED, 2)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
-	add_child(l)
+	PanelKit.wrapped(self, text, 16, MUTED, 2, SettingsScreen.INNER_W - 20.0)
 
 func _value() -> Label:
-	var l := StudyHud.label("", 17, Color.WHITE, 3)
-	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	l.custom_minimum_size = Vector2(860, 0)
-	add_child(l)
-	return l
+	return PanelKit.wrapped(self, "", 17, Color.WHITE, 3, SettingsScreen.INNER_W - 20.0)
 
 func _row() -> HBoxContainer:
-	var r := HBoxContainer.new()
-	r.add_theme_constant_override("separation", 10)
-	add_child(r)
-	return r
+	return PanelKit.row(self)
 
 func _button(parent: Control, text: String, cb: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.add_theme_font_size_override("font_size", 17)
-	b.focus_mode = Control.FOCUS_NONE  # Space stays the stop key
-	b.pressed.connect(cb)
+	var b := PanelKit.button(text, 17, cb)
 	parent.add_child(b)
 	_buttons.append(b)
 	return b
@@ -189,14 +175,7 @@ func _slider(parent: Control, label: String, lo: float, hi: float, v: float) -> 
 	return s
 
 func _spin(parent: Control, label: String, lo: float, hi: float, v: float) -> SpinBox:
-	parent.add_child(StudyHud.label(label, 16, MUTED, 2))
-	var s := SpinBox.new()
-	s.min_value = lo
-	s.max_value = hi
-	s.step = 1
-	s.value = v
-	parent.add_child(s)
-	return s
+	return PanelKit.spin(parent, label, lo, hi, 1, v)
 
 # ------------------------------------------------------------------ actions
 func backend_ready() -> bool:
@@ -350,6 +329,8 @@ func refresh() -> void:
 		_hub.text = "ハブ: %s　システム %s　ポート %s　セッション %s" % ["接続" if connected else "接続待ち（つなぎ直し中）",
 			str(int(meta.get("system_id", 0))), str(meta.get("port", "?")),
 			str(int(meta.get("session_id", 0))) if connected else "-"]
+		if not connected and str(meta.get("problem", "")) != "":
+			_hub.text += "\n" + str(meta.problem)  # why (another system's hub, no port, not a hub...)
 	_hub.add_theme_color_override("font_color", GOOD if connected else YELLOW)
 	var rows: Array[String] = []
 	for d in devices:

@@ -721,6 +721,7 @@ func _build_gesture() -> void:
 	_button(hb2, "ROI: ON/OFF", func(): g.roi_enabled = not g.roi_enabled)
 	_gesture_status = Label.new()
 	_gesture_status.add_theme_font_size_override("font_size", 11)
+	_gesture_status.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_vbox.add_child(_gesture_status)
 	_note("つまむ指は人差し指・中指・薬指のどれでもよい。手のひらを上に向けてつまむ = XY、手の甲を上に（手のひらを下に）向けてつまむ = 上下（音が変わる）。右手が前提: 逆なら「Swap palm」（画面で手を上へ = アーム上げ）、グー 0.5 秒 = 爪を閉じる、ピース 0.5 秒 = 開く（爪の位置を記録してから）。検出の様子はカメラタブの Overview に重ねて出る")
 	var box := _fold("感度・速度・ROI")
@@ -898,7 +899,9 @@ static func stabilize_text(fs: FocusStream) -> String:
 ## A new tab, scrolling; the helpers below add to it.
 func _tab(title: String) -> void:
 	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# a tab whose rows are wider than the panel scrolls sideways; it never pushes the panel
+	# past the screen's edge (#157: the panel was 455 px wide in a 360 px slot)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_tabs.add_child(scroll)
 	_tabs.set_tab_title(_tabs.get_tab_count() - 1, title)
 	_vbox = VBoxContainer.new()
@@ -964,6 +967,13 @@ func _button(parent: Node, text: String, cb: Callable) -> Button:
 	b.text = text
 	b.add_theme_font_size_override("font_size", 11)
 	b.focus_mode = Control.FOCUS_NONE  # Space (stop) and the arrows stay with the game
+	if text.length() > 24:
+		# a long caption must not widen the panel past the screen's edge (#157): it is cut
+		# with "…" and shown whole as the tooltip
+		b.clip_text = true
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.tooltip_text = text
 	b.pressed.connect(cb)
 	parent.add_child(b)
 	return b
@@ -1086,7 +1096,9 @@ func _process(_dt: float) -> void:
 		hint = main.jog_hint_for(RobotState.robot_error.trim_prefix("jog rejected: "))
 	if main.z_end_hint != "":
 		hint += ("\n" if hint != "" else "") + main.z_end_hint
-	if RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset and RobotState.z_servo_jog_recovers:
+	if RobotState.source == "websocket" and RobotState.connected and (RobotState.z_servo_power_cycle or RobotState.arm_servo_power_cycle):
+		hint += ("\n" if hint != "" else "") + CalibrationPanel.servo_power_cycle_text(RobotState.z_servo_power_cycle, RobotState.arm_servo_power_cycle)
+	elif RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset and RobotState.z_servo_jog_recovers:
 		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。▲ / ▼ を押せば動く。上下の点を記録し直す"
 	elif RobotState.source == "websocket" and RobotState.connected and RobotState.z_servo_reset:
 		hint += ("\n" if hint != "" else "") + "Z: 巻き上げサーボの電源が切れて戻った。「実機」タブの「巻き上げサーボを復帰」を押す"

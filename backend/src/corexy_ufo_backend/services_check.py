@@ -6,7 +6,9 @@
 - VOICEVOX (#112): /version
 
 `ask=True` also sends one short question with the sample worksheet (tools/samples) through the
-explanation's adapter, to see a real answer come back. Secrets (tokens) never go into a result.
+explanation's adapter, to see a real answer come back, and (with a tutor URL) reads that worksheet
+with the worksheet reader, POST /v1/sheet (#230; it has no check of its own: only a real call shows
+whether the server runs its model). Secrets (tokens) never go into a result.
 Every check has a timeout; each one is "ok", "ng" (with the reason) or "skip" (not used here).
 """
 
@@ -29,7 +31,7 @@ from typing import Any, Callable
 from .config import REPO_ROOT
 from .homework.jev import JevError, load_credentials
 from .homework.speech import SpeechConfig
-from .study import StudyConfig, make_adapter
+from .study import StudyConfig, make_adapter, make_sheet_client
 from .study.claude_adapter import resolve_claude
 
 log = logging.getLogger(__name__)
@@ -38,7 +40,8 @@ SAMPLE = REPO_ROOT / "tools" / "samples" / "worksheet_sample.jpg"
 VERIFY_URLS = ("https://api.cloudflare.com/client/v4/user/tokens/verify",
                "https://api.cloudflare.com/client/v4/accounts/{account_id}/tokens/verify")
 LABELS = {"jev": "Jev（Cloudflare）", "tutor": "学習支援 AI（ローカル LLM）", "claude": "Claude Code",
-          "codex": "Codex", "voicevox": "VOICEVOX", "ask": "AI に試しに質問"}
+          "codex": "Codex", "voicevox": "VOICEVOX", "ask": "AI に試しに質問",
+          "sheet": "プリント読み取り（/v1/sheet）"}
 
 
 def result(name: str, status: str, detail: str, t0: float | None = None) -> dict:
@@ -178,6 +181,22 @@ async def ask_once(cfg: StudyConfig, provider: str, timeout_s: float = 90.0) -> 
             log.exception("services_check: closing the adapter")
 
 
+def check_sheet(cfg: StudyConfig, image: Path = SAMPLE) -> dict:
+    """Reads the sample worksheet once with POST /v1/sheet (~10 s; a 401 is never sent twice)."""
+    from .study.sheet_client import SheetError
+    t0 = time.monotonic()
+    try:
+        client = make_sheet_client(cfg)
+        res = client.read(image.read_bytes())
+    except SheetError as e:
+        return result("sheet", "ng", str(e), t0)
+    except Exception as e:  # noqa: BLE001
+        return result("sheet", "ng", f"{type(e).__name__}: {e}", t0)
+    if not res.read_anything:
+        return result("sheet", "ng", "つながったが、見本のプリントを読めなかった（problems が空）", t0)
+    return result("sheet", "ok", f"見本のプリントを読んだ: {res.summary()}", t0)
+
+
 async def check_all(raw: dict[str, Any], *, ask: bool = False, env_path: Path | None = None,
                     root: Path = REPO_ROOT, focus_calibration: Any = None) -> list[dict]:
     cfg = replace(StudyConfig.from_raw(raw), root=str(root), focus_calibration=focus_calibration)
@@ -203,4 +222,6 @@ async def check_all(raw: dict[str, Any], *, ask: bool = False, env_path: Path | 
         out.append(result("tutor", "skip", "使っていない（設定の「勉強モードの解説」と「学習支援 AI の URL」）"))
     if ask:
         out.append(await ask_once(cfg, explain))
+        if cfg.tutor_url:  # after the question: the server works one request at a time
+            out.append(await asyncio.to_thread(check_sheet, cfg))
     return out

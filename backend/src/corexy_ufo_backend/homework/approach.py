@@ -52,11 +52,11 @@ from typing import Any
 from ..config import RobotLimits
 from ..robot.interface import RobotCommandError, RobotInterface
 from ..robot.state import MachineState
+from ..sequence.abortable import ABORT_WAIT_S, AbortableSequence  # noqa: F401 (ABORT_WAIT_S: as before)
 from ..sequence.fault import SequenceFault
 
 log = logging.getLogger(__name__)
 
-ABORT_WAIT_S = 2.0
 
 
 class ApproachPhase(StrEnum):
@@ -150,7 +150,14 @@ class _Step:
         return "wait for the capture" + (f" ({self.stage})" if self.stage else "")
 
 
-class ApproachSequencer:
+class ApproachSequencer(AbortableSequence):
+    label = "homework approach"  # in the log lines
+    FAULT_PHASE = ApproachPhase.FAULT
+    _log = log
+
+    def _fault_text(self, reason: str) -> str:
+        return reason  # (as before: without the note of a stop that failed, which is in `error`)
+
     def __init__(self, robot: RobotInterface, limits: RobotLimits, params: ApproachParams | None = None, *,
                  spot_path: Path | None = None, lock: asyncio.Lock | None = None,
                  is_jogging: Callable[[], bool] = lambda: False,
@@ -369,26 +376,6 @@ class ApproachSequencer:
         self._released.set()
         return True
 
-    def request_abort(self, reason: str) -> bool:
-        if not self.active:
-            return False
-        if not self._abort_reason:
-            self._abort_reason = reason
-        return True
-
-    async def abort(self, reason: str, *, send_stop: bool = True) -> bool:
-        if not self.request_abort(reason):
-            return False
-        if send_stop:
-            await self._emergency_stop()
-        else:
-            self._stop_sent = True
-        return True
-
-    async def wait(self) -> None:
-        if self._task is not None:
-            await asyncio.shield(self._task)
-
     # ------------------------------------------------------------------ run loop
     async def _run(self, steps: list[_Step]) -> None:
         try:
@@ -448,16 +435,6 @@ class ApproachSequencer:
         return abs(s.z - step.z) <= self.params.z_tolerance and s.state not in (
             MachineState.Z_LOWERING, MachineState.Z_RAISING)
 
-    async def _action_body(self, step: _Step) -> None:
-        if self._abort_reason:
-            raise RobotCommandError(f"not sent ({self._abort_reason})")
-        if step.kind == "z":
-            await self.robot.move_z(step.z)
-        elif step.kind == "claw":
-            await self.robot.arm_goto(step.claw)
-        else:
-            await self.robot.move_xy(step.x, step.y, self.params.xy_feed_mm_min)
-
     async def _do_step(self, step: _Step) -> None:
         if step.stage:
             self.stage = step.stage
@@ -503,30 +480,3 @@ class ApproachSequencer:
                 if self._reached(step):
                     return
             await asyncio.sleep(self.poll_s)
-
-    async def _emergency_stop(self) -> None:
-        if self._stop_sent:
-            return
-        self._stop_sent = True
-        try:
-            await self.robot.stop()
-        except Exception as e:
-            log.error("homework approach: emergency stop failed: %s", e)
-            self.error += f" (stop failed: {e})"
-
-    async def _fault(self, reason: str) -> None:
-        action = self._action
-        self.error = reason
-        self.last_result = "fault"
-        await self._emergency_stop()
-        self._set_phase(ApproachPhase.FAULT, reason)
-        log.error("homework approach: FAULT: %s", reason)
-        if action is not None and not action.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(action), ABORT_WAIT_S)
-            except Exception:
-                pass
-            if not action.done():
-                action.cancel()
-        elif action is not None and action.done() and not action.cancelled():
-            action.exception()

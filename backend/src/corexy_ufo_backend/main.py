@@ -66,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list-cameras", action="store_true", help="list cameras with their OpenCV index (macOS / Windows)")
     p.add_argument("--study", action="store_true",
                    help="enable the optional camera study assistant (also requires study.enabled in config)")
+    p.add_argument("--devicehub", metavar="PORT",
+                   help="use the peripherals' hub on PORT for this run, whatever devicehub.enabled says: "
+                        "mock (a simulated hub: the game mode's rehearsal without hardware, #138), auto, or a port name")
+    p.add_argument("--devicehub-trace", metavar="FILE",
+                   help="write UFO-DeviceHub's trace (every command, ACK and event of the hub, JSON Lines) to FILE")
     p.add_argument("--stop-on-stdin-close", action="store_true",
                    help="stop cleanly (as on Ctrl-C) when stdin reaches EOF: start.ps1 closes it to end the backend")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -155,8 +160,11 @@ async def run(args: argparse.Namespace) -> int:
         # the mock's own speeds (the game's manual controls stay as they were) plus the
         # dry run's virtual claw / inputs for the auto catch
         robot = make_dry_run_robot(auto_cfg.dry_run, cfg.limits, speed_model=False)
+        robot.jog_max_mm_s = cfg.jog_max_mm_s  # the same cap as the real robot's jog (#179)
     else:
         robot = RealRobot(cfg)
+    robot.jog_boost_mm_s = cfg.jog_boost_mm_s or 0.0  # #188: the SPEED UP's cap, for a while
+    robot.jog_boost_max_s = cfg.jog_boost_max_s
     vision = make_vision(args, cfg.raw.get("gesture", {}))
     study_cfg = replace(StudyConfig.from_raw(cfg.raw), root=str(REPO_ROOT), focus_calibration=cfg.focus_camera_path)
     study = None
@@ -192,6 +200,10 @@ async def run(args: argparse.Namespace) -> int:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
     hub_cfg = DeviceHubConfig.from_raw(cfg.raw)
+    if args.devicehub:
+        hub_cfg = DeviceHubConfig(True, args.devicehub.strip(), hub_cfg.system_id, hub_cfg.trace)
+    if args.devicehub_trace:
+        hub_cfg = DeviceHubConfig(hub_cfg.enabled, hub_cfg.port, hub_cfg.system_id, args.devicehub_trace)
     devicehub = None
     if hub_cfg.enabled:
         try:

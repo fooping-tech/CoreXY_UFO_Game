@@ -8,7 +8,7 @@
     "z_min_mm": 0.0,
     "z_max_mm": 100.0,
     "z_up_is_positive": true,
-    "_z_note": "Z is reported by the backend in abstract 'z units' (0..z_max) derived from the STS3020 ID1 drum servo count (SERVO_STATUS abs=). The firmware has no Z homing; the backend defines 0 at the position seen when 'z_zero' is sent. If a LARGER value means the arm is HIGHER set z_up_is_positive=true. The on-screen rope is longest when the arm is highest (inverse mapping)."
+    "_z_note": "Z is reported by the backend in abstract 'z units' (0..z_max) derived from the STS3020 ID1 drum servo count (SERVO_STATUS abs=). The firmware has no Z homing; the backend defines 0 at the position seen when 'z_set top' is sent. If a LARGER value means the arm is HIGHER set z_up_is_positive=true. The on-screen rope is longest when the arm is highest (inverse mapping)."
   },
   "world": {
     "travel_x_cm": 52.0,
@@ -42,12 +42,18 @@
     "particles": true,
     "screen_shake": true,
     "shake_max_px": 12.0,
+    "fullscreen": false,
+    "_fullscreen_note": "The screen is portrait, 9:16 (#157): design size 720 x 1280, the exhibit's monitor is 1080 x 1920 (or 2160 x 3840) standing on end. The monitor is turned in the OS's display settings, never inside the game. fullscreen: true = the game fills the monitor (also --fullscreen / --windowed on the command line, F11 while it runs). On a monitor of another shape the picture keeps its 9:16 and gets bars at the sides: nothing is cut off or stretched. docs/display_setup.md.",
     "particle_amount": 1.0,
     "vfx": true
   },
   "audio": {
     "enabled": true,
     "volume_db": -8.0,
+    "sfx_enabled": true,
+    "sfx_volume_db": 0.0,
+    "bgm_enabled": true,
+    "bgm_volume_db": 0.0,
     "dir": "res://assets/audio",
     "move": "wizard-flight1.mp3",
     "up": "magic-statusup1.mp3",
@@ -108,7 +114,7 @@
       "radius": 0.15,
       "deadzone": 0.12,
       "full": 0.8,
-      "max_speed_mm_s": 30.0,
+      "max_speed_mm_s": 60.0,
       "curve": 1.5,
       "smoothing_ms": 80.0,
       "invert_x": true,
@@ -146,9 +152,8 @@
     },
     "scope": {
       "enabled": true,
-      "settle_s": 0.7,
-      "hold_s": 10.0,
-      "zoom": 1.0
+      "zoom": 1.0,
+      "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. It shows the hub's picture, so the stabilized one whenever the backend streams it (camera.focus.stabilize, #118: the shake is cancelled with optical flow in the backend; not with --game-only, which has no backend). zoom 1..4 crops the middle. Display only."
     },
     "_note": "USB cameras by role (C270 = overview / gesture, Innomaker U20CAM = arm tip): overview = looks down on the desk (gesture detection later), focus = on the arm tip. match = part of the camera name (empty = none; pick one in the debug panel). The scope view shows focus, or overview when there is no focus camera. Frames are only drawn: never saved or sent."
   },
@@ -171,11 +176,16 @@
         {"key": "title_screen.enabled", "apply": "restart", "label": "起動時にタイトル画面を出す", "type": "bool", "note": "オフにするとこの画面も開けなくなる。戻すときは config/local_settings.json を消す"},
         {"key": "audio.enabled", "apply": "now", "label": "効果音", "type": "bool"},
         {"key": "audio.volume_db", "apply": "now", "label": "効果音の大きさ（dB）", "type": "number", "min": -40, "max": 0, "step": 1},
+        {"key": "audio.bgm_enabled", "apply": "now", "label": "音楽（スコアゲーム）", "type": "bool"},
+        {"key": "audio.bgm_volume_db", "apply": "now", "label": "音楽の大きさ（dB、効果音との差）", "type": "number", "min": -30, "max": 6, "step": 1},
+        {"key": "render.fullscreen", "apply": "now", "label": "フルスクリーン（縦置きモニタ。F11 でも切り替え）", "type": "bool"},
         {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
         {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
       ]},
       {"title": "ハンドジェスチャー", "items": [
         {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum", "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"], ["pose_direction", "手の形で方向を決める"]]},
+        {"key": "game_mode.tutorial.enabled", "apply": "now", "label": "スコアゲームの前に練習（UFO 召喚と手の練習）", "type": "bool",
+         "note": "オフにすると、スコアゲームのタイトルで Enter を押すとすぐ始まる（T で練習から始められる）"},
         {"key": "gesture.camera", "apply": "backend", "label": "手のカメラ（名前の一部か番号）", "type": "text", "max_length": 80},
         {"key": "gesture.enabled", "apply": "restart", "label": "ゲームを直接起動したときに ON", "type": "bool", "note": "start.sh では使わない（start.sh は --gesture / --no-gesture を必ず渡す）"}
       ]},
@@ -292,6 +302,7 @@
       },
       "voicevox_speaker": 3,
       "voicevox_sampling_rate": 24000,
+      "cache": {"enabled": true, "dir": "cache/speech", "max_files": 500, "_note": "#171: a line made once (VOICEVOX / say) is kept as a file in this directory (relative to the repository root; not in Git) and the same line is played from it without asking the engine again; the files stay when the backend stops. Another speaker / sampling rate / say voice is another file. max_files: the least recently used go first. Delete the directory to make every line again."},
       "say_voice": "Kyoko",
       "timeout_s": 15.0,
       "max_chars": 120,
@@ -311,11 +322,187 @@
     },
     "_note": "Homework watch (F1 panel tab). enabled = this watch in the F1 panel; the backend's homework service also starts when study_mode.enabled is true (the study mode uses it), and nothing is captured until a watch is started. While started, the overview camera is captured every interval_s and the worksheet's progress is estimated with Cloudflare Workers AI typesafe/jev-1.14.0 (method verified in ~/python_ws/jev: 3 questions per call, about 8.8k tokens / $0.00037 per call). The key is CF_ACCOUNT_ID / CF_API_TOKEN from the environment or the repository's .env (never committed; see .env.example). Frames go to Cloudflare and are not stored here. Stall: the shown progress has not grown by stall_min_gain points for stall_s (not at 100%, not while a hand covers the sheet); the panel then offers an advice by the study assistant (study.provider: Claude Code / Codex, no --study needed), and again only after another stall_s."
   },
+  "game_mode": {
+    "powerups": {
+      "enabled": true,
+      "notice": true,
+      "sounds": true,
+      "lights": true,
+      "debug_keys": true,
+      "first_spawn_s": 5.0,
+      "spawn_interval_s": 12.0,
+      "spawn_chance": 1.0,
+      "item_life_s": 8.0,
+      "weights": {"speed": 1.0, "multiball": 1.0, "double": 1.0},
+      "duration_s": {"speed": 10.0, "double": 15.0},
+      "duck_db": -8.0,
+      "duck_s": 0.7,
+      "speed": {
+        "boost_mm_s": 100.0,
+        "_safety": "SPEED UP: the hand's stick and the arrow keys go up to boost_mm_s in XY while it lasts (Z never changes; the easy mode's automatic carry is not touched). Without it the hand is at gesture.joystick.max_speed_mm_s (60) and the keys at their usual speed. On the real crane the backend decides: its jog cap is backend.jog_max_mm_s (60) and becomes backend.jog_boost_mm_s (100) only while the jog_boost the game sends lasts; the backend ends it by itself, and at an emergency stop (the game ends it when the round stops). The 5 mm jog edge margin, the dead-man and the firmware's soft limits are unchanged. 100 mm/s is NOT verified on the real crane."
+      },
+      "_note": "#188. enabled: the items appear at all. notice: the big name on the screen with its burst and shake (the small timers stay). sounds: the pickup's sound, and the music duck_db lower for duck_s under it. lights: the Dial's front LED (MULTI BALL) and the gold exhibition light (DOUBLE SCORE). debug_keys: while playing, F2 = SPEED UP, F3 = MULTI BALL (needs a ball on the field), F4 = DOUBLE SCORE now. An item appears first_spawn_s after GO, then every spawn_interval_s after the last one was taken or went away, with the chance spawn_chance (0..1); which one by weights (0 = never), at one of three spots, one at a time, for item_life_s. Speed and x2 run on timers (taking it again starts the time again, never stacks); MULTI BALL splits one ball into three but keeps one physical Dial cycle. Effects/lighting never hold robot motion or physics."
+    },
+    "enabled": true,
+    "duration_s": 150,
+    "countdown_s": 3,
+    "hurry_s": 30,
+    "warning_s": 10,
+    "settle_max_s": 30,
+    "devices": "auto",
+    "lights": true,
+    "dial_leds": true,
+    "visual_quality": "high",
+    "effects": true,
+    "sounds": {
+      "files": true,
+      "pan": 0.6,
+      "bgm": {"files": true, "top": "top.wav", "menu": "intro.mp3", "tutorial": "tutorial.mp3", "game": "game.wav", "ending": "ending.mp3", "jingle": "Intro Jingle.wav",
+        "gain_db": {"top": 3, "menu": -9, "tutorial": -13, "game": 0, "ending": -13, "jingle": 9},
+        "_levels_note": "#181: top = the title screen at start (the mode selection), menu = the score game's own title, tutorial = the practice, game = the 150 s clock, ending = the result; jingle = played once (not a loop, on the effects' bus) when a mode is chosen on the title screen, and the next music starts after it. No music in the settings screen's 校正 tab. No fades: a track starts and stops at once (it still steps back while a voice speaks). gain_db makes the tracks equally loud: measured with ffmpeg -i FILE -af ebur128 -f null - (integrated loudness, LUFS: top -21.0, intro -8.9, tutorial -4.9, game -18.0, ending -4.9) and brought to -18 LUFS; the jingle (-27.1) to -18. Other files: measure them and set gain_db = -18 - LUFS.",
+        "_note": "#173: the music from files in game/assets/audio/bgm/ (each machine puts its own there; the folder is not in Git, #151). menu = while a title screen shows (the mode selection at start, the score game's own title), game = while the 150 s clock runs, ending = the result and the ranking after a round. .mp3 / .ogg / .wav, played as a loop. A file that is not there: the round keeps the synthesised tune, the menu and the result stay silent. gain_db: each track's own level on top of audio.bgm_volume_db. files: false = never the files."},
+      "_note": "The score game's sounds (#143). files: true = the sound files of game/assets/audio/manifest.json (Kenney, CC0; where each came from is in that file and docs/audio_sources.md), false = only the sounds synthesised in the game (also what a missing file falls back to). pan 0..1: how far a Dial's sounds (absorb, drop, return, release, fault) are to the Dial's side (the left; #200: the only Dial). Volumes: audio.volume_db (effects), audio.sfx_volume_db / audio.bgm_volume_db (the buses), audio.sfx_enabled / audio.bgm_enabled."
+    },
+    "scope": {
+      "enabled": true,
+      "zoom": 1.0,
+      "_note": "The arm camera as a round aiming scope in the right column of the score game (#141): camera.focus, or camera.overview when the arm has no camera; hidden with no camera at all. zoom 1..4 crops the middle."
+    },
+    "trace": true,
+    "result_bonus": {
+      "capsule_each": 100,
+      "combo_each": 50,
+      "jackpot_each": 500,
+      "_note": "The round's end bonuses (#153; docs/game_mode_spec.md §3.2), added to the score on the result screen: capsule_each x the capsules a Dial took before the time ran out (a late one and the practice capsule do not count), combo_each x the longest chain, jackpot_each x the jackpots won. final score = the score while playing + these. They are end bonuses only: the switch bonus (score.table.switch_bonus) and the jackpot's own points (score.table.jackpot) are paid while playing and are not added again. 0 = that bonus is left out. Tuning values, not final."
+    },
+    "result_show": {
+      "intro_s": 0.5,
+      "count_s": 1.6,
+      "hold_s": 0.8,
+      "announce_s": 0.9,
+      "absorb_s": 0.45,
+      "bonus_count_s": 0.7,
+      "bonus_hold_s": 0.5,
+      "wind_up_s": 0.35,
+      "final_s": 3.2,
+      "tick_s": 0.055,
+      "strong_at": 3000,
+      "_note": "The result's show (#153), one timeline (seconds): YOUR SCORE comes up (intro_s), the number counts up (count_s) and stops (hold_s); then for each bonus: BONUS! and its points (announce_s), they fly into the number (absorb_s), the number runs on (bonus_count_s), a breath (bonus_hold_s); then the number shrinks (wind_up_s) and FINAL SCORE! hits and celebrates (final_s). tick_s: one counting blip per this long. strong_at: a bonus of this many points or more gets the strongest effects (less = weaker, never below 30 %). Every sound, shake, flash and spark of a moment starts in the same tick of this timeline. Enter skips to the end. With game_mode.effects false the final score is shown at once; render.screen_shake off keeps the picture still. Presentation only: no device is told anything."
+    },
+    "ranking": {
+      "enabled": true,
+      "hold_s": 1.2,
+      "record_s": 3.2,
+      "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
+    },
+    "debug_panel": false,
+    "easy": {
+      "hold_s": 0.6,
+      "cancel_hold_s": 1.5,
+      "wait_destination_s": 15,
+      "request_timeout_s": 3.0,
+      "dry_run": {"dial_1": [20, 100], "release_z": 70},
+      "real": {
+        "xy_tolerance_mm": 1.0, "z_tolerance": 1.0, "claw_settle_s": 0.5, "claw_span_min_deg": 5, "claw_span_max_deg": 355,
+        "limit_home_zone_mm": 5, "total_timeout_s": 120,
+        "xy_feed_mm_min": 9000,
+        "_xy_feed_note": "#194: the feed (mm/min) of the easy mode's XY moves to a Dial: the carry, and the practice's easy_goto. 9000 = 150 mm/s. At backend.xy_fast_feed_mm_min (15900 = 265 mm/s, the firmware's top) a 45-degree move, where one motor does nearly all the steps (about 1.4 times an axis move's step rate), ended in the firmware's alarm 'timed segment queue lost position confidence' on the machine (2026-11-19), and the practice's moves were too quick to watch. At 9000 the one-motor step rate of a diagonal stays under that of an axis move at 15900, which ran. Leave this out to use backend.xy_fast_feed_mm_min again.",
+        "timeouts_s": {"open_claw": 6, "lower_to_catch": 20, "close_claw": 6, "raise_with_item": 20, "move_to_box": 45, "lower_to_release": 20, "release": 6, "raise_empty": 20}
+      },
+      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). #198: nobody chooses a difficulty any more (no config key, no D key, no fingers on the title): the easy mode is always what is played; where it cannot be used (no backend, another hand scheme) the manual hand control is played and the title says why. cancel_hold_s: while the backend waits for the destination, an open hand held this long gives the catch up (the claw opens, try again), longer than the short open hand that separates the fist from the fingers. The easy mode: (pinch = XY only; a fist held hold_s = catch here by itself; then one finger = carry to the portal, Dial 1 on the left; #200: there is no Dial 2 on the right any more and two fingers mean nothing). The practice shows the same. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (Dial 1's XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
+    },
+    "tutorial": {
+      "voice_link_wait_s": 2.5,
+      "enabled": true,
+      "ok_s": 1.4,
+      "retry_s": 8.0,
+      "_note": "The practice before the score game (#149): Enter on the score game's title goes through it once per visit (the spell, the hand shapes one by one, one real capsule through a Dial), then the round starts from a full reset. enabled: false = Enter starts the round at once (T still starts the practice). mode: only read when game_mode.difficulty is missing (an older config); the practice shows the round's difficulty (#169). The hand steps' gauges fill in about 3 s (hold_s of open / pinch / z_pinch, move_s of move / z_move: override them in steps). The hard mode with the pinch joystick also teaches letting go (release: the shape that opens the claw) and the up / down mode (z_pinch: a pinch with the back of the hand to the camera; z_move: carried up or down). voice_link_wait_s: the first lines wait this long for the voice's link to come up (else the spell would be shown without its voice). debug_panel (game_mode.debug_panel): true keeps the debug panel open beside the score game (false: closed when it opens; F1 / Tab opens it). steps: {id: {title, sub, say, hold_s...}} overrides a step, modes: {mode: {hand scheme: [step ids]}} the order (game/scripts/tutorial/gesture_tutorial_steps.gd). Staff keys in the practice: F6 = the step again, F7 = the next step, F8 = leave the practice out."
+    },
+    "ufo": {
+      "min": 0.1,
+      "max": 0.9,
+      "one_way_s": 6.0
+    },
+    "timing": {
+      "absorb_s": 0.85,
+      "drop_s": 0.25,
+      "return_s": 0.9,
+      "release_sync_s": 0.6,
+      "release_timeout_s": 8.0,
+      "command_timeout_s": 5.0,
+      "arm_retry_s": 3.0,
+      "verify_retry_s": 0.5,
+      "verify_tries": 4,
+      "release_retries": 2,
+      "_release_retries_note": "#185: after RELEASE_DONE the Dial's switch is still on for the whole check (verify_retry_s x verify_tries = 2 s): the capsule did not leave, so RELEASE_BALL is sent once more, at most release_retries times, then FAULT. Needs the Dial firmware 0.4 (UFO-DeviceHub); an older Dial refuses the second release = FAULT as before. 0 = never again."
+    },
+    "field": {
+      "max_stay_s": 15.0,
+      "stall_s": 1.2,
+      "gravity_scale": 0.85,
+      "_portrait_note": "The field is tall since #157 (660 x 714, the screen is portrait): the capsule is seen falling all the way down. gravity_scale went 0.7 -> 0.85 with it so a capsule does not stay much longer than on the old wide field (measured over 60 capsules: 6.2 s on average, 11.9 s at most; the wide field: 4.9 s, 9.9 s). Where everything stands is in game/scripts/game_mode/pinball_field.gd and docs/game_mode_spec.md §4.",
+      "bounce": 0.45,
+      "settle_after_s": 5.0,
+      "settle_over_s": 3.0,
+      "settle_kick": 0.1,
+      "settle_gravity": 2.5,
+      "star_respawn_s": 8.0
+    },
+    "score": {
+      "table": {
+        "pin": 10,
+        "bumper": 100,
+        "spinner": 200,
+        "star": 500,
+        "switch": 50,
+        "switch_bonus": 1500,
+        "pop": 50,
+        "target": 150,
+        "sling": 30,
+        "gem": 100,
+        "alien": 400,
+        "warp": 300,
+        "goal_left": 100,
+        "goal_right": 100,
+        "goal_center": 1000,
+        "jackpot": 3000
+      },
+      "combo": [
+        [
+          2,
+          1.5
+        ],
+        [
+          4,
+          2.0
+        ],
+        [
+          6,
+          3.0
+        ]
+      ],
+      "combo_window_s": 2.5,
+      "cooldown_s": 0.4,
+      "jackpot_s": 20.0
+    },
+    "dials": {
+      "left": {
+        "device": 32,
+        "color": [
+          0,
+          255,
+          255
+        ]
+      }
+    },
+    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), the only portal since #200 (a right entry is not read: nothing is sent to Dial 2, 0x21), color = its RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the default is UFO-DeviceHub's own: cyan). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). visual_quality: high / low (low = a still, plain background for a slow machine; the game is the same). effects: false = no bounce, no light trails, no breathing glow (for debugging; the game is the same). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
+  },
   "devicehub": {
     "enabled": false,
     "port": "auto",
     "system_id": 1,
-    "_note": "The peripherals' hub (UFO-DeviceHub: ESP-NOW hub M5AtomS3R, Illumination ATOM, M5Dial x2), #108. The backend opens it (enabled) and the settings screen's テスト tab tests the devices through it, like UFO-DeviceHub's pc.web_console (which cannot run at the same time: one program per serial port). port: auto (every USB serial port in turn except the robot's (Core2) ports: the hub's auto-detect sends HELLO lines), a port name, or mock (a simulated hub, no hardware). system_id: which UFO system's hub (1 / 2; another system's hub is refused). The protocol and gateway are copies of UFO-DeviceHub's pc/ (backend/src/corexy_ufo_backend/devicehub/__init__.py says which commit). Not yet run with the real hub from the game."
+    "trace": "",
+    "_note": "The peripherals' hub (UFO-DeviceHub: ESP-NOW hub M5AtomS3R, Illumination ATOM, M5Dial x2), #108. The backend opens it (enabled) and the settings screen's テスト tab tests the devices through it, like UFO-DeviceHub's pc.web_console (which cannot run at the same time: one program per serial port). port: auto (every USB serial port in turn except the robot's (Core2) ports: the hub's auto-detect sends HELLO lines), a port name, or mock (a simulated hub, no hardware). system_id: which UFO system's hub (1 / 2; another system's hub is refused). The protocol and gateway are copies of UFO-DeviceHub's pc/ (backend/src/corexy_ufo_backend/devicehub/__init__.py says which commit). trace: a file for UFO-DeviceHub's own trace (every command, ACK and event of the hub as JSON Lines; \"\" = none; also the backend's --devicehub-trace), to join with the score game's trace (#138). Not yet run with the real hub from the game."
   },
   "backend": {
     "serial_port": "",
@@ -326,13 +513,28 @@
     "z_counts_per_unit": 122.88,
     "z_sign": 1,
     "arm_open_turns": 0.5,
+    "claw_grip_tolerance_deg": 3.0,
+    "_claw_grip_note": "#192: a claw closing to its recorded closed angle (閉じる / grab / the sequences' CLOSE_CLAW) grips the capsule a little before that angle; the firmware then answers SERVO_TURN ... result=TIMEOUT ... torque=ON. When it stopped within this many degrees of the target with the torque still on, the backend takes it as a grip (not a failure). Seen on the machine: 0.6 and 0.9 deg short (7 and 10 counts). 0 = every TIMEOUT is a failure, as before; at most 15. A tuning value: a thicker object stops farther away.",
     "xy_feed_mm_min": 900,
-    "jog_max_mm_s": 50,
+    "xy_fast_feed_mm_min": 15900,
+    "_xy_fast_feed_note": "#179: the feed (mm/min) of the automatic XY moves that are to be as quick as the machine goes: to the middle of the stage after homing, and the easy mode's carry to a Dial (game_mode.easy.real.xy_feed_mm_min overrides it there). 15900 = just under the firmware's MAX_FEED_MM_MIN (15909.9 mm/min = 265 mm/s, 1000 mm/s2; a larger feed is clamped there). null = xy_feed_mm_min. NOT yet run at this feed on the real machine (lost steps, a carried capsule swinging): lower it here if it is too much.",
+    "jog_max_mm_s": 60,
+    "jog_boost_mm_s": 100,
+    "jog_boost_max_s": 30,
+    "_jog_boost_note": "#188 (SPEED UP): while the game's boost lasts (the jog_boost command, sent by the game when the item is taken) a jog's XY cap is jog_boost_mm_s instead of jog_max_mm_s. The backend keeps the deadline (at most jog_boost_max_s per request) and goes back by itself; the emergency stop, motors off, jog_boost 0 or the last client leaving ends it at once (a soft_stop only stops the motion). The edge margin (jog_edge_margin_mm, jog_edge_slow_s), the dead-man and the firmware's soft limits are unchanged. Omit it or set it <= jog_max_mm_s for no boost. 100 mm/s is NOT verified on the real crane (the firmware's own jog cap is far above it): try it there before the exhibit.",
+    "jog_edge_margin_mm": 5.0,
+    "jog_edge_slow_s": 0.25,
+    "_jog_edge_note": "#185: a jog (the arrow keys, the hand stick) stays jog_edge_margin_mm inside the XY soft limits and slows down towards that line (speed towards an edge <= distance left / jog_edge_slow_s). Seen on the machine 2026-11-17: at 60 mm/s the hand stick ran to Y = 0.3 mm (the firmware's soft limit is at 0.5 mm), the home limit switch was pressed and the next jog ended in ALARM. 0 = off. Programmed moves (move_xy, the easy mode) are not changed.",
     "jog_z_max_counts_s": 2400,
     "z_poll_hz": 3,
     "home_requires_z_top": true,
     "home_z_tolerance": 5.0,
-    "_note": "serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
+    "home_then_center": true,
+    "home_center_mm": null,
+    "_home_center_note": "#175: after XY homing (the home command, and the 校正 tab's preparation) the arm goes on to the middle of the stage: the centre of robot.x_min..x_max / y_min..y_max, or home_center_mm [x, y] (mm; a point outside the soft limits is not used). An ordinary XY move at backend.xy_fast_feed_mm_min (#179), at the height homing already requires (the arm wound up). home_then_center false = it stays in the home corner as before.",
+    "serial_rx_stall_s": 5.0,
+    "serial_reopen_s": 3.0,
+    "_note": "serial_rx_stall_s / serial_reopen_s (#161): a command sent and nothing at all read for serial_rx_stall_s = the link is dead although the port looks open (a USB hub's transaction error can stop the reading side alone: jogs still move, every command times out); the backend sends JOG 0 / ABORT blind (best effort, unconfirmed), drops the link (motors disabled, Z points forgotten) and, like after an unplugged cable, reopens the port every serial_reopen_s (0 = never). serial_port / serial_port_2: the Core2 boards used here (#100; set them in the settings screen, saved to local_settings.json): the one connected is opened (both: serial_port), none set = the first USB serial port found, ./start.sh --port wins. z_counts_per_unit: servo counts per abstract Z unit (4096 counts/turn; 3 turns = 12288 counts = 100 units). z_sign: +1 if positive SERVO_TURN raises the arm, -1 otherwise (set on the real machine). jog_max_mm_s: speed cap for serial JOG (firmware recommends <= 50 mm/s)."
   },
   "study_mode": {
     "enabled": true,
@@ -498,7 +700,7 @@
     }
   },
   "auto_catch": {
-    "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_zero reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",
+    "_note": "One-button auto catch (backend/src/corexy_ufo_backend/sequence/). Z in the backend's z units (robot.z_min..z_max; z_max = arm at the top, the z_set top reference), XY in mm, times in s. 'real' drives the real crane: every null must be measured on the machine and every 'confirmed' item set true by hand after checking it there, otherwise the backend refuses auto_catch on the real robot. 'dry_run' is used only with --mock / --auto-catch-dry-run: made-up values for the virtual crane, never for the real robot. Accelerations and the servo speed are fixed in the firmware (XY 1000 mm/s^2, servo 2400 counts/s): they only drive the dry-run model. Polarity: the home limit switches are read by the firmware (active LOW, 30 ms debounce) and reach the host as LIMIT_X/LIMIT_Y=ACTIVE|OPEN; there is no physical E-stop input (stop = ABORT command); the catch button is the game's C key (no electrical polarity).",
     "real": {
       "safe_z": null,
       "catch_z": null,

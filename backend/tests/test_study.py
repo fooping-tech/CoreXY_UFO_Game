@@ -12,6 +12,7 @@ from corexy_ufo_backend.robot.mock_robot import MockRobot
 from corexy_ufo_backend.study import CodexStudyAdapter, StudyConfig, StudyService
 from corexy_ufo_backend.websocket import GameServer
 from corexy_ufo_backend.study.codex_adapter import CodexAdapterError
+from ws_helpers import recv_type as _recv_type
 
 
 JPEG = b"\xff\xd8study-test\xff\xd9"
@@ -88,13 +89,6 @@ async def test_study_validation_busy_cancel_and_close():
     assert events[-1]["data"]["code"] == "cancelled"
     await service.close()
     assert adapter.closed
-
-
-async def _recv_type(ws, wanted: str) -> dict:
-    while True:
-        message = json.loads(await asyncio.wait_for(ws.recv(), 2.0))
-        if message.get("type") == wanted:
-            return message
 
 
 @pytest.mark.asyncio

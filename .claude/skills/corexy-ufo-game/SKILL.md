@@ -5,7 +5,7 @@ description: >
   Python WebSocket/シリアルバックエンド）専用の設計制約・作業手順・テスト手順。このリポジトリの
   game/ backend/ config/ tools/ assets/ を変更・調査・デバッグ・テストするときは最初に読む。
   対象: UFO の表情/ポーズ/アニメーション、ロープの揺れ・3D Verlet 物理・2.5D 投影、RobotState/GameState、
-  MockRobot、WebSocket・request_id・ACK/NACK、実機同期（XY、Z 軸、z_sign、z_zero、ロープ長の逆マッピング）、
+  MockRobot、WebSocket・request_id・ACK/NACK、実機同期（XY、Z 軸、z_sign、z_set、ロープ長の逆マッピング）、
   E-STOP/ABORT/ALARM、通信切断、game_config.json、スプライトシート、演出・ゲーム体験、headless テスト。
   例:「UFOの表情を増やして」「ロープの揺れを改善して」「実機のZ軸と同期して」「急停止の演出」
   「切断時の表示」「バックエンドにコマンド追加」。汎用の Godot / game-feel / physics の知識は
@@ -40,11 +40,17 @@ description: >
 | 設定画面（#93、タイトルの歯車） | `ui/settings_screen.gd`, `game_config.gd::save_local / load_local`, backend `config.py::local_overrides`, `game_config.json` の `settings_screen` 節 | 保存先は Git に入らない `config/local_settings.json`。ゲームとバックエンドはスキーマにある項目・値だけを重ねる。**校正・安全の値をスキーマに足さない**。テストは `GameConfig.drop_local()` / `CXUFO_NO_LOCAL_SETTINGS=1` で手元のファイルを無視する |
 | 校正タブ（#98、設定画面） | `ui/calibration_panel.gd`, `settings_screen.gd::calibrating`, `main.gd::calibrating / homework_for_calibration / CALIBRATION_KEYS` | 校正タブの間だけ `_handle_input` の title の halt を外し、[ ] Q A を通す。ジェスチャー・自動キャッチは止めたまま。ボタンは既存のコマンド（z_set / arm_set / homework_spot_set / camera_map_*）を送るだけで、関門はバックエンド。実機での校正は未検証 |
 | 起動時のタイトル（#90） | `ui/title_screen.gd`, `main.gd::show_title / _on_title_chosen` | README「タイトル画面」。演出だけ（RobotState を書かない、コマンドを送らない）。表示中は `_handle_input` が halt、キーはタイトルが受け取る（Space・F1 / Tab は通す）。ヘッドレスでは出さない |
-| 周辺機器のテストタブ（#108） | backend `devicehub/`（UFO-DeviceHub の `pc/protocol.py`・`device_gateway.py`・`mock_hub.py` のコピー。書き換えない）, `devicehub/service.py`（設定・ロボットのポートを外す自動検出・排他）, `websocket/server.py::_devicehub`, `ui/device_test_panel.gd`, `ui/settings_screen.gd`（`TEST_TAB`） | README「テストタブ」。`devicehub_*` はロボットに触れず、ほかのコマンドの後ろに並ばず、シーケンス中も受け付ける。ハブの自動検出は Core2 のポートを開かない。テストタブの Space は STOP_ALL も送る。実機未検証 |
+| 周辺機器のテストタブ（#108） | UFO-DeviceHub の Python パッケージ `ufo_devicehub`（`external/UFO-DeviceHub/` の clone を editable な依存にしたもの。#159。コピーを作らない。足りない機能は UFO-DeviceHub 側に足す）, backend `devicehub/service.py`（このゲームだけのコード: 設定・ロボットのポートを開かない・排他・画面の言葉）, `websocket/server.py::_devicehub`, `ui/device_test_panel.gd`, `ui/settings_screen.gd`（`TEST_TAB`） | README「テストタブ」、`docs/devicehub_dependency.md`（clone の準備 `tools/setup_devicehub.sh`、確認済みのコミット `tools/devicehub.pin`、2 リポジトリにまたがる変更の出し方）。`devicehub_*` はロボットに触れず、ほかのコマンドの後ろに並ばず、シーケンス中も受け付ける。ハブの自動検出は Core2 のポートを開かない。テストタブの Space は STOP_ALL も送る。実機未検証 |
+| 縦画面（#157、9:16、720×1280） | `game/project.godot`（`viewport_width / height`、`stretch/aspect = keep`）, `game_mode/game_mode_layout.gd`（スコアゲームの座標はここだけ）, `game_mode/pinball_field.gd`（縦長の盤面の定数）, `main.gd::apply_window_mode`（`render.fullscreen`、`--fullscreen`、F11） | `docs/display_setup.md`、`docs/game_mode_spec.md` §4。モニタの回転は OS 側（ゲームの中で回さない）。ドットは設計 2 px（1080×1920 で 3 px）。新しい表示物は `GameModeLayout` の定数から置く（数字を各ファイルに書かない）。画面の形は表示だけ: `RobotState` の変換、ソフトリミット、JOG の向きは変えない。盤面を変えたら `_test_game_mode_physics`（24 個がゴールに届く）と滞在時間・得点の計測を取り直す |
+| スコアゲームのハイスコアランキング（#155） | `game_mode/ranking_manager.gd`（TOP10、同点は先の記録が上、`user://game_mode/rankings.tsv`、壊れたファイル・書けないファイルでも止まらない）, `game_mode/game_mode_ranking_hud.gd`・`game_mode/game_mode_show_screen.gd`（結果画面と共通の土台: キャンバス上の絵の層・中央のラベル・シート・光の筋）（NEW RECORD! と HIGH SCORES）, `game_mode/game_mode_ranking_flow.gd`（#222: 登録と画面の切り替え `tick` / `register_score` / `excluded`、今日のベスト。画面が読む状態 `ranking_view` などは `game_mode_controller.gd` に残る） | `docs/game_mode_spec.md` §3.3。名前は聞かない・保存しない・表示しない。登録はリザルト演出が終わった tick に自動で 1 回（ラウンドの ID で二重登録を防ぐ）。STOPPED・練習・デモ・短いラウンド・0 点・圏外は登録しない。phase は `RESULT` のまま（`ranking_view` で画面を表す）。テストは `ctl.ranking.path` を差し替える（`_gm_game()` は空 = ファイルに触らない） |
+| スコアゲームの終了のリザルト演出（#153） | `game_mode/result_bonus.gd`（終了ボーナスの計算。`ScoreManager.score` は変えない）, `game_mode/result_show.gd`（1 本の時刻表。合図 cue を出すだけ）, `game_mode/game_mode_result_screen.gd`（画面）, `game_mode_controller.gd::_result / _on_result_cue` | `docs/game_mode_spec.md` §3.2。内訳は `RESULT` に入るとき一度だけ確定し、表示の数字（`ResultShow.shown`）とは別。音・シェイク・光は同じ cue の中で始める（個別の Tween・タイマーを足さない）。音の終わりを待たない。演出のために機器へ命令を送らない。値は `game_mode.result_bonus` / `result_show` |
+| スコアゲームの開始前の練習（#149） | `tutorial/gesture_tutorial_steps.gd`（ステップの定義）, `tutorial/gesture_tutorial_controller.gd`（判定。何も送らない）, `tutorial/gesture_tutorial_hud.gd`（画面）, `game_mode/game_mode_controller.gd`（phase `TUTORIAL`、練習カプセル `practice_begin`、スタッフ用 F6 / F7 / F8）, `game_mode/game_mode_tutorial_voice.gd`（#222: 声の取り次ぎ。リンク待ち・依頼・返事） | `docs/game_mode_spec.md` §3.1。練習は手の操作の結果（`GestureControl` の状態・`claw_requested`）を見るだけで、ロボットにも Dial にも自分では送らない。練習カプセルは本番と同じ状態機械を時計なしで動かし、本番は全部を初期化してから始める。声の完了を進行の条件にしない。かんたんモードの 2 ステップ（グー・指 1 本。#200 で指 2 本はなくした）は手の形だけを判定し、練習カプセルは本番の操作で入れる |
+| スコアゲームのかんたんモード（#169） | `game_mode/easy_mode_control.gd`（手の形の意味。main が持つ）, `game_mode/easy_mode_hud.gd`, `main.gd::_tick_easy / _easy_send / easy_problem`, `game_mode_controller.gd::difficulty / easy_on / easy_delivered`, backend `sequence/easy.py`（`EasySequencer`）, `websocket/server.py`（`easy_*`） | `docs/game_mode_spec.md` §3.4。動かすのはバックエンドのシーケンス 1 本（キャッチ → 行き先待ち → 投入までモーションロックを持つ）。ゲームは 1 合図 1 回だけ頼み、`RobotState.easy_mode` の報告に従う。合図の後はパーを見るまで次を数えない。時間切れ（EXPIRED）は動かさず・開かず・ABORT も送らない。投入の完了は Dial の受取ではない（模擬どうしのときだけ模擬カプセル）。実機の値（Dial 1 の XY、キャッチと投入の高さ。#200: 行き先は Dial 1 だけ）は `calibration.json#easy_dials`（校正タブの 8 で記録・確認、次の起動でも使う、Z を測り直したら高さは無効）。実機のキャッチの設定は測った値だけから組み立て（`real_catch_params`）、機体の事実でない値は `game_mode.easy.real`。`auto_catch.real` は使わない。推測で埋めない。実機未検証 |
 | 勉強モード（#86） | `study_mode/study_mode_controller.gd`（体験の状態機械）, `study_mode/study_services.gd`（Mock / Jev / AI / ロボットの窓口）, `ui/study_hud.gd`, backend `study_mode/`・`homework/approach.py`（段階撮影）・`sequence/cleanup.py` | `docs/study_mode.md`。体験の状態は RobotState と別。動きはバックエンドのシーケンス 1 本（モーションロック）かゲーム内 Mock だけ、JOG は送らない。`study_mode.height.real` / `cleanup.real` は実機で測って `confirmed` を立てるまで null（推測で埋めない）。config の `demo.source` は simulated / camera だけで、ロボットは start.sh がつないだもの（#92: simulated は実機を動かさない） |
+| スコアゲーム（#138、タイトルの 3） | `game_mode/game_mode_controller.gd`（時計・Dial の状態機械・例外。#200: ポータルは左の Dial 1 だけで、`SIDES` は `["left"]`。Dial 2 には何も送らない）, `game_mode/score_manager.gd`, `game_mode/pinball_field.gd`（盤面。カプセルだけ Godot の RigidBody2D）, `game_mode/pinball_field_art.gd`・`game_mode_backdrop.gd`（絵。640×360 のキャンバス `pixel_view` に描き 2 倍で映す = UFO と同じドット。物理の状態を読むだけ）, `game_mode/game_mode_vfx.gd`, `game_mode/mock_dial_hub.gd` / `backend_dial_hub.gd`（機器の窓口）, backend `devicehub/service.py::mock_ball` | `docs/game_mode_spec.md`（仕様の正本）。体験の状態は RobotState と別で、クレーンに何も送らない（画面の UFO は絵で、アームの位置を読まない）。機器へは `GameModeDevices` 経由だけ。`RELEASE_BALL` はカプセル 1 個に 1 回で、失敗・通信断のあとに自動で送り直さない（FAULT）。`RELEASE_DONE` は排出の証明ではない。光（イルミ・Dial の LED）は失敗しても進む。Dial の LED は UFO-DeviceHub の `docs/game-mode-interface.md` の名前付きアニメーション（`LED_ANIMATIONS`）。数値は調整値。実機未検証 |
 | 学習支援 AI（#104） | backend `study/tutor_adapter.py`（provider `tutor`）, `study_mode/navigation.py`（ずれ → mm、範囲の確認、XY → u, v）, `study_mode/explain.py::navigate_of`, `websocket/server.py::_homework_navigate`, `study_services.gd::navigate_help`, `study_mode_controller.gd`（`MAX_NAV`）, `tools/check_tutor_api.py`, `tools/calibrate_focus.py` | `docs/study_mode.md` §8。解説だけ（`study.explain_provider`）。`homework_navigate` は動かさず u, v を返すだけで、動かすのは既存の段階撮影。60 mm・2 回・アームが戻ってから・Space で取り消し。トークン・証明書は `config/secrets/`（Git に入れない）、先端カメラの校正は `calibration.json` の `focus_camera`。実機未検証 |
 | USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
-| テスト | `game/tests/run_tests.gd`, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
+| テスト | `game/tests/run_tests.gd`（実行順）と `game/tests/test_*.gd`（分野ごと）, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
 
 パスの省略: ゲーム側は `game/scripts/`、バックエンド側（`serial_service/` など）は `backend/src/corexy_ufo_backend/` からの相対。
 
@@ -90,7 +96,7 @@ description: >
 3. ソルバーを変えるなら伸びなし・UFO がロープ長を超えない・減衰・性能のテストを全部通す。詳細は [rope-physics.md](references/rope-physics.md)。
 
 ### C. 「実機の Z 軸と同期して」
-1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = `z_zero` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
+1. 3 つの層を混同しない: **ゲームの Z 単位**（0..100、`z_up_is_positive`）、**サーボの回転方向**（`z_sign`）、**基準点**（`z_set top` = アーム最上位、`z_set bottom` = 最下位。ファームウェアに Z ホーミングなし。上下 2 点で `z_counts_per_unit`・`z_sign` を実測し `config/calibration.json` の `z` に保存、設定値より優先）。
 2. ゲーム側の逆マッピング（`rope_length_for_z`）は正しい前提で触らない。ずれは backend の換算（`z_sign`, `z_counts_per_unit`）か基準設定の手順で直す。
 3. 実機での確認が必要（§5）。手順は `docs/HANDOFF.md` §6。詳細は [robot-protocol.md](references/robot-protocol.md) §3。
 
@@ -119,7 +125,9 @@ description: >
 | 表情が変わらない | `manual_expression` 固定、mood の優先順位（panic > mood）、`_last_expr_shown` | デバッグパネル Character を `(auto)` に戻す |
 | 実機モードで ERROR から戻らない（驚き顔のまま、望遠鏡が出ない） | `GameState` は実機が正常な状態を報告したときか `error_cleared` で ERROR を抜ける。実機の状態が変わらないと残る | デバッグパネルの game= を見る。[robot-protocol.md](references/robot-protocol.md) §5 |
 | ▲ / ▼ を押しても巻き上げが動かない・途中で止まる（エラーなし） | 巻き上げサーボだけ電源が切れて 1 回転モードに戻った（`SERVO_STATUS` が `tracking=YES limits=0/4095`）。ファームウェアの `beginJog` はこれを見ない | `robot_state.z_servo_reset`。新ファームウェア（CoreXY_UFO #11、`tracking=LOST`）なら `z_servo_jog_recovers` が立ち、▲ / ▼ を押せば `JOG servo ... tracking=RESET` で戻る。旧ファームウェアはデバッグパネル「巻き上げサーボを復帰」（`z_servo_recover`）。どちらも点を記録し直す。`docs/HANDOFF_FIRMWARE_Z_SERVO.md` |
-| `move_z` が NACK になる | Z の点（`z_set top` / `bottom`、`z_zero`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
+| W / S（や爪のキー）が無反応、ログに `JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)` | Core2 だけが再起動（USB の挿し直しなど）して、サーボは電源が入ったまま多回転・トルク OFF。重みでドラムが最後の goal から 5 カウント超ずれると、ファームウェアが回転数を決められず拒否する（CoreXY_UFO `StsServoBus::enableTracking`） | `robot_state.z_servo_power_cycle` / `arm_servo_power_cycle`（#163）。そのサーボの電源を入れ直す（`SERVO_STATUS` が `limits=0/4095` に戻れば解除）。Z の点を記録し直す |
+| `move_z` が NACK になる | Z の点（`z_set top` / `bottom`）を記録していない。ファームウェアの再起動・再接続でも消える（意図的） | ログの `Z reference not set` |
+| 起動やテストで `Parse Error: Identifier "…" not declared in the current scope`、ヘッドレスのテストが終わらない | `class_name` を持つスクリプトが増えたコミットを取り込んだ後で、Git に入らないキャッシュ `game/.godot/global_script_class_cache.cfg` が古い（Godot は実行時に作り直さない） | `godot --headless --path game --import`。`./start.sh` と `tools/verify.sh` は起動前に `tools/godot_refresh.sh` で作り直す（#228）。`godot` を直接起動するときは手で |
 | 新しいスプライトが出ない | `--no-sync` で生成した、手で `assets/` だけ編集した、新しいファイルの `.import` がない | `assets: game/assets matches assets/` テスト。`godot --headless --path game --import` |
 | ポーズのスピード線・汗が出ない / ずれる | `action_effects` が無い・セル数が `action_poses` と違う、`show_pose_effects=false` | `metadata: action_effects aligned 1:1`、`pose fx:` テスト |
 | perf テストが 2 ms に近い | 初回起動のばらつき | 再実行する。安定して遅い場合のみ調べる |
@@ -139,12 +147,13 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 116 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 525 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
-#   クリーンなチェックアウトでは先に: godot --headless --path game --import
+#   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
+#   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 150 件）
+# Python バックエンド（基準 527 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 
@@ -169,6 +178,6 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 | HUD・メニュー | `game-ui-ux`, `godot-ui-control` | デバッグパネルはコードで構築（`debug_ui.gd`）。プレイ画面にクレーンアームを描かない |
 | 性能 | `performance-optimization` | `physics_usec`、`--capture` の FPS で計測してから直す |
 | ピクセル VFX（pixelfx） | `pixelfx-vfx`（このリポジトリ専用） | カタログ → `tools/build_vfx.py` → `VFXManager.spawn_fx`。場面は `vfx_director.gd` |
-| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける |
+| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（移動・上昇・下降、`main.gd::motion_intensities` の強さで鳴らす）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける。スコアゲームの音は `game_mode/game_mode_sounds.gd`（Kenney の CC0 のファイル + 合成音のフォールバック、`assets/audio/manifest.json`）とバス `ui/audio_buses.gd`。出典は `docs/audio_sources.md`。音源を足すときは配布元でライセンスを確かめ、マニフェストと文書に記録する（確認できないものは入れない） |
 | カメラ | `camera-systems` | 基本は不要。固定カメラの投影（`origin_px`）を壊す追従カメラを入れない |
 | どれか分からない | `router` | このスキルを読んだ後に使う |
