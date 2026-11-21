@@ -43,7 +43,7 @@ from .locate import (LOCATE_SYSTEM_PROMPT, LocateError, LocateParams, agrees, ce
                      jpeg_size, locate_prompt, parse_answer)
 from .progress import STALL_MIN_GAIN, STALL_S, ProgressTracker, build_input, parse
 from .questions import add_questions, parse_questions
-from .sheet_watch import answers_from_sheet, locate_in_sheet, questions_from_sheet, reading_from_sheet
+from .sheet_watch import answers_from_sheet, locate_in_sheet, questions_from_sheet, reading_from_sheet, worksheet_numbers
 from .speech import SpeechError, SpeechService
 from ..study_mode.explain import (EXPLAIN_SYSTEM_PROMPT, ExplainError, compare_with_known, explain_prompt,
                                   fallback_explanation, parse_explanation, split_speech)
@@ -476,7 +476,8 @@ class HomeworkService:
         s.fatal_in_row = 0
         s.count += 1
         ws = s.worksheet or {}
-        reading = reading_from_sheet(res.problems, ws)
+        # #237: a real print has its own problems: every one the reader saw (not the sample sheet's)
+        reading = reading_from_sheet(res.problems, None)
         gains = s.tracker.gains
         smoothed = s.tracker.add(s.elapsed(), reading)
         if s.tracker.gains != gains or (s.before_frame is None and not reading.held):
@@ -485,8 +486,8 @@ class HomeworkService:
                 "held_reason": reading.held_reason, "visible_prob": reading.visible_prob,
                 "occluded_prob": None, "top_level_prob": None,
                 "latency_ms": round((time.monotonic() - t0) * 1000), "source": "sheet", **s.summary(),
-                "worksheet_id": ws.get("worksheet_id", ""), "questions": questions_from_sheet(res.problems, ws),
-                "answers": answers_from_sheet(res.problems, ws)}
+                "worksheet_id": ws.get("worksheet_id", ""), "questions": questions_from_sheet(res.problems, None),
+                "answers": answers_from_sheet(res.problems, None), "problem_numbers": worksheet_numbers(None, res.problems)}
         await emit({"type": "homework_progress", "request_id": request_id, "data": data})
 
     # ------------------------------------------------------------------ advice
@@ -573,7 +574,7 @@ class HomeworkService:
             if ws is None:
                 raise ValueError("kind problem needs a worksheet_id")
             try:
-                prob = WorksheetCatalog.problem(ws, int(problem))
+                prob = self._problem(ws, int(problem))
             except (WorksheetError, TypeError, ValueError) as e:
                 raise ValueError(str(e)) from e
             target = {"worksheet": ws, "problem": prob}
@@ -626,6 +627,16 @@ class HomeworkService:
             "box_kind": found["which"], "partial": found["partial"],
             "problem_number": number, "worksheet_id": ws["worksheet_id"]}
         await emit({"type": "homework_locate_result", "request_id": request_id, "data": data})
+
+    def _problem(self, ws: dict, number: int, known_only: bool = False) -> dict | None:
+        """The sample sheet's problem; with the local reader (#237) a real print's problem need not
+        be on it: then a bare one ({number}) to locate, or None (nothing known to compare with)."""
+        try:
+            return WorksheetCatalog.problem(ws, number)
+        except WorksheetError:
+            if not self.study_local or number < 1:
+                raise
+            return None if known_only else {"number": number, "prompt": "", "description_en": f"problem {number}"}
 
     @staticmethod
     def _target_text(target: dict | None) -> str:
@@ -767,7 +778,7 @@ class HomeworkService:
         if worksheet_id:
             ws = self.worksheet(worksheet_id)
             try:
-                known = WorksheetCatalog.problem(ws, int(problem))
+                known = self._problem(ws, int(problem), known_only=True)
             except (WorksheetError, TypeError, ValueError) as e:
                 raise ValueError(str(e)) from e
             grade_label = grade_label or str(ws.get("grade_label", ""))

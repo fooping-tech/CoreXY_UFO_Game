@@ -49,8 +49,9 @@ def test_the_progress_counts_written_problems_and_holds_when_nothing_was_read():
 
 
 def test_answers_never_carry_the_right_answer():
-    a = answers_from_sheet([prob(1, "incorrect"), prob(8, "correct")], WS)
-    assert a == [{"number": 1, "answer_status": "incorrect", "student_answer": "5"}]
+    a = answers_from_sheet([prob(1, "incorrect"), prob(8, "correct"), prob(2, "correct", visible="partial")], WS)
+    assert a == [{"number": 1, "answer_status": "incorrect", "student_answer": "5", "visible": "full"},
+                 {"number": 2, "answer_status": "correct", "student_answer": "5", "visible": "partial"}]
 
 
 def test_locate_takes_the_answer_box_else_the_problem_box():
@@ -221,3 +222,28 @@ async def test_the_hello_says_which(monkeypatch):
         finally:
             await srv.stop()
             await svc.close()
+
+
+async def test_a_real_print_has_its_own_problems():
+    """#237: the watch reports every problem the reader saw (not the sample sheet's 1..3), and a
+    problem that is not on the sample sheet can still be located."""
+    reader = FakeReader([prob(3, "correct"), prob(4, "blank"), prob(5, "partial", visible="partial")])
+    svc = local_service(reader)
+    sent = []
+
+    async def emit(m):
+        sent.append(m)
+    await svc.start("s", "mon-elem_1-01")
+    await svc.frame("s", "r", B64, emit)
+    await svc.sessions["s"].task
+    d = sent[-1]["data"]
+    assert [q["number"] for q in d["questions"]] == [3, 4, 5] and d["problem_numbers"] == [3, 4, 5]
+    assert [q["filled_prob"] for q in d["questions"]] == [0.95, 0.05, None]
+    assert [a["visible"] for a in d["answers"]] == ["full", "full", "partial"]
+    reader.problems = [prob(5, "blank", answer_box=(100, 800, 300, 900))]
+    await svc.locate("s", "l", "problem", B64, emit, problem=5, worksheet_id="mon-elem_1-01")
+    await svc._locate_task
+    assert sent[-1]["type"] == "homework_locate_result" and sent[-1]["data"]["problem_number"] == 5
+    assert questions_from_sheet([prob(7, "correct"), prob(2, "blank")], None) == [
+        {"number": 2, "filled_prob": 0.05}, {"number": 7, "filled_prob": 0.95}]
+    await svc.close()

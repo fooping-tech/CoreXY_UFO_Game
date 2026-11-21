@@ -336,7 +336,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	GameState.event.connect(on_event)
 	ctl.start()
 	var intro_ok := ctl.state == "INTRO" and hud.visible and ctl.speech.current == "そろそろ勉強の時間だよ！" \
-		and str(hud._check_rows[0][1].text) == "さんすうプリント"
+		and not hud.has_method("_build_checklist")  # #237: no list at the right any more
 	_study_pump(game, 15.0, func(): return ctl.state == "WAITING_FOR_WORKSHEET")
 	ctl.change_grade(-1)  # 小学2年
 	var grade_ok := ctl.grade_label() == "小学2年"
@@ -366,39 +366,90 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	_ok(help_ok and moving and halted and order_ok and went_down and explained_ok,
 		"study mock: HELP looks at problem 3 with the 10cm close-up, explains, and the jog is held meanwhile",
 		"%s %s %s %s %s %s %s" % [help_ok, moving, halted, captures, went_down, explained_ok, ctl.state])
-	# complete: only after stable readings, celebrated once
+	# #237: every problem written -> the answer check with UFOくん (not the celebration yet)
 	ctl.handle_key(KEY_2)
 	ctl.handle_key(KEY_3)
 	_study_pump(game, 2.0)
 	var not_early := ctl.celebrate_count == 0
 	var celebrations_before: int = game.vfx.celebrations
-	_study_pump(game, 10.0, func(): return ctl.state == "CELEBRATION")
-	var celebrate_ok: bool = ctl.state == "CELEBRATION" and ctl.celebrate_count == 1 and events.has("study_complete") \
-		and game.vfx.celebrations == celebrations_before + 1 and game._mood() == "SUCCESS"
-	ctl._on_reading([0.95, 0.95, 0.95], false, "")
-	ctl._check_complete()
-	ctl.advance()  # a stray Enter during the celebration
-	var once_ok := ctl.celebrate_count == 1
+	_study_pump(game, 12.0, func(): return ctl.state == "ANSWER_CHECK_READY")
+	var check_ok: bool = ctl.state == "ANSWER_CHECK_READY" and events.has("study_complete") and ctl.celebrate_count == 0
 	hud.refresh()
-	var banner_ok := hud._banner.visible and str(hud._banner.text) == "宿題完了！！" and str(hud._check_rows[0][0].text) == "☑"
-	_ok(not_early and celebrate_ok and once_ok and banner_ok, "study mock: the celebration fires once, after the 3 problems are stably filled",
-		"%s %s %s %s" % [not_early, celebrate_ok, once_ok, banner_ok])
-	# the tidy-up: waits for a grown-up to confirm the grip, then the game is unlocked
+	var mission_now: bool = hud.sheet.answer_marks.is_empty() and hud._pop.text == "こたえあわせ！"
+	_ok(not_early and check_ok and mission_now, "study mock: the 3 problems written start the answer check, not the celebration",
+		"%s %s %s %s" % [not_early, check_ok, mission_now, ctl.state])
+	# one reading, shown one problem at a time from 1 (the simulated reading: 1 right, 2 to look at, 3 right)
+	var order: Array = []
+	var on_shown := func(e: String, d: Dictionary):
+		if e in ["study_answer_correct", "study_answer_review"]:
+			order.append([int(d.number), e])
+	GameState.event.connect(on_shown)
+	var mids: Array = []  # a lambda cannot assign an outer local: collect instead
+	_study_pump(game, 20.0, func():
+		if ctl.state == "GRADING_QUESTION" and ctl.shown.size() == 1 and ctl.shown.has(1):
+			mids.append(true)
+		return ctl.state == "REVIEW_SUMMARY")
+	var mid := not mids.is_empty()
+	hud.refresh()
+	var am: Dictionary = hud.sheet.answer_marks
+	var chips := [str(am.get(1, {}).get("verdict", "")), str(am.get(2, {}).get("verdict", "")), str(am.get(3, {}).get("verdict", ""))]
+	var graded_ok: bool = ctl.state == "REVIEW_SUMMARY" and mid and order == [[1, "study_answer_correct"], [2, "study_answer_review"],
+		[3, "study_answer_correct"]] and chips == ["correct", "review", "correct"] and hud.sheet.mark_point(1) != Vector2.ZERO \
+		and ctl.energy() == 2 and hud._energy.text == "⚡ × 2" and hud._count.text == "せいかい 2 / 3" \
+		and ctl.adult_prompt.contains("R") and ctl.speech.current.contains("2ばんは")
+	_ok(graded_ok, "study mock: the reading is shown from problem 1, one at a time; ○ for right, ？ (never a cross) and a hint to look at again",
+		str([ctl.state, mid, order, chips, ctl.energy(), ctl.speech.current]))
+	# rewritten: R reads again; only the one to look at is shown again; the reward is never given twice
+	ctl.handle_key(KEY_R)
+	var rescanning := ctl.state == "RESCAN" and ctl.adult_prompt == ""
+	_study_pump(game, 20.0, func(): return ctl.state == "REWARD_REVEAL")
+	hud.refresh()
+	var reward_ok: bool = ctl.state == "REWARD_REVEAL" and ctl.grading.all_correct() and order.size() == 4 and order[3] == [2, "study_answer_correct"] \
+		and int(ctl.reward.time_bonus_s) == 30 and int(ctl.reward.power_tickets) == 1 and bool(ctl.reward.perfect) \
+		and ctl.celebrate_count == 1 and game.vfx.celebrations == celebrations_before + 1 and game._mood() == "SUCCESS" \
+		and hud._banner.text == "PERFECT!" and hud._sub_banner.text.contains("TIME +30") and hud._sub_banner.text.contains("POWER TICKET ×1")
+	GameState.event.disconnect(on_shown)
+	_ok(rescanning and reward_ok, "study mock: R reads the rewritten sheet again; all right: +30 s (the cap), a ticket, PERFECT! once",
+		str([rescanning, ctl.state, order, ctl.reward, hud._banner.text, hud._sub_banner.text]))
+	# the ticket: a roulette goes round the powers and stops on one (here DOUBLE SCORE), once
+	ctl.roulette_force = "double"
+	_study_pump(game, 20.0, func(): return ctl.state == "POWERUP_SELECT")
+	hud.refresh()
+	var select_shown: bool = hud._powers.visible and ctl.roulette_spinning
+	ctl.handle_key(KEY_1)  # nobody chooses: the keys do nothing here
+	var lit: Array = []
+	_study_pump(game, 10.0, func():
+		if ctl.roulette_index >= 0 and (lit.is_empty() or lit[-1] != ctl.roulette_index):
+			lit.append(ctl.roulette_index)
+		return not ctl.selected_powerups.is_empty())
+	var picked: bool = ctl.selected_powerups == ["double"] and ctl.reward.selected_powerups == ["double"] \
+		and lit.size() >= 8 and 0 in lit and 1 in lit and 2 in lit and lit[-1] == 1 and not ctl.roulette_spinning
+	_ok(select_shown and picked, "study mock: the power roulette goes round, slows down and stops on one power (no key picks it)",
+		str([select_shown, lit.size(), ctl.selected_powerups]))
+	# the tidy-up: waits for a grown-up to confirm the grip, then the game is ready with the reward
 	_study_pump(game, 20.0, func(): return ctl.adult_prompt != "")
 	var frozen := ctl.elapsed_s()
 	var grip_wait := ctl.state == "CLEANUP" and ctl.adult_prompt.contains("つかめていたら") and hud._time_panel.visible
 	_study_pump(game, 3.0)
 	var still := ctl.state == "CLEANUP" and is_equal_approx(ctl.elapsed_s(), frozen)  # never by itself
 	ctl.advance()
-	_study_pump(game, 40.0, func(): return ctl.state == "GAME_UNLOCKED")
+	_study_pump(game, 40.0, func(): return ctl.state == "GAME_READY_WITH_REWARD")
 	hud.refresh()
-	var unlocked := ctl.state == "GAME_UNLOCKED" and ctl.cleanup_ok and str(hud._check_rows[2][0].text) == "☑" \
-		and hud._play.visible and str(hud._banner.text) == "MISSION COMPLETE!" and hud._sub_banner.text.begins_with("GAME MODE UNLOCKED!")
-	_ok(grip_wait and still and unlocked, "study mock: the tidy-up waits for the grip confirmation, then MISSION COMPLETE",
-		"%s %s %s %s" % [grip_wait, still, unlocked, ctl.state])
+	var unlocked: bool = ctl.state == "GAME_READY_WITH_REWARD" and ctl.cleanup_ok \
+		and hud._play.visible and hud._banner.text == "STUDY POWER LOADED!" and hud._sub_banner.text.contains("TIME +30") \
+		and hud._sub_banner.text.contains("DOUBLE SCORE READY")
+	_ok(grip_wait and still and unlocked, "study mock: the tidy-up waits for the grip confirmation, then STUDY POWER LOADED!",
+		"%s %s %s %s %s" % [grip_wait, still, unlocked, ctl.state, hud._sub_banner.text])
+	var handed := []
+	var on_reward := func(e: String, d: Dictionary):
+		if e == "study_reward":
+			handed.append(d)
+	GameState.event.connect(on_reward)
 	ctl.play_game()
-	_ok(ctl.state == "OFF" and not hud.visible and game._mood() != "SUCCESS" and not ctl.blocks_manual_control(),
-		"study mock: 'ゲームで遊ぶ' returns to the claw game")
+	GameState.event.disconnect(on_reward)
+	_ok(ctl.state == "OFF" and not hud.visible and game._mood() != "SUCCESS" and not ctl.blocks_manual_control()
+		and handed.size() == 1 and ctl.last_reward.selected_powerups == ["double"] and int(ctl.last_reward.time_bonus_s) == 30,
+		"study mock: 'ゲームで遊ぶ' hands the reward over once and leaves the study mode", str(handed))
 	GameState.event.disconnect(on_event)
 	remove_child(game)
 	game.free()
@@ -442,14 +493,17 @@ func _test_study_mode_failures(rs: Node) -> void:
 		"study: without VOICEVOX the lines are only shown, for a reading time")
 	# the tidy-up fails: told apart from the unlock, needs a grown-up, then unlocks without the check
 	ctl.services.inject_fail = "cleanup"
+	ctl.services.demo_results = ["correct", "correct", "correct"]
 	ctl.tracker.confirm_complete()
 	ctl._check_complete()
+	_study_pump(game, 40.0, func(): return ctl.state == "POWERUP_SELECT")
+	ctl.choose_powerup("speed")
 	_study_pump(game, 30.0, func(): return ctl.state == "CLEANUP_FAILED")
 	game.study_hud.refresh()
 	var failed_ok: bool = ctl.state == "CLEANUP_FAILED" and not ctl.cleanup_ok and ctl.adult_prompt != "" \
-		and str(game.study_hud._check_rows[2][0].text) == "☒"
+		and game.study_hud._banner.visible == false
 	ctl.advance()
-	_ok(failed_ok and ctl.state == "GAME_UNLOCKED" and not ctl.cleanup_ok and game.study_hud._sub_banner.text.contains("大人"),
+	_ok(failed_ok and ctl.state == "GAME_READY_WITH_REWARD" and not ctl.cleanup_ok and game.study_hud._sub_banner.text.contains("大人"),
 		"study: a failed tidy-up is not the unlock (a grown-up confirms, the tidy-up stays unchecked)",
 		"%s %s" % [failed_ok, ctl.state])
 	# #92: the robot is the one start.sh connected; the config only says simulated / camera
@@ -689,11 +743,18 @@ func _test_study_mode_without_tidy_up(rs: Node) -> void:
 	ctl._check_complete()
 	var seen: Array[String] = []
 	ctl.state_changed.connect(func(_p, c): seen.append(c))
-	_study_pump(game, 30.0, func(): return ctl.state == "GAME_UNLOCKED")
+	_study_pump(game, 60.0, func():
+		if ctl.state == "REVIEW_SUMMARY":
+			ctl.advance()  # go on without rewriting: what to look at again stays, nothing is taken away
+		if ctl.state == "POWERUP_SELECT":
+			ctl.choose_powerup("multiball")
+		return ctl.state == "GAME_READY_WITH_REWARD")
 	game.study_hud.refresh()
-	_ok(ctl.state == "GAME_UNLOCKED" and not "CLEANUP" in seen and not ctl.services.motion_active()
-		and game.study_hud._check_rows[2][1].text.contains("今はなし") and not game.study_hud._sub_banner.text.contains("お片付け"),
-		"study: with the tidy-up off the game unlocks after the celebration, no arm motion", str(seen))
+	_ok(ctl.state == "GAME_READY_WITH_REWARD" and not "CLEANUP" in seen and not ctl.services.motion_active()
+		and "REVIEW_SUMMARY" in seen and int(ctl.reward.confirmed_correct) == 2 and int(ctl.reward.time_bonus_s) == 20
+		and ctl.reward.needs_review == [2] and int(ctl.reward.power_tickets) == 1
+		and not game.study_hud._sub_banner.text.contains("お片付け"),
+		"study: with the tidy-up off the game is ready after the reward, no arm motion; a problem left to look at keeps the rest", str(seen))
 	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
 	ctl.stop()
 	remove_child(game)
@@ -942,12 +1003,12 @@ func _test_study_voice(rs: Node) -> void:
 	ctl.handle_key_release(KEY_V)
 	var stop_rid := str(sent[-1].get("request_id", ""))
 	var hearing: bool = vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop"
-	hw._on_message({"type": "homework_heard", "request_id": stop_rid, "data": {"text": "3ばんが わからない"}})
+	hw._on_message({"type": "homework_heard", "request_id": stop_rid, "data": {"text": "ここが わからない"}})
 	var talk: Dictionary = sent[-1]
-	var asked: bool = talk.type == "homework_talk" and talk.data.text == "3ばんが わからない" and int(talk.data.target_problem) == 0 \
+	var asked: bool = talk.type == "homework_talk" and talk.data.text == "ここが わからない" and int(talk.data.target_problem) == 0 \
 		and str(talk.data.image_jpeg_base64) != "" and vo.state == StudyVoice.THINKING
 	hud.refresh()
-	var shown: bool = hud._voice_bar.visible and hud._voice_text.text.contains("「3ばんが わからない」") \
+	var shown: bool = hud._voice_bar.visible and hud._voice_text.text.contains("「ここが わからない」") \
 		and hud._voice_text.text.contains("かんがえちゅう")
 	_ok(listening and hearing and asked and shown,
 		"study voice: held V listens, the release writes it down, the words and the worksheet go to the tutor",
@@ -961,7 +1022,7 @@ func _test_study_voice(rs: Node) -> void:
 		"action": "talk", "target_problem": 3, "need_recapture": false}})
 	var queued: Array = ctl.speech._queue.map(func(q): return q.text)
 	var spoken: bool = at_once and queued == ["5こから2こ とると？", "のこりを かぞえてね。"] and vo.state == StudyVoice.IDLE \
-		and vo.target_problem == 3 and vo.history == [{"role": "user", "content": "3ばんが わからない"},
+		and vo.target_problem == 3 and vo.history == [{"role": "user", "content": "ここが わからない"},
 			{"role": "assistant", "content": "いっしょに かんがえよう。5こから2こ とると？のこりを かぞえてね。"}]
 	var busy_why := vo.blocker()
 	ctl.speech.clear()
@@ -1035,3 +1096,337 @@ class _VoiceLinkSpy:
 	func send_aux(msg: Dictionary) -> Error:
 		sent.append(msg)
 		return OK
+
+
+## #237: the answer check's rules (StudyGrading) and its failures.
+func _test_study_answer_check(rs: Node) -> void:
+	var g := StudyGrading.new()
+	g.reset([1, 2, 3])
+	_ok(StudyGrading.classify("correct") == "correct" and StudyGrading.classify("incorrect") == "review"
+		and StudyGrading.classify("partial") == "review" and StudyGrading.classify("unreadable") == "unclear"
+		and StudyGrading.classify("blank") == "unclear" and StudyGrading.classify("correct", "partial") == "unclear"
+		and StudyGrading.classify("") == "unclear",
+		"answer check: right = correct, wrong or half = look again, unreadable / cut off / missing = unclear (never wrong)")
+	var first := g.apply([{"number": 1, "answer_status": "correct", "student_answer": "12"},
+		{"number": 2, "answer_status": "incorrect"}])
+	var r1 := g.reward("ws")
+	var again := g.apply([{"number": 1, "answer_status": "incorrect"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "correct"}])
+	var r2 := g.reward("ws")
+	var third := g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "correct"}])
+	_ok(first == [1, 2, 3] and g.verdicts[1] == "correct" and r1.confirmed_correct == 1 and r1.unclear == [3]
+		and again == [2, 3] and r2.confirmed_correct == 3 and third.is_empty() and g.reward("ws").confirmed_correct == 3
+		and not r2.has("answers") and not r2.has("student_answer") and g.answers[1] == "12",
+		"answer check: a right problem stays right, a rescan shows only what changed, the reward never counts twice (and has no answers)",
+		str([first, again, third, r2]))
+	g.reset([1, 2, 3, 4])
+	g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "correct"}, {"number": 4, "answer_status": "correct"}])
+	var capped := g.time_bonus_s() == 30 and g.power_tickets() == 0
+	g.checked = true
+	g.used_help = true
+	var r := g.reward("ws")
+	_ok(capped and r.power_tickets == 1 and r.time_bonus_s == 30 and r.perfect and r.used_help,
+		"answer check: +10 s a right problem up to +30 s, a ticket once all were checked; a HELP takes nothing away", str(r))
+	g.reset([1, 2])
+	g.apply([{"number": 1, "answer_status": "correct"}])
+	_ok(g.fail_all() == [2] and g.verdicts[1] == "correct" and g.verdicts[2] == "unclear" and g.count("review") == 0,
+		"answer check: a failed reading leaves only 'unclear', never a wrong one, and keeps what was right")
+
+	# review on #241: the camera path keeps "cut off" (the watch's answers carry visible)
+	g.reset([1, 2])
+	g.apply([{"number": 1, "answer_status": "correct", "student_answer": "3", "visible": "partial"},
+		{"number": 2, "answer_status": "incorrect", "student_answer": "4", "visible": "partial"}])
+	_ok(g.verdicts[1] == "unclear" and g.verdicts[2] == "unclear" and g.time_bonus_s() == 0,
+		"answer check: a cut-off problem read by the camera is never graded (no ○, no reward)", str(g.verdicts))
+	# #237: the moments sound full: the game's sound files layered with the synthesised ones
+	var snd := StudySounds.new()
+	add_child(snd)
+	snd.enabled = false
+	snd.cue("correct")
+	var layered: bool = snd.last_cue == "correct" and snd.last_played == "gem" and snd._files.has("star") \
+		and snd._files.has("jackpot") and snd._streams.has("drum") and snd._streams.has("boom")
+	for c in StudySounds.CUES:
+		for k in StudySounds.CUES[c]:
+			var got := snd.pick(str(k))
+			layered = layered and (snd._files.has(got) or snd._streams.has(got))
+	snd.music_play("study")  # tests never load this machine's music files: silence, no error
+	var game_level := float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB
+	_ok(layered and snd.music_track == "" and snd.music_files == {"study": "study.mp3", "check": "study_check.mp3"}
+		and is_equal_approx(snd.music_volume_db("study"), game_level - 9.0) and is_equal_approx(snd.music_volume_db("check"), game_level - 4.0),
+		"answer check: every cue's sounds exist (files and synthesised); the music: study.mp3, then study_check.mp3 from the check (at the score game's level)", str(snd._files.keys()))
+	snd.free()
+	# the reading fails in the study mode: unclear, a hint to look again, and the story goes on
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.services.inject_fail = "grade"
+	ctl.tracker.confirm_complete()
+	ctl._check_complete()
+	_study_pump(game, 30.0, func(): return ctl.state == "REVIEW_SUMMARY")
+	var unclear_ok: bool = ctl.state == "REVIEW_SUMMARY" and ctl.grading.count("unclear") == 3 and ctl.grading.count("review") == 0 \
+		and ctl.notice.contains("読めなかった")
+	ctl.advance()  # go on: nothing right, but checked: the ticket, no time
+	_study_pump(game, 20.0, func(): return ctl.state == "POWERUP_SELECT")
+	var no_time: bool = int(ctl.reward.time_bonus_s) == 0 and int(ctl.reward.power_tickets) == 1 and ctl.reward.unclear == [1, 2, 3]
+	# fingers pick nothing: the roulette does (by chance; any of the three)
+	ctl.hand_tick("three", 1000.0)
+	ctl.hand_tick("three", 1000.0 + ctl.hand_hold_ms + 10.0)
+	var not_by_hand := ctl.selected_powerups.is_empty()
+	_study_pump(game, 10.0, func(): return not ctl.selected_powerups.is_empty())
+	_ok(unclear_ok and no_time and not_by_hand and ctl.selected_powerups.size() == 1
+		and ctl.selected_powerups[0] in ["speed", "double", "multiball"],
+		"answer check: a failed reading is 'unclear' (no verdict), the check goes on; the roulette picks a power",
+		str([unclear_ok, no_time, ctl.reward, ctl.selected_powerups]))
+	# F6 walks through every new state without stopping
+	ctl.start()
+	var seen: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): seen.append(c))
+	for i in 20:
+		if ctl.state == "GAME_READY_WITH_REWARD":
+			break
+		ctl.debug_skip()
+		_study_pump(game, 0.2)
+	var walked := true
+	for st in ["ANSWER_CHECK_READY", "SHEET_SCANNING", "GRADING_QUESTION", "REWARD_CALCULATING", "REWARD_REVEAL",
+			"POWERUP_SELECT", "GAME_READY_WITH_REWARD"]:
+		walked = walked and st in seen
+	_ok(walked and ctl.state == "GAME_READY_WITH_REWARD", "answer check: F6 skips through every state of the check and the reward", str(seen))
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: the problems of a real print come from the reading (any number, any count).
+func _test_study_real_print_problems(rs: Node) -> void:
+	var t := StudyQuestionTracker.new()
+	t.configure({"confirm_readings": 1, "complete_readings": 1})
+	t.reset_numbers([], true)
+	t.add_numbered([{"number": 5, "filled_prob": 0.05}, {"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.5}], false, "", true)
+	var grown := t.numbers == [3, 4, 5] and t.count == 3 and t.is_filled(3) and t.shown_state(4) == "writing"
+	t.add_numbered([{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.95}], false, "", true)
+	var kept := t.numbers == [3, 4, 5] and not t.complete  # 5 not seen this time: still there, not written
+	t.add_numbered([{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.95}, {"number": 5, "filled_prob": 0.95}], false, "", true)
+	var empty := StudyQuestionTracker.new()
+	empty.reset_numbers([], true)
+	empty.add_numbered([], false, "", true)
+	_ok(grown and kept and t.complete and not empty.complete,
+		"real print: the problems are the numbers read (3, 4, 5), a number once seen stays, complete when all are written",
+		str([t.numbers, t.states, t.complete]))
+	var g := StudyGrading.new()
+	g.reset([3, 4])
+	var shown := g.apply([{"number": 4, "answer_status": "correct"}, {"number": 6, "answer_status": "incorrect"}], true)
+	_ok(g.numbers == [3, 4, 6] and shown == [3, 4, 6] and g.verdicts[3] == "unclear" and g.verdicts[6] == "review",
+		"real print: the answer check takes in a problem first read then", str([g.numbers, g.verdicts]))
+
+	# the study mode, camera + local: 5 problems read -> 5 chips; the check reads the cut-out frame once
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	var hud: StudyHud = game.study_hud
+	hw.sheet_settings_path = ""
+	hw.study_local = true
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	hw.worksheet_id = str(ctl.current_worksheet().get("worksheet_id", ""))
+	var qs: Array = []
+	for n in [1, 2, 3, 4, 5]:
+		qs.append({"number": n, "filled_prob": 0.05})
+	sv.watching = true
+	sv.seen = true
+	sv._on_progress({"questions": qs, "held": false, "visible_prob": 1.0,
+		"answers": [{"number": 1, "answer_status": "blank", "student_answer": "", "visible": "full"}]})
+	hud.refresh()
+	var five: bool = ctl.tracker.numbers == [1, 2, 3, 4, 5] and hud._count.text == "宿題 0 / 5 問"
+	# Y on a real print: the problem the child seems stuck on (being written, else not written), never "3" by itself
+	ctl.tracker.confirm_readings = 1
+	ctl.tracker.add_numbered([{"number": 1, "filled_prob": 0.95}, {"number": 2, "filled_prob": 0.95},
+		{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.45}], false, "", true)
+	var stuck_writing := ctl.stuck_problem()
+	ctl.tracker.add_numbered([{"number": 4, "filled_prob": 0.05}], false, "", true)
+	var stuck_empty := ctl.stuck_problem()
+	var all_written := StudyQuestionTracker.new()
+	all_written.configure({"confirm_readings": 1})
+	all_written.reset_numbers([], true)
+	all_written.add_numbered([{"number": 1, "filled_prob": 0.95}], false, "", true)
+	var real_tracker := ctl.tracker
+	ctl.tracker = all_written
+	ctl.request_help()
+	var asked_which: bool = ctl.state == "STUDYING" and ctl.notice.contains("どの問題") and ctl.stuck_problem() == 0
+	ctl.tracker = real_tracker
+	_ok(stuck_writing == 4 and stuck_empty == 4 and asked_which,
+		"real print: Y helps with the problem being written (else the first not written); all written: it asks which, no move",
+		str([stuck_writing, stuck_empty, asked_which, ctl.state, ctl.notice]))
+	ctl.debug_skip()  # to the answer check
+	_study_pump(game, 10.0, func(): return ctl.state in ["SHEET_SCANNING", "GRADING_QUESTION"])
+	# no backend in the test: the reader's answer arrives as sheet_read's ack
+	sv._grade_rid = "g1"
+	game.ws.ack.emit("g1", false, {"reason": "timeout"})  # the link's few seconds: still waiting
+	var waiting: bool = sv._grade_rid == "g1"
+	sv._on_graded_by_reader(true, {"problems": [
+		{"number": 1, "answer_status": "correct", "student_answer": "4", "correct_answer": "4", "visible": "full"},
+		{"number": 2, "answer_status": "incorrect", "student_answer": "7", "correct_answer": "9", "visible": "full"},
+		{"number": 3, "answer_status": "correct", "student_answer": "5", "visible": "partial"},
+		{"number": 4, "answer_status": "correct", "student_answer": "2", "visible": "full"},
+		{"number": 5, "answer_status": "correct", "student_answer": "8", "visible": "full", "answer_box": [100, 800, 300, 900]}]})
+	_study_pump(game, 30.0, func(): return ctl.state == "REVIEW_SUMMARY")
+	hud.refresh()
+	_ok(five and waiting and ctl.grading.numbers == [1, 2, 3, 4, 5] and ctl.grading.count("correct") == 3
+		and ctl.grading.verdicts[3] == "unclear" and ctl.grading.verdicts[2] == "review" and hud.sheet.answer_marks.size() == 5
+		and hud.sheet.mark_boxes.has(5)
+		and not str(ctl.grading.answers).contains("9"),
+		"real print: 5 problems read are 5 problems; the check reads them once and marks them where they are (the right answers never kept)",
+		str([five, waiting, ctl.grading.numbers, ctl.grading.verdicts, ctl.state]))
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: the power items in dots, and the sounds added for the answer check.
+func _test_study_power_items(rs: Node) -> void:
+	var ok := true
+	for kind in ["speed", "double", "multiball", "clock", "ticket", "magnifier"]:
+		var rows: Array = PowerItemArt.SPRITES[kind]
+		ok = ok and rows.size() == PowerItemArt.SIZE
+		for row in rows:
+			ok = ok and str(row).length() == PowerItemArt.SIZE
+			for ch in str(row):
+				ok = ok and (ch == "." or PowerItemArt.PALETTE.has(ch))
+	var all_have := true
+	for pw in StudyModeController.POWERUPS:
+		all_have = all_have and PowerItemArt.SPRITES.has(pw[0])
+	_ok(ok and all_have, "power items: each power-up is a 16 x 16 pixel-art item of known colours")
+	var snd := StudySounds.new()
+	add_child(snd)
+	snd.enabled = false
+	var don_or_stand_in := snd.pick("don|boom")
+	var jan_or_stand_in := snd.pick("jan|fanfare")
+	_ok((don_or_stand_in == "don") == snd._files.has("don") and (jan_or_stand_in == "jan") == snd._files.has("jan")
+		and snd.pick("nothing|tick") == "tick" and "don|boom" in StudySounds.CUES.correct and "jan|fanfare" in StudySounds.CUES.reward,
+		"answer check: don / pico at a right answer and jan as the fanfare when their files are there (else the stand-ins)",
+		str([don_or_stand_in, jan_or_stand_in, snd._files.keys()]))
+	snd.free()
+
+
+## #237: the warm pixel-art room, the "put it here" guide, the found show, the voice's "ユーフォー".
+func _test_study_scenery(rs: Node) -> void:
+	var img := StudyBackdrop.paint()
+	var top := img.get_pixel(StudyBackdrop.W / 2, 2)
+	var desk := img.get_pixel(StudyBackdrop.W / 2, StudyBackdrop.H - 4)
+	_ok(img.get_size() == Vector2i(StudyBackdrop.W, StudyBackdrop.H) and top.r > top.b and top.g > 0.8 and desk.r > desk.b,
+		"study scenery: the background is a warm pixel-art scene (light yellow sky, a wooden desk)", str([top, desk]))
+	_ok(StudyServices.spoken("UFOくん、こんにちは") == "ユーフォーくん、こんにちは" and StudyServices.spoken("ＵＦＯ") == "ユーフォー",
+		"study scenery: the voice says ユーフォー (the bubble keeps UFOくん)")
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	ctl.services.worksheet_wait_s = 999.0
+	game.gesture_hud.hidden_by_study = false
+	ctl.start()
+	hud.refresh()
+	var intro_no_sheet: bool = ctl.state == "INTRO" and not hud.sheet.visible  # no sheet before it is asked for
+	ctl.services.set_mode("camera")
+	ctl.state = "STUDYING"
+	hud.refresh()
+	var camera_no_drawing: bool = not hud.sheet.visible  # no camera here: never the sample sheet's drawing
+	ctl.services.set_mode("simulated")
+	ctl.state = "INTRO"
+	var backdrop: Node2D = game.get_node("StudyBackdrop")
+	ctl.debug_skip()  # waiting for the sheet
+	hud.refresh()
+	var waiting: bool = ctl.state == "WAITING_FOR_WORKSHEET" and hud.sheet.guide and backdrop.visible \
+		and game.gesture_hud.hidden_by_study
+	ctl.services.mark_seen()
+	hud.refresh()
+	var found_ok: bool = ctl.state == "STUDYING" and not hud.sheet.guide and hud._pop.text == "みつけた！" \
+		and ctl.sounds.last_cue == "found"
+	ctl.stop()
+	_ok(intro_no_sheet and camera_no_drawing, "study scenery: no sheet at the start; the camera mode never draws the sample sheet",
+		str([intro_no_sheet, camera_no_drawing]))
+	_ok(waiting and found_ok and not backdrop.visible and not game.gesture_hud.hidden_by_study,
+		"study scenery: 'ここへおいてね！' until the sheet is found, then みつけた！; the warm room and no gesture camera only in the study mode",
+		str([waiting, found_ok, backdrop.visible]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: the reward told line by line, its items got one after another, then the score game by itself.
+func _test_study_reward_show(rs: Node) -> void:
+	var r := {"question_count": 4, "confirmed_correct": 1, "needs_review": [2, 3], "unclear": [4], "time_bonus_s": 10,
+		"power_tickets": 1, "selected_powerups": []}
+	var text := StudyHud.reward_text("REWARD_REVEAL", r)
+	_ok(text == "4もん かくにん\n1もん せいかい　3もん みなおし\nTIME +10\nPOWER TICKET ×1",
+		"study reward: one thing a line (the counts, the TIME, the ticket)", text)
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false
+	ctl.services.demo_results = ["correct", "correct", "correct"]
+	ctl.roulette_force = "speed"
+	ctl.start()
+	for i in 6:
+		if ctl.state == "REWARD_REVEAL":
+			break
+		ctl.debug_skip()
+		_study_pump(game, 0.3)
+	_study_pump(game, 20.0, func(): return ctl.state == "REWARD_REVEAL")
+	var kinds: Array = []
+	_study_pump(game, 8.0, func():
+		hud._process(0.1)  # the HUD's own clock (the pump drives the study mode's)
+		if hud._get_t >= 0.0 and (kinds.is_empty() or kinds[-1] != hud._get_kind):
+			kinds.append(hud._get_kind)
+		return ctl.state != "REWARD_REVEAL")
+	_ok(kinds == ["clock", "ticket"], "study reward: the clock (TIME) is got, then the ticket", str(kinds))
+	_study_pump(game, 30.0, func(): return ctl.state == "GAME_READY_WITH_REWARD")
+	hud.refresh()
+	var counting: bool = hud._play.text.contains("5") or hud._play.text.contains("4")
+	_study_pump(game, 7.0, func(): return ctl.state == "OFF")
+	var to_score: bool = ctl.state == "OFF" and ctl.last_reward.selected_powerups == ["speed"] \
+		and (game.game_mode == null or game.game_mode.active())
+	_ok(counting and to_score, "study reward: 'ゲームで遊ぶ' counts down 5 s, then the score game's title by itself",
+		str([counting, hud._play.text, ctl.state, game.game_mode != null and game.game_mode.active()]))
+	if game.game_mode != null and game.game_mode.active():
+		game.game_mode.close()
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: a problem named by voice ("1ばんが わからない") is looked at (the usual HELP), not only talked about.
+func _test_study_voice_goes_to_look(rs: Node) -> void:
+	var cases := {"1ばんが わからない": 1, "３番おしえて": 3, "(2) がむずかしい": 2, "④": 4, "にばん みて": 2,
+		"三番のこたえ": 3, "もんだい 5 が": 5, "ヒントちょうだい": 0, "ごはんたべた": 0}
+	var bad := []
+	for text in cases:
+		if StudyVoice.number_in(text) != int(cases[text]):
+			bad.append([text, StudyVoice.number_in(text)])
+	_ok(bad.is_empty(), "study voice: the problem a child names is read (1ばん, ３番, (2), ④, にばん, 三番, もんだい 5)", str(bad))
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var vo := ctl.voice
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.speech.clear()
+	var states: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): states.append(c))
+	vo.state = StudyVoice.HEARING
+	vo._rid = "sm-lst-9"
+	vo._on_aux({"type": "homework_heard", "request_id": "sm-lst-9", "data": {"text": "1ばんが わからない"}})
+	_ok("HELP_LOCATING" in states and ctl.help_problem == 1 and vo.state == StudyVoice.IDLE and vo.target_problem == 1,
+		"study voice: '1ばんが わからない' goes to look at problem 1 (locate, the arm's camera, the explanation)", str([states, ctl.help_problem]))
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()

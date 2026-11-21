@@ -24,6 +24,9 @@ const COLUMN_SIZE := GameModeLayout.GESTURE_RECT.size
 const COLUMN_POS := GameModeLayout.GESTURE_RECT.position
 const COLUMN_RING_R := 30.0
 
+## #237: the study mode shows its own camera picture: the gesture's mini camera stays hidden
+## meanwhile (the hand is still read: 1 / 2 / 3 fingers, a thumbs-up)
+var hidden_by_study := false
 var gesture: GestureControl
 ## Why the robot may not be moved now ("" = it may), from the main scene.
 var gate := ""
@@ -89,7 +92,7 @@ func ring() -> Array:
 func step(dt: float) -> void:
 	_t += dt
 	_flash_left -= dt
-	visible = gesture != null and gesture.enabled
+	visible = gesture != null and gesture.enabled and not hidden_by_study
 	if visible:
 		_overlay.gesture = gesture
 		_cam.visible = _hub != null and _hub.has_feed("overview")

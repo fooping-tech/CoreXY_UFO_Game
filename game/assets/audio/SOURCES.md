@@ -24,6 +24,10 @@
 `audio.move` / `audio.up` / `audio.down` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
 
+## 勉強モードの効果音（`se/`）
+
+`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。使っている場面と規約は `se/README.md`。
+
 ## スコアゲームの音（`sfx/`）は別
 
 `sfx/` の OGG は Kenney（kenney.nl）の CC0 の音源で、上の効果音ラボの規約とは関係がない（制限なく使える）。出典は `manifest.json`、`licenses/kenney_cc0.md`、`docs/audio_sources.md`。

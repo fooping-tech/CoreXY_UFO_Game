@@ -5,9 +5,14 @@ extends Node
 ##   INTRO -> WAITING_FOR_WORKSHEET -> STUDYING
 ##   STUDYING --HELP (Y, or 1 / 2 / 3 fingers then a thumbs-up: #136)--> HELP_LOCATING -> HELP_MOVING -> CAPTURE_10CM -> CAPTURE_5CM
 ##            -> CAPTURE_LANDING -> AI_EXPLAINING -> RESUME_STUDY -> STUDYING
-##   STUDYING --3 problems stably filled / grown-up's Enter--> HOMEWORK_COMPLETE
-##            -> CELEBRATION -> CLEANUP -> GAME_UNLOCKED --"ゲームで遊ぶ"--> (off)
-##   CLEANUP --fault--> CLEANUP_FAILED --Enter--> GAME_UNLOCKED (tidy-up left unchecked)
+##   STUDYING --3 problems stably filled / grown-up's Enter--> the answer check (#236, #237):
+##            ANSWER_CHECK_READY -> SHEET_SCANNING -> GRADING_QUESTION (one problem at a time, from 1)
+##            -> REVIEW_SUMMARY (only when something is to be looked at again)
+##                 --R: rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
+##                 --Enter--> REWARD_CALCULATING
+##            -> REWARD_REVEAL -> POWERUP_SELECT (a power ticket: a roulette picks it) -> CLEANUP -> GAME_READY_WITH_REWARD
+##            --"ゲームで遊ぶ"--> (off; the reward is handed over: StudyGrading.reward)
+##   CLEANUP --fault--> CLEANUP_FAILED --Enter--> GAME_READY_WITH_REWARD (tidy-up left unchecked)
 ##   any motion fault / stop --> ERROR --Enter--> STUDYING (never moves again by itself)
 ##
 ## Separate from the machine: this node never writes RobotState and never sends a
@@ -20,13 +25,18 @@ signal state_changed(previous: String, current: String)
 signal changed  # anything shown changed (HUD refresh)
 
 const STATES := ["OFF", "INTRO", "WAITING_FOR_WORKSHEET", "STUDYING", "HELP_LOCATING", "HELP_MOVING",
-	"CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING", "AI_EXPLAINING", "RESUME_STUDY", "HOMEWORK_COMPLETE",
-	"CELEBRATION", "CLEANUP", "CLEANUP_FAILED", "GAME_UNLOCKED", "ERROR"]
+	"CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING", "AI_EXPLAINING", "RESUME_STUDY", "ANSWER_CHECK_READY",
+	"SHEET_SCANNING", "GRADING_QUESTION", "REVIEW_SUMMARY", "RESCAN", "REWARD_CALCULATING", "REWARD_REVEAL",
+	"POWERUP_SELECT", "CLEANUP", "CLEANUP_FAILED", "GAME_READY_WITH_REWARD", "ERROR"]
+## #237: the answer check, and the reward that follows it
+const CHECK_STATES := ["ANSWER_CHECK_READY", "SHEET_SCANNING", "GRADING_QUESTION", "REVIEW_SUMMARY", "RESCAN"]
+const REWARD_STATES := ["REWARD_CALCULATING", "REWARD_REVEAL", "POWERUP_SELECT"]
+const POWERUPS := [["speed", "SPEED UP"], ["double", "DOUBLE SCORE"], ["multiball", "MULTI BALL"]]
 const CAPTURE_STATE := {"10cm": "CAPTURE_10CM", "5cm": "CAPTURE_5CM", "landing": "CAPTURE_LANDING"}
 const HELP_STATES := ["HELP_LOCATING", "HELP_MOVING", "CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING"]
-const FAILURES := ["", "locate", "motion", "ai", "voice", "occlude", "cleanup"]
+const FAILURES := ["", "locate", "motion", "ai", "voice", "occlude", "grade", "cleanup"]
 const FAILURE_LABEL := {"": "なし", "locate": "位置の特定", "motion": "アームの停止", "ai": "AI の解説",
-	"voice": "音声", "occlude": "手で隠れる", "cleanup": "片付け"}
+	"voice": "音声", "occlude": "手で隠れる", "grade": "答え合わせの読み取り", "cleanup": "片付け"}
 
 var main: Node
 var services: StudyServices
@@ -56,7 +66,25 @@ var _hand_since_ms := -1.0
 var _hand_used := ""  # a pose already acted on: nothing more until the hand changes
 ## keys of the study mode (study_mode.keys); the game's own keys stay as they are
 var keys := {"advance": KEY_ENTER, "fill_1": KEY_1, "fill_2": KEY_2, "fill_3": KEY_3, "grade_prev": KEY_COMMA,
-	"grade_next": KEY_PERIOD, "skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5}
+	"grade_next": KEY_PERIOD, "skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5, "rescan": KEY_R}
+## #237: the answer check
+var grading := StudyGrading.new()
+var grade_checking_s := 0.9  # "かくにん中…" before a problem's verdict
+var grade_reveal_s := 2.5  # one problem's whole turn
+var reveal_queue: Array[int] = []
+var reveal_current := 0  # the problem being shown now (0 = none)
+var shown := {}  # number -> true once its verdict was shown
+var combo := 0  # right answers shown in a row (the HUD's COMBO)
+## the power ticket's roulette: the light goes round the powers, slows down and stops on one
+var roulette_index := -1  # the power lit now (-1 = not turning)
+var roulette_spinning := false
+var roulette_force := ""  # tests / a demo: where it stops ("" = by chance)
+var roulette_rng := RandomNumberGenerator.new()
+const ROULETTE_STEPS := 22  # at least this many steps (then up to two more to stop on the pick)
+var used_help := false  # HELP never takes a reward away; only remembered
+var reward: Dictionary = {}  # the last check's reward (StudyGrading.reward), handed to the game
+var selected_powerups: Array = []
+var last_reward: Dictionary = {}  # what "ゲームで遊ぶ" handed over (kept after the mode ends)
 ## the study time: from the start of the homework to all 3 problems filled
 var study_started_ms := -1
 var study_final_s := -1.0
@@ -122,6 +150,15 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	services.explain_failed.connect(_on_explain_failed)
 	services.navigated.connect(_on_navigated)
 	services.navigate_failed.connect(_on_navigate_failed)
+	services.graded.connect(_on_graded)
+	services.grade_failed.connect(_on_grade_failed)
+	var ac = GameConfig.get_value("study_mode", "answer_check", {})
+	if ac is Dictionary:
+		grading.configure(ac)
+		grade_checking_s = maxf(float(ac.get("checking_s", grade_checking_s)), 0.1)
+		grade_reveal_s = maxf(float(ac.get("reveal_s", grade_reveal_s)), grade_checking_s + 0.2)
+		if ac.get("demo_results") is Array:
+			services.demo_results = (ac.demo_results as Array).duplicate()
 	var w = GameConfig.get_value("study_mode", "watch", {})
 	tracker.configure(w if w is Dictionary else {})
 	weekday_label = str(GameConfig.get_value("study_mode", "weekday_label", weekday_label))
@@ -170,12 +207,14 @@ func start() -> void:
 		main._layout()
 	_set_state("INTRO")
 	sounds.play("appear")
+	sounds.music_play("study")  # #237: the study mode's own music (study.mp3)
 	_say([{"text": "そろそろ勉強の時間だよ！", "face": "excited"},
 		{"text": "今日は%s！宿題をチェックしよう！" % weekday_label, "face": "happy"},
 		{"text": "席について、プリントを置いてね！", "face": "wink"}], _enter_waiting)
 
 func stop() -> void:
 	voice.reset()
+	sounds.music_stop()
 	services.abort("勉強モードを終えました")
 	services.watch_stop()
 	speech.clear()
@@ -183,6 +222,15 @@ func stop() -> void:
 
 func reset_story() -> void:
 	_story += 1
+	grading.reset([])
+	used_help = false
+	reward = {}
+	selected_powerups = []
+	roulette_spinning = false
+	roulette_index = -1
+	shown.clear()
+	reveal_queue.clear()
+	reveal_current = 0
 	if voice != null:
 		voice.reset()
 	offer_problem = 0
@@ -278,7 +326,7 @@ func _on_worksheet_seen() -> void:
 		return
 	_set_state("STUDYING")
 	study_started_ms = Time.get_ticks_msec()
-	sounds.play("chime")
+	sounds.cue("found")
 	GameState.post_event("study_started", {"worksheet_id": worksheet.get("worksheet_id", "")})
 	_say([{"text": "プリントを見つけたよ！", "face": "happy"},
 		{"text": "宿題スタート！むずかしかったら %s キーでぼくを呼んでね。" % OS.get_keycode_string(help_keycode), "face": "normal"}])
@@ -286,10 +334,14 @@ func _on_worksheet_seen() -> void:
 func studying() -> bool:
 	return state in ["STUDYING", "RESUME_STUDY"] or state in HELP_STATES or state == "AI_EXPLAINING"
 
-func _on_reading(probs: Array, held: bool, reason: String) -> void:
+func _on_reading(questions: Array, held: bool, reason: String) -> void:
 	if not studying() or completion_fired:
 		return
-	var newly := tracker.add_reading(probs, held, reason)
+	# #237: a real print read by the local reader: its problems are the ones read, any count
+	var grow := services.reads_whole_sheet()
+	if grow and not tracker.from_sheet:
+		tracker.reset_numbers([], true)
+	var newly := tracker.add_numbered(questions, held, reason, grow)
 	for n in newly:
 		sounds.play("chime")
 		GameState.post_event("study_question_filled", {"number": n})
@@ -309,30 +361,220 @@ func elapsed_s() -> float:
 		return 0.0
 	return (Time.get_ticks_msec() - study_started_ms) / 1000.0
 
-## Fired once per story (a repeated reading / key press never celebrates twice).
+## Fired once per story (a repeated reading / key press never starts the check twice): every
+## problem written -> the answer check with UFOくん (#237), not the celebration yet.
 func _complete() -> void:
 	if completion_fired:
 		return
 	completion_fired = true
 	study_final_s = elapsed_s()
-	services.watch_stop()
-	_set_state("HOMEWORK_COMPLETE")
+	_set_state("ANSWER_CHECK_READY")
 	GameState.post_event("study_complete", {"elapsed_s": study_final_s, "by": tracker.completed_by})
-	_celebrate()
+	grading.reset(tracker.numbers)  # the problems written (a real print: the ones read on it)
+	grading.used_help = used_help
+	shown.clear()
+	reveal_current = 0
+	combo = 0
+	sounds.music_play("check")  # the answer check's music (study_check.mp3)
+	sounds.cue("check_start")
+	_say([{"text": "ぜんぶ書けたね！", "face": "excited"},
+		{"text": "UFOくんと答え合わせしよう！", "face": "happy"}], _scan.bind(false))
 
-func _celebrate() -> void:
-	celebrate_count += 1
-	_set_state("CELEBRATION")
-	sounds.play("fanfare")
-	GameState.post_event("study_celebrate", {})
-	_say([{"text": "やったー！！！", "face": "excited"},
-		{"text": "宿題、ぜんぶ終わったね！", "face": "happy"},
-		{"text": "すっごい！がんばったね！！", "face": "excited"}], _celebration_spoken)
-
-func _celebration_spoken() -> void:
-	if state != "CELEBRATION":
+# ------------------------------------------------------------------ the answer check (#237)
+## Read the whole sheet once (the reader is called once; the problems are then shown one by one).
+func _scan(rescan: bool) -> void:
+	if not (state == "ANSWER_CHECK_READY" or (rescan and state == "REVIEW_SUMMARY")):
 		return
-	_later(maxf(_celebration_min_s - _state_t, 0.0), _begin_cleanup if cleanup_enabled() else _unlock)
+	_set_state("RESCAN" if rescan else "SHEET_SCANNING")
+	notice = ""
+	sounds.play("tick")
+	services.grade(rescan)
+	if rescan:
+		_say([{"text": "もういちど 見てみるね！", "face": "normal"}])
+
+func _on_graded(problems: Array) -> void:
+	if state not in ["SHEET_SCANNING", "RESCAN"]:
+		return
+	_reveal(grading.apply(problems, services.reads_whole_sheet()))
+
+## The reading failed: never "wrong", the problems not yet right are only unclear.
+func _on_grade_failed(reason: String) -> void:
+	if state not in ["SHEET_SCANNING", "RESCAN"]:
+		return
+	notice = "プリントを読めなかったよ: " + reason
+	services.trace("answer check: " + reason)
+	_reveal(grading.fail_all())
+
+func _reveal(numbers: Array[int]) -> void:
+	reveal_queue = numbers.duplicate()
+	for n in numbers:
+		shown.erase(n)
+	_set_state("GRADING_QUESTION")
+	_reveal_next()
+
+func _reveal_next() -> void:
+	if state != "GRADING_QUESTION":
+		return
+	if reveal_queue.is_empty():
+		reveal_current = 0
+		_summary()
+		return
+	reveal_current = reveal_queue.pop_front()
+	sounds.cue("drum")  # the roll before the verdict
+	changed.emit()
+	_later(grade_checking_s, _show_verdict.bind(reveal_current))
+
+func _show_verdict(n: int) -> void:
+	if state != "GRADING_QUESTION" or reveal_current != n:
+		return
+	shown[n] = true
+	var v: String = grading.verdicts.get(n, StudyGrading.UNCLEAR)
+	match v:
+		StudyGrading.CORRECT:
+			combo += 1
+			sounds.cue("correct")
+			if combo >= 2:
+				sounds.cue("combo")
+			main.ufo.flash("happy", 1.5)
+			GameState.post_event("study_answer_correct", {"number": n, "combo": combo})
+			speech.say([{"text": "%dばん、せいかい！" % n, "face": "excited"}])
+		StudyGrading.REVIEW:
+			combo = 0
+			sounds.cue("review")
+			GameState.post_event("study_answer_review", {"number": n})
+			speech.say([{"text": "%dばんは、もういちど 見てみよう。" % n, "face": "wink"}])
+		_:
+			combo = 0
+			sounds.cue("unclear")
+			GameState.post_event("study_answer_unclear", {"number": n})
+			speech.say([{"text": "%dばんは、紙が 見えにくかったみたい。" % n, "face": "worried"}])
+	changed.emit()
+	_later(maxf(grade_reveal_s - grade_checking_s, 0.1), _reveal_next)
+
+## The energy for the game: one per problem right.
+func energy() -> int:
+	return grading.count(StudyGrading.CORRECT)
+
+## A hint for a problem to look at again: the worksheet's first hint (never the answer).
+func review_hint(n: int) -> String:
+	var hints: Array = WorksheetCatalog.problem(worksheet, n).get("hints", [])
+	return str(hints[0]) if not hints.is_empty() else "もういちど 問題を ゆっくり 読んでみよう"
+
+func _summary() -> void:
+	grading.checked = true
+	var look := grading.to_look_again()
+	if look.is_empty():
+		_calc_reward()
+		return
+	_set_state("REVIEW_SUMMARY")
+	var lines: Array = []
+	for n in grading.with_verdict(StudyGrading.REVIEW):
+		lines.append({"text": "%dばんは、%s" % [n, review_hint(n)], "face": "normal"})
+	for n in grading.with_verdict(StudyGrading.UNCLEAR):
+		lines.append({"text": "%dばんは、紙の位置や 手で かくれていないかを 見てね。" % n, "face": "worried"})
+	lines.append({"text": "書きなおしたら、もういちど 見るよ。あとで見直してもいいよ！", "face": "wink"})
+	_say(lines)
+	_ask_adult("review", "書きなおしたら R でもう一度読む ／ このまま Enter でつぎへ（見直しはあとでも OK）")
+
+func _calc_reward() -> void:
+	if state not in ["GRADING_QUESTION", "REVIEW_SUMMARY"]:
+		return
+	_pending_adult = ""
+	adult_prompt = ""
+	services.watch_stop()
+	selected_powerups = []
+	_set_state("REWARD_CALCULATING")
+	reward = grading.reward(str(worksheet.get("worksheet_id", "")))
+	_later(0.8, _reveal_reward)
+
+func _reveal_reward() -> void:
+	if state != "REWARD_CALCULATING":
+		return
+	celebrate_count += 1
+	_set_state("REWARD_REVEAL")
+	sounds.cue("reward")
+	if grading.all_correct():
+		sounds.cue("perfect")
+	GameState.post_event("study_celebrate", {"reward": reward.duplicate()})
+	var lines: Array = []
+	if grading.all_correct():
+		lines.append({"text": "ぜんぶ せいかい！パーフェクト！！", "face": "excited"})
+	else:
+		lines.append({"text": "やったー！ 答え合わせ おわり！", "face": "excited"})
+	if int(reward.time_bonus_s) > 0:
+		lines.append({"text": "ゲームの じかんが %d びょう ふえるよ！" % int(reward.time_bonus_s), "face": "happy"})
+	if int(reward.power_tickets) > 0:
+		lines.append({"text": "パワーチケットも ゲット！", "face": "excited"})
+	# the HUD shows the items got one after another (the clock, the ticket): wait for them
+	var gets := (1 if int(reward.time_bonus_s) > 0 else 0) + (1 if int(reward.power_tickets) > 0 else 0)
+	var show_s := maxf(_celebration_min_s, 1.0 + 2.7 * gets + 0.4)
+	_say(lines, func():
+		if state == "REWARD_REVEAL":
+			_later(maxf(show_s - _state_t, 0.0), _after_reveal))
+
+func _after_reveal() -> void:
+	if state != "REWARD_REVEAL":
+		return
+	if int(reward.get("power_tickets", 0)) > 0:
+		_set_state("POWERUP_SELECT")
+		sounds.cue("power_show")
+		_say([{"text": "パワールーレット、スタート！", "face": "excited"}])
+		_spin_roulette()
+	else:
+		_after_reward()
+
+## The roulette: the light steps round the powers, each step a little slower, and stops on the
+## pick (roulette_force, else by chance): that power is chosen.
+func _spin_roulette() -> void:
+	var pick := -1
+	for i in POWERUPS.size():
+		if POWERUPS[i][0] == roulette_force:
+			pick = i
+	if pick < 0:
+		pick = roulette_rng.randi_range(0, POWERUPS.size() - 1)
+	var steps := ROULETTE_STEPS
+	while (steps - 1) % POWERUPS.size() != pick:
+		steps += 1
+	roulette_spinning = true
+	roulette_index = -1
+	var t := 0.0
+	for i in steps:
+		t += 0.045 + 0.32 * pow(float(i) / steps, 3.0)  # fast, then slower and slower
+		_later(t, _roulette_step.bind(i % POWERUPS.size(), i == steps - 1))
+
+func _roulette_step(index: int, last: bool) -> void:
+	if state != "POWERUP_SELECT" or not roulette_spinning:
+		return
+	roulette_index = index
+	sounds.play("pin" if not last else "tick")
+	changed.emit()
+	if last:
+		roulette_spinning = false
+		choose_powerup(POWERUPS[index][0])
+
+## The power for the game: where the roulette stopped (once per check).
+func choose_powerup(kind: String) -> void:
+	if state != "POWERUP_SELECT" or not selected_powerups.is_empty():
+		return
+	var name := ""
+	for pw in POWERUPS:
+		if pw[0] == kind:
+			name = pw[1]
+	if name == "":
+		return
+	selected_powerups = [kind]
+	reward = grading.reward(str(worksheet.get("worksheet_id", "")), selected_powerups)
+	sounds.cue("power_pick")
+	GameState.post_event("study_powerup_selected", {"kind": kind})
+	_say([{"text": "%s に けってい！ ゲームに もっていこう！" % name, "face": "excited"}], _after_reward)
+
+func _after_reward() -> void:
+	if state not in ["REWARD_REVEAL", "POWERUP_SELECT"]:
+		return
+	if cleanup_enabled():
+		_begin_cleanup()
+	else:
+		_unlock()
 
 ## study_mode.cleanup.enabled (#110: off = no tidy-up, the game unlocks after the celebration).
 static func cleanup_enabled() -> bool:
@@ -371,8 +613,22 @@ func hand_tick(pose: String, now_ms: float) -> void:
 		request_help(n, true)
 
 ## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
+## The problem Y helps with (#237): on a real print (read by the camera) the one the child seems
+## stuck on: the first being written, else the first not written yet; 0 = none to tell (all are
+## written, or none read yet: the child is asked). On the sample sheet: help.problem (its challenge).
+func stuck_problem() -> int:
+	if not services.reads_whole_sheet() and not tracker.from_sheet:
+		return default_help_problem
+	for n in tracker.numbers:
+		if tracker.shown_state(n) == StudyQuestionTracker.WRITING:
+			return n
+	for n in tracker.numbers:
+		if tracker.shown_state(n) in [StudyQuestionTracker.EMPTY, StudyQuestionTracker.HELD] and not tracker.is_filled(n):
+			return n
+	return 0
+
 func offer_help(problem: int, now_ms: float) -> void:
-	if WorksheetCatalog.problem(worksheet, problem).is_empty():
+	if WorksheetCatalog.problem(worksheet, problem).is_empty() and not tracker.has(problem):
 		return
 	offer_problem = problem
 	_offer_until_ms = now_ms + hand_offer_s * 1000.0
@@ -384,7 +640,7 @@ func offer_help(problem: int, now_ms: float) -> void:
 	changed.emit()
 
 # ------------------------------------------------------------------ HELP
-## HELP for problem (Y = default_help_problem). asked: the child asked for it by hand, so a
+## HELP for problem (Y: stuck_problem(), 0 = ask which). asked: the child asked for it by hand, so a
 ## problem already filled is explained too.
 func request_help(problem := 0, asked := false) -> void:
 	if state not in ["STUDYING", "RESUME_STUDY"]:
@@ -393,7 +649,16 @@ func request_help(problem := 0, asked := false) -> void:
 			changed.emit()
 		return
 	offer_problem = 0
-	help_problem = problem if problem > 0 else default_help_problem
+	if problem <= 0:
+		problem = stuck_problem()
+		if problem <= 0:  # nothing to go to by itself: ask, never move on a guess
+			notice = "どの問題か教えてね（指で番号 → いいね、または V を押して話す）"
+			_say([{"text": "どの問題かな？", "face": "surprised"},
+				{"text": "指で番号を見せるか、Vを押して教えてね！", "face": "wink"}])
+			changed.emit()
+			return
+	used_help = true  # remembered only: a HELP never takes a reward away (#236)
+	help_problem = problem
 	if tracker.is_filled(help_problem) and not asked:
 		notice = "問題 %d はもう書けているみたい（アームは動かしません）" % help_problem
 		_say([{"text": "問題 %d はもう書けているみたい！すごいね！" % help_problem, "face": "happy"}])
@@ -585,7 +850,7 @@ func _error(text: String) -> void:
 
 # ------------------------------------------------------------------ the tidy-up
 func _begin_cleanup() -> void:
-	if state != "CELEBRATION":
+	if state not in ["REWARD_REVEAL", "POWERUP_SELECT"]:
 		return
 	_set_state("CLEANUP")
 	GameState.post_event("study_cleanup", {})
@@ -634,19 +899,31 @@ func _cleanup_failed(reason: String) -> void:
 	_say([{"text": "あれれ、お片付けがうまくいかなかったみたい。", "face": "worried"},
 		{"text": "大人の人に見てもらってね。", "face": "sad"}])
 
+## #237: the score game's title comes by itself this long after the game is ready.
+const AUTO_PLAY_S := 5.0
+
+func ready_left() -> int:
+	return maxi(int(ceil(AUTO_PLAY_S - _state_t)), 0) if state == "GAME_READY_WITH_REWARD" else 0
+
 func _unlock() -> void:
-	_set_state("GAME_UNLOCKED")
-	sounds.play("fanfare")
-	GameState.post_event("study_game_unlocked", {"cleanup_ok": cleanup_ok})
-	_say([{"text": "お勉強おつかれさま！", "face": "happy"}, {"text": "宿題ぜんぶ終わったね！", "face": "excited"},
+	_set_state("GAME_READY_WITH_REWARD")
+	_later(AUTO_PLAY_S, play_game)
+	sounds.cue("ready")
+	GameState.post_event("study_game_unlocked", {"cleanup_ok": cleanup_ok, "reward": reward.duplicate()})
+	_say([{"text": "お勉強おつかれさま！", "face": "happy"}, {"text": "STUDY POWER、じゅんび OK！", "face": "excited"},
 		{"text": "これからはゲームの時間だよ！", "face": "wink"}])
 
-## "ゲームで遊ぶ": back to the claw game (its own readiness checks apply as before).
+## "ゲームで遊ぶ" (or AUTO_PLAY_S later): the reward is handed over once (last_reward; the score
+## game takes it in #239), the study mode ends and the score game's title opens (#237).
 func play_game() -> void:
-	if state != "GAME_UNLOCKED":
+	if state != "GAME_READY_WITH_REWARD":
 		return
+	last_reward = reward.duplicate(true)
+	GameState.post_event("study_reward", last_reward.duplicate(true))
 	stop()
 	GameState.post_event("reset")
+	if main != null and main.has_method("open_score_game"):
+		main.open_score_game()
 
 # ------------------------------------------------------------------ grown-ups, keys, stop
 func _ask_adult(kind: String, text: String) -> void:
@@ -673,6 +950,8 @@ func _adult_ok() -> void:
 				_unlock()
 		"prepare":
 			services.prepare_mock_robot()
+		"review":
+			_calc_reward()
 	changed.emit()
 
 ## Enter: the context's "next" (the sheet is placed, a grown-up's confirmation, play).
@@ -700,7 +979,7 @@ func advance() -> void:
 			if state == "STUDYING":
 				services.watch_start()
 			_say([{"text": "続きをやろう！", "face": "normal"}])
-		"GAME_UNLOCKED":
+		"GAME_READY_WITH_REWARD":
 			play_game()
 
 ## Space (the game's stop key, which also stops the robot): the study mode stops its motion.
@@ -743,7 +1022,13 @@ func handle_key(keycode: int) -> bool:
 		return true
 	if not active():
 		return false
-	if keycode == voice.talk_keycode:
+	if state == "POWERUP_SELECT" and keycode in [KEY_1, KEY_2, KEY_3]:
+		pass  # the roulette picks it (the fill keys do nothing here)
+	elif state == "REVIEW_SUMMARY" and keycode == keys.rescan:
+		_pending_adult = ""
+		adult_prompt = ""
+		_scan(true)
+	elif keycode == voice.talk_keycode:
 		voice.press()  # #233: held = listening; the release ends it (handle_key_release)
 	elif keycode == keys.advance or keycode == KEY_KP_ENTER:
 		advance()
@@ -811,7 +1096,7 @@ func blocks_manual_control() -> bool:
 ## The UFO's mood over the game's one ("" = the game's).
 func mood_override() -> String:
 	match state:
-		"CELEBRATION", "HOMEWORK_COMPLETE", "GAME_UNLOCKED":
+		"REWARD_REVEAL", "POWERUP_SELECT", "GAME_READY_WITH_REWARD":
 			return "SUCCESS"
 		"ERROR", "CLEANUP_FAILED":
 			return "FAILURE"
@@ -865,18 +1150,42 @@ func debug_skip() -> void:
 			speech.clear()
 			_help_arm_done = true
 			_resume_study()
-		"CELEBRATION":
+		"ANSWER_CHECK_READY":
 			speech.clear()
-			if cleanup_enabled():
-				_begin_cleanup()
-			else:
-				_unlock()
+			_scan(false)
+		"SHEET_SCANNING", "RESCAN":  # as if the reader found every problem right
+			services.cancel_grade()
+			var all_right: Array = []
+			for n in grading.numbers:
+				all_right.append({"number": n, "answer_status": "correct"})
+			_on_graded(all_right)
+		"GRADING_QUESTION":
+			for n in reveal_queue:
+				shown[n] = true
+			if reveal_current > 0:
+				shown[reveal_current] = true
+			reveal_queue.clear()
+			reveal_current = 0
+			_summary()
+		"REVIEW_SUMMARY":
+			_calc_reward()
+		"REWARD_CALCULATING":
+			_reveal_reward()
+		"REWARD_REVEAL":
+			speech.clear()
+			_after_reveal()
+		"POWERUP_SELECT":
+			if selected_powerups.is_empty():  # stop the roulette where it is (or on the first)
+				roulette_spinning = false
+				choose_powerup(POWERUPS[maxi(roulette_index, 0)][0])
+			speech.clear()
+			_after_reward()
 		"CLEANUP":
 			services.abort("F6 でスキップ")
 			_cleanup_finished()
 		"CLEANUP_FAILED", "ERROR":
 			advance()
-		"GAME_UNLOCKED":
+		"GAME_READY_WITH_REWARD":
 			play_game()
 	changed.emit()
 

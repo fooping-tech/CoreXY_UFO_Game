@@ -25,15 +25,19 @@ from .progress import Reading
 FILLED_PROB = {"correct": 0.95, "incorrect": 0.95, "partial": 0.5, "blank": 0.05}
 
 
-def worksheet_numbers(worksheet: dict) -> list[int]:
-    return [int(p["number"]) for p in worksheet.get("problems", [])]
+def worksheet_numbers(worksheet: dict | None, problems: list[dict] | None = None) -> list[int]:
+    """The problems a reading is about: the known worksheet's, or (worksheet None: a real print,
+    #237) every problem the reader saw on it, whatever their number and count."""
+    if worksheet is not None:
+        return [int(p["number"]) for p in worksheet.get("problems", [])]
+    return sorted({int(p["number"]) for p in problems or [] if isinstance(p.get("number"), int) and p["number"] > 0})
 
 
-def questions_from_sheet(problems: list[dict], worksheet: dict) -> list[dict[str, Any]]:
+def questions_from_sheet(problems: list[dict], worksheet: dict | None) -> list[dict[str, Any]]:
     """[{number, filled_prob (None when not read)}] in the worksheet's problem order."""
     by_number = {int(p["number"]): p for p in problems if isinstance(p.get("number"), int)}
     out = []
-    for n in worksheet_numbers(worksheet):
+    for n in worksheet_numbers(worksheet, problems):
         p = by_number.get(n)
         prob = None
         if p is not None and p.get("visible", "full") != "partial":
@@ -42,15 +46,16 @@ def questions_from_sheet(problems: list[dict], worksheet: dict) -> list[dict[str
     return out
 
 
-def answers_from_sheet(problems: list[dict], worksheet: dict) -> list[dict[str, Any]]:
-    """What was read per problem of the worksheet: the state and the child's answer only."""
-    wanted = set(worksheet_numbers(worksheet))
+def answers_from_sheet(problems: list[dict], worksheet: dict | None) -> list[dict[str, Any]]:
+    """What was read per problem of the worksheet: the state, the child's answer and whether the
+    problem was cut off (the answer check never grades a cut-off problem: review on #241)."""
+    wanted = set(worksheet_numbers(worksheet, problems))
     return [{"number": int(p["number"]), "answer_status": str(p.get("answer_status", "")),
-             "student_answer": str(p.get("student_answer", ""))}
+             "student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full"))}
             for p in problems if isinstance(p.get("number"), int) and p["number"] in wanted]
 
 
-def reading_from_sheet(problems: list[dict], worksheet: dict) -> Reading:
+def reading_from_sheet(problems: list[dict], worksheet: dict | None) -> Reading:
     """The progress: the share of the worksheet's problems read as written. Held (the shown
     value stays) when nothing was read: an empty sheet answer means "could not read"."""
     qs = questions_from_sheet(problems, worksheet)

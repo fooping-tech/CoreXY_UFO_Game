@@ -314,6 +314,16 @@ func _setup_study_mode() -> void:
 	study_hud.name = "StudyHud"
 	add_child(study_hud)
 	study_hud.setup(study_mode)
+	# #237: the study mode's warm pixel-art room behind the UFO (over the stars), and no gesture
+	# mini camera meanwhile (the study mode shows its own camera picture)
+	var backdrop := StudyBackdrop.new()
+	backdrop.name = "StudyBackdrop"
+	add_child(backdrop)
+	backdrop.visible = false
+	study_mode.state_changed.connect(func(_p, c):
+		backdrop.visible = c != "OFF"
+		if gesture_hud != null:
+			gesture_hud.hidden_by_study = c != "OFF")
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
 		study_mode.call_deferred("start")
 
@@ -456,6 +466,12 @@ func hand_for_menus() -> Dictionary:
 
 func title_active() -> bool:
 	return title != null and title.active()
+
+## #237: the study mode is done: on to the score game's own title (as if chosen at the start), or
+## back to the claw game when there is no score game.
+func open_score_game() -> void:
+	if game_mode != null:
+		_on_title_chosen("score")
 
 func _on_title_chosen(mode: String) -> void:
 	debug_log.emit("title: " + mode)
