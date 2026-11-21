@@ -19,6 +19,9 @@
 | 横移動（`audio.move`） | 魔法使いが空を飛ぶ | 戦闘 https://soundeffect-lab.info/sound/battle/ | `wizard-flight1.mp3` |
 | UFO 上昇＝アーム下降（`audio.up`） | ステータス上昇魔法1 | 戦闘 https://soundeffect-lab.info/sound/battle/ | `magic-statusup1.mp3` |
 | UFO 下降＝アーム上昇（`audio.down`） | ヒューン | 演出・アニメ https://soundeffect-lab.info/sound/anime/ | `hyun1.mp3` |
+| 勉強モードの正解の発表（`StudySounds.OWN_FILES`、#237） | ドン | **出典を記入してください**（2026-11-21 に追加） | `don.mp3` |
+| 勉強モードの正解の発表（同上） | ピコーン | **出典を記入してください** | `pico.mp3` |
+| 勉強モードの報酬のファンファーレ（同上） | ジャーン | **出典を記入してください** | `jan.mp3` |
 
 別の音にするときは、同じサイトからダウンロードしてこのフォルダに置き、`config/game_config.json` の
 `audio.move` / `audio.up` / `audio.down` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
