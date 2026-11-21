@@ -3,7 +3,8 @@ extends RefCounted
 ## The arm-tip camera's calibration from the 校正 tab (#242), the automatic version of
 ## tools/calibrate_focus.py: with the arm held over the worksheet at a capture height, it takes
 ## the arm-tip camera's picture, moves the arm a little (+X, +Y, -X, -Y, STEP_MM each, move_xy),
-## waits for it to stop and takes a picture each time, brings the arm back, and sends the
+## waits for it to stop and for the picture to stand still (the camera swings on the rope)
+## and takes a picture each time, brings the arm back, and sends the
 ## pictures to the backend (focus_calibrate). The backend works out how the picture shifts per
 ## mm of the arm and keeps it in calibration.json#focus_camera; HELP uses it to aim the arm at a
 ## problem (navigate / camera_move).
@@ -12,7 +13,16 @@ extends RefCounted
 ## Space (soft_stop) or a refused move ends it (cancel / a NACK); nothing is retried.
 
 const STEP_MM := 10.0
-const SETTLE_S := 1.2  # after the arm stopped: the rope / camera stop swinging, a new frame arrives
+## The camera hangs on the rope with the claw: after a move it swings for a while. A picture is
+## taken only once the picture itself stands still: frames SAMPLE_S apart (small and grey) differ
+## by under STILL_DIFF (0..255, the mean) STILL_N times in a row, at least MIN_SETTLE_S after the
+## stop; not still after MAX_SETTLE_S = fail (the base picture too: the arm was just moved).
+const MIN_SETTLE_S := 1.0
+const MAX_SETTLE_S := 20.0
+const SAMPLE_S := 0.2
+const STILL_DIFF := 2.0
+const STILL_N := 5
+const THUMB := Vector2i(64, 48)
 const MOVE_TIMEOUT_S := 20.0
 const ARRIVED_MM := 1.0
 const MAX_EDGE := 640
@@ -43,6 +53,10 @@ var _target := Vector2.ZERO
 var _rid := ""
 var _acked := false
 var _t := 0.0
+var _sample_t := 0.0
+var _thumb: Image
+var _still := 0
+var last_motion := -1.0  # the last frame-to-frame difference (shown while waiting)
 
 func active() -> bool:
 	return state in [MOVING, SETTLING, RETURNING, COMPUTING]
@@ -73,12 +87,14 @@ func start(at_height: String) -> String:
 		return why
 	height = at_height
 	origin = Vector2(RobotState.x_mm, RobotState.y_mm)
-	_base = jpeg64(frame)
+	_target = origin
+	_base = ""
 	_shots.clear()
 	result = {}
 	error = ""
-	_next = 0
-	_go(origin + MOVES[0] * STEP_MM, MOVING)
+	_next = -1  # the base picture first, once the picture stands still
+	_rid = ""
+	_settle()
 	return ""
 
 ## Space, the tab closed, the link lost: stop here (the arm stays where Space left it).
@@ -88,8 +104,12 @@ func cancel(reason: String) -> void:
 
 func progress_text() -> String:
 	match state:
-		MOVING, SETTLING:
-			return "先端カメラの校正: %d / %d 枚目を撮っています（Space で止まる）" % [_next + 1, MOVES.size()]
+		MOVING:
+			return "先端カメラの校正: %d / %d 枚目へ動いています（Space で止まる）" % [_next + 1, MOVES.size()]
+		SETTLING:
+			return "先端カメラの校正: %s 揺れが止まるのを待っています%s（Space で止まる）" % [
+				"基準の画像の前に" if _next < 0 else "%d / %d 枚目の前に" % [_next + 1, MOVES.size()],
+				"（画像の動き %.1f）" % last_motion if last_motion >= 0.0 else ""]
 		RETURNING:
 			return "先端カメラの校正: もとの位置へ戻っています"
 		COMPUTING:
@@ -127,28 +147,73 @@ func tick(dt: float) -> void:
 				if state == RETURNING:
 					_compute()
 				else:
-					state = SETTLING
-					_t = 0.0
+					_settle()
 			elif _acked and not there and RobotState.machine_state == "IDLE" and _t > 2.0:
 				_fail("アームが目的の位置まで動かなかった（Space で止めた？）")
 			elif _t > MOVE_TIMEOUT_S:
 				_fail("アームが動き終わらない")
 		SETTLING:
-			if _t >= SETTLE_S:
-				var frame: Image = capture.call() if capture.is_valid() else null
-				if frame == null or frame.is_empty():
-					_fail("先端カメラの映像が取れない")
-					return
-				var d: Vector2 = MOVES[_next] * STEP_MM
-				_shots.append({"image_jpeg_base64": jpeg64(frame), "dx": d.x, "dy": d.y})
-				_next += 1
-				if _next < MOVES.size():
-					_go(origin + MOVES[_next] * STEP_MM, MOVING)
-				else:
-					_go(origin, RETURNING)
+			_sample_t += dt
+			if _sample_t < SAMPLE_S:
+				return
+			_sample_t = 0.0
+			var frame: Image = capture.call() if capture.is_valid() else null
+			if frame == null or frame.is_empty():
+				_fail("先端カメラの映像が取れない")
+				return
+			var th := thumb(frame)
+			if _thumb != null:
+				last_motion = motion(_thumb, th)
+				_still = _still + 1 if last_motion < STILL_DIFF else 0
+			_thumb = th
+			if _still < STILL_N or _t < MIN_SETTLE_S:
+				if _t > MAX_SETTLE_S:
+					_fail("先端カメラの揺れが止まらない（画像の動き %.1f）: 爪が揺れていないか、カメラの前で何か動いていないか確かめる" % last_motion)
+				return
+			if _next < 0:
+				_base = jpeg64(frame)
+				_next = 0
+				_go(origin + MOVES[0] * STEP_MM, MOVING)
+				return
+			var d: Vector2 = MOVES[_next] * STEP_MM
+			_shots.append({"image_jpeg_base64": jpeg64(frame), "dx": d.x, "dy": d.y})
+			_next += 1
+			if _next < MOVES.size():
+				_go(origin + MOVES[_next] * STEP_MM, MOVING)
+			else:
+				_go(origin, RETURNING)
 		COMPUTING:
 			if _t > 30.0:
 				_fail("バックエンドから返事がない")
+
+func _settle() -> void:
+	state = SETTLING
+	_t = 0.0
+	_sample_t = 0.0
+	_thumb = null
+	_still = 0
+	last_motion = -1.0
+
+## A frame small and grey, to see whether the picture still moves.
+static func thumb(img: Image) -> Image:
+	var im := img.duplicate() as Image
+	if im.is_compressed():
+		im.decompress()
+	im.resize(THUMB.x, THUMB.y, Image.INTERPOLATE_BILINEAR)
+	im.convert(Image.FORMAT_L8)
+	return im
+
+## The mean difference of two thumbnails (0..255).
+static func motion(a: Image, b: Image) -> float:
+	var da := a.get_data()
+	var db := b.get_data()
+	var n := mini(da.size(), db.size())
+	if n == 0:
+		return 255.0
+	var sum := 0
+	for i in n:
+		sum += absi(int(da[i]) - int(db[i]))
+	return float(sum) / n
 
 func _go(target: Vector2, next_state: String) -> void:
 	_target = target
