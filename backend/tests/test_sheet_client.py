@@ -187,6 +187,36 @@ def test_401_is_not_retried_and_that_token_is_not_sent_again():
     assert len(server.calls) == 2
 
 
+def test_a_request_waiting_behind_a_401_is_not_sent():
+    """Review on #231: the check runs again once the server's lock is free."""
+    import threading
+    gate, entered = threading.Event(), threading.Event()
+    calls = []
+
+    def slow_401(req, timeout):
+        calls.append(1)
+        entered.set()
+        gate.wait(5)
+        raise urllib.error.HTTPError(req.full_url, 401, "x", {}, io.BytesIO(b"{}"))
+    errors: list[SheetError] = []
+
+    def run():
+        try:
+            client(slow_401).read(jpeg(100, 100))
+        except SheetError as e:
+            errors.append(e)
+    first = threading.Thread(target=run)
+    first.start()
+    assert entered.wait(5)
+    second = threading.Thread(target=run)
+    second.start()  # passes the early check (no 401 yet) and waits for the lock
+    second.join(0.2)
+    gate.set()
+    first.join(5)
+    second.join(5)
+    assert len(calls) == 1 and [e.kind for e in errors] == ["auth", "auth"]
+
+
 @pytest.mark.parametrize("code,kind", [(400, "bad_request"), (403, "forbidden"), (413, "too_large")])
 def test_client_errors_are_not_retried(code, kind):
     server = FakeServer(code, ANSWER)

@@ -193,15 +193,18 @@ class SheetClient:
     def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE) -> SheetResult:
         """One photo -> the sheet's problems. Blocking (~10 s; call it in a thread from async code)."""
         image = prepare_image(photo, long_side)
-        key = _token_key(self.base, self.token)
-        if key in SheetClient._refused:
+        self._may_send()  # fail fast before waiting for the lock...
+        body = json.dumps({"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}).encode()
+        with self.lock:
+            self._may_send()  # ...and again: a request ahead of this one may have got a 401 / 429
+            return parse_result(self._send(body), image)
+
+    def _may_send(self) -> None:
+        if _token_key(self.base, self.token) in SheetClient._refused:
             raise SheetError("auth", self.auth_problem() + "（このトークンは前に断られたので、直すまで送らない）", 401)
         wait = SheetClient._blocked_until.get(self.base, 0.0) - time.monotonic()
         if wait > 0:
             raise SheetError("blocked", f"認証の失敗が続いたためサーバがブロック中（あと約 {wait / 60:.0f} 分）", 429)
-        body = json.dumps({"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}).encode()
-        with self.lock:
-            return parse_result(self._send(body), image)
 
     def _send(self, body: bytes) -> Any:
         busy = list(self.busy_waits_s)
