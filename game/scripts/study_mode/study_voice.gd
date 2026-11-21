@@ -196,7 +196,49 @@ func _on_aux(msg: Dictionary) -> void:
 			_fail(str(data.get("message", "うまく いかなかった")), false)
 
 ## The child's words + the worksheet now -> the tutor.
+## What the child names (#237, the backend's number_in_utterance): "1ばん", "１番", "(1)", "①",
+## "いちばん", "一番", "もんだい 1". 0 = no problem named.
+const KANA_NUMBERS := {"じゅう": 10, "きゅう": 9, "いち": 1, "さん": 3, "よん": 4, "ろく": 6, "なな": 7, "しち": 7,
+	"はち": 8, "に": 2, "し": 4, "ご": 5, "く": 9}
+const KANJI_NUMBERS := {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+static func number_in(text: String) -> int:
+	var t := text
+	for i in 10:
+		t = t.replace(char(0xFF10 + i), str(i))
+	for ch in t:
+		var c := ch.unicode_at(0)
+		if c >= 0x2460 and c <= 0x2473:  # ① .. ⑳
+			return c - 0x2460 + 1
+	var re := RegEx.create_from_string("([0-9]{1,2})\\s*(ばん|番|もん|問)|[(（]\\s*([0-9]{1,2})\\s*[)）]|(もんだい|問題)\\s*([0-9]{1,2})")
+	var m := re.search(t)
+	if m != null:
+		for g in [1, 3, 5]:
+			if m.get_string(g) != "":
+				return int(m.get_string(g))
+	var kana := RegEx.create_from_string("(じゅう|きゅう|いち|さん|よん|ろく|なな|しち|はち|に|し|ご|く)\\s*(ばん|番)")
+	m = kana.search(t)
+	if m != null:
+		return int(KANA_NUMBERS[m.get_string(1)])
+	var kanji := RegEx.create_from_string("([一二三四五六七八九十])\\s*(ばん|番)")
+	m = kanji.search(t)
+	if m != null:
+		return int(KANJI_NUMBERS[m.get_string(1)])
+	return 0
+
 func _ask(text: String) -> void:
+	# a problem named ("1ばんが わからない"): go and look at it (the overview camera finds it, the
+	# arm's camera looks closer, the tutor explains: the usual HELP; a grown-up's Enter first on
+	# the real crane). Nothing named: the dialogue answers.
+	var named := number_in(text)
+	if named > 0 and in_talk_state():
+		_rid = ""
+		state = IDLE
+		note = ""
+		history.append({"role": "user", "content": text})
+		target_problem = named
+		changed.emit()
+		ctl.request_help(named, true)
+		return
 	var hw := _homework()
 	var img: Image = overview_source.call()
 	if img == null or img.is_empty():

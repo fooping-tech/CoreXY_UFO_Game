@@ -26,6 +26,9 @@ var guide_region := Rect2()
 var answer_marks := {}
 ## #237: the reader is checking the answers now: a scanning beam and "答案を確認中！"
 var scanning := false
+## #237: the problem being looked at (HELP): its box in the picture ([l, t, r, b], 0..1) and its number
+var focus_box: Array = []
+var focus_number := 0
 var mark_boxes := {}
 const MARK_GROW_MS := 420.0
 const RED := Color("ff2d2d")
@@ -114,6 +117,8 @@ func _draw() -> void:
 		_draw_marks(func(n: int) -> Rect2: return box_on(shown, mark_boxes.get(n)))
 		if scanning:
 			_draw_scanning(shown)
+		if focus_box.size() == 4:
+			_draw_focus(shown)
 		return
 	var s := minf(size.x / page.x, (size.y - top) / page.y)
 	var o := Vector2((size.x - page.x * s) * 0.5, top)
@@ -240,6 +245,22 @@ func _draw_guide(font: Font, top: float) -> void:
 	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30), ac + Vector2(26, -30), ac + Vector2(0, 6)]), Color("ff4fa3"))
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62), ac + Vector2(12, -62), ac + Vector2(12, -30), ac + Vector2(-12, -30)]), Color("ff4fa3"))
+
+## The problem UFOくん goes to look at: a pulsing box on the picture and "Nばん ここ！".
+func _draw_focus(shown: Rect2) -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	var pulse := 0.5 + 0.5 * sin(t * 6.0)
+	var a := Vector2(float(focus_box[0]), float(focus_box[1]))
+	var b := Vector2(float(focus_box[2]), float(focus_box[3]))
+	var r := Rect2(shown.position + a * shown.size, (b - a) * shown.size).abs().grow(6.0 + 4.0 * pulse)
+	draw_rect(r, Color(1.0, 0.3, 0.65, 0.16 + 0.1 * pulse))
+	var col := Color("ff4fa3").lerp(Color("7af0ff"), pulse)
+	draw_rect(r, col, false, 5.0)
+	var font := UiFonts.title()
+	var text := "%dばん ここ！" % focus_number if focus_number > 0 else "ここ！"
+	var at := Vector2(r.position.x, maxf(r.position.y - 10.0, shown.position.y + 30.0))
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, 10, Color("5a1a3a"))
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color("fff3a0"))
 
 ## The answers being checked: a beam sweeping up and down the picture, a light veil over it, and
 ## "答案を確認中！" bouncing at its top (the dots counting).

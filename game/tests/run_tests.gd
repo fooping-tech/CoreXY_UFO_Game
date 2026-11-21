@@ -80,6 +80,7 @@ func _ready() -> void:
 	_s.study._test_study_power_items(rs)
 	_s.study._test_study_scenery(rs)
 	_s.study._test_study_reward_show(rs)
+	_s.study._test_study_voice_goes_to_look(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)

@@ -676,6 +676,9 @@ func refresh() -> void:
 		var hw := ctl.services.homework
 		sheet.guide_region = SheetFrame.for_role("overview", hw.sheet_settings_path).region if hw != null else Rect2()
 	sheet.scanning = st in ["ANSWER_CHECK_READY", "SHEET_SCANNING", "RESCAN"]
+	var looking: bool = st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING"
+	sheet.focus_box = ctl.services.located_box if looking else []
+	sheet.focus_number = ctl.help_problem
 	sheet.mark_boxes = ctl.grading.boxes
 	var am := {}
 	for n in ctl.shown:

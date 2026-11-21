@@ -1003,12 +1003,12 @@ func _test_study_voice(rs: Node) -> void:
 	ctl.handle_key_release(KEY_V)
 	var stop_rid := str(sent[-1].get("request_id", ""))
 	var hearing: bool = vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop"
-	hw._on_message({"type": "homework_heard", "request_id": stop_rid, "data": {"text": "3ばんが わからない"}})
+	hw._on_message({"type": "homework_heard", "request_id": stop_rid, "data": {"text": "ここが わからない"}})
 	var talk: Dictionary = sent[-1]
-	var asked: bool = talk.type == "homework_talk" and talk.data.text == "3ばんが わからない" and int(talk.data.target_problem) == 0 \
+	var asked: bool = talk.type == "homework_talk" and talk.data.text == "ここが わからない" and int(talk.data.target_problem) == 0 \
 		and str(talk.data.image_jpeg_base64) != "" and vo.state == StudyVoice.THINKING
 	hud.refresh()
-	var shown: bool = hud._voice_bar.visible and hud._voice_text.text.contains("「3ばんが わからない」") \
+	var shown: bool = hud._voice_bar.visible and hud._voice_text.text.contains("「ここが わからない」") \
 		and hud._voice_text.text.contains("かんがえちゅう")
 	_ok(listening and hearing and asked and shown,
 		"study voice: held V listens, the release writes it down, the words and the worksheet go to the tutor",
@@ -1022,7 +1022,7 @@ func _test_study_voice(rs: Node) -> void:
 		"action": "talk", "target_problem": 3, "need_recapture": false}})
 	var queued: Array = ctl.speech._queue.map(func(q): return q.text)
 	var spoken: bool = at_once and queued == ["5こから2こ とると？", "のこりを かぞえてね。"] and vo.state == StudyVoice.IDLE \
-		and vo.target_problem == 3 and vo.history == [{"role": "user", "content": "3ばんが わからない"},
+		and vo.target_problem == 3 and vo.history == [{"role": "user", "content": "ここが わからない"},
 			{"role": "assistant", "content": "いっしょに かんがえよう。5こから2こ とると？のこりを かぞえてね。"}]
 	var busy_why := vo.blocker()
 	ctl.speech.clear()
@@ -1398,6 +1398,35 @@ func _test_study_reward_show(rs: Node) -> void:
 	if game.game_mode != null and game.game_mode.active():
 		game.game_mode.close()
 	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## #237: a problem named by voice ("1ばんが わからない") is looked at (the usual HELP), not only talked about.
+func _test_study_voice_goes_to_look(rs: Node) -> void:
+	var cases := {"1ばんが わからない": 1, "３番おしえて": 3, "(2) がむずかしい": 2, "④": 4, "にばん みて": 2,
+		"三番のこたえ": 3, "もんだい 5 が": 5, "ヒントちょうだい": 0, "ごはんたべた": 0}
+	var bad := []
+	for text in cases:
+		if StudyVoice.number_in(text) != int(cases[text]):
+			bad.append([text, StudyVoice.number_in(text)])
+	_ok(bad.is_empty(), "study voice: the problem a child names is read (1ばん, ３番, (2), ④, にばん, 三番, もんだい 5)", str(bad))
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var vo := ctl.voice
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.speech.clear()
+	var states: Array[String] = []
+	ctl.state_changed.connect(func(_p, c): states.append(c))
+	vo.state = StudyVoice.HEARING
+	vo._rid = "sm-lst-9"
+	vo._on_aux({"type": "homework_heard", "request_id": "sm-lst-9", "data": {"text": "1ばんが わからない"}})
+	_ok("HELP_LOCATING" in states and ctl.help_problem == 1 and vo.state == StudyVoice.IDLE and vo.target_problem == 1,
+		"study voice: '1ばんが わからない' goes to look at problem 1 (locate, the arm's camera, the explanation)", str([states, ctl.help_problem]))
+	ctl.stop()
 	remove_child(game)
 	game.free()
 	rs.clear_samples()

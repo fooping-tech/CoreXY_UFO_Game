@@ -72,6 +72,8 @@ var seen := false
 var _locate_rid := ""
 ## #232: how the last located frame was cut and turned ({rotation, region, size}; {} = as it was)
 var _locate_prep := {}
+## #237: the problem being looked at, in the picture the locate read ([l, t, r, b], 0..1; [] = none)
+var located_box: Array = []
 ## #237: the last per-problem reading the watch brought (camera mode: its answer states)
 var last_answers: Array = []
 ## the simulated mode's answer check: the result of each problem the first time (study_mode.answer_check.demo_results);
@@ -551,6 +553,7 @@ static func blocker_for(route: String, real: bool, demo_source: String) -> Strin
 # ------------------------------------------------------------------ HELP: where is problem n
 func locate_help(problem: int) -> void:
 	_help_problem = problem
+	located_box = []
 	captures.clear()  # #136: another problem's photos are not this one's
 	var tok := _token
 	if inject_fail == "locate":
@@ -959,6 +962,8 @@ func _on_aux(msg: Dictionary) -> void:
 	elif rid == _locate_rid and t in ["homework_locate_result", "homework_locate_error", "homework_error"]:
 		_locate_rid = ""
 		if t == "homework_locate_result" and bool(data.get("usable", false)):
+			# #237: where it is in the picture read (cut out, upright: as the screen shows it)
+			located_box = data.box if data.get("box") is Array else []
 			var at := located_point(Vector2(float(data.get("u", 0.5)), float(data.get("v", 0.5))))
 			located.emit({"u": at.x, "v": at.y, "problem": _help_problem,
 				"verified": bool(data.get("verified", false)), "page_check": data.get("page_check")})
