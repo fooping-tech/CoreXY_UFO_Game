@@ -54,6 +54,41 @@ def grade_in_prompt(text: str, default: int) -> int:
     return int(m.group(1).translate(str.maketrans("１２３４５６", "123456"))) if m else default
 
 
+# where a streamed sentence ends (UFOくん's lines: 。！？ and line breaks)
+SENTENCE_END = re.compile(r"[。！？!?]+[」』）)]*|\n+")
+# "こたえは 5" / "答えは5だよ": giving the answer away (mode normal never should)
+REVEAL = re.compile(r"(こたえ|答え)\s*(は|が|も)\s*[「（(]?\s*[0-9０-９一二三四五六七八九十]")
+
+
+def split_sentences(text: str) -> list[str]:
+    out, start = [], 0
+    for m in SENTENCE_END.finditer(text):
+        part = text[start:m.end()].strip()
+        if part:
+            out.append(part)
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def gives_answer(sentence: str, answers: Sequence[str] = ()) -> bool:
+    """A sentence that seems to say the answer: "こたえは 5", or a known answer said as one
+    ("= 85", "85 だよ", "85 になる")."""
+    s = sentence.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+    if REVEAL.search(s):
+        return True
+    for a in answers:
+        a = str(a).strip().translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+        if not a:
+            continue
+        num = re.escape(a)
+        if re.search(rf"=\s*{num}(?![0-9])", s) or re.search(rf"(?<![0-9]){num}\s*(だよ|です|になる|だね|が こたえ|がこたえ)", s):
+            return True
+    return False
+
+
 class TutorStudyAdapter:
     _breakers: dict[str, dict] = {}  # 接続先 URL → {"fails", "open_until"}
 
@@ -181,36 +216,114 @@ class TutorStudyAdapter:
                     out["navigate"]["error"] = str(e)
         return out
 
-    def converse(self, image: bytes, utterance: str, *, history: Sequence[dict] = (), target: int | None = None,
-                 grade: int | None = None) -> dict:
-        """One turn of the study mode's voice dialogue (#233): what the child said, the worksheet as
-        the overview camera sees it, the turns so far ([{hint_level, message}], the server's own
-        shape) and the problem being talked about. Blocking; StudyAdapterError when it fails.
-        -> {message, action, target_problem, hint_level, need_recapture, ufo_face, visual_effect,
-        answer_status, visible_problems}"""
-        hist = []
-        for h in list(history)[-8:]:
-            if isinstance(h, dict) and str(h.get("message", "")).strip():
-                hist.append({"hint_level": max(min(int(h.get("hint_level", 0) or 0), 5), 0),
-                             "message": str(h["message"])[:400]})
-        url = "data:image/jpeg;base64," + base64.b64encode(image).decode()
-        body = {"model": self.model, "max_tokens": 400,
-                "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}]}],
-                "tutor": {"target_problem": target if isinstance(target, int) and target > 0 else None,
-                          "grade": max(min(int(grade or self.grade), 6), 1), "mode": "normal", "history": hist,
-                          "utterance": utterance.strip()[:200]}}
-        tr = self._post(body).get("tutor_result") or {}
-        g, c = tr.get("game") or {}, tr.get("corexy") or {}
-        message = str(g.get("message") or c.get("speech_text") or "").strip()
+    def converse_stream(self, image: bytes, utterance: str, *, turns: Sequence[dict] = (), target: int | None = None,
+                        grade: int | None = None, on_sentence: Callable[[str], None] | None = None,
+                        answers: Sequence[str] = ()) -> dict:
+        """One turn of the voice dialogue, streamed (docs/ufo_api_spec.md §5.2 format "dialog", §5.4): UFOくん's
+        words come as they are made, and each finished sentence goes to `on_sentence` at once (the
+        game says it while the rest is still coming). The conversation is in the messages: the
+        worksheet's picture first, then the turns so far ([{role: user|assistant, content}]), then
+        what the child just said. Blocking; StudyAdapterError when it fails.
+
+        A streamed sentence has not been checked by the server yet (the stream skips its checks
+        but the answer's): a sentence that seems to give the answer away (`answers`, or "こたえは 5")
+        is held back, and nothing more is streamed after it. The end compares with the server's
+        checked text: `rest` is what is still to be said (all of it when it differs from what was
+        streamed and nothing was said yet).
+        -> {message, rest, spoken, action, target_problem, need_recapture, visual_effect}"""
+        msgs: list[dict] = [{"role": "user", "content": [{"type": "image_url", "image_url": {
+            "url": "data:image/jpeg;base64," + base64.b64encode(image).decode()}}]}]
+        for t in [t for t in turns if isinstance(t, dict)][-10:]:  # 12 messages at most (§5.1)
+            role = "assistant" if t.get("role") == "assistant" else "user"
+            text = str(t.get("content", "")).strip()[:400]
+            if text:
+                msgs.append({"role": role, "content": text})
+        msgs.append({"role": "user", "content": utterance.strip()[:100]})
+        body = {"model": self.model, "max_tokens": 300, "stream": True, "messages": msgs,
+                "tutor": {"grade": max(min(int(grade or self.grade), 6), 1), "format": "dialog", "mode": "normal",
+                          "target_problem": target if isinstance(target, int) and target > 0 else None}}
+        spoken: list[str] = []
+        held = False
+        buf = ""
+
+        def flush(final: bool) -> None:
+            nonlocal buf, held
+            while True:
+                m = SENTENCE_END.search(buf)
+                if m is None and not final:
+                    return
+                cut = m.end() if m is not None else len(buf)
+                sentence, buf = buf[:cut].strip(), buf[cut:]
+                if sentence and not held:
+                    if gives_answer(sentence, answers):
+                        held = True  # the server's checked text decides the rest
+                    else:
+                        spoken.append(sentence)
+                        if on_sentence is not None:
+                            on_sentence(sentence)
+                if m is None:
+                    return
+
+        def delta(text: str) -> None:
+            nonlocal buf
+            buf += text
+            flush(False)
+        tr = self._post_stream(body, delta)
+        g = tr.get("game") or {}
+        message = str((tr.get("dialog") or {}).get("message") or g.get("message") or "").strip()
         if not message:
             raise StudyAdapterError("学習支援 AI の返事に、話すことばがありません")
-        tp = g.get("target_problem")
-        return {"message": message, "action": str(g.get("action", "")),
-                "target_problem": tp if isinstance(tp, int) and tp > 0 else None,
-                "hint_level": int(g.get("hint_level", 0) or 0), "need_recapture": bool(g.get("need_recapture", False)),
-                "ufo_face": str(c.get("ufo_face", "")), "visual_effect": str(g.get("visual_effect", "")),
-                "answer_status": str(c.get("answer_status", "")),
-                "visible_problems": [n for n in g.get("visible_problems") or [] if isinstance(n, int)]}
+        checked = split_sentences(message)
+        if checked[:len(spoken)] == spoken:
+            rest = checked[len(spoken):]
+        else:
+            rest = [] if spoken else checked  # what was said cannot be unsaid
+        return {"message": message, "rest": rest, "spoken": spoken, "held_back": held,
+                "action": str(g.get("action", "")), "need_recapture": bool(g.get("need_recapture", False)),
+                "visual_effect": str(g.get("visual_effect", "")), "notes": [str(n) for n in tr.get("notes") or []]}
+
+    def _post_stream(self, body: dict, on_text: Callable[[str], None]) -> dict:
+        """POST with "stream": true; the content deltas go to on_text; -> tutor_result."""
+        if time.monotonic() < self.breaker["open_until"]:
+            raise StudyAdapterError(f"学習支援 AI は休止中（続けて失敗したため、あと {self.breaker['open_until'] - time.monotonic():.0f} 秒）")
+        req = urllib.request.Request(self.url, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", **self._auth()})
+        result: dict | None = None
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s, context=self.ctx) as r:
+                for raw in r:
+                    line = raw.decode("utf-8", "replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    ev = json.loads(payload)
+                    if "error" in ev:
+                        raise StudyAdapterError("学習支援 AI の返事が途中で失敗しました: "
+                                                + str((ev.get("error") or {}).get("message", ""))[:200])
+                    for ch in ev.get("choices") or []:
+                        text = (ch.get("delta") or {}).get("content")
+                        if text:
+                            on_text(text)
+                    if isinstance(ev.get("tutor_result"), dict):
+                        result = ev["tutor_result"]
+        except StudyAdapterError:
+            self._failed()
+            raise
+        except urllib.error.HTTPError as e:
+            self._failed()
+            if e.code == 401:
+                raise StudyAdapterError(self.auth_problem()) from e
+            raise StudyAdapterError(f"学習支援 AI がエラーを返しました（HTTP {e.code}）") from e
+        except Exception as e:  # noqa: BLE001  つながらない・時間切れ・証明書・こわれた JSON
+            self._failed()
+            raise StudyAdapterError(f"学習支援 AI に接続できません: {e}") from e
+        if result is None:
+            self._failed()
+            raise StudyAdapterError("学習支援 AI の返事が途中で終わりました")
+        self.breaker["fails"] = 0
+        return result
 
     async def ask(self, thread_id: str, text: str, image_path: Path, on_delta: Callable[[str], Awaitable[None]],
                   more_images: Sequence[Path] = ()) -> str:

@@ -202,7 +202,7 @@ def test_a_request_waiting_behind_a_401_is_not_sent():
 
     def run():
         try:
-            client(slow_401).read(jpeg(100, 100))
+            client(slow_401, concurrency=1).read(jpeg(100, 100))
         except SheetError as e:
             errors.append(e)
     first = threading.Thread(target=run)
@@ -369,3 +369,79 @@ async def test_the_server_reads_a_frame_with_sheet_read(monkeypatch):
             assert m["type"] == "nack" and len(seen) == 2
     finally:
         await srv.stop()
+
+
+# ------------------------------------------------------------------ the stream (API_SPEC §6.3)
+
+
+def sse(*events, done=True):
+    lines = [f"data: {json.dumps(e)}\n\n" for e in events]
+    if done:
+        lines.append("data: [DONE]\n\n")
+    return "".join(lines).encode()
+
+
+class SSEServer(FakeServer):
+    def __call__(self, req, timeout):
+        self.calls.append({"body": json.loads(req.data)})
+        a = self.answers.pop(0)
+        if isinstance(a, int):
+            raise urllib.error.HTTPError(req.full_url, a, "x", {}, io.BytesIO(b"{}"))
+        return FakeResp(a)
+
+
+START = {"object": "sheet.start", "image": {"width": 900, "height": 1200}, "paper_px": None}
+P1, P2, P3 = ({**ANSWER["problems"][1]}, {**ANSWER["problems"][0]}, {**ANSWER["problems"][2]})
+
+
+def test_streamed_problems_come_one_by_one_and_the_result_is_the_last_event():
+    server = SSEServer(sse(START, {"object": "sheet.problem", "index": 0, "problem": P1},
+                           {"object": "sheet.problem", "index": 1, "problem": P2}, {"object": "something.new"},
+                           {**ANSWER, "object": "sheet.result"}))
+    got = []
+    res = client(server).read(jpeg(300, 400), on_problem=lambda p: got.append(p["number"]) and False)
+    assert server.calls[0]["body"]["stream"] is True and got == [1, 2]
+    assert [p["number"] for p in res.problems] == [1, 2, 3] and not res.raw.get("stopped_early")
+
+
+def test_a_stream_stops_when_asked_and_keeps_what_came():
+    server = SSEServer(sse(START, {"object": "sheet.problem", "index": 0, "problem": P1},
+                           {"object": "sheet.problem", "index": 1, "problem": P2},
+                           {"object": "sheet.problem", "index": 2, "problem": P3}))
+    res = client(server).read(jpeg(300, 400), on_problem=lambda p: p["number"] == 2)
+    assert [p["number"] for p in res.problems] == [1, 2] and res.raw["stopped_early"]
+
+
+def test_a_stream_that_fails_or_breaks_off_is_an_error():
+    for body, kind in ((sse(START, {"error": {"message": "生成に失敗しました", "type": "server_error"}}), "server"),
+                       (sse(START, {"object": "sheet.problem", "index": 0, "problem": P1}, done=False), "response")):
+        SheetClient.forget()
+        with pytest.raises(SheetError) as e:
+            client(SSEServer(body, body)).read(jpeg(100, 100), on_problem=lambda p: False)
+        assert e.value.kind == kind
+
+
+def test_two_readings_may_run_at_once_a_third_waits():
+    import threading
+    gate = threading.Event()
+    inside = []
+    lock = threading.Lock()
+
+    def slow(req, timeout):
+        with lock:
+            inside.append(1)
+        gate.wait(5)
+        return FakeResp(json.dumps(ANSWER).encode())
+    threads = [threading.Thread(target=lambda: client(slow).read(jpeg(100, 100))) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for _ in range(100):
+        if len(inside) >= 2:
+            break
+        threading.Event().wait(0.01)
+    threading.Event().wait(0.1)
+    at_once = len(inside)
+    gate.set()
+    for t in threads:
+        t.join(5)
+    assert at_once == 2 and len(inside) == 3

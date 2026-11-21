@@ -178,53 +178,18 @@ class FakeResp(io.BytesIO):
         return False
 
 
-GAME = {"action": "give_hint", "target_problem": 3, "hint_level": 1, "message": "5こから2こ とると いくつかな？",
-        "need_recapture": False, "visual_effect": "thinking", "visible_problems": [1, 2, 3]}
-
-
-def tutor(monkeypatch, answers):
-    sent = []
-
-    def fake_urlopen(req, timeout=None, context=None):
-        sent.append(json.loads(req.data))
-        a = answers.pop(0)
-        if isinstance(a, int):
-            raise urllib.error.HTTPError(req.full_url, a, "x", {}, io.BytesIO(b'{"error": {"message": "no"}}'))
-        return FakeResp(json.dumps(a).encode())
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    TutorStudyAdapter._breakers.clear()
-    return TutorStudyAdapter("https://192.0.2.1:8444", "tok", grade=3), sent
-
-
-def test_converse_sends_the_turns_in_the_servers_shape(monkeypatch):
-    t, sent = tutor(monkeypatch, [{"tutor_result": {"game": GAME, "corexy": {"ufo_face": "normal"}}}])
-    history = [{"hint_level": 9, "message": "まえの ヒント"}, {"message": ""}, "bad"]
-    r = t.converse(JPEG, "  もっと ヒント  ", history=history, target=3, grade=8)
-    ext = sent[0]["tutor"]
-    assert ext == {"target_problem": 3, "grade": 6, "mode": "normal", "utterance": "もっと ヒント",
-                   "history": [{"hint_level": 5, "message": "まえの ヒント"}]}
-    assert sent[0]["messages"][0]["content"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert r["message"].startswith("5こから") and r["action"] == "give_hint" and r["target_problem"] == 3
-    assert r["hint_level"] == 1 and r["ufo_face"] == "normal" and r["visible_problems"] == [1, 2, 3]
-
-
-def test_converse_without_words_or_on_401_is_an_error(monkeypatch):
-    t, _ = tutor(monkeypatch, [{"tutor_result": {"game": {**GAME, "message": ""}}}, 401])
-    with pytest.raises(StudyAdapterError, match="ことば"):
-        t.converse(JPEG, "やあ")
-    with pytest.raises(StudyAdapterError, match="トークン"):
-        t.converse(JPEG, "やあ")
-
-
 class FakeTutor:
-    def __init__(self, fail=None):
-        self.fail, self.calls = fail, []
+    def __init__(self, fail=None, sentences=("いっしょに かんがえよう。", "5こから2こ とると？")):
+        self.fail, self.calls, self.sentences = fail, [], sentences
 
-    def converse(self, image, text, history=(), target=None, grade=None):
-        self.calls.append({"text": text, "history": history, "target": target, "grade": grade})
+    def converse_stream(self, image, text, turns=(), target=None, grade=None, on_sentence=None, answers=()):
+        self.calls.append({"text": text, "turns": turns, "target": target, "grade": grade, "answers": answers})
         if self.fail:
             raise self.fail
-        return {**GAME, "ufo_face": "normal", "answer_status": "", "target_problem": 3}
+        for line in self.sentences:
+            on_sentence(line)
+        return {"message": "".join(self.sentences) + "のこりは？", "rest": ["のこりは？"], "spoken": list(self.sentences),
+                "held_back": False, "action": "talk", "need_recapture": False, "visual_effect": "thinking", "notes": []}
 
 
 async def test_the_service_talks_once_at_a_time_and_says_errors():
@@ -241,7 +206,14 @@ async def test_the_service_talks_once_at_a_time_and_says_errors():
         await svc.talk("t2", "もういちど", B64, emit)
     await svc._talk_task
     d = sent[-1]["data"]
-    assert sent[-1]["type"] == "homework_talk_result" and d["speech_lines"] and ft.calls[0]["grade"] == 1
+    assert [m["type"] for m in sent] == ["homework_talk_delta", "homework_talk_delta", "homework_talk_result"]
+    assert sent[0]["data"]["text"] == "いっしょに かんがえよう。" and d["rest"] == ["のこりは？"]
+    assert ft.calls[0]["grade"] == 1 and ft.calls[0]["target"] == 3 and d["target_problem"] == 3  # said "3ばん"
+    assert ft.calls[0]["answers"] and d["first_ms"] is not None
+    sent.clear()
+    await svc.talk("t1b", "もっと ヒント", B64, emit, target=2, history=[{"role": "user", "content": "x"}])
+    await svc._talk_task
+    assert ft.calls[-1]["target"] == 2 and ft.calls[-1]["turns"] == [{"role": "user", "content": "x"}]
     with pytest.raises(ValueError):
         await svc.talk("t3", "   ", B64, emit)
     svc._talk_factory = lambda: FakeTutor(StudyAdapterError("学習支援 AI に接続できません"))
@@ -282,8 +254,9 @@ async def test_over_the_websocket_and_a_disconnect_drops_the_recording():
             await ws.send(json.dumps({"type": "homework_talk", "request_id": "t1", "data": {
                 "text": heard["data"]["text"], "image_jpeg_base64": B64, "target_problem": 3,
                 "history": [{"hint_level": 1, "message": "x"}], "worksheet_id": "mon-elem_1-01"}}))
+            first = await until(ws, "homework_talk_delta")
             r = await until(ws, "homework_talk_result")
-            assert r["request_id"] == "t1" and r["data"]["target_problem"] == 3
+            assert first["request_id"] == "t1" and r["request_id"] == "t1" and r["data"]["target_problem"] == 3
             await ws.send(json.dumps({"type": "homework_listen_start", "request_id": "l3", "data": {}}))
             await until(ws, "homework_listen")
         for _ in range(50):  # the client went away while holding the key
@@ -294,3 +267,125 @@ async def test_over_the_websocket_and_a_disconnect_drops_the_recording():
     finally:
         await srv.stop()
         await svc.close()
+
+
+# ------------------------------------------------------------------ the streamed dialogue (API_SPEC §5.4)
+
+
+def sse_body(deltas, result=None, error=None, done=True):
+    out = []
+    for d in deltas:
+        out.append({"object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {"content": d}}]})
+    if error:
+        out.append({"error": {"message": error, "type": "server_error"}})
+    if result is not None:
+        out.append({"choices": [], "tutor_result": result})
+    lines = "".join(f"data: {json.dumps(e, ensure_ascii=False)}\n\n" for e in out)
+    return (lines + ("data: [DONE]\n\n" if done else "")).encode()
+
+
+def stream_tutor(monkeypatch, body):
+    sent = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        sent.append(json.loads(req.data))
+        if isinstance(body, int):
+            raise urllib.error.HTTPError(req.full_url, body, "x", {}, io.BytesIO(b"{}"))
+        return FakeResp(body)
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    TutorStudyAdapter._breakers.clear()
+    return TutorStudyAdapter("https://192.0.2.1:8444", "tok", grade=3), sent
+
+
+def result(message, action="talk"):
+    return {"dialog": {"message": message}, "game": {"action": action, "target_problem": 1, "message": message,
+            "need_recapture": False, "visual_effect": "thinking"}, "notes": []}
+
+
+def test_converse_stream_says_each_sentence_as_it_comes(monkeypatch):
+    msg = "いっしょに 考えよう。「1と1は いくつかな？」 ゆびで かぞえてね"
+    t, sent = stream_tutor(monkeypatch, sse_body(["いっしょに 考", "えよう。「1と1は", " いくつかな？」", " ゆびで かぞえてね"],
+                                                 result(msg)))
+    said = []
+    turns = [{"role": "user", "content": "1ばん"}, {"role": "assistant", "content": "うん"}, {"role": "x", "content": ""}]
+    r = t.converse_stream(JPEG, "もっと ヒント", turns=turns, target=1, grade=1, on_sentence=said.append)
+    body = sent[0]
+    assert body["stream"] is True and body["tutor"]["format"] == "dialog" and body["tutor"]["mode"] == "normal"
+    assert body["tutor"]["target_problem"] == 1 and body["tutor"]["grade"] == 1
+    assert [m["role"] for m in body["messages"]] == ["user", "user", "assistant", "user"]
+    assert body["messages"][0]["content"][0]["type"] == "image_url" and body["messages"][-1]["content"] == "もっと ヒント"
+    assert said == ["いっしょに 考えよう。", "「1と1は いくつかな？」"]  # the unfinished tail waits for the checked text
+    assert r["rest"] == ["ゆびで かぞえてね"] and r["message"] == msg
+
+
+def test_a_sentence_giving_the_answer_away_is_held_back(monkeypatch):
+    t, _ = stream_tutor(monkeypatch, sse_body(["がんばったね。", "こたえは 2だよ。", "またね。"],
+                                              result("がんばったね。もういちど 考えてみよう。")))
+    said = []
+    r = t.converse_stream(JPEG, "こたえ おしえて", on_sentence=said.append, answers=["2"])
+    assert said == ["がんばったね。"] and r["held_back"] and r["rest"] == ["もういちど 考えてみよう。"]
+
+
+def test_when_the_checked_text_differs_what_was_said_is_not_repeated(monkeypatch):
+    t, _ = stream_tutor(monkeypatch, sse_body(["そうだね。", "つぎへ いこう。"], result("ちがう ことば。")))
+    said = []
+    r = t.converse_stream(JPEG, "やあ", on_sentence=said.append)
+    assert said == ["そうだね。", "つぎへ いこう。"] and r["rest"] == []
+    t, _ = stream_tutor(monkeypatch, sse_body(["こたえは 5"], result("いっしょに 考えよう。")))
+    r = t.converse_stream(JPEG, "やあ", on_sentence=said.append)
+    assert r["rest"] == ["いっしょに 考えよう。"]  # nothing was said: all of the checked text
+
+
+def test_a_stream_that_fails_or_ends_early_is_an_error(monkeypatch):
+    for body, word in ((sse_body(["あ"], error="生成に失敗しました"), "途中"), (sse_body(["あ"], done=False), "途中"),
+                       (401, "トークン")):
+        t, _ = stream_tutor(monkeypatch, body)
+        with pytest.raises(StudyAdapterError, match=word):
+            t.converse_stream(JPEG, "やあ")
+
+
+def test_the_problem_named_by_the_child():
+    from corexy_ufo_backend.homework.service import number_in_utterance as n
+    assert [n(x) for x in ["3ばんが わからない", "３番", "(2)", "③", "さんばん", "三番", "もんだい 4", "ヒント", "ごはん"]] == \
+        [3, 3, 2, 3, 3, 3, 4, None, None]
+
+
+def test_answers_given_away():
+    from corexy_ufo_backend.study.tutor_adapter import gives_answer, split_sentences
+    assert gives_answer("こたえは ５だよ") and gives_answer("38+47=85", ["85"]) and gives_answer("85に なるね", ["85"]) is False
+    assert gives_answer("ぜんぶで 85 になるね", ["85"]) and not gives_answer("3ばんを みよう", ["3"])
+    assert not gives_answer("5こから 2こ とると？", ["3"])
+    assert split_sentences("あ。「い？」う\n\nえ") == ["あ。", "「い？」", "う", "え"]
+
+
+async def test_the_tutor_is_kept_warm_while_a_study_session_runs(monkeypatch):
+    import corexy_ufo_backend.homework.service as service_mod
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+    ft = FakeTutor()
+    v, _ = voice(warm_every_s=1.0)
+    svc = HomeworkService(HomeworkConfig(enabled=True), worksheets=CAT, voice=v, talk_factory=lambda: ft,
+                          client_factory=lambda: object(), sheet_factory=lambda: object())
+    await svc.start("helper")  # no worksheet: not the study mode, nothing warmed
+    assert svc._warm_task is None
+    await svc.start("s", "mon-elem_1-01")
+    for _ in range(20):
+        await _real_sleep(0.01)
+        if ft.calls:
+            break
+    assert ft.calls and ft.calls[0]["text"] == "こんにちは"  # the grey picture, never the child's sheet
+    await svc.stop("s")
+    await asyncio.wait_for(svc._warm_task, 1.0)  # ends with the study session
+    off, _ = voice(warm_every_s=0.0)
+    quiet = HomeworkService(HomeworkConfig(enabled=True), worksheets=CAT, voice=off, talk_factory=lambda: ft,
+                            sheet_factory=lambda: object())
+    await quiet.start("s", "mon-elem_1-01")
+    assert quiet._warm_task is None
+    await svc.close()
+    await quiet.close()
+
+
+_real_sleep = asyncio.sleep
+
+
+async def _fast_sleep(secs, *a, **k):
+    await _real_sleep(0.001)

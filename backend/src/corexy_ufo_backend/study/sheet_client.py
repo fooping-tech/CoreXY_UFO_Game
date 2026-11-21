@@ -12,7 +12,9 @@ How it calls the server (the server's hand-off document):
   - the image goes as a data URL: decoded with EXIF orientation applied (cv2.imdecode does), shrunk
     to a long side of 1800 px (more does not help: the server shrinks to ~0.65 MP), JPEG <= 4 MB
   - the server's cert.pem is trusted (never verify=False); the hostname check stays on
-  - one request at a time per server (it works one by one and answers 503 past 4 waiting)
+  - at most 2 requests at a time per server (docs/ufo_api_spec.md §9: it reads 2 sheets at once, 503 past 4)
+  - `on_problem` (docs/ufo_api_spec.md §6.3, stream): the problems come one by one (the first after ~2.5 s);
+    returning True from it closes the connection (the server then stops) and keeps what came
   - 401: never again with that token in this process (10 wrong ones block the IP for 10 minutes);
     429: wait 10 minutes; 400 / 403 / 413: no retry; 500: once more; 503: again after 5, 10, 20 s
   - neither the token nor the image goes into a log or an error message
@@ -177,15 +179,16 @@ def _token_key(url: str, token: str) -> str:
 
 
 class SheetClient:
-    # per server: one request at a time, a token the server refused, the time a 429 block ends
-    _locks: dict[str, threading.Lock] = {}
+    # per server: at most CONCURRENCY requests at a time, a token the server refused, the time a 429 block ends
+    CONCURRENCY = 2
+    _locks: dict[str, threading.BoundedSemaphore] = {}
     _refused: set[str] = set()
     _blocked_until: dict[str, float] = {}
     _guard = threading.Lock()
 
     def __init__(self, base_url: str, token: str, *, cafile: str | None = None, timeout_s: float = 180.0,
                  busy_waits_s: tuple[float, ...] = BUSY_WAITS_S, sleep: Callable[[float], None] = time.sleep,
-                 opener: Callable[..., Any] | None = None) -> None:
+                 opener: Callable[..., Any] | None = None, concurrency: int | None = None) -> None:
         base = base_url.rstrip("/")
         if not base.startswith(("https://", "http://")):
             raise SheetError("config", "学習支援 AI の URL が https:// で始まっていません（study.tutor_url）")
@@ -198,7 +201,8 @@ class SheetClient:
             # the server's self-signed cert.pem only; it names the server's IP and host name
             self.ctx = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
         with SheetClient._guard:
-            self.lock = SheetClient._locks.setdefault(self.base, threading.Lock())
+            self.lock = SheetClient._locks.setdefault(
+                self.base, threading.BoundedSemaphore(max(int(concurrency or SheetClient.CONCURRENCY), 1)))
 
     def _open(self, req: urllib.request.Request):
         if self.opener is not None:
@@ -211,14 +215,21 @@ class SheetClient:
             h["Authorization"] = "Bearer " + self.token
         return h
 
-    def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE) -> SheetResult:
-        """One photo -> the sheet's problems. Blocking (~10 s; call it in a thread from async code)."""
+    def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE,
+             on_problem: Callable[[dict], bool] | None = None) -> SheetResult:
+        """One photo -> the sheet's problems. Blocking (~10 s; call it in a thread from async code).
+        With `on_problem` the answer streams: it gets each problem as read; True from it ends the
+        reading there (the result then has the problems so far and `raw["stopped_early"]`)."""
         image = prepare_image(photo, long_side)
         self._may_send()  # fail fast before waiting for the lock...
-        body = json.dumps({"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}).encode()
+        body = {"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}
+        if on_problem is not None:
+            body["stream"] = True
+        data = json.dumps(body).encode()
         with self.lock:
             self._may_send()  # ...and again: a request ahead of this one may have got a 401 / 429
-            return parse_result(self._send(body), image)
+            raw = self._send(data, on_problem)
+            return parse_result(raw, image)
 
     def _may_send(self) -> None:
         if _token_key(self.base, self.token) in SheetClient._refused:
@@ -227,13 +238,15 @@ class SheetClient:
         if wait > 0:
             raise SheetError("blocked", f"認証の失敗が続いたためサーバがブロック中（あと約 {wait / 60:.0f} 分）", 429)
 
-    def _send(self, body: bytes) -> Any:
+    def _send(self, body: bytes, on_problem: Callable[[dict], bool] | None = None) -> Any:
         busy = list(self.busy_waits_s)
         server_retry = True
         while True:
             req = urllib.request.Request(self.url, body, self._headers(), method="POST")
             try:
                 with self._open(req) as r:
+                    if on_problem is not None:
+                        return self._events(r, on_problem)
                     return json.loads(r.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 err = self._http_error(e)
@@ -253,6 +266,35 @@ class SheetClient:
                 if isinstance(e, ValueError):
                     raise SheetError("response", "プリント読み取りの返事が JSON ではありません") from None
                 raise SheetError("network", f"学習支援 AI に接続できません: {e}") from None
+
+    @staticmethod
+    def _events(r: Any, on_problem: Callable[[dict], bool]) -> dict:
+        """The SSE answer (docs/ufo_api_spec.md §6.3): sheet.start, sheet.problem..., sheet.result, [DONE].
+        The final sheet.result is the answer; a reading stopped early answers with what came."""
+        start: dict = {}
+        seen: list[dict] = []
+        for raw_line in r:
+            line = raw_line.decode("utf-8", "replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            ev = json.loads(payload)
+            if "error" in ev:
+                msg = str((ev.get("error") or {}).get("message", ""))[:200]
+                raise SheetError("server", "プリントの読み取りに失敗（途中）" + (f": {msg}" if msg else ""))
+            kind = ev.get("object")
+            if kind == "sheet.start":
+                start = ev
+            elif kind == "sheet.problem" and isinstance(ev.get("problem"), dict):
+                seen.append(ev["problem"])
+                if on_problem(ev["problem"]):
+                    return {**start, "object": "sheet.partial", "problems": seen, "stopped_early": True,
+                            "seconds": ev.get("seconds")}
+            elif kind == "sheet.result":
+                return ev
+        raise SheetError("response", "プリント読み取りの返事が途中で終わりました（sheet.result がない）")
 
     def _http_error(self, e: urllib.error.HTTPError) -> SheetError:
         detail = ""

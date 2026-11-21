@@ -52,6 +52,9 @@ class VoiceConfig:
     min_rms: float = 0.004  # quieter than this is no voice (a float32 signal, full scale 1.0)
     device: str = ""  # "" = the default input; else part of the device's name
     preload: bool = True
+    # the tutor's model is unloaded when idle (the first answer then takes ~10 s): a tiny turn keeps
+    # it loaded while a study session runs, at the session's start and after this long without one
+    warm_every_s: float = 240.0
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any]) -> "VoiceConfig":
@@ -60,7 +63,8 @@ class VoiceConfig:
         return cls(enabled=bool(d.get("enabled", True)), model=str(d.get("model", cls.model)),
                    language=str(d.get("language", "ja")), max_s=min(max(float(d.get("max_s", 20.0)), 1.0), 60.0),
                    min_s=max(float(d.get("min_s", 0.4)), 0.0), min_rms=max(float(d.get("min_rms", 0.004)), 0.0),
-                   device=str(d.get("device", "")), preload=bool(d.get("preload", True)))
+                   device=str(d.get("device", "")), preload=bool(d.get("preload", True)),
+                   warm_every_s=max(float(d.get("warm_every_s", 240.0)), 0.0))
 
 
 class Recorder(Protocol):
