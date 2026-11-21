@@ -5,10 +5,10 @@
 - **このフォルダの中身は Git に入らない。** 入るのはこの `README.md` と `.gitignore` だけ（Godot が作る `.import` も入らない）。
 - ほかの PC では、同じファイルを自分でここに置く。
 - ゲームがこのフォルダの次のファイルを鳴らす（#173、#181。ファイル名は `config/game_config.json` の `game_mode.sounds.bgm` で変えられる）:
-  - `top.wav` — トップメニュー（起動時のタイトル画面 = モードの選択）
+  - `title.mp3` — トップメニュー（起動時のタイトル画面 = モードの選択）。元のファイル名 `iwashiro_pocket.mp3`（前は `top.wav`）
   - `Intro Jingle.wav` — トップメニューで種類を選んだときの効果音（1 回だけ。鳴り終わってから次の曲が始まる）
   - `intro.mp3` — スコアゲームのタイトル
-  - `tutorial.mp3` — 練習（チュートリアル）の間
+  - `practice.mp3` — 練習（チュートリアル）の間。元のファイル名 `iwashiro_tuto_and_rial.mp3`（前は `tutorial.mp3`）
   - `game.wav` — ゲーム中（150 秒の時計が動いている間）
   - `ending.mp3` — ゲームが終わった後の結果発表（リザルトとランキング）
   - `study.mp3` — 勉強モードの間（#237。元のファイル名 `iwashiro_intelli_kun.mp3`）。`config/game_config.json` の `study_mode.bgm.study`
