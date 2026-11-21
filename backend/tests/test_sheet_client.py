@@ -507,3 +507,42 @@ def test_a_deadline_caps_the_socket_wait_and_a_slow_stream():
     srv = FakeServer(ANSWER)
     client(srv).read(jpeg(320, 240))
     assert srv.calls[0]["timeout"] == 180.0
+
+
+def test_a_deadline_holds_when_the_server_drips_bytes_without_a_newline():
+    """Review on #245: a real socket, bytes every 0.05 s and never a whole line: the read is cut
+    at the deadline (not the socket timeout, which each byte resets)."""
+    import threading as _th
+    import time as _t
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Drip(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            try:
+                for _ in range(60):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    _t.sleep(0.05)
+            except OSError:
+                pass
+
+        def log_message(self, *a):
+            pass
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+    th = _th.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    try:
+        c = SheetClient(f"http://127.0.0.1:{srv.server_address[1]}", TOKEN, sleep=lambda s: None)
+        t0 = _t.monotonic()
+        with pytest.raises(SheetError) as e:
+            c.read(jpeg(320, 240), on_problem=lambda p: False, deadline_s=0.3)
+        assert e.value.kind == "timeout" and _t.monotonic() - t0 < 0.8
+        assert c.lock.acquire(blocking=False)  # the slot is free at once
+        c.lock.release()
+    finally:
+        srv.shutdown()
+        srv.server_close()

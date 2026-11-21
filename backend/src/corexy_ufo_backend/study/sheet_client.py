@@ -178,6 +178,22 @@ def _token_key(url: str, token: str) -> str:
     return url + "#" + hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
+def _cut(r: Any) -> None:
+    """Ends a response being read in another thread: shuts its socket down (a blocked recv
+    returns), or closes it when there is no socket to reach (a test's fake)."""
+    import socket
+    try:
+        sock = r.fp.raw._sock  # http.client.HTTPResponse -> SocketIO -> socket
+        sock.shutdown(socket.SHUT_RDWR)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class SheetClient:
     # per server: at most CONCURRENCY requests at a time, a token the server refused, the time a 429 block ends
     CONCURRENCY = 2
@@ -276,9 +292,19 @@ class SheetClient:
                 raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）")
             try:
                 with self._open(req, left) as r:
-                    if on_problem is not None:
-                        return self._events(r, on_problem, end)
-                    return json.loads(r.read().decode("utf-8"))
+                    # review on #245: a read blocks between lines (or on bytes without a newline) past
+                    # the socket's timeout: at the deadline the connection is cut, which ends the read
+                    timer = threading.Timer(max(end - time.monotonic(), 0.0), _cut, (r,)) if end is not None else None
+                    if timer is not None:
+                        timer.daemon = True
+                        timer.start()
+                    try:
+                        if on_problem is not None:
+                            return self._events(r, on_problem, end)
+                        return json.loads(r.read().decode("utf-8"))
+                    finally:
+                        if timer is not None:
+                            timer.cancel()
             except urllib.error.HTTPError as e:
                 err = self._http_error(e)
                 if err.kind == "busy" and busy and (end is None or time.monotonic() + busy[0] < end):
@@ -292,8 +318,7 @@ class SheetClient:
                     continue
                 raise err from None
             except (OSError, ValueError) as e:  # cannot connect / timeout / certificate / not JSON
-                if end is not None and time.monotonic() >= end - 0.05 and isinstance(e, (TimeoutError, OSError)) \
-                        and not isinstance(e, ssl.SSLError):
+                if end is not None and time.monotonic() >= end - 0.05 and not isinstance(e, ssl.SSLError):
                     raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）") from None
                 if isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError):
                     raise SheetError("network", f"証明書を確かめられません（config/secrets/tutor_cert.pem と、URL の IP）: {e}") from None
