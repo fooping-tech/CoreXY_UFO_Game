@@ -3,9 +3,10 @@ extends Node
 ## The study mode's voice dialogue (#233): the child holds the talk key (V) or the microphone
 ## button and speaks; on letting go the backend turns it into text (Whisper on this Mac) and the
 ## text, the worksheet as the overview camera sees it (cut out and turned upright: SheetFrame)
-## and the turns so far go to the tutor (the local LLM server). UFOくん says its answer with the
-## usual speech (voice + bubble). When the tutor wants a closer look at a problem, the usual HELP
-## (the arm's camera) starts for it.
+## and the turns so far go to the tutor (the local LLM server, its "dialog" format, streamed).
+## UFOくん starts saying the answer with its first sentence (homework_talk_delta), while the rest
+## is still being made, with the usual speech (voice + bubble). When the tutor wants a closer look
+## at a problem, the usual HELP (the arm's camera) starts for it.
 ##
 ## Only while studying, in the camera mode, with the backend's voice (hello: study_voice), and
 ## never while UFOくん speaks (it would hear itself). The microphone is opened by the backend only
@@ -17,9 +18,10 @@ const IDLE := "idle"
 const LISTENING := "listening"  # the key is held
 const HEARING := "hearing"  # Whisper is writing it down
 const THINKING := "thinking"  # the tutor is answering
+const ANSWERING := "answering"  # its first sentences are being said, the rest is coming
 const FACES := {"excited": "excited", "happy": "happy", "normal": "normal", "sad": "sad", "surprised": "surprised",
 	"worried": "worried", "wink": "wink", "thinking": "worried", "praise": "happy", "celebrate": "excited"}
-const MAX_HISTORY := 8
+const MAX_HISTORY := 10  # messages: the API takes 12 with the picture and the new question
 
 var ctl: StudyModeController
 var enabled := true
@@ -30,12 +32,13 @@ var state := IDLE
 var heard := ""
 var last_answer: Dictionary = {}
 var note := ""  # why it cannot listen now / what went wrong (shown small)
-## the dialogue: the problem talked about and its turns ([{hint_level, message}], the server's shape)
+## the dialogue: the problem talked about and its turns ([{role: user|assistant, content}])
 var target_problem := 0
 var history: Array = []
 ## where the worksheet's picture comes from (the overview camera; tests give their own)
 var overview_source: Callable
 var _rid := ""
+var _said := 0  # sentences of this answer already given to the speech
 var _held_s := 0.0
 var _seq := 0
 var _token := 0
@@ -166,6 +169,8 @@ func _on_aux(msg: Dictionary) -> void:
 		"homework_heard_error":
 			var code := str(data.get("code", ""))
 			_fail(str(data.get("message", "")), code == "not_heard")
+		"homework_talk_delta":
+			_sentence(str(data.get("text", "")))
 		"homework_talk_result":
 			_answer(data)
 		"homework_talk_error", "homework_error":
@@ -182,8 +187,8 @@ func _ask(text: String) -> void:
 	if jpeg.is_empty():
 		_fail("画像を上限サイズ内に圧縮できなかった", false)
 		return
-	# a number said ("3ばん") picks the problem itself; else the one being talked about
-	var target := 0 if mentions_number(text) else target_problem
+	# the backend reads a number said ("3ばん"); else the problem being talked about
+	var target := target_problem
 	_rid = _next_rid("talk")
 	var err := hw.link.send_aux({"type": "homework_talk", "request_id": _rid, "data": {
 		"text": text, "image_jpeg_base64": Marshalls.raw_to_base64(jpeg), "target_problem": target,
@@ -192,11 +197,17 @@ func _ask(text: String) -> void:
 		_fail("バックエンドに送れなかった", false)
 		return
 	state = THINKING
+	_said = 0
 	changed.emit()
 
-static func mentions_number(text: String) -> bool:
-	var re := RegEx.create_from_string("[0-9０-９一二三四五六七八九十]|ばん|番")
-	return re.search(text) != null
+## A sentence of the answer while the rest is still coming: said at once.
+func _sentence(text: String) -> void:
+	if text.strip_edges() == "" or state not in [THINKING, ANSWERING]:
+		return
+	ctl.voice_lines([{"text": text, "face": "normal"}], _said == 0)
+	_said += 1
+	state = ANSWERING
+	changed.emit()
 
 func _answer(data: Dictionary) -> void:
 	_rid = ""
@@ -207,20 +218,20 @@ func _answer(data: Dictionary) -> void:
 		target_problem = tp
 		history.clear()  # another problem: its own turns
 	var message := str(data.get("message", ""))
-	history.append({"hint_level": int(data.get("hint_level", 0)), "message": message})
+	history.append({"role": "user", "content": heard})
+	history.append({"role": "assistant", "content": message})
 	while history.size() > MAX_HISTORY:
 		history.pop_front()
-	var face: String = FACES.get(str(data.get("ufo_face", "")), FACES.get(str(data.get("visual_effect", "")), "normal"))
+	var face: String = FACES.get(str(data.get("visual_effect", "")), "normal")
+	var rest: Array = data.rest if data.get("rest") is Array else ([] if _said > 0 else [message])
 	var lines: Array = []
-	var parts: Array = data.speech_lines if data.get("speech_lines") is Array and not (data.speech_lines as Array).is_empty() \
-		else [message]
-	for p in parts:
+	for p in rest:
 		lines.append({"text": str(p), "face": face})
+	if not lines.is_empty():
+		ctl.voice_lines(lines, _said == 0)
 	var look := bool(data.get("need_recapture", false)) and tp > 0
-	if str(data.get("action", "")) == "praise":
-		GameState.post_event("study_voice_praise", {"problem": tp})
 	changed.emit()
-	ctl.voice_answer(lines, tp if look else 0)
+	ctl.voice_done(tp if look else 0)
 
 func _fail(message: String, not_heard: bool) -> void:
 	_rid = ""
@@ -239,6 +250,8 @@ func status_text() -> String:
 			return "きいた ことばを かいてるよ…"
 		THINKING:
 			return "かんがえちゅう…"
+		ANSWERING:
+			return ""
 	if can_talk():
 		return "%s を おしながら はなしかけてね" % OS.get_keycode_string(talk_keycode)
 	return ""

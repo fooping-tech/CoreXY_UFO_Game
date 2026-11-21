@@ -439,8 +439,12 @@ func refresh() -> void:
 	sheet.marks = ctl.services.sheet_marks() if ctl.services.mode == "camera" else {}
 	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
 	sheet.photo_texture = cams.texture("overview") if cams != null and cams.has_feed("overview") else null
-	sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
-		("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
+	sheet.crop_texture = _crop if _crop_wanted() else null
+	if sheet.crop_texture != null:
+		sheet.caption = "カメラ（AI に送る画像）"
+	else:
+		sheet.caption = "つくえの上（模擬）" if ctl.services.mode == "simulated" else \
+			("プリント（カメラ）" if sheet.showing_photo() else "プリント（%s・カメラで探し中）" % ctl.worksheet.get("worksheet_id", ""))
 	sheet.visible = st not in ["CELEBRATION", "GAME_UNLOCKED", "HOMEWORK_COMPLETE"]
 	sheet.queue_redraw()
 	# the round close-up (the mock's drawing; a real focus camera shows in the game's scope)
@@ -495,9 +499,42 @@ static func key_help(state: String, mode: String) -> String:
 	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
 	return "  ".join(parts)
 
+## #232: the sheet as it goes to the local LLM server, from the overview camera now and then.
+const CROP_EVERY_S := 0.5
+const CROP_EDGE := 480
+var _crop: ImageTexture
+var _crop_left := 0.0
+
+func _crop_wanted() -> bool:
+	var hw := ctl.services.homework if ctl.services != null else null
+	return ctl.services.mode == "camera" and hw != null and hw.reads_locally()
+
+func _update_crop(dt: float) -> void:
+	_crop_left -= dt
+	if _crop_left > 0.0 or not _crop_wanted():
+		return
+	_crop_left = CROP_EVERY_S
+	var cams: CameraHub = ctl.main.cameras if ctl.main != null else null
+	if cams == null or not cams.has_feed("overview"):
+		return
+	var img := cams.texture("overview").get_image()
+	if img == null or img.is_empty():
+		return
+	var out := ctl.services.homework.watch_image(img)
+	var big := maxi(out.get_width(), out.get_height())
+	if big > CROP_EDGE:
+		out.resize(maxi(1, out.get_width() * CROP_EDGE / big), maxi(1, out.get_height() * CROP_EDGE / big), Image.INTERPOLATE_BILINEAR)
+	if _crop == null or Vector2i(_crop.get_size()) != out.get_size():
+		_crop = ImageTexture.create_from_image(out)
+	else:
+		_crop.update(out)
+	sheet.crop_texture = _crop
+	sheet.queue_redraw()
+
 func _process(dt: float) -> void:
 	if not visible or ctl == null:
 		return
+	_update_crop(dt)
 	_typed += dt * 28.0
 	_bubble_text.visible_characters = -1 if _typed >= _bubble_text.text.length() else int(_typed)
 	_timer.text = "べんきょう " + HomeworkClient.format_elapsed(ctl.elapsed_s())

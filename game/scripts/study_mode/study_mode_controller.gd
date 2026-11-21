@@ -772,6 +772,29 @@ func handle_key_release(keycode: int) -> bool:
 	voice.release()
 	return true
 
+## The voice dialogue's answer as it comes (#233): the first lines replace what was being said,
+## the next ones queue after them.
+func voice_lines(lines: Array, first: bool) -> void:
+	if not active():
+		return
+	if first:
+		_say(lines)
+	else:
+		speech.say(lines)
+
+## The answer is complete: `look` > 0 then sends the arm's camera to that problem once UFOくん
+## has said it all (the usual HELP, asked by the child).
+func voice_done(look := 0) -> void:
+	if not active() or look <= 0:
+		return
+	var f := func():
+		if voice.in_talk_state():
+			request_help(look, true)
+	if speech.busy():
+		_after_speech = f
+	else:
+		f.call()
+
 ## UFOくん answers what the child said (#233); `look` > 0: then the arm's camera looks at that
 ## problem (the usual HELP, asked by the child: a problem already written is looked at too).
 func voice_answer(lines: Array, look := 0) -> void:

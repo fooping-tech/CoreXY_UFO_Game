@@ -927,6 +927,16 @@ func _test_study_voice(rs: Node) -> void:
 	vo.overview_source = func() -> Image: return overview
 	_ok(vo.can_talk() and vo.status_text().contains("V を おしながら"), "study voice: while studying it invites to talk",
 		vo.status_text())
+	# #232: read locally, the sheet shown is the camera's crop that goes to the AI, not the drawing
+	hud._crop = ImageTexture.create_from_image(Image.create(200, 240, false, Image.FORMAT_RGB8))
+	hud.refresh()
+	var crop_shown: bool = hud.sheet.crop_texture != null and hud.sheet.caption.contains("AI に送る")
+	hw.study_local = false
+	hud.refresh()
+	var drawing_back: bool = hud.sheet.crop_texture == null and not hud.sheet.caption.contains("AI に送る")
+	hw.study_local = true
+	_ok(crop_shown and drawing_back, "study local: the sheet shown is the camera's crop sent to the AI (the drawing otherwise)",
+		str([crop_shown, drawing_back, hud.sheet.caption]))
 	ctl.handle_key(KEY_V)
 	var listening: bool = vo.state == StudyVoice.LISTENING and sent.size() == 1 and sent[0].type == "homework_listen_start"
 	ctl.handle_key_release(KEY_V)
@@ -942,26 +952,31 @@ func _test_study_voice(rs: Node) -> void:
 	_ok(listening and hearing and asked and shown,
 		"study voice: held V listens, the release writes it down, the words and the worksheet go to the tutor",
 		str([listening, hearing, asked, shown, hud._voice_text.text]))
-	# the answer is spoken; the dialogue keeps its problem and turns
+	# streamed: the first sentence is said at once, the next queues, the result adds what is left
+	hw._on_message({"type": "homework_talk_delta", "request_id": str(talk.request_id), "data": {"text": "いっしょに かんがえよう。"}})
+	var at_once: bool = ctl.speech.current == "いっしょに かんがえよう。" and vo.state == StudyVoice.ANSWERING
+	hw._on_message({"type": "homework_talk_delta", "request_id": str(talk.request_id), "data": {"text": "5こから2こ とると？"}})
 	hw._on_message({"type": "homework_talk_result", "request_id": str(talk.request_id), "data": {
-		"message": "5こから2こ とると いくつかな？", "speech_lines": ["5こから2こ とると いくつかな？"], "action": "give_hint",
-		"target_problem": 3, "hint_level": 1, "need_recapture": false, "ufo_face": "normal"}})
-	var spoken: bool = ctl.speech.current.contains("5こから2こ") and vo.state == StudyVoice.IDLE and vo.target_problem == 3 \
-		and vo.history == [{"hint_level": 1, "message": "5こから2こ とると いくつかな？"}]
+		"message": "いっしょに かんがえよう。5こから2こ とると？のこりを かぞえてね。", "rest": ["のこりを かぞえてね。"],
+		"action": "talk", "target_problem": 3, "need_recapture": false}})
+	var queued: Array = ctl.speech._queue.map(func(q): return q.text)
+	var spoken: bool = at_once and queued == ["5こから2こ とると？", "のこりを かぞえてね。"] and vo.state == StudyVoice.IDLE \
+		and vo.target_problem == 3 and vo.history == [{"role": "user", "content": "3ばんが わからない"},
+			{"role": "assistant", "content": "いっしょに かんがえよう。5こから2こ とると？のこりを かぞえてね。"}]
 	var busy_why := vo.blocker()
 	ctl.speech.clear()
 	ctl.handle_key(KEY_V)
 	ctl.handle_key_release(KEY_V)
 	hw._on_message({"type": "homework_heard", "request_id": str(sent[-1].request_id), "data": {"text": "もっと ヒント"}})
 	var follow: Dictionary = sent[-1]
-	_ok(spoken and busy_why.contains("話している") and int(follow.data.target_problem) == 3 and follow.data.history.size() == 1,
-		"study voice: the answer is said; not while UFOくん speaks; the next turn keeps the problem and the turns",
-		str([spoken, busy_why, follow.data.get("target_problem"), vo.history]))
+	_ok(spoken and busy_why.contains("話している") and int(follow.data.target_problem) == 3 and follow.data.history.size() == 2,
+		"study voice: the first sentence is said as it comes, the rest queues; not while UFOくん speaks; the next turn keeps the problem and the turns",
+		str([spoken, queued, busy_why, follow.data.get("target_problem"), vo.history]))
 	# a closer look: the usual HELP for that problem after the answer
 	hw._on_message({"type": "homework_talk_result", "request_id": str(follow.request_id), "data": {
-		"message": "ちかくで みてみるね", "action": "ask_recapture", "target_problem": 2, "hint_level": 0,
+		"message": "ちかくで みてみるね", "rest": ["ちかくで みてみるね"], "action": "talk", "target_problem": 2,
 		"need_recapture": true}})
-	var reset_turns: bool = vo.target_problem == 2 and vo.history.size() == 1
+	var reset_turns: bool = vo.target_problem == 2 and vo.history.size() == 2 and ctl.speech.current == "ちかくで みてみるね"
 	var states: Array[String] = []
 	ctl.state_changed.connect(func(_p, c): states.append(c))
 	_study_pump(game, 6.0)
@@ -990,8 +1005,6 @@ func _test_study_voice(rs: Node) -> void:
 	_ok(down and vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop",
 		"study voice: the game's key handling gives the talk key's press and release", vo.state)
 	vo.cancel()
-	_ok(StudyVoice.mentions_number("3ばん") and StudyVoice.mentions_number("さんばん") and not StudyVoice.mentions_number("ヒントちょうだい"),
-		"study voice: a number said picks the problem itself")
 	ctl.stop()
 	hw.link = real_link
 	spy.free()
