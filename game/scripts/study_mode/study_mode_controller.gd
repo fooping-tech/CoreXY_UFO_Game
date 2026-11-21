@@ -610,6 +610,20 @@ func hand_tick(pose: String, now_ms: float) -> void:
 		request_help(n, true)
 
 ## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
+## The problem Y helps with (#237): on a real print (read by the camera) the one the child seems
+## stuck on: the first being written, else the first not written yet; 0 = none to tell (all are
+## written, or none read yet: the child is asked). On the sample sheet: help.problem (its challenge).
+func stuck_problem() -> int:
+	if not services.reads_whole_sheet() and not tracker.from_sheet:
+		return default_help_problem
+	for n in tracker.numbers:
+		if tracker.shown_state(n) == StudyQuestionTracker.WRITING:
+			return n
+	for n in tracker.numbers:
+		if tracker.shown_state(n) in [StudyQuestionTracker.EMPTY, StudyQuestionTracker.HELD] and not tracker.is_filled(n):
+			return n
+	return 0
+
 func offer_help(problem: int, now_ms: float) -> void:
 	if WorksheetCatalog.problem(worksheet, problem).is_empty() and not tracker.has(problem):
 		return
@@ -623,7 +637,7 @@ func offer_help(problem: int, now_ms: float) -> void:
 	changed.emit()
 
 # ------------------------------------------------------------------ HELP
-## HELP for problem (Y = default_help_problem). asked: the child asked for it by hand, so a
+## HELP for problem (Y: stuck_problem(), 0 = ask which). asked: the child asked for it by hand, so a
 ## problem already filled is explained too.
 func request_help(problem := 0, asked := false) -> void:
 	if state not in ["STUDYING", "RESUME_STUDY"]:
@@ -632,8 +646,16 @@ func request_help(problem := 0, asked := false) -> void:
 			changed.emit()
 		return
 	offer_problem = 0
+	if problem <= 0:
+		problem = stuck_problem()
+		if problem <= 0:  # nothing to go to by itself: ask, never move on a guess
+			notice = "どの問題か教えてね（指で番号 → いいね、または V を押して話す）"
+			_say([{"text": "どの問題かな？", "face": "surprised"},
+				{"text": "指で番号を見せるか、Vを押して教えてね！", "face": "wink"}])
+			changed.emit()
+			return
 	used_help = true  # remembered only: a HELP never takes a reward away (#236)
-	help_problem = problem if problem > 0 else default_help_problem
+	help_problem = problem
 	if tracker.is_filled(help_problem) and not asked:
 		notice = "問題 %d はもう書けているみたい（アームは動かしません）" % help_problem
 		_say([{"text": "問題 %d はもう書けているみたい！すごいね！" % help_problem, "face": "happy"}])

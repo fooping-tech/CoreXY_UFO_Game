@@ -1246,6 +1246,25 @@ func _test_study_real_print_problems(rs: Node) -> void:
 		"answers": [{"number": 1, "answer_status": "blank", "student_answer": "", "visible": "full"}]})
 	hud.refresh()
 	var five: bool = ctl.tracker.numbers == [1, 2, 3, 4, 5] and hud._count.text == "宿題 0 / 5 問"
+	# Y on a real print: the problem the child seems stuck on (being written, else not written), never "3" by itself
+	ctl.tracker.confirm_readings = 1
+	ctl.tracker.add_numbered([{"number": 1, "filled_prob": 0.95}, {"number": 2, "filled_prob": 0.95},
+		{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.45}], false, "", true)
+	var stuck_writing := ctl.stuck_problem()
+	ctl.tracker.add_numbered([{"number": 4, "filled_prob": 0.05}], false, "", true)
+	var stuck_empty := ctl.stuck_problem()
+	var all_written := StudyQuestionTracker.new()
+	all_written.configure({"confirm_readings": 1})
+	all_written.reset_numbers([], true)
+	all_written.add_numbered([{"number": 1, "filled_prob": 0.95}], false, "", true)
+	var real_tracker := ctl.tracker
+	ctl.tracker = all_written
+	ctl.request_help()
+	var asked_which: bool = ctl.state == "STUDYING" and ctl.notice.contains("どの問題") and ctl.stuck_problem() == 0
+	ctl.tracker = real_tracker
+	_ok(stuck_writing == 4 and stuck_empty == 4 and asked_which,
+		"real print: Y helps with the problem being written (else the first not written); all written: it asks which, no move",
+		str([stuck_writing, stuck_empty, asked_which, ctl.state, ctl.notice]))
 	ctl.debug_skip()  # to the answer check
 	_study_pump(game, 10.0, func(): return ctl.state in ["SHEET_SCANNING", "GRADING_QUESTION"])
 	# no backend in the test: the reader's answer arrives as sheet_read's ack
