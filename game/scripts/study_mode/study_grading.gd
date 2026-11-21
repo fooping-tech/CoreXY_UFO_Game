@@ -52,12 +52,18 @@ static func classify(answer_status: String, visible := "full") -> String:
 	return UNCLEAR  # unreadable, blank (all were written: the reader missed it), unknown
 
 ## One reading of the sheet ([{number, answer_status, student_answer?, visible?}]); a problem
-## it does not show is unclear. -> the problems whose verdict changed, in order (to be shown).
-func apply(problems: Array) -> Array[int]:
+## it does not show is unclear. `grow`: a problem not known yet is added (a real print: its
+## problems are the ones read). -> the problems whose verdict changed, in order (to be shown).
+func apply(problems: Array, grow := false) -> Array[int]:
 	var seen := {}
 	for p in problems:
-		if p is Dictionary and p.get("number") != null:
+		if p is Dictionary and p.get("number") != null and int(p.number) > 0:
 			seen[int(p.number)] = p
+			if grow and not int(p.number) in numbers:
+				numbers.append(int(p.number))
+				verdicts[int(p.number)] = PENDING
+				answers[int(p.number)] = ""
+	numbers.sort()
 	var changed: Array[int] = []
 	for n in numbers:
 		if verdicts.get(n) == CORRECT:

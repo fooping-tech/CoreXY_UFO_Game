@@ -323,10 +323,14 @@ func _on_worksheet_seen() -> void:
 func studying() -> bool:
 	return state in ["STUDYING", "RESUME_STUDY"] or state in HELP_STATES or state == "AI_EXPLAINING"
 
-func _on_reading(probs: Array, held: bool, reason: String) -> void:
+func _on_reading(questions: Array, held: bool, reason: String) -> void:
 	if not studying() or completion_fired:
 		return
-	var newly := tracker.add_reading(probs, held, reason)
+	# #237: a real print read by the local reader: its problems are the ones read, any count
+	var grow := services.reads_whole_sheet()
+	if grow and not tracker.from_sheet:
+		tracker.reset_numbers([], true)
+	var newly := tracker.add_numbered(questions, held, reason, grow)
 	for n in newly:
 		sounds.play("chime")
 		GameState.post_event("study_question_filled", {"number": n})
@@ -355,10 +359,7 @@ func _complete() -> void:
 	study_final_s = elapsed_s()
 	_set_state("ANSWER_CHECK_READY")
 	GameState.post_event("study_complete", {"elapsed_s": study_final_s, "by": tracker.completed_by})
-	var nums: Array = []
-	for p in worksheet.get("problems", []):
-		nums.append(int(p.number))
-	grading.reset(nums)
+	grading.reset(tracker.numbers)  # the problems written (a real print: the ones read on it)
 	grading.used_help = used_help
 	shown.clear()
 	reveal_current = 0
@@ -381,7 +382,7 @@ func _scan(rescan: bool) -> void:
 func _on_graded(problems: Array) -> void:
 	if state not in ["SHEET_SCANNING", "RESCAN"]:
 		return
-	_reveal(grading.apply(problems))
+	_reveal(grading.apply(problems, services.reads_whole_sheet()))
 
 ## The reading failed: never "wrong", the problems not yet right are only unclear.
 func _on_grade_failed(reason: String) -> void:
@@ -565,7 +566,7 @@ func hand_tick(pose: String, now_ms: float) -> void:
 
 ## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
 func offer_help(problem: int, now_ms: float) -> void:
-	if WorksheetCatalog.problem(worksheet, problem).is_empty():
+	if WorksheetCatalog.problem(worksheet, problem).is_empty() and not tracker.has(problem):
 		return
 	offer_problem = problem
 	_offer_until_ms = now_ms + hand_offer_s * 1000.0

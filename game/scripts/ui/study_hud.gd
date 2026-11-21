@@ -35,6 +35,7 @@ var _energy: Label
 var _powers: PanelContainer
 var _power_buttons: Array[Button] = []
 var _count: Label
+var _chip_grid: GridContainer
 var _chips: Array = []  # [PanelContainer, Label]
 var _bar: ProgressBar
 var _timer: Label
@@ -173,21 +174,13 @@ func _build_checklist() -> void:
 	v.add_child(HSeparator.new())
 	_count = label("宿題 0 / 3 問", 30, INK)
 	v.add_child(_count)
-	var chips := HBoxContainer.new()
-	chips.add_theme_constant_override("separation", 10)
-	v.add_child(chips)
-	for i in 3:
-		var c := panel(Color("e8ecf4"), Color("9aa6bb"), 12, 3)
-		c.custom_minimum_size = Vector2(98, 0)
-		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var csb := c.get_theme_stylebox("panel") as StyleBoxFlat
-		csb.content_margin_left = 6  # #237: three verdicts side by side in the right column
-		csb.content_margin_right = 6
-		var l := label("", 17, INK)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		c.add_child(l)
-		chips.add_child(c)
-		_chips.append([c, l])
+	# #237: one chip per problem, as many as the print has (4 to a row)
+	_chip_grid = GridContainer.new()
+	_chip_grid.columns = 3
+	_chip_grid.add_theme_constant_override("h_separation", 8)
+	_chip_grid.add_theme_constant_override("v_separation", 6)
+	v.add_child(_chip_grid)
+	_ensure_chips(3)
 	_bar = ProgressBar.new()
 	_bar.custom_minimum_size = Vector2(0, 22)
 	_bar.max_value = 3
@@ -209,6 +202,28 @@ func _build_checklist() -> void:
 	_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_notice.custom_minimum_size = Vector2(RIGHT_W - 40, 0)
 	v.add_child(_notice)
+
+## As many problem chips as `n` (the print's problems); smaller when more than 3 to a row.
+func _ensure_chips(n: int) -> void:
+	n = clampi(n, 0, 12)
+	while _chips.size() < n:
+		var c := panel(Color("e8ecf4"), Color("9aa6bb"), 12, 3)
+		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var csb := c.get_theme_stylebox("panel") as StyleBoxFlat
+		csb.content_margin_left = 4
+		csb.content_margin_right = 4
+		var l := label("", 17, INK)
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		c.add_child(l)
+		_chip_grid.add_child(c)
+		_chips.append([c, l])
+	while _chips.size() > n:
+		var last: Array = _chips.pop_back()
+		(last[0] as Node).queue_free()
+	_chip_grid.columns = clampi(n, 1, 3) if n <= 3 else 4
+	for ch in _chips:
+		ch[0].custom_minimum_size = Vector2(98 if n <= 3 else 74, 0)
+		ch[1].add_theme_font_size_override("font_size", 17 if n <= 3 else 14)
 
 func _build_bubble() -> void:
 	_bubble = panel(Color.WHITE, BLUE, 26, 5)
@@ -427,14 +442,20 @@ func refresh() -> void:
 		row[1].text = "%s %s%s" % ["①②③④"[i], MISSION[i], " ←いまここ" if i == step else ""]
 	# each problem: written or not while studying; the verdict once the check has begun
 	var checking := ctl.completion_fired
+	var nums: Array[int] = ctl.grading.numbers if checking else t.numbers
+	_ensure_chips(nums.size())
+	_bar.max_value = maxi(nums.size(), 1)
 	if checking:
-		_count.text = "答え合わせ ○ %d / %d" % [ctl.grading.count(StudyGrading.CORRECT), ctl.grading.numbers.size()]
+		_count.text = "答え合わせ ○ %d / %d" % [ctl.grading.count(StudyGrading.CORRECT), nums.size()]
 		_bar.value = ctl.grading.count(StudyGrading.CORRECT)
+	elif nums.is_empty():
+		_count.text = "宿題（問題を さがしています）"
+		_bar.value = 0
 	else:
 		_count.text = "宿題 %d / %d 問" % [t.filled_count(), t.count]
 		_bar.value = t.filled_count()
 	for i in _chips.size():
-		var n := i + 1
+		var n := nums[i]
 		if checking:
 			var v: String = ctl.grading.verdicts.get(n, StudyGrading.PENDING) if ctl.shown.has(n) else StudyGrading.PENDING
 			var look: Array = StudyGrading.shown(v)

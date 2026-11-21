@@ -23,7 +23,8 @@ extends Node
 ## own targets: never jogs. Results that come back after `abort()` are ignored.
 
 signal worksheet_seen
-signal reading(probs: Array, held: bool, reason: String)
+## each problem's reading by its printed number: [{number, filled_prob}] (#237: any count)
+signal reading(questions: Array, held: bool, reason: String)
 signal located(target: Dictionary)
 signal locate_failed(reason: String)
 ## kind: "help" | "cleanup"; data: the sequence's status
@@ -77,6 +78,8 @@ var last_answers: Array = []
 ## a rescan finds the ones to look at again written right (the child rewrote them)
 var demo_results: Array = ["correct", "incorrect", "correct"]
 var _grade_token := 0
+var _grade_rid := ""
+const GRADE_WAIT_S := 120.0  # the reader: ~10 s, more when busy
 var _explain_rid := ""
 var _help_rid := ""
 var _nav_rid := ""
@@ -398,9 +401,13 @@ func _mock_tick(dt: float) -> void:
 			_mock_probs[i] = 0.95
 	if _occlude_left > 0:
 		_occlude_left -= 1
-		reading.emit([null, null, null], true, "occluded")
+		reading.emit([], true, "occluded")
 		return
-	reading.emit(_mock_probs.duplicate(), false, "")
+	var qs: Array = []
+	var probs: Array = worksheet.get("problems", []) if worksheet.get("problems") is Array else []
+	for i in mini(probs.size(), _mock_probs.size()):
+		qs.append({"number": int(probs[i].number), "filled_prob": _mock_probs[i]})
+	reading.emit(qs, false, "")
 
 func _on_progress(data: Dictionary) -> void:
 	if not watching:
@@ -411,12 +418,18 @@ func _on_progress(data: Dictionary) -> void:
 		mark_seen()
 	if not seen:
 		return
-	var probs: Array = []
+	var qs: Array = []
 	for q in data.get("questions", []) if data.get("questions") is Array else []:
-		probs.append(q.get("filled_prob"))
+		if q is Dictionary and q.get("number") != null:
+			qs.append({"number": int(q.number), "filled_prob": q.get("filled_prob")})
 	if data.get("answers") is Array and not (data.answers as Array).is_empty():
 		last_answers = (data.answers as Array).duplicate(true)
-	reading.emit(probs, bool(data.get("held", false)), reason)
+	reading.emit(qs, bool(data.get("held", false)), reason)
+
+## #237: the problems are the ones read on the real print (any number, any count), not the
+## sample sheet's: the camera mode read by the local LLM server.
+func reads_whole_sheet() -> bool:
+	return mode == "camera" and homework != null and homework.reads_locally()
 
 # ------------------------------------------------------------------ the answer check (#237)
 ## Read the whole sheet once for the answer check -> graded(problems) / grade_failed(reason).
@@ -438,7 +451,24 @@ func grade(rescan := false) -> void:
 			out.append({"number": int(probs[i].number), "answer_status": st, "visible": "full"})
 		_after(1.5, func(): if tok == _grade_token: graded.emit(out))
 		return
-	# camera (Phase 1): what the watch read last; Phase 2 reads the sheet for the check itself
+	# camera, read locally: the overview frame now, cut out and turned upright (as the watch's,
+	# SheetFrame) -> the worksheet reader once (the backend's sheet_read)
+	if reads_whole_sheet() and backend_robot():
+		var img := _overview_image()
+		if img != null and not img.is_empty():
+			img.convert(Image.FORMAT_RGB8)
+			var jpeg := StudyClient.encode_jpeg(homework.watch_image(img), 1600, 600000)
+			if not jpeg.is_empty():
+				_grade_rid = main.ws.send_command("sheet_read", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
+				if main.ws.last_send_error == OK:
+					_after(GRADE_WAIT_S, func():
+						if tok == _grade_token and _grade_rid != "":
+							_grade_rid = ""
+							grade_failed.emit("プリントの読み取りの返事が来ませんでした"))
+					return
+				main.ws.forget(_grade_rid)
+				_grade_rid = ""
+	# otherwise: what the watch read last
 	var got := last_answers.duplicate(true)
 	_after(0.5, func():
 		if tok != _grade_token:
@@ -450,6 +480,27 @@ func grade(rescan := false) -> void:
 
 func cancel_grade() -> void:
 	_grade_token += 1
+	_grade_rid = ""
+
+func _on_graded_by_reader(ok: bool, payload: Dictionary) -> void:
+	if not ok:
+		var why := str(payload.get("reason", "?"))
+		trace("answer check: the reader refused: " + why)
+		if not last_answers.is_empty():  # what the watch read last is better than nothing
+			graded.emit(last_answers.duplicate(true))
+		else:
+			grade_failed.emit("プリントを読めませんでした（%s）" % why)
+		return
+	var probs: Array = payload.problems if payload.get("problems") is Array else []
+	if probs.is_empty():
+		grade_failed.emit("プリントの問題を読み取れませんでした")
+		return
+	var out: Array = []
+	for p in probs:  # the state and what was written only: the right answer stays out
+		if p is Dictionary and p.get("number") != null:
+			out.append({"number": int(p.number), "answer_status": str(p.get("answer_status", "")),
+				"student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full"))})
+	graded.emit(out)
 
 # ------------------------------------------------------------------ robot routing
 func backend_robot() -> bool:
@@ -920,6 +971,13 @@ func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:
 	if rid == _sheet_rid:
 		_sheet_rid = ""
 		_on_sheet_found(ok, payload)
+		return
+	if rid == _grade_rid:
+		# the link gives up on every command after a few seconds; the reading takes longer
+		if not ok and str(payload.get("reason", "")) == "timeout" and not payload.has("command"):
+			return
+		_grade_rid = ""
+		_on_graded_by_reader(ok, payload)
 		return
 	if rid == _help_rid:
 		_help_rid = ""

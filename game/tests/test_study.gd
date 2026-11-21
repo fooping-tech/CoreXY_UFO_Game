@@ -1173,3 +1173,72 @@ func _test_study_answer_check(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+
+## #237: the problems of a real print come from the reading (any number, any count).
+func _test_study_real_print_problems(rs: Node) -> void:
+	var t := StudyQuestionTracker.new()
+	t.configure({"confirm_readings": 1, "complete_readings": 1})
+	t.reset_numbers([], true)
+	t.add_numbered([{"number": 5, "filled_prob": 0.05}, {"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.5}], false, "", true)
+	var grown := t.numbers == [3, 4, 5] and t.count == 3 and t.is_filled(3) and t.shown_state(4) == "writing"
+	t.add_numbered([{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.95}], false, "", true)
+	var kept := t.numbers == [3, 4, 5] and not t.complete  # 5 not seen this time: still there, not written
+	t.add_numbered([{"number": 3, "filled_prob": 0.95}, {"number": 4, "filled_prob": 0.95}, {"number": 5, "filled_prob": 0.95}], false, "", true)
+	var empty := StudyQuestionTracker.new()
+	empty.reset_numbers([], true)
+	empty.add_numbered([], false, "", true)
+	_ok(grown and kept and t.complete and not empty.complete,
+		"real print: the problems are the numbers read (3, 4, 5), a number once seen stays, complete when all are written",
+		str([t.numbers, t.states, t.complete]))
+	var g := StudyGrading.new()
+	g.reset([3, 4])
+	var shown := g.apply([{"number": 4, "answer_status": "correct"}, {"number": 6, "answer_status": "incorrect"}], true)
+	_ok(g.numbers == [3, 4, 6] and shown == [3, 4, 6] and g.verdicts[3] == "unclear" and g.verdicts[6] == "review",
+		"real print: the answer check takes in a problem first read then", str([g.numbers, g.verdicts]))
+
+	# the study mode, camera + local: 5 problems read -> 5 chips; the check reads the cut-out frame once
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	var hud: StudyHud = game.study_hud
+	hw.sheet_settings_path = ""
+	hw.study_local = true
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	hw.worksheet_id = str(ctl.current_worksheet().get("worksheet_id", ""))
+	var qs: Array = []
+	for n in [1, 2, 3, 4, 5]:
+		qs.append({"number": n, "filled_prob": 0.05})
+	sv.watching = true
+	sv.seen = true
+	sv._on_progress({"questions": qs, "held": false, "visible_prob": 1.0,
+		"answers": [{"number": 1, "answer_status": "blank", "student_answer": "", "visible": "full"}]})
+	hud.refresh()
+	var five: bool = ctl.tracker.numbers == [1, 2, 3, 4, 5] and hud._chips.size() == 5 and hud._count.text.contains("0 / 5") \
+		and hud._chips[4][1].text.begins_with("5 ")
+	ctl.debug_skip()  # to the answer check
+	_study_pump(game, 10.0, func(): return ctl.state in ["SHEET_SCANNING", "GRADING_QUESTION"])
+	# no backend in the test: the reader's answer arrives as sheet_read's ack
+	sv._grade_rid = "g1"
+	game.ws.ack.emit("g1", false, {"reason": "timeout"})  # the link's few seconds: still waiting
+	var waiting: bool = sv._grade_rid == "g1"
+	sv._on_graded_by_reader(true, {"problems": [
+		{"number": 1, "answer_status": "correct", "student_answer": "4", "correct_answer": "4", "visible": "full"},
+		{"number": 2, "answer_status": "incorrect", "student_answer": "7", "correct_answer": "9", "visible": "full"},
+		{"number": 3, "answer_status": "correct", "student_answer": "5", "visible": "partial"},
+		{"number": 4, "answer_status": "correct", "student_answer": "2", "visible": "full"},
+		{"number": 5, "answer_status": "correct", "student_answer": "8", "visible": "full"}]})
+	_study_pump(game, 30.0, func(): return ctl.state == "REVIEW_SUMMARY")
+	hud.refresh()
+	_ok(five and waiting and ctl.grading.numbers == [1, 2, 3, 4, 5] and ctl.grading.count("correct") == 3
+		and ctl.grading.verdicts[3] == "unclear" and ctl.grading.verdicts[2] == "review" and hud._chips.size() == 5
+		and not str(ctl.grading.answers).contains("9"),
+		"real print: 5 problems read give 5 chips; the check reads them once (the right answers never kept)",
+		str([five, waiting, ctl.grading.numbers, ctl.grading.verdicts, ctl.state]))
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
