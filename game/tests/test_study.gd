@@ -1126,6 +1126,12 @@ func _test_study_answer_check(rs: Node) -> void:
 	_ok(g.fail_all() == [2] and g.verdicts[1] == "correct" and g.verdicts[2] == "unclear" and g.count("review") == 0,
 		"answer check: a failed reading leaves only 'unclear', never a wrong one, and keeps what was right")
 
+	# review on #241: the camera path keeps "cut off" (the watch's answers carry visible)
+	g.reset([1, 2])
+	g.apply([{"number": 1, "answer_status": "correct", "student_answer": "3", "visible": "partial"},
+		{"number": 2, "answer_status": "incorrect", "student_answer": "4", "visible": "partial"}])
+	_ok(g.verdicts[1] == "unclear" and g.verdicts[2] == "unclear" and g.time_bonus_s() == 0,
+		"answer check: a cut-off problem read by the camera is never graded (no ○, no reward)", str(g.verdicts))
 	# the reading fails in the study mode: unclear, a hint to look again, and the story goes on
 	var game := _study_game()
 	var ctl: StudyModeController = game.study_mode

@@ -43,10 +43,11 @@ def questions_from_sheet(problems: list[dict], worksheet: dict) -> list[dict[str
 
 
 def answers_from_sheet(problems: list[dict], worksheet: dict) -> list[dict[str, Any]]:
-    """What was read per problem of the worksheet: the state and the child's answer only."""
+    """What was read per problem of the worksheet: the state, the child's answer and whether the
+    problem was cut off (the answer check never grades a cut-off problem: review on #241)."""
     wanted = set(worksheet_numbers(worksheet))
     return [{"number": int(p["number"]), "answer_status": str(p.get("answer_status", "")),
-             "student_answer": str(p.get("student_answer", ""))}
+             "student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full"))}
             for p in problems if isinstance(p.get("number"), int) and p["number"] in wanted]
 
 

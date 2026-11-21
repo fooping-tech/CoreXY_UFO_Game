@@ -49,8 +49,9 @@ def test_the_progress_counts_written_problems_and_holds_when_nothing_was_read():
 
 
 def test_answers_never_carry_the_right_answer():
-    a = answers_from_sheet([prob(1, "incorrect"), prob(8, "correct")], WS)
-    assert a == [{"number": 1, "answer_status": "incorrect", "student_answer": "5"}]
+    a = answers_from_sheet([prob(1, "incorrect"), prob(8, "correct"), prob(2, "correct", visible="partial")], WS)
+    assert a == [{"number": 1, "answer_status": "incorrect", "student_answer": "5", "visible": "full"},
+                 {"number": 2, "answer_status": "correct", "student_answer": "5", "visible": "partial"}]
 
 
 def test_locate_takes_the_answer_box_else_the_problem_box():
