@@ -1151,10 +1151,11 @@ func _test_study_answer_check(rs: Node) -> void:
 		for k in StudySounds.CUES[c]:
 			var got := snd.pick(str(k))
 			layered = layered and (snd._files.has(got) or snd._streams.has(got))
-	snd.music_start()  # tests never load this machine's music files
-	var game_level := float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB - 13.0
-	_ok(layered and snd.music == null and snd.music_file == "ending.mp3" and is_equal_approx(snd.music_volume_db(), game_level),
-		"answer check: every cue's sounds exist (files and synthesised); the study music is ending.mp3", str(snd._files.keys()))
+	snd.music_play("study")  # tests never load this machine's music files: silence, no error
+	var game_level := float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB
+	_ok(layered and snd.music_track == "" and snd.music_files == {"study": "study.mp3", "check": "study_check.mp3"}
+		and is_equal_approx(snd.music_volume_db("study"), game_level - 9.0) and is_equal_approx(snd.music_volume_db("check"), game_level - 4.0),
+		"answer check: every cue's sounds exist (files and synthesised); the music: study.mp3, then study_check.mp3 from the check (at the score game's level)", str(snd._files.keys()))
 	snd.free()
 	# the reading fails in the study mode: unclear, a hint to look again, and the story goes on
 	var game := _study_game()

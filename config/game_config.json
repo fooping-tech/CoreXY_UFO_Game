@@ -577,9 +577,10 @@
       "_note": "HELP looks at problem 3 (the challenge). key: the same key as the homework helper's stuck key (homework.helper.keys.stuck) by default. open_claw: open the claws before going down (false: the landing stays above the sheet with the claws closed)."
     },
     "bgm": {
-      "file": "ending.mp3",
-      "gain_db": -13.0,
-      "_note": "#237: the study mode's music: this file from game/assets/audio/bgm/ (each machine's own, never in Git, as the score game's music) loops on the BGM bus from the study mode's start to its end. No file, or audio.bgm_enabled false: silence. The level is worked out as the score game's music: audio.volume_db + the music's -8 dB + gain_db (the score game plays the same ending.mp3 at gain -13), then the BGM bus (audio.bgm_volume_db)."
+      "study": "study.mp3",
+      "check": "study_check.mp3",
+      "gain_db": {"study": -9, "check": -4},
+      "_note": "#237: the study mode's music from game/assets/audio/bgm/ (each machine's own, never in Git): study from the study mode's start, check from the answer check on (a check without its file keeps the study's music). Looped on the BGM bus; no file, or audio.bgm_enabled false: silence. The level is worked out as the score game's music: audio.volume_db + the music's -8 dB + gain_db, gain_db = -18 - the file's LUFS (ffmpeg -i FILE -af ebur128 -f null -; study.mp3 -8.8, study_check.mp3 -14.0)."
     },
     "answer_check": {
       "checking_s": 0.9,

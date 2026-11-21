@@ -9,9 +9,10 @@ extends Node
 ## (assets/audio/manifest.json: Kenney, CC0, the score game's) layered with the synthesised ones;
 ## a file that is not there leaves its synthesised sound (or nothing).
 ##
-## The music (#237): while the study mode runs, study_mode.bgm.file (default ending.mp3) from
-## game/assets/audio/bgm/ (each machine's own, never in Git) loops on the BGM bus. No file, or the
-## music off (audio.bgm_enabled), is silence.
+## The music (#237), from game/assets/audio/bgm/ (each machine's own, never in Git), looping on
+## the BGM bus: study_mode.bgm.study (study.mp3) from the study mode's start, study_mode.bgm.check
+## (study_check.mp3) from the answer check on. No file, or the music off (audio.bgm_enabled):
+## silence (a check without its own file keeps the study's music).
 
 const RATE := 22050
 var enabled := true
@@ -19,11 +20,12 @@ var volume_db := -6.0
 var _streams: Dictionary = {}
 var _players: Array[AudioStreamPlayer] = []
 var last_played := ""
-var music_file := "ending.mp3"
-## the track's own level, as the score game's music: audio.volume_db + GameModeSounds.BGM_DB +
-## this (the same ending.mp3 plays at -13 there)
-var music_gain_db := -13.0
-var music: AudioStreamPlayer  # null when there is no music file
+## track -> file; each track's own level (as the score game's music: -18 LUFS, gain = -18 - its LUFS)
+var music_files := {"study": "study.mp3", "check": "study_check.mp3"}
+var music_gain_db := {"study": -9.0, "check": -4.0}
+var music_track := ""  # what plays now ("" = none)
+var _music: Dictionary = {}  # track -> AudioStreamPlayer (only the files that are there)
+var _music_loaded := false
 var _files: Dictionary = {}  # manifest key -> AudioStream
 var last_cue := ""
 ## the study mode's own effects in assets/audio/se/ (効果音ラボ, see se/README.md): key -> file.
@@ -71,35 +73,51 @@ func _ready() -> void:
 
 ## The study mode's music from the bgm folder (as the score game's: GameModeSounds).
 func _load_music() -> void:
+	_music_loaded = true
 	var b = GameConfig.get_value("study_mode", "bgm", {})
 	if b is Dictionary:
-		music_file = str(b.get("file", music_file))
-		music_gain_db = float(b.get("gain_db", music_gain_db))
-	if music_file == "" or not GameModeSounds.load_music:
+		for track in music_files:
+			if b.get(track) is String:
+				music_files[track] = str(b[track])
+		if b.get("gain_db") is Dictionary:
+			for track in music_gain_db:
+				if b.gain_db.get(track) != null:
+					music_gain_db[track] = clampf(float(b.gain_db[track]), -40.0, 12.0)
+	if not GameModeSounds.load_music:
 		return
-	var stream := GameModeSounds.load_music_stream(GameModeSounds.MUSIC_DIR.path_join(music_file))
-	if stream == null:
-		return
-	music = AudioStreamPlayer.new()
-	music.name = "StudyMusic"
-	music.bus = AudioBuses.BGM
-	music.stream = stream
-	music.volume_db = music_volume_db()
-	add_child(music)
+	for track in music_files:
+		var file := str(music_files[track])
+		var stream := GameModeSounds.load_music_stream(GameModeSounds.MUSIC_DIR.path_join(file)) if file != "" else null
+		if stream == null:
+			continue
+		var p := AudioStreamPlayer.new()
+		p.name = "StudyMusic_" + track
+		p.bus = AudioBuses.BGM
+		p.stream = stream
+		p.volume_db = music_volume_db(track)
+		add_child(p)
+		_music[track] = p
 
-## The music's level, worked out as the score game's (so the two sound alike).
-func music_volume_db() -> float:
-	return float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB + music_gain_db
+## A track's level, worked out as the score game's music (so they all sound alike).
+func music_volume_db(track: String) -> float:
+	return float(GameConfig.get_value("audio", "volume_db", -8.0)) + GameModeSounds.BGM_DB + float(music_gain_db.get(track, 0.0))
 
-func music_start() -> void:
-	if music == null:
+## The study's music, or the answer check's: the other stops (a track without a file keeps what plays).
+func music_play(track: String) -> void:
+	if not _music_loaded:
 		_load_music()
-	if music != null and not music.playing and bool(GameConfig.get_value("audio", "bgm_enabled", true)):
-		music.play()
+	if not _music.has(track) or music_track == track:
+		return
+	music_stop()
+	if not bool(GameConfig.get_value("audio", "bgm_enabled", true)):
+		return
+	(_music[track] as AudioStreamPlayer).play()
+	music_track = track
 
 func music_stop() -> void:
-	if music != null:
-		music.stop()
+	for p in _music.values():
+		(p as AudioStreamPlayer).stop()
+	music_track = ""
 
 func _load_files() -> void:
 	for key in OWN_FILES:

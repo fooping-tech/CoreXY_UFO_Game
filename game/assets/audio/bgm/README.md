@@ -11,6 +11,8 @@
   - `tutorial.mp3` — 練習（チュートリアル）の間
   - `game.wav` — ゲーム中（150 秒の時計が動いている間）
   - `ending.mp3` — ゲームが終わった後の結果発表（リザルトとランキング）
+  - `study.mp3` — 勉強モードの間（#237。元のファイル名 `iwashiro_intelli_kun.mp3`）。`config/game_config.json` の `study_mode.bgm.study`
+  - `study_check.mp3` — 勉強モードの答え合わせ（採点）が始まってから（元のファイル名 `iwashiro_daifugo_yusuri.mp3`）。`study_mode.bgm.check`。音量は `study_mode.bgm.gain_db`
 - 設定画面の校正タブを開いている間は、どの曲も鳴らない。
 - 曲はフェードしない（すぐ始まり、すぐ止まる）。声が話している間だけ小さくなる。
 - 曲ごとの音量は `game_mode.sounds.bgm.gain_db` でそろえてある（-18 LUFS）。ファイルを替えたら `ffmpeg -i ファイル -af ebur128 -f null -` の最後に出る `I:`（LUFS）を見て、`gain_db = -18 - その値` にする。

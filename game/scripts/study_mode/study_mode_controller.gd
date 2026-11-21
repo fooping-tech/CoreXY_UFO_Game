@@ -207,7 +207,7 @@ func start() -> void:
 		main._layout()
 	_set_state("INTRO")
 	sounds.play("appear")
-	sounds.music_start()  # #237: the study mode's own music (ending.mp3)
+	sounds.music_play("study")  # #237: the study mode's own music (study.mp3)
 	_say([{"text": "そろそろ勉強の時間だよ！", "face": "excited"},
 		{"text": "今日は%s！宿題をチェックしよう！" % weekday_label, "face": "happy"},
 		{"text": "席について、プリントを置いてね！", "face": "wink"}], _enter_waiting)
@@ -375,6 +375,7 @@ func _complete() -> void:
 	shown.clear()
 	reveal_current = 0
 	combo = 0
+	sounds.music_play("check")  # the answer check's music (study_check.mp3)
 	sounds.cue("check_start")
 	_say([{"text": "ぜんぶ書けたね！", "face": "excited"},
 		{"text": "UFOくんと答え合わせしよう！", "face": "happy"}], _scan.bind(false))
