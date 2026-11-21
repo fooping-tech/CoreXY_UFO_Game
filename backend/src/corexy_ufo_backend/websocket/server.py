@@ -378,6 +378,7 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         try:
             await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None,
                 "homework_advice": self.homework is not None and self.homework.advice_available,
+                "study_ai": "local" if self.homework is not None and self.homework.study_local else "cloud",
                 "homework_speech": self.homework is not None and self.homework.speech_available,
                 "study_profile": self.study_profile}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))

@@ -9,8 +9,11 @@ extends Node
 ##               camera, no Jev, no AI, nothing leaves the machine. The arm moves on the
 ##               backend's mock robot (`./start.sh --mock --study-mode`) or, without a
 ##               backend, on the game's own MockRobot; never on the real crane.
-##   camera    : the overview camera + Jev (HomeworkClient's watch with the worksheet),
-##               Claude / Codex (locate + explain).
+##   camera    : the overview camera. With study.ai "local" (the default, #232) everything is
+##               read by the local LLM server (the worksheet reader for the watch and the
+##               locate, the tutor for the explanation; the frames cut out and turned upright
+##               as the プリント tab says, SheetFrame); with "cloud": Jev (HomeworkClient's watch
+##               with the worksheet), Claude / Codex (locate + explain).
 ##
 ## Which robot is not chosen here (#92): it is the one start.sh connected (--real /
 ## --mock). With the real crane the backend still refuses what is not calibrated.
@@ -63,6 +66,8 @@ var watching := false
 var seen := false
 ## pending work ("" = none): results with another id are ignored
 var _locate_rid := ""
+## #232: how the last located frame was cut and turned ({rotation, region, size}; {} = as it was)
+var _locate_prep := {}
 var _explain_rid := ""
 var _help_rid := ""
 var _nav_rid := ""
@@ -331,7 +336,7 @@ func watch_start() -> void:
 	_helper_offer_was = homework.helper_offer
 	homework.helper_offer = false  # the study mode has its own HELP: no "手伝おうか？" moving the arm
 	homework.start()
-	status = "カメラでプリントを見ています（Jev）"
+	status = "カメラでプリントを見ています（%s）" % ("ローカル LLM" if homework.study_local else "Jev")
 
 func watch_stop() -> void:
 	var was := watching
@@ -471,7 +476,11 @@ func locate_help(problem: int) -> void:
 		locate_failed.emit("俯瞰カメラの映像がありません")
 		return
 	captures["overview"] = img
-	var jpeg := StudyClient.encode_jpeg(img, homework.max_image_edge, homework.max_image_bytes)
+	# #232: read locally, the frame goes cut out and turned upright; the answer is put back on it
+	_locate_prep = homework.sheet_settings()
+	_locate_prep["size"] = img.get_size()
+	var jpeg := StudyClient.encode_jpeg(SheetFrame.prepare(img, int(_locate_prep.rotation), _locate_prep.region),
+		homework.max_image_edge, homework.max_image_bytes)
 	if jpeg.is_empty():
 		locate_failed.emit("俯瞰カメラの画像を上限サイズ内に圧縮できませんでした")
 		return
@@ -482,6 +491,12 @@ func locate_help(problem: int) -> void:
 	if err != OK:
 		_locate_rid = ""
 		locate_failed.emit("画像を送れませんでした（WebSocket error %d）" % err)
+
+## The located point (0..1 of the image sent) on the whole overview frame (#232).
+func located_point(p: Vector2) -> Vector2:
+	if _locate_prep.is_empty():
+		return p
+	return SheetFrame.to_frame(p, int(_locate_prep.rotation), _locate_prep.region, _locate_prep.size)
 
 ## The mock desk: where problem p's answer box is in robot XY (mm).
 func mock_target_xy(p: Dictionary) -> Vector2:
@@ -650,7 +665,7 @@ func explain(problem: int) -> void:
 			demo["navigate"] = inject_navigate.pop_front()
 		_after(2.0, func(): if tok == _token: explained.emit(demo))
 		return
-	if homework == null or not homework.advice_available:
+	if homework == null or not (homework.advice_available or homework.study_local):
 		explain_failed.emit("解説するアシスタント（study.provider）が使えません", fb)
 		return
 	var images: Array = []
@@ -837,7 +852,8 @@ func _on_aux(msg: Dictionary) -> void:
 	elif rid == _locate_rid and t in ["homework_locate_result", "homework_locate_error", "homework_error"]:
 		_locate_rid = ""
 		if t == "homework_locate_result" and bool(data.get("usable", false)):
-			located.emit({"u": float(data.get("u", 0.5)), "v": float(data.get("v", 0.5)), "problem": _help_problem,
+			var at := located_point(Vector2(float(data.get("u", 0.5)), float(data.get("v", 0.5))))
+			located.emit({"u": at.x, "v": at.y, "problem": _help_problem,
 				"verified": bool(data.get("verified", false)), "page_check": data.get("page_check")})
 		elif t == "homework_locate_result":
 			locate_failed.emit("問題の位置がはっきりしないので動かしません: " + str(data.get("reason", "")))

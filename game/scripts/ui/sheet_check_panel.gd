@@ -5,7 +5,8 @@ extends VBoxContainer
 ##
 ## The frame is put right here before it is sent: the part with the worksheet is cut out (a
 ## rectangle dragged on the live view, per camera) and turned upright (0 / 90 / 180 / 270°, per
-## camera); both are kept in user://sheet_check.cfg. What was sent is shown with the answer drawn
+## camera); both are kept in user://sheet_check.cfg (SheetFrame), and the study mode's overview frames
+## use them too (#232). What was sent is shown with the answer drawn
 ## over it (each problem's box and answer box, coloured by the answer's state), the list below,
 ## and the server's answer as JSON. The whole frame (with the rectangle) can be shown again.
 ## Never the crane: no RobotState, no robot command. Nothing is saved but the two settings.
@@ -20,8 +21,7 @@ const VIEW_H := 470.0
 const IMAGE_EDGE := 1600  # the server shrinks to ~0.65 MP: more does not help
 const IMAGE_BYTES := 600000  # the main link's send buffer (and the backend's 1 MiB message)
 const WAIT_S := 200.0  # ~10 s a sheet; up to 3 x 503 waits and the backend's 180 s
-const MIN_REGION_PX := 32
-const SETTINGS_PATH := "user://sheet_check.cfg"
+const SETTINGS_PATH := SheetFrame.SETTINGS_PATH
 const CAMERAS := [["overview", "俯瞰カメラ"], ["focus", "アームのカメラ"]]
 const ROTATIONS := [[0, "そのまま"], [180, "上下反転（180°）"], [90, "右に 90°"], [270, "左に 90°"]]
 const STATUS_NAMES := {"correct": "正解", "incorrect": "まちがい", "blank": "空白", "partial": "書きかけ",
@@ -195,44 +195,21 @@ func set_region(r: Rect2) -> void:
 	refresh()
 
 func _load() -> void:
-	if settings_path == "":
-		return
-	var cf := ConfigFile.new()
-	if cf.load(settings_path) != OK:
-		return
-	for c in CAMERAS:
-		var r: String = c[0]
-		rotations[r] = int(cf.get_value(r, "rotation", 0))
-		var v = cf.get_value(r, "region", Rect2())
-		regions[r] = v if v is Rect2 else Rect2()
+	var saved := SheetFrame.load_settings(settings_path)
+	for r in saved:
+		rotations[r] = int(saved[r].rotation)
+		regions[r] = saved[r].region
 
 func _save() -> void:
-	if settings_path == "":
-		return
-	var cf := ConfigFile.new()
+	var out := {}
 	for c in CAMERAS:
 		var r: String = c[0]
-		cf.set_value(r, "rotation", rotation_deg(r))
-		cf.set_value(r, "region", region(r))
-	cf.save(settings_path)
+		out[r] = {"rotation": rotation_deg(r), "region": region(r)}
+	SheetFrame.save_settings(out, settings_path)
 
-## The frame -> what is sent: the region cut out, then turned clockwise by `deg`.
+## The frame -> what is sent (SheetFrame.prepare: the study mode does the same, #232).
 static func prepare(img: Image, deg: int, part: Rect2) -> Image:
-	var out: Image
-	var sz := Vector2(img.get_size())
-	var r := Rect2i(Rect2(part.position * sz, part.size * sz).abs()).intersection(Rect2i(Vector2i.ZERO, img.get_size()))
-	if part.has_area() and r.size.x >= MIN_REGION_PX and r.size.y >= MIN_REGION_PX:
-		out = img.get_region(r)
-	else:
-		out = img.duplicate()
-	match deg:
-		90:
-			out.rotate_90(CLOCKWISE)
-		180:
-			out.rotate_180()
-		270:
-			out.rotate_90(COUNTERCLOCKWISE)
-	return out
+	return SheetFrame.prepare(img, deg, part)
 
 # ------------------------------------------------------------------ the camera and the view
 func backend_ready() -> bool:

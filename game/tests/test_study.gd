@@ -820,3 +820,77 @@ func _test_study_hand_help(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+
+## #232: read locally, the overview frames go cut out and turned upright (the プリント tab's
+## settings); the located point comes back on the whole frame.
+func _test_study_local_frames(rs: Node) -> void:
+	# the turn's direction, and to_frame is prepare's inverse (on real pixels)
+	var img := Image.create(400, 300, false, Image.FORMAT_RGB8)
+	img.set_pixel(0, 0, Color.RED)
+	var cw := SheetFrame.prepare(img, 90, Rect2())
+	var ccw := SheetFrame.prepare(img, 270, Rect2())
+	_ok(cw.get_size() == Vector2i(300, 400) and cw.get_pixel(299, 0) == Color.RED and ccw.get_pixel(0, 399) == Color.RED,
+		"sheet frame: 90° turns clockwise (top-left to top-right), 270° the other way")
+	var part := Rect2(0.25, 0.1, 0.5, 0.8)
+	var spot := Vector2i(230, 70)  # inside the part
+	var bad: Array = []
+	for deg in SheetFrame.ROTATIONS:
+		var src := Image.create(400, 300, false, Image.FORMAT_RGB8)
+		src.set_pixel(spot.x, spot.y, Color.WHITE)
+		var out := SheetFrame.prepare(src, deg, part)
+		var found := Vector2i(-1, -1)
+		for y in out.get_height():
+			for x in out.get_width():
+				if out.get_pixel(x, y).r > 0.5:
+					found = Vector2i(x, y)
+		var p := (Vector2(found) + Vector2(0.5, 0.5)) / Vector2(out.get_size())
+		var back := SheetFrame.to_frame(p, deg, part, Vector2i(400, 300)) * Vector2(400, 300)
+		if back.distance_to(Vector2(spot) + Vector2(0.5, 0.5)) > 0.01:
+			bad.append([deg, found, back])
+	_ok(bad.is_empty(), "sheet frame: a point of the image sent goes back to the same pixel of the frame, at every turn", str(bad))
+	# saved per camera, read back
+	var path := "user://test_sheet_frame.cfg"
+	SheetFrame.save_settings({"overview": {"rotation": 180, "region": part}, "focus": {"rotation": 45, "region": 3}}, path)
+	var got := SheetFrame.load_settings(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_ok(got.overview.rotation == 180 and got.overview.region.is_equal_approx(part) and got.focus.rotation == 0
+		and got.focus.region == Rect2() and SheetFrame.load_settings("").is_empty(),
+		"sheet frame: the settings are kept per camera; a bad turn or region reads as none", str(got))
+
+	# the study mode: only a local session sends the prepared frame, and the located point comes back
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	path = "user://test_sheet_frame_study.cfg"
+	SheetFrame.save_settings({"overview": {"rotation": 180, "region": part}}, path)
+	hw.sheet_settings_path = path
+	hw.worksheet_id = "mon-elem_1-01"
+	hw.study_local = false
+	var cloud_same: bool = hw.watch_image(img).get_size() == Vector2i(400, 300) and hw.sheet_settings().rotation == 0
+	hw._on_message({"type": "hello", "data": {"homework": true, "study_ai": "local"}})
+	var sent := hw.watch_image(img)
+	var local_ok := hw.study_local and hw.reads_locally() and sent.get_size() == Vector2i(200, 240)
+	hw.advice_available = false
+	var blocker := hw.focus_blocker()
+	sv._locate_prep = hw.sheet_settings()
+	sv._locate_prep["size"] = Vector2i(400, 300)
+	var at := sv.located_point(Vector2(0.0, 0.0))  # the top-left of the image sent = the region's bottom-right
+	var located: Array = []
+	sv.located.connect(func(d): located.append(d))
+	sv._locate_rid = "sm-loc-1"
+	sv._help_problem = 3
+	sv._on_aux({"type": "homework_locate_result", "request_id": "sm-loc-1", "data": {"usable": true, "verified": true,
+		"u": 1.0, "v": 1.0, "source": "sheet"}})
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_ok(cloud_same and local_ok and not blocker.contains("アシスタント") and at.is_equal_approx(Vector2(0.75, 0.9))
+		and located.size() == 1 and Vector2(located[0].u, located[0].v).is_equal_approx(Vector2(0.25, 0.1)),
+		"study local: the watch's and the locate's frames go cut and turned; the located point is put back on the frame",
+		str([cloud_same, local_ok, blocker, at, located]))
+	sv._locate_prep = {}
+	_ok(sv.located_point(Vector2(0.3, 0.4)) == Vector2(0.3, 0.4), "study local: an answer about the whole frame stays as it is")
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()

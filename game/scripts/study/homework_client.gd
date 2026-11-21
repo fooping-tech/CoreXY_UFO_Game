@@ -71,6 +71,10 @@ var advice_status := ""
 ## The backend's approach sequence: {active, phase, error, last_result, spot}
 var approach: Dictionary = {}
 var advice_available := false
+## #232: the backend reads the study mode's frames with the local LLM server only (hello's study_ai)
+var study_local := false
+## where the プリント tab keeps the overview camera's turn and region (SheetFrame; "" = none: tests)
+var sheet_settings_path := SheetFrame.SETTINGS_PATH
 ## The backend's camera calibration: {points, camera, usable, problem, rms_mm, max_mm, h_inv, ...}
 var camera_map: Dictionary = {}
 var calib_status := ""
@@ -211,7 +215,7 @@ func _process(_dt: float) -> void:
 		status_text = "%s カメラに映像がありません" % camera_role
 		state_changed.emit()
 		return
-	var jpeg := StudyClient.encode_jpeg(cameras.texture(camera_role).get_image(), max_image_edge, max_image_bytes)
+	var jpeg := StudyClient.encode_jpeg(watch_image(cameras.texture(camera_role).get_image()), max_image_edge, max_image_bytes)
 	if jpeg.is_empty():
 		status_text = "画像を上限サイズ内に圧縮できませんでした"
 		state_changed.emit()
@@ -240,6 +244,7 @@ func _on_message(msg: Dictionary) -> void:
 		return  # the study mode's own requests (explain / locate / say): handled there
 	if t == "hello":
 		advice_available = bool(data.get("homework_advice", false))
+		study_local = str(data.get("study_ai", "")) == "local"
 		speech_available = bool(data.get("homework_speech", false))
 		hello_seen = true
 		if state != "connecting" and state != "running":
@@ -636,9 +641,26 @@ func thumb_tick(thumb: bool, now_ms: float) -> void:
 		_thumb_spent = true
 		focus_problem("stuck")
 
+## #232: a local study session reads the worksheet with the local LLM server.
+func reads_locally() -> bool:
+	return study_local and worksheet_id != ""
+
+## The settings of the overview camera's frames for the worksheet reader ({} = sent as they are).
+func sheet_settings() -> Dictionary:
+	if not reads_locally():
+		return {"rotation": 0, "region": Rect2()}
+	return SheetFrame.for_role(camera_role, sheet_settings_path)
+
+## The frame sent to watch the worksheet: cut out and turned upright when read locally (#232).
+func watch_image(img: Image) -> Image:
+	if img == null or img.is_empty() or not reads_locally():
+		return img
+	var st := sheet_settings()
+	return SheetFrame.prepare(img, int(st.rotation), st.region)
+
 ## Why the arm cannot be sent to a problem now ("" when it can).
 func focus_blocker() -> String:
-	if not advice_available:
+	if not advice_available and not reads_locally():
 		return "問題を読み取るアシスタントがない（study.provider）"
 	if not robot_link_ready():
 		return "動かすにはバックエンド（実機 / モック）への接続が要る"

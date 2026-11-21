@@ -49,7 +49,8 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 | `demo.source` | プリント・記入 | 位置 | 解説 | 外部への送信 |
 |---|---|---|---|---|
 | `simulated`（既定） | 模擬（`worksheet_wait_s` 秒で発見。記入は 1/2/3 キー、`auto_answer` で 1・2 問を自動） | プリントデータから | プリントのヒント | **なし** |
-| `camera` | 俯瞰カメラ + Jev（HomeworkClient の見守りにワークシートを付ける） | Claude/Codex + Jev + 基準マーク + camera_map | Claude / Codex | 俯瞰と近接の画像を Jev（Cloudflare）と Claude / Codex へ |
+| `camera`（`study.ai: local`、既定） | 俯瞰カメラ + プリント読み取り（`/v1/sheet`） | プリント読み取りの枠 + camera_map | 学習支援 AI | 俯瞰と近接の画像を**学習支援 AI のサーバ（同じ LAN）だけ**へ。クラウドへは送らない |
+| `camera`（`study.ai: cloud`） | 俯瞰カメラ + Jev（HomeworkClient の見守りにワークシートを付ける） | Claude/Codex + Jev + 基準マーク + camera_map | Claude / Codex（`explain_provider`） | 俯瞰と近接の画像を Jev（Cloudflare）と Claude / Codex へ |
 
 | つないだロボット | `simulated` | `camera` |
 |---|---|---|
@@ -116,6 +117,20 @@ config で決めるのは「模擬か、カメラと AI を使うか」だけで
 - 通信が切れたことの検知は、実機が止まったことの保証ではありません（ファームウェアにホストウォッチドッグはない）。
 
 ## 8. 学習支援 AI（UFOくん API、#104）
+
+### 勉強モードの AI はローカルだけ（#232、`study.ai`）
+
+`study.ai: "local"`（既定。設定画面の「勉強モードの AI」）では、勉強モードは学習支援 AI のサーバ（ローカル LLM、`study.tutor_url`）だけを使います。Jev・Claude Code・Codex は呼ばず、Jev のキーも要りません。`"cloud"` にすると、前の動き（Jev + Claude / Codex）に戻ります。
+
+| 用途 | 中身 |
+|---|---|
+| 進み具合 | 俯瞰カメラの画像を `/v1/sheet` で読む（1 回 約 10 秒。読んでいる間の画像は捨てる）。正解・まちがい = 記入済み（0.95）、書きかけ = 0.5、空白 = 0.05、読めない・見切れ = 判定しない。全部読めないときは表示を保つ（`held`）。正しいかどうかはゲームに渡さない（`answers` は状態と読み取った答えだけ） |
+| 問題の場所 | `/v1/sheet` の答えのらん（なければ問題の枠）の中心。見つからない・枠がプリント全体ほど大きいときは動かさない。その先は今までどおり camera_map で XY |
+| 解説 | 学習支援 AI（`explain_provider` は使わない） |
+
+俯瞰カメラの画像は、設定画面の「プリント」タブで俯瞰カメラに決めた**向きと範囲**で切り出して正立させてから送ります（`SheetFrame`、`user://sheet_check.cfg`）。場所の答えは、ゲームが元の画像の座標に戻してから camera_map に渡します。アームのカメラの近接画像は回しません（先端カメラの校正と `navigate` のずれが元の向きのため）。
+
+認証が 3 回続けて断られると（トークン・許可 IP・設定）、見守りは自分で止まります。読めないとき・つながらないときも勉強モードは止まらず、解説はプリントのヒントになります。
 
 解説を、別の PC（Windows・RTX）で動く学習支援 AI に頼めます。答えを教えずに段階的なヒントを出し、目的の問題が写っていなければ、どちらにどれだけずれているかを返します。引き継ぎ資料と見本のコードは学習支援 AI 側の `integrations/corexy_ufo/`（`HANDOFF.md`、`PATCHES.md`）。
 
