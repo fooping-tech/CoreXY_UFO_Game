@@ -133,6 +133,25 @@ class SheetResult:
         return f"{len(self.problems)} 問（{parts}）"
 
 
+def sheet_payload(res: SheetResult) -> dict[str, Any]:
+    """What the game's プリント tab shows: per problem, the boxes on the 0..1000 scale of the
+    image sent (so of the camera frame), and the paper's corners as 0..1 of it."""
+    keys = ("number", "answer_status", "student_answer", "correct_answer", "visible", "notes", "box", "answer_box")
+    paper = None
+    corners, size = res.raw.get("paper_px"), res.raw.get("image") or {}
+    w, h = size.get("width") or res.image.width, size.get("height") or res.image.height
+    if isinstance(corners, list) and len(corners) == 4 and w and h:
+        try:
+            paper = [[float(x) / w, float(y) / h] for x, y in corners]
+        except (TypeError, ValueError):
+            paper = None
+    return {"problems": [{k: p.get(k) for k in keys} for p in res.problems], "counts": res.counts,
+            "summary": res.summary(), "read_anything": res.read_anything, "paper": paper,
+            "notes": [str(n) for n in res.raw.get("notes") or [] if isinstance(n, str)],
+            "seconds": res.raw.get("seconds"), "model": str(res.raw.get("model", "")),
+            "image": {"width": res.image.width, "height": res.image.height}}
+
+
 def parse_result(raw: Any, image: SheetImage) -> SheetResult:
     """Checks the answer's shape; a problem with an unknown state counts as unreadable."""
     if not isinstance(raw, dict) or not isinstance(raw.get("problems"), list):

@@ -317,3 +317,54 @@ async def test_only_an_ask_run_reads_the_sample_sheet(monkeypatch, tmp_path):
     raw = {"study": {"provider": "claude"}}
     names = [r["name"] for r in await sc.check_all(raw, ask=True, root=tmp_path)]
     assert "sheet" not in names
+
+
+# ------------------------------------------------------------------ the 設定 screen's プリント tab
+
+
+def test_the_tab_payload_keeps_the_boxes_of_the_frame_and_the_paper_as_fractions():
+    from corexy_ufo_backend.study.sheet_client import sheet_payload
+    res = parse_result(ANSWER, prepare_image(jpeg(900, 1200)))
+    d = sheet_payload(res)
+    assert [p["number"] for p in d["problems"]] == [1, 2, 3]
+    assert d["problems"][0]["box"] == [100, 100, 900, 200] and "box_px" not in d["problems"][0]
+    assert d["paper"][0] == pytest.approx([10 / 900, 10 / 1200]) and d["counts"]["incorrect"] == 1
+    assert d["read_anything"] and "3 問" in d["summary"] and d["image"] == {"width": 900, "height": 1200}
+    json.dumps(d)  # goes over the WebSocket
+    assert sheet_payload(parse_result({**ANSWER, "paper_px": None}, res.image))["paper"] is None
+
+
+async def test_the_server_reads_a_frame_with_sheet_read(monkeypatch):
+    import base64
+    import websockets
+    import corexy_ufo_backend.study as study
+    from corexy_ufo_backend.robot.mock_robot import MockRobot
+    from corexy_ufo_backend.websocket import GameServer
+    from ws_helpers import cmd
+
+    seen = []
+
+    class Fake:
+        def read(self, data, calc=True, crop=True):
+            seen.append((len(data), calc, crop))
+            if data == b"refuse":
+                raise SheetError("auth", "トークンが違う", 401)
+            return parse_result(ANSWER, prepare_image(data))
+    monkeypatch.setattr(study, "make_sheet_client", lambda cfg: Fake())
+    robot = MockRobot()
+    await robot.connect()
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
+    await srv.start()
+    port = next(iter(srv._server.sockets)).getsockname()[1]
+    frame = jpeg(640, 480)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": base64.b64encode(frame).decode(), "crop": False}, rid="a")
+            assert m["type"] == "ack" and m["data"]["command"] == "sheet_read"
+            assert [p["number"] for p in m["data"]["problems"]] == [1, 2, 3] and seen[-1] == (len(frame), True, False)
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": base64.b64encode(b"refuse").decode()}, rid="b")
+            assert m["type"] == "nack" and "トークン" in m["data"]["reason"]
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": "!!"}, rid="c")
+            assert m["type"] == "nack" and len(seen) == 2
+    finally:
+        await srv.stop()
