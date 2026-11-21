@@ -168,8 +168,13 @@ class HomeworkService:
                  explain_factory: Callable[[], Any] | None = None,
                  locate: LocateParams | None = None, speech: SpeechService | None = None,
                  worksheets: WorksheetCatalog | None = None,
-                 sheet_factory: Callable[[], Any] | None = None) -> None:
+                 sheet_factory: Callable[[], Any] | None = None, voice: Any = None,
+                 talk_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
+        # #233: the voice dialogue: push to talk (homework/voice.VoiceService) and the tutor (converse)
+        self.voice = voice
+        self._talk_factory = talk_factory
+        self._talk_task: asyncio.Task | None = None
         # #232: the worksheet reader (study/sheet_client.SheetClient) for the study mode's sessions
         self._sheet_factory = sheet_factory
         self.worksheets = worksheets
@@ -200,6 +205,85 @@ class HomeworkService:
         worksheet reader cannot do is refused, never sent to Claude / Codex / Jev instead."""
         if self._local(s):
             raise ValueError(f"{what}は勉強モード（ローカル LLM だけ、study.ai local）では使えません")
+
+    # ------------------------------------------------------------------ the voice dialogue (#233)
+    @property
+    def voice_available(self) -> bool:
+        return self.voice is not None and self.voice.available and self._talk_factory is not None
+
+    def voice_problem(self) -> str:
+        if self._talk_factory is None:
+            return "声の対話は学習支援 AI（study.ai local と study.tutor_url）が要ります"
+        if self.voice is None:
+            return "声の入力がありません"
+        return self.voice.why_not()
+
+    async def listen_start(self, owner: object, request_id: str, emit: Emit) -> None:
+        from .voice import VoiceError
+        if self._talk_factory is None:
+            raise VoiceError("off", self.voice_problem())
+        if self.voice is None:
+            raise VoiceError("off", self.voice_problem())
+        st = await self.voice.start(owner)
+        await emit({"type": "homework_listen", "request_id": request_id, "data": st})
+
+    async def listen_stop(self, owner: object, request_id: str, emit: Emit) -> None:
+        """-> homework_heard {text, seconds} or homework_heard_error {code, message}."""
+        from .voice import VoiceError
+        if self.voice is None:
+            raise VoiceError("off", self.voice_problem())
+        try:
+            heard = await self.voice.stop(owner)
+        except VoiceError as e:
+            await emit({"type": "homework_heard_error", "request_id": request_id,
+                        "data": {"code": e.kind, "message": str(e)}})
+            return
+        await emit({"type": "homework_heard", "request_id": request_id, "data": heard})
+
+    def listen_cancel(self, owner: object) -> bool:
+        return self.voice is not None and self.voice.cancel(owner)
+
+    async def talk(self, request_id: str, text: str, image_b64: str, emit: Emit, *, target: int | None = None,
+                   history: list | None = None, worksheet_id: str = "") -> None:
+        """One turn with the tutor -> homework_talk_result {message, action, target_problem, hint_level,
+        need_recapture, ufo_face, visual_effect, speech_lines} or homework_talk_error. One at a time."""
+        if self._talk_factory is None:
+            raise ValueError(self.voice_problem())
+        if self._talk_task is not None and not self._talk_task.done():
+            raise ValueError("前の返事を考えているところです")
+        if not request_id:
+            raise ValueError("request_id is required")
+        text = str(text).strip()
+        if not text:
+            raise ValueError("ことばがありません")
+        image = decode_jpeg(image_b64, self.config.max_image_bytes)
+        grade = None
+        if worksheet_id:
+            from ..study.tutor_adapter import grade_in_prompt
+            ws = self.worksheet(worksheet_id)
+            grade = grade_in_prompt(f"{ws.get('grade_label', '')}の宿題プリント", 3)
+        self._talk_task = asyncio.create_task(
+            self._talk(request_id, text, image, target, list(history or []), grade, emit))
+
+    async def _talk(self, request_id: str, text: str, image: bytes, target: int | None, history: list,
+                    grade: int | None, emit: Emit) -> None:
+        t0 = time.monotonic()
+        try:
+            adapter = self._talk_factory()  # type: ignore[misc]
+            res = await asyncio.wait_for(asyncio.to_thread(adapter.converse, image, text, history=history,
+                                                           target=target, grade=grade),
+                                         self.config.explain_timeout_s)
+            res["speech_lines"] = split_speech(res["message"])
+            res["latency_ms"] = round((time.monotonic() - t0) * 1000)
+            await emit({"type": "homework_talk_result", "request_id": request_id, "data": res})
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            await emit({"type": "homework_talk_error", "request_id": request_id,
+                        "data": {"code": "timeout", "message": "返事がまにあいませんでした"}})
+        except Exception as e:
+            await emit({"type": "homework_talk_error", "request_id": request_id,
+                        "data": {"code": getattr(e, "kind", "tutor_error"), "message": str(e)}})
 
     def worksheet(self, worksheet_id: str) -> dict:
         if not worksheet_id:
@@ -701,7 +785,10 @@ class HomeworkService:
     async def close(self) -> None:
         for session_id in list(self.sessions):
             await self.stop(session_id)
-        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, *self._speech_tasks)
+        if self.voice is not None:
+            self.voice.cancel()
+        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, self._talk_task,
+                             *self._speech_tasks)
                  if t is not None and not t.done()]
         for t in tasks:
             t.cancel()

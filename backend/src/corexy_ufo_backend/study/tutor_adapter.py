@@ -181,6 +181,37 @@ class TutorStudyAdapter:
                     out["navigate"]["error"] = str(e)
         return out
 
+    def converse(self, image: bytes, utterance: str, *, history: Sequence[dict] = (), target: int | None = None,
+                 grade: int | None = None) -> dict:
+        """One turn of the study mode's voice dialogue (#233): what the child said, the worksheet as
+        the overview camera sees it, the turns so far ([{hint_level, message}], the server's own
+        shape) and the problem being talked about. Blocking; StudyAdapterError when it fails.
+        -> {message, action, target_problem, hint_level, need_recapture, ufo_face, visual_effect,
+        answer_status, visible_problems}"""
+        hist = []
+        for h in list(history)[-8:]:
+            if isinstance(h, dict) and str(h.get("message", "")).strip():
+                hist.append({"hint_level": max(min(int(h.get("hint_level", 0) or 0), 5), 0),
+                             "message": str(h["message"])[:400]})
+        url = "data:image/jpeg;base64," + base64.b64encode(image).decode()
+        body = {"model": self.model, "max_tokens": 400,
+                "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}]}],
+                "tutor": {"target_problem": target if isinstance(target, int) and target > 0 else None,
+                          "grade": max(min(int(grade or self.grade), 6), 1), "mode": "normal", "history": hist,
+                          "utterance": utterance.strip()[:200]}}
+        tr = self._post(body).get("tutor_result") or {}
+        g, c = tr.get("game") or {}, tr.get("corexy") or {}
+        message = str(g.get("message") or c.get("speech_text") or "").strip()
+        if not message:
+            raise StudyAdapterError("学習支援 AI の返事に、話すことばがありません")
+        tp = g.get("target_problem")
+        return {"message": message, "action": str(g.get("action", "")),
+                "target_problem": tp if isinstance(tp, int) and tp > 0 else None,
+                "hint_level": int(g.get("hint_level", 0) or 0), "need_recapture": bool(g.get("need_recapture", False)),
+                "ufo_face": str(c.get("ufo_face", "")), "visual_effect": str(g.get("visual_effect", "")),
+                "answer_status": str(c.get("answer_status", "")),
+                "visible_problems": [n for n in g.get("visible_problems") or [] if isinstance(n, int)]}
+
     async def ask(self, thread_id: str, text: str, image_path: Path, on_delta: Callable[[str], Awaitable[None]],
                   more_images: Sequence[Path] = ()) -> str:
         body, n, role = self.build_request(text, list(more_images) + [image_path])

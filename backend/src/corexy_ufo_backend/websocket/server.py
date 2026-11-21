@@ -379,6 +379,8 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
             await ws.send(json.dumps({"type": "hello", "timestamp": now_ms(), "data": {"server": "corexy-ufo-backend", "robot": self.robot.name, "commands": list(COMMANDS), "study": self.study is not None, "study_provider": self._study_provider(), "homework": self.homework is not None,
                 "homework_advice": self.homework is not None and self.homework.advice_available,
                 "study_ai": "local" if self.homework is not None and self.homework.study_local else "cloud",
+                "study_voice": self.homework is not None and self.homework.voice_available,
+                "study_voice_problem": self.homework.voice_problem() if self.homework is not None else "",
                 "homework_speech": self.homework is not None and self.homework.speech_available,
                 "study_profile": self.study_profile}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
@@ -422,6 +424,8 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
             for session_id in self._homework_sessions.pop(ws, set()):
                 if self.homework is not None:
                     await self.homework.stop(session_id)
+            if self.homework is not None and self.homework.listen_cancel(ws):
+                log.info("voice: the listening client disconnected: the recording is dropped")
             log.info("client disconnected (%d)", len(self.clients))
             if not self.clients:
                 self.robot.jog_boost(0)  # #188: nobody left who asked for the SPEED UP
@@ -498,6 +502,19 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                                             lambda reply: self._study_send(ws, reply))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "state": "explaining"}})
+            elif msg["type"] == "homework_listen_start":  # #233: push to talk (held)
+                await self.homework.listen_start(ws, rid, lambda reply: self._study_send(ws, reply))
+            elif msg["type"] == "homework_listen_stop":  # let go: the text comes as homework_heard
+                await self.homework.listen_stop(ws, rid, lambda reply: self._study_send(ws, reply))
+            elif msg["type"] == "homework_listen_cancel":
+                self.homework.listen_cancel(ws)
+            elif msg["type"] == "homework_talk":  # what the child said + the worksheet -> the tutor
+                target = data.get("target_problem")
+                await self.homework.talk(rid, str(data.get("text", "")), str(data.get("image_jpeg_base64", "")),
+                                         lambda reply: self._study_send(ws, reply),
+                                         target=int(target) if isinstance(target, (int, float)) and target else None,
+                                         history=data.get("history") if isinstance(data.get("history"), list) else [],
+                                         worksheet_id=str(data.get("worksheet_id", "")))
             elif msg["type"] == "homework_say":
                 await self.homework.say(rid, str(data.get("text", "")), lambda reply: self._study_send(ws, reply))
             elif msg["type"] == "homework_stop":

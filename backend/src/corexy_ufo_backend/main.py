@@ -34,6 +34,7 @@ from .config import REPO_ROOT
 from .homework import HomeworkConfig, HomeworkService, LocateParams, SpeechConfig, SpeechService
 from .homework.approach import ApproachParams
 from .homework.camera_map import CameraMapParams
+from .homework.voice import VoiceConfig, VoiceService
 from .study import StudyConfig, StudyService, make_adapter, make_sheet_client
 from .study_mode import WorksheetCatalog, WorksheetError
 from .devicehub import DeviceHubConfig, DeviceHubService
@@ -195,6 +196,13 @@ async def run(args: argparse.Namespace) -> int:
         sheet_factory = lambda: make_sheet_client(study_cfg)  # noqa: E731 - read when a frame comes
         log.info("study mode AI: local only (%s; the watch and the locate with /v1/sheet, the explanation with the tutor)",
                  study_cfg.tutor_url or "study.tutor_url not set")
+    # #233: the voice dialogue: push to talk, Whisper on this Mac, the tutor (local only)
+    voice = talk_factory = None
+    if study_cfg.ai == "local" and study_mode_on:
+        voice_cfg = VoiceConfig.from_raw(cfg.raw)
+        voice = VoiceService(voice_cfg)
+        talk_factory = lambda: make_adapter(study_cfg, "tutor")  # noqa: E731
+        log.info("study mode voice: %s", "on (Whisper %s)" % voice_cfg.model if voice.available else voice.why_not())
     if explain_provider == "tutor":
         log.info("study mode explanations: the tutor AI at %s (the worksheet's hints when it fails)",
                  study_cfg.tutor_url or "(study.tutor_url not set)")
@@ -202,7 +210,8 @@ async def run(args: argparse.Namespace) -> int:
                                explain_factory=lambda: make_adapter(study_cfg, explain_provider),
                                locate=LocateParams.from_raw(cfg.raw),
                                speech=SpeechService(SpeechConfig.from_raw(cfg.raw)),
-                               worksheets=worksheets, sheet_factory=sheet_factory) if (hw_cfg.enabled or study_mode_on) else None
+                               worksheets=worksheets, sheet_factory=sheet_factory,
+                               voice=voice, talk_factory=talk_factory) if (hw_cfg.enabled or study_mode_on) else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
@@ -229,6 +238,10 @@ async def run(args: argparse.Namespace) -> int:
     if devicehub is not None and robot_port and hasattr(devicehub.transport, "exclude"):
         devicehub.transport.exclude.add(str(robot_port))  # opened by the server's start, just below
     await server.start()
+    preload = None
+    if homework is not None and homework.voice is not None:
+        # #233: Whisper loads (the first time: downloads ~1.6 GB) while the game starts, not at the first question
+        preload = asyncio.create_task(homework.voice.preload())
     if vision:
         vision.start()
     # #118: the arm-tip camera, stabilized, on its own port (opened only while the game watches)
@@ -252,6 +265,8 @@ async def run(args: argparse.Namespace) -> int:
         vision.stop()
     if focus_stream is not None:
         await focus_stream.stop()
+    if preload is not None and not preload.done():
+        preload.cancel()  # a download still running is left for the next start
     await server.stop()
     await robot.disconnect()
     return 0
