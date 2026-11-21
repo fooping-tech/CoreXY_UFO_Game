@@ -49,6 +49,9 @@ class StudyConfig:
     tutor_fail_limit: int = 2  # failures in a row before the tutor rests...
     tutor_cooldown_s: float = 120.0  # ...for this long (the worksheet's hints meanwhile)
     sheet_timeout_s: float = 180.0  # POST /v1/sheet (#230): ~10 s a sheet, at least 120
+    # #232: "local" = the study mode uses the local LLM server (study.tutor_url) only: the watch and the
+    # locate with POST /v1/sheet, the explanation with the tutor; "cloud" = Jev + Claude / Codex as before
+    ai: str = "local"
     root: str = "."  # relative tutor_* files are under the repository (main.py sets it)
     focus_calibration: Any = None  # calibration.json#focus_camera (main.py sets it)
 
@@ -72,7 +75,8 @@ class StudyConfig:
                    tutor_timeout_s=max(float(data.get("tutor_timeout_s", 20.0)), 1.0),
                    tutor_fail_limit=max(int(data.get("tutor_fail_limit", 2)), 1),
                    tutor_cooldown_s=max(float(data.get("tutor_cooldown_s", 120.0)), 0.0),
-                   sheet_timeout_s=max(float(data.get("sheet_timeout_s", 180.0)), 120.0))
+                   sheet_timeout_s=max(float(data.get("sheet_timeout_s", 180.0)), 120.0),
+                   ai="cloud" if str(data.get("ai", "local")).strip().lower() == "cloud" else "local")
 
 
 PROVIDERS = ("claude", "codex", "tutor")

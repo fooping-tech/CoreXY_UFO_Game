@@ -17,6 +17,11 @@ Jev call then also asks, per problem, whether its answer box holds a handwritten
 given problem of that worksheet (also checked against the page layout from its corner
 marks), and `explain` sends the overview and the arm camera's close-ups to the study
 assistant in one question for a structured explanation (study_mode/explain.py).
+
+Local (#232): with a `sheet_factory` (study.ai "local", the default) a study mode session (one
+with a worksheet) reads every frame and finds its problem with the learning support AI's
+worksheet reader (POST /v1/sheet, sheet_watch.py) on the local LLM server: no Jev, no Claude /
+Codex, so nothing of the study mode goes to the cloud (and no Jev key is needed).
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from .locate import (LOCATE_SYSTEM_PROMPT, LocateError, LocateParams, agrees, ce
                      jpeg_size, locate_prompt, parse_answer)
 from .progress import STALL_MIN_GAIN, STALL_S, ProgressTracker, build_input, parse
 from .questions import add_questions, parse_questions
+from .sheet_watch import answers_from_sheet, locate_in_sheet, questions_from_sheet, reading_from_sheet
 from .speech import SpeechError, SpeechService
 from ..study_mode.explain import (EXPLAIN_SYSTEM_PROMPT, ExplainError, compare_with_known, explain_prompt,
                                   fallback_explanation, parse_explanation, split_speech)
@@ -108,9 +114,13 @@ class HomeworkConfig:
                    env_path=env_path)
 
 
+# a refused token / address / setting: the local watch stops by itself after FATAL_LIMIT of these
+SHEET_FATAL = ("auth", "forbidden", "config", "blocked")
+
+
 @dataclass
 class _Session:
-    client: JevRunner
+    client: JevRunner | None  # None: a local study session (#232) never calls Jev
     tracker: ProgressTracker
     started: float = field(default_factory=time.monotonic)
     task: asyncio.Task | None = None
@@ -157,8 +167,11 @@ class HomeworkService:
                  advice_factory: Callable[[], Any] | None = None,
                  explain_factory: Callable[[], Any] | None = None,
                  locate: LocateParams | None = None, speech: SpeechService | None = None,
-                 worksheets: WorksheetCatalog | None = None) -> None:
+                 worksheets: WorksheetCatalog | None = None,
+                 sheet_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
+        # #232: the worksheet reader (study/sheet_client.SheetClient) for the study mode's sessions
+        self._sheet_factory = sheet_factory
         self.worksheets = worksheets
         self._explain_task: asyncio.Task | None = None
         self.locate_params = locate or LocateParams()
@@ -173,6 +186,14 @@ class HomeworkService:
         self._explain_factory = explain_factory or advice_factory
         self._advice_task: asyncio.Task | None = None
         self.sessions: dict[str, _Session] = {}
+
+    @property
+    def study_local(self) -> bool:
+        """The study mode reads with the local LLM server only (#232)."""
+        return self._sheet_factory is not None
+
+    def _local(self, s: "_Session | None") -> bool:
+        return self.study_local and s is not None and s.worksheet is not None
 
     def worksheet(self, worksheet_id: str) -> dict:
         if not worksheet_id:
@@ -189,13 +210,16 @@ class HomeworkService:
             raise ValueError("invalid session_id")
         ws = self.worksheet(worksheet_id) if worksheet_id else None
         if session_id not in self.sessions:
-            self.sessions[session_id] = _Session(  # JevError("config") if no key
-                client=self._client_factory(),
+            local = self.study_local and ws is not None
+            self.sessions[session_id] = _Session(  # JevError("config") if no key (not for a local one)
+                client=None if local else self._client_factory(),
                 tracker=ProgressTracker(stall_s=self.config.stall_s, stall_min_gain=self.config.stall_min_gain))
-            log.info("homework session %s started", session_id)
+            log.info("homework session %s started%s", session_id, " (local: the worksheet reader)" if local else "")
         s = self.sessions[session_id]
         if ws is not None:
             s.worksheet = ws
+            if s.client is None and not self.study_local:  # pragma: no cover - a service is one or the other
+                s.client = self._client_factory()
         return {"session_id": session_id, "state": "running", "interval_s": self.config.interval_s,
                 "camera_role": self.config.camera_role, "elapsed_s": round(s.elapsed(), 1),
                 "worksheet_id": s.worksheet["worksheet_id"] if s.worksheet else ""}
@@ -209,6 +233,11 @@ class HomeworkService:
             s.skipped += 1
             return False
         image = decode_jpeg(image_b64, self.config.max_image_bytes)
+        if self._local(s):
+            s.task = asyncio.create_task(self._run_sheet(session_id, s, request_id, emit, image))
+            return True
+        if s.client is None:
+            raise ValueError("this session reads with the worksheet reader only")
         jev_input = build_input(base64.b64encode(image).decode("ascii"))
         if s.worksheet is not None:
             jev_input = add_questions(jev_input, s.worksheet)
@@ -218,6 +247,7 @@ class HomeworkService:
     async def _run(self, session_id: str, s: _Session, request_id: str, jev_input: dict, emit: Emit,
                    image: bytes = b"") -> None:
         try:
+            assert s.client is not None  # frame() sends a local session to _run_sheet
             res = await asyncio.wait_for(asyncio.to_thread(s.client.run, jev_input, self.config.timeout_s),
                                          self.config.timeout_s + 5.0)
         except asyncio.CancelledError:
@@ -251,6 +281,44 @@ class HomeworkService:
         if s.worksheet is not None:
             data["worksheet_id"] = s.worksheet["worksheet_id"]
             data["questions"] = parse_questions(res.output, s.worksheet)
+        await emit({"type": "homework_progress", "request_id": request_id, "data": data})
+
+    async def _run_sheet(self, session_id: str, s: _Session, request_id: str, emit: Emit, image: bytes) -> None:
+        """#232: one frame read by the worksheet reader -> homework_progress (as from Jev)."""
+        from ..study.sheet_client import SheetError
+        t0 = time.monotonic()
+        try:
+            client = self._sheet_factory()  # type: ignore[misc]
+            res = await asyncio.to_thread(client.read, image)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # SheetError, or anything the reader did not expect
+            kind = e.kind if isinstance(e, SheetError) else "reader_error"
+            s.errors += 1
+            s.fatal_in_row = s.fatal_in_row + 1 if kind in SHEET_FATAL else 0
+            data: dict[str, Any] = {"code": kind, "message": f"プリントの読み取り: {e}",
+                                    "status": getattr(e, "status", None), **s.summary()}
+            if s.fatal_in_row >= FATAL_LIMIT:
+                s.stopped = f"{FATAL_LIMIT} errors in a row"
+                data["stopped"] = True
+                self.sessions.pop(session_id, None)
+                log.warning("homework session %s stopped: %s", session_id, e)
+            await emit({"type": "homework_error", "request_id": request_id, "data": data})
+            return
+        s.fatal_in_row = 0
+        s.count += 1
+        ws = s.worksheet or {}
+        reading = reading_from_sheet(res.problems, ws)
+        gains = s.tracker.gains
+        smoothed = s.tracker.add(s.elapsed(), reading)
+        if s.tracker.gains != gains or (s.before_frame is None and not reading.held):
+            s.before_frame = image
+        data = {"progress_pct": reading.progress_pct, "smoothed_pct": smoothed, "held": reading.held,
+                "held_reason": reading.held_reason, "visible_prob": reading.visible_prob,
+                "occluded_prob": None, "top_level_prob": None,
+                "latency_ms": round((time.monotonic() - t0) * 1000), "source": "sheet", **s.summary(),
+                "worksheet_id": ws.get("worksheet_id", ""), "questions": questions_from_sheet(res.problems, ws),
+                "answers": answers_from_sheet(res.problems, ws)}
         await emit({"type": "homework_progress", "request_id": request_id, "data": data})
 
     # ------------------------------------------------------------------ advice
@@ -320,7 +388,8 @@ class HomeworkService:
         and where its answer box is in this overview image. Answers with homework_locate_result
         {kind, problem, u, v, box, jev_box, verified, usable, page_check} or homework_locate_error.
         One at a time."""
-        if self._advice_factory is None:
+        local = self.study_local and kind == "problem"
+        if self._advice_factory is None and not local:
             raise ValueError("no assistant to read the worksheet (study.provider)")
         if self._locate_task is not None and not self._locate_task.done():
             raise ValueError("a problem is already being located")
@@ -339,9 +408,51 @@ class HomeworkService:
             target = {"worksheet": ws, "problem": prob}
         locate_prompt(kind, 1, 1, False, self._target_text(target))  # an unknown kind fails here
         image = decode_jpeg(image_b64, self.config.max_image_bytes)
+        if local and target is not None:
+            self._locate_task = asyncio.create_task(self._locate_sheet(s, request_id, image, emit, target))
+            return
         width, height = jpeg_size(image)
         self._locate_task = asyncio.create_task(self._locate(s, request_id, kind, image, width, height, emit,
                                                              target))
+
+    async def _locate_sheet(self, s: _Session | None, request_id: str, image: bytes, emit: Emit,
+                            target: dict) -> None:
+        """#232: the problem's answer box from the worksheet reader -> homework_locate_result
+        (the Claude + Jev answer's shape; verified: one reader, nothing to compare)."""
+        from ..study.sheet_client import SheetError
+        number = int(target["problem"]["number"])
+        ws = target["worksheet"]
+
+        async def fail(code: str, message: str) -> None:
+            await emit({"type": "homework_locate_error", "request_id": request_id,
+                        "data": {"kind": "problem", "code": code, "message": message, "source": "sheet"}})
+        try:
+            client = self._sheet_factory()  # type: ignore[misc]
+            res = await asyncio.to_thread(client.read, image)
+        except asyncio.CancelledError:
+            raise
+        except SheetError as e:
+            await fail(e.kind, f"プリントの読み取り: {e}")
+            return
+        except Exception as e:
+            await fail("reader_error", f"プリントの読み取り: {e}")
+            return
+        found = locate_in_sheet(res.problems, number)
+        if found is None:
+            seen = [p["number"] for p in res.problems]
+            await fail("not_found", f"プリントの読み取りで問題 {number} が見つかりませんでした"
+                       + (f"（写っている問題: {', '.join(map(str, seen))}）" if seen else "（問題を読めませんでした）"))
+            return
+        box_area = (found["box"][2] - found["box"][0]) * (found["box"][3] - found["box"][1])
+        usable = box_area <= self.locate_params.max_box_area
+        data: dict[str, Any] = {
+            "kind": "problem", "problem": f"問題 {number}", "description_en": target["problem"]["description_en"],
+            "box": found["box"], "u": found["u"], "v": found["v"], "compared": False, "jev_box": None,
+            "jev_confidence": None, "verified": usable, "usable": usable, "page_check": None,
+            "reason": "" if usable else "読み取った枠がプリント全体ほど大きい", "source": "sheet",
+            "box_kind": found["which"], "partial": found["partial"],
+            "problem_number": number, "worksheet_id": ws["worksheet_id"]}
+        await emit({"type": "homework_locate_result", "request_id": request_id, "data": data})
 
     @staticmethod
     def _target_text(target: dict | None) -> str:
@@ -390,7 +501,7 @@ class HomeworkService:
                                     "jev_box": None, "jev_confidence": None, "verified": False, "reason": ""}
             data["u"], data["v"] = (round(v, 4) for v in centre(found["box"]))
             try:
-                client = s.client if s is not None else self._client_factory()
+                client = s.client if s is not None and s.client is not None else self._client_factory()
                 jev_input = jev_box_input(base64.b64encode(image).decode("ascii"), found["description_en"],
                                           marks=target is not None)
                 res = await asyncio.wait_for(asyncio.to_thread(client.run, jev_input, p.jev_timeout_s),

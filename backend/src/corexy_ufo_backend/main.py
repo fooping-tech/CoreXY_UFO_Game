@@ -34,7 +34,7 @@ from .config import REPO_ROOT
 from .homework import HomeworkConfig, HomeworkService, LocateParams, SpeechConfig, SpeechService
 from .homework.approach import ApproachParams
 from .homework.camera_map import CameraMapParams
-from .study import StudyConfig, StudyService, make_adapter
+from .study import StudyConfig, StudyService, make_adapter, make_sheet_client
 from .study_mode import WorksheetCatalog, WorksheetError
 from .devicehub import DeviceHubConfig, DeviceHubService
 
@@ -188,6 +188,13 @@ async def run(args: argparse.Namespace) -> int:
     # the advice uses the study assistant's provider (Claude Code / Codex) without needing --study
     # the study mode's explanation may go elsewhere (#104: study.explain_provider, e.g. the tutor AI)
     explain_provider = study_cfg.explain_provider or study_cfg.provider
+    # #232: study.ai "local" (the default): the study mode reads and explains with the local LLM server only
+    sheet_factory = None
+    if study_cfg.ai == "local":
+        explain_provider = "tutor"
+        sheet_factory = lambda: make_sheet_client(study_cfg)  # noqa: E731 - read when a frame comes
+        log.info("study mode AI: local only (%s; the watch and the locate with /v1/sheet, the explanation with the tutor)",
+                 study_cfg.tutor_url or "study.tutor_url not set")
     if explain_provider == "tutor":
         log.info("study mode explanations: the tutor AI at %s (the worksheet's hints when it fails)",
                  study_cfg.tutor_url or "(study.tutor_url not set)")
@@ -195,7 +202,7 @@ async def run(args: argparse.Namespace) -> int:
                                explain_factory=lambda: make_adapter(study_cfg, explain_provider),
                                locate=LocateParams.from_raw(cfg.raw),
                                speech=SpeechService(SpeechConfig.from_raw(cfg.raw)),
-                               worksheets=worksheets) if (hw_cfg.enabled or study_mode_on) else None
+                               worksheets=worksheets, sheet_factory=sheet_factory) if (hw_cfg.enabled or study_mode_on) else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports
