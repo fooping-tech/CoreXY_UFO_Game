@@ -1090,6 +1090,13 @@ func _handle_input(dt: float) -> void:
 			jog_hint = "勉強モードでアームを使っている間は手動操作できない（Space で止める）"
 		if gesture.is_active():
 			gesture.stop("study_mode")
+	# #242 review: the arm-tip camera's calibration owns the arm (a jog would change what it measures)
+	if settings != null and settings.calibration != null and settings.calibration.focus_cal.active():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "先端カメラの校正中は手動操作できない（Space で止める）"
+		if gesture.is_active():
+			gesture.stop("focus_calibration")
 	# the auto catch owns the crane: no manual jog until it ends (Space / E-STOP still stop it)
 	if RobotState.auto_catch_active():
 		halt = true

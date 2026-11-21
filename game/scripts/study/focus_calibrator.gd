@@ -59,6 +59,7 @@ var _target := Vector2.ZERO
 var _rid := ""
 var _acked := false
 var _t := 0.0
+var _z0 := 0.0  # the height it started at: the pictures are only good for that height
 var _sample_t := 0.0
 var _thumb: Image
 var _still := 0
@@ -97,6 +98,7 @@ func start(at_height: String) -> String:
 		return why
 	height = at_height
 	origin = Vector2(RobotState.x_mm, RobotState.y_mm)
+	_z0 = RobotState.z_mm
 	_target = origin
 	_base_pics.clear()
 	_burst.clear()
@@ -109,10 +111,14 @@ func start(at_height: String) -> String:
 	_settle()
 	return ""
 
-## Space, the tab closed, the link lost: stop here (the arm stays where Space left it).
+## Space, the tab closed, the link lost: stop here. A move still going is stopped (soft_stop:
+## the tab closing does not stop the arm by itself; Space already sent one, another is harmless).
 func cancel(reason: String) -> void:
-	if active():
-		_fail(reason)
+	if not active():
+		return
+	if state in [MOVING, RETURNING] and send.is_valid():
+		send.call("soft_stop", {})
+	_fail(reason)
 
 func progress_text() -> String:
 	match state:
@@ -155,6 +161,13 @@ func tick(dt: float) -> void:
 		_fail("アラーム・非常停止")
 		return
 	_t += dt
+	# #242 review: what it measures is only good at that height and where it moved the arm itself
+	if absf(RobotState.z_mm - _z0) > 2.0:
+		_fail("アームの高さが変わった（Z %.0f → %.0f）" % [_z0, RobotState.z_mm])
+		return
+	if state == SETTLING and Vector2(RobotState.x_mm, RobotState.y_mm).distance_to(_target) > ARRIVED_MM * 2.0:
+		_fail("アームの位置が変わった")
+		return
 	match state:
 		MOVING, RETURNING:
 			var there := Vector2(RobotState.x_mm, RobotState.y_mm).distance_to(_target) <= ARRIVED_MM

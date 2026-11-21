@@ -1021,6 +1021,25 @@ func _test_focus_calibrator() -> void:
 		fc.tick(0.1)
 	_ok(after_space == FocusCalibrator.FAILED and refused == "busy" and fc.state == FocusCalibrator.FAILED
 		and fc.error.contains("目的の位置"), "focus calibration: Space, a refusal or an arm that stayed end it", fc.error)
+	# #242 review: closing the tab mid-move stops the arm; a jog of the height / place ends it
+	sent.clear()
+	fc.start("10cm")
+	for k in 30:
+		fc.tick(0.1)
+	fc.cancel("校正タブを閉じた")
+	var stopped: bool = sent.size() == 2 and str(sent[0][0]) == "move_xy" and str(sent[1][0]) == "soft_stop"
+	fc.start("10cm")
+	RobotState.z_mm += 5.0
+	fc.tick(0.1)
+	var z_moved := fc.error
+	RobotState.z_mm -= 5.0
+	fc.start("10cm")
+	RobotState.x_mm += 3.0
+	fc.tick(0.1)
+	var xy_moved := fc.error
+	RobotState.x_mm -= 3.0
+	_ok(stopped and z_moved.contains("高さが変わった") and xy_moved.contains("位置が変わった"),
+		"focus calibration: closing the tab stops the move; a changed height or place ends it", "%s %s %s" % [sent, z_moved, xy_moved])
 	# the camera swings on the rope: no picture while it moves, a failure when it never stops
 	var dark := Image.create(64, 48, false, Image.FORMAT_RGB8)
 	dark.fill(Color(0.2, 0.2, 0.2))
