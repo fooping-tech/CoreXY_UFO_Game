@@ -42,12 +42,12 @@ const CUES := {
 	"combo": ["combo", "sparkle"],
 	"review": ["pop", "switch"],
 	"unclear": ["tick"],
-	"reward": ["jan|fanfare", "boom", "jackpot"],
-	"perfect": ["bonus", "sparkle"],
+	"reward": ["jan|fanfare", "boom"],  # the fanfare is jan.mp3 (se/); the synthesised one only without it
+	"perfect": ["sparkle", "gem"],  # with the reward's own fanfare: no second jingle
 	"count": ["pin"],
 	"power_show": ["warp"],
 	"power_pick": ["boom", "star", "alien"],
-	"ready": ["result", "chime"],
+	"ready": ["jan|fanfare", "sparkle"],
 }
 
 func _ready() -> void:
