@@ -33,6 +33,8 @@ var _services: Label  # the whole list as text (tests; hidden)
 var _services_box: VBoxContainer  # one coloured line per check
 var _services_shown := ""
 var _services_asking := false
+## the rows only an "ask" run adds (#230: the worksheet reader, POST /v1/sheet)
+const ASK_ROWS := ["ask", "sheet"]
 var _asked := false  # this opening's requests went out (the backend may connect later)
 ## #124: the backend's word on the robot's serial link (list_ports' "robot"), asked again
 ## every LINK_ASK_MS while the real robot is not connected.
@@ -695,12 +697,12 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 	if cmd == "services_check":
 		_services_asking = false
 		if ok and data.get("results") is Array:
-			# an "ask" run adds its line to the last check
-			var asked: Array = (data.results as Array).filter(func(r): return r is Dictionary and r.get("name") == "ask")
+			# an "ask" run adds its lines (the question, and the worksheet reader #230) to the last check
+			var asked: Array = (data.results as Array).filter(func(r): return r is Dictionary and r.get("name") in ASK_ROWS)
 			if asked.is_empty() or services.is_empty():
 				services = data.results
 			else:
-				services = services.filter(func(r): return r is Dictionary and r.get("name") != "ask") + asked
+				services = services.filter(func(r): return r is Dictionary and not r.get("name") in ASK_ROWS) + asked
 		elif not ok:
 			services = [{"name": "backend", "label": "バックエンド", "status": "ng", "detail": str(data.get("reason", ""))}]
 		return

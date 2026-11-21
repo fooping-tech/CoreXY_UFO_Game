@@ -19,6 +19,9 @@ Command names and safety rules:
   jog_expiry_s), clear_alarm,
   worksheet_find {image_jpeg_base64} (#116: the study worksheet's corner marks in the overview
   frame -> {found, corners: {tl, tr, bl, br: [u, v]}, score}; OpenCV only, nothing kept),
+  sheet_read {image_jpeg_base64, calc?, crop?} (#230: the 設定 screen's プリント tab: a camera frame
+  -> the learning support AI's worksheet reader, POST /v1/sheet -> {problems, counts, summary, ...};
+  ~10 s; never the robot, never queued, nothing kept),
   services_check {ask?} (#114: Jev / the tutor AI / Claude Code / Codex / VOICEVOX reachable? ask =
   one short question with the sample worksheet; never the robot, never queued),
   get_state, list_ports, gesture_config {pinch_start?, pinch_release?, pinch_confirm_ms?, ...}
@@ -583,6 +586,8 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
             return await self._devicehub(name, params)
         if name == "worksheet_find":  # #116: the sheet's corner marks in the overview frame; never the robot
             return await self._worksheet_find(params)
+        if name == "sheet_read":  # #230: a camera frame -> POST /v1/sheet; never the robot
+            return await self._sheet_read(params)
         if name == "services_check":  # #114: Jev / the tutor / Claude Code / VOICEVOX; never the robot
             from ..services_check import check_all
             cfg = self.backend_cfg
@@ -866,6 +871,37 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         except ValueError as e:
             return self._nack(name, str(e))
         return self._ack(name, {"found": found is not None, **(found or {})})
+
+    SHEET_READ_MAX_BYTES = 4 * 1024 * 1024
+
+    async def _sheet_read(self, params: dict) -> dict:
+        """The プリント tab's check (#230): one frame of a connected camera, read by the learning
+        support AI's worksheet reader with the study.tutor_* settings. The frame is not kept."""
+        import base64
+        import binascii
+        from dataclasses import replace
+        from ..config import REPO_ROOT
+        from ..study import StudyConfig, make_sheet_client
+        from ..study.sheet_client import SheetError, sheet_payload
+        name = "sheet_read"
+        b64 = params.get("image_jpeg_base64")
+        if not isinstance(b64, str) or not b64:
+            return self._nack(name, "image_jpeg_base64 is required")
+        try:
+            data = base64.b64decode(b64, validate=True)
+        except (binascii.Error, ValueError):
+            return self._nack(name, "image_jpeg_base64 is not base64")
+        if len(data) > self.SHEET_READ_MAX_BYTES:
+            return self._nack(name, "the image is too large")
+        cfg = self.backend_cfg
+        study = replace(StudyConfig.from_raw(cfg.raw if cfg is not None else {}), root=str(REPO_ROOT))
+        try:
+            client = make_sheet_client(study)
+            res = await asyncio.to_thread(client.read, data, calc=params.get("calc") is not False,
+                                          crop=params.get("crop") is not False)
+        except SheetError as e:
+            return self._nack(name, str(e))
+        return self._ack(name, sheet_payload(res))
 
     async def _devicehub(self, name: str, params: dict) -> dict:
         """The settings screen's テスト tab (#108): UFO-DeviceHub's console commands."""
