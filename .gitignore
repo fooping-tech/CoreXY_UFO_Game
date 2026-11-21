@@ -43,3 +43,6 @@ config/calibration.json.tmp
 # UFOくん's made voice lines (#171: homework.speech.cache). Made again when missing;
 # VOICEVOX audio is not committed
 /cache/
+
+# #230: tools/read_sheet.py draws the boxes on a worksheet photo (a child's handwriting): never in Git
+*.sheet.jpg

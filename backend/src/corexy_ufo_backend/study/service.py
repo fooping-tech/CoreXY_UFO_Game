@@ -48,6 +48,7 @@ class StudyConfig:
     tutor_timeout_s: float = 20.0
     tutor_fail_limit: int = 2  # failures in a row before the tutor rests...
     tutor_cooldown_s: float = 120.0  # ...for this long (the worksheet's hints meanwhile)
+    sheet_timeout_s: float = 180.0  # POST /v1/sheet (#230): ~10 s a sheet, at least 120
     root: str = "."  # relative tutor_* files are under the repository (main.py sets it)
     focus_calibration: Any = None  # calibration.json#focus_camera (main.py sets it)
 
@@ -70,7 +71,8 @@ class StudyConfig:
                    tutor_grade=int(data.get("tutor_grade", 3)),
                    tutor_timeout_s=max(float(data.get("tutor_timeout_s", 20.0)), 1.0),
                    tutor_fail_limit=max(int(data.get("tutor_fail_limit", 2)), 1),
-                   tutor_cooldown_s=max(float(data.get("tutor_cooldown_s", 120.0)), 0.0))
+                   tutor_cooldown_s=max(float(data.get("tutor_cooldown_s", 120.0)), 0.0),
+                   sheet_timeout_s=max(float(data.get("sheet_timeout_s", 180.0)), 120.0))
 
 
 PROVIDERS = ("claude", "codex", "tutor")
@@ -81,6 +83,30 @@ def _under_root(config: StudyConfig, name: str) -> Path:
     return p if p.is_absolute() else Path(config.root) / p
 
 
+def _tutor_access(config: StudyConfig, error: Callable[[str], Exception]) -> tuple[str, str | None]:
+    """(token, cafile) of the learning support AI. #128: the token is optional (a server started
+    without one): no file = no token. No cert file = the system's CAs."""
+    token = ""
+    if config.tutor_token_file:
+        token_file = _under_root(config, config.tutor_token_file)
+        if token_file.exists():
+            try:
+                token = token_file.read_text(encoding="utf-8").strip()
+            except OSError as e:
+                raise error(f"学習支援 AI のトークンを読めません（{token_file}）") from e
+    cafile = _under_root(config, config.tutor_cafile) if config.tutor_cafile else None
+    return token, (str(cafile) if cafile is not None and cafile.exists() else None)
+
+
+def make_sheet_client(config: StudyConfig):
+    """The worksheet reader (POST /v1/sheet, #230) on the learning support AI's server."""
+    from .sheet_client import SheetClient, SheetError
+    if not config.tutor_url:
+        raise SheetError("config", "学習支援 AI の URL がありません（study.tutor_url）")
+    token, cafile = _tutor_access(config, lambda m: SheetError("config", m))
+    return SheetClient(config.tutor_url, token, cafile=cafile, timeout_s=config.sheet_timeout_s)
+
+
 def make_adapter(config: StudyConfig, provider: str | None = None) -> StudyAdapter:
     """The adapter for study.provider, or `provider` (imported lazily: each one is optional)."""
     provider = provider or config.provider
@@ -89,18 +115,8 @@ def make_adapter(config: StudyConfig, provider: str | None = None) -> StudyAdapt
         from .tutor_adapter import TutorStudyAdapter
         if not config.tutor_url:
             raise StudyAdapterError("学習支援 AI の URL がありません（study.tutor_url）")
-        # #128: the token is optional (a server started without one): no file = no token
-        token = ""
-        if config.tutor_token_file:
-            token_file = _under_root(config, config.tutor_token_file)
-            if token_file.exists():
-                try:
-                    token = token_file.read_text(encoding="utf-8").strip()
-                except OSError as e:
-                    raise StudyAdapterError(f"学習支援 AI のトークンを読めません（{token_file}）") from e
-        cafile = _under_root(config, config.tutor_cafile) if config.tutor_cafile else None
-        return TutorStudyAdapter(config.tutor_url, token, grade=config.tutor_grade,
-                                 cafile=str(cafile) if cafile is not None and cafile.exists() else None,
+        token, cafile = _tutor_access(config, StudyAdapterError)
+        return TutorStudyAdapter(config.tutor_url, token, grade=config.tutor_grade, cafile=cafile,
                                  focus_calibration=config.focus_calibration, timeout_s=config.tutor_timeout_s,
                                  fail_limit=config.tutor_fail_limit, cooldown_s=config.tutor_cooldown_s)
     config = replace(config, provider=provider)
