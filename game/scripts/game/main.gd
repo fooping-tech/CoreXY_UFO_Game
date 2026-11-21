@@ -287,6 +287,7 @@ func _ready() -> void:
 	settings.setup()
 	settings.setup_calibration(self)
 	settings.setup_tests(self)
+	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.closed.connect(_on_settings_closed)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)

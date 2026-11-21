@@ -27,11 +27,13 @@ var _status: Label
 var tabs: TabContainer
 var calibration: CalibrationPanel
 var tests: DeviceTestPanel
+var sheet: SheetCheckPanel
 var _reset_b: Button
 var _cancel_b: Button
 var _save_b: Button
 const CALIBRATION_TAB := 1
 const TEST_TAB := 2
+const SHEET_TAB := 3
 var _list: VBoxContainer
 ## #126: each schema section is a card (as on the 校正 tab); rows go in the current one
 var _box: VBoxContainer
@@ -149,6 +151,21 @@ func setup_tests(main: Node) -> void:
 	scroll.add_child(tests)
 	tests.setup(main)
 
+## The プリント tab (#230): the learning support AI's worksheet reader, tried with a camera.
+func setup_sheet(main: Node) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.name = "プリント"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	tabs.add_child(scroll)
+	sheet = SheetCheckPanel.new()
+	sheet.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(sheet)
+	sheet.setup(main)
+
+## The プリント tab shows.
+func sheet_checking() -> bool:
+	return visible and sheet != null and tabs.current_tab == SHEET_TAB
+
 ## The テスト tab shows: Space also stops the peripherals (STOP ALL).
 func testing() -> bool:
 	return visible and tests != null and tabs.current_tab == TEST_TAB
@@ -175,6 +192,8 @@ func _on_tab_changed(i: int) -> void:
 		calibration.opened()
 	if i == TEST_TAB and tests != null:
 		tests.opened()
+	if i == SHEET_TAB and sheet != null:
+		sheet.opened()
 
 func _process(dt: float) -> void:
 	if testing():
@@ -182,6 +201,14 @@ func _process(dt: float) -> void:
 		if tests.result_text != "":
 			_status.text = tests.result_text
 			_status.add_theme_color_override("font_color", DeviceTestPanel.GOOD if tests.result_ok else DeviceTestPanel.BAD)
+	if sheet != null:
+		if sheet_checking():
+			sheet.tick(dt)
+		else:
+			sheet.tick_hidden(dt)
+		if sheet_checking() and sheet.result_text != "":
+			_status.text = sheet.result_text
+			_status.add_theme_color_override("font_color", SheetCheckPanel.GOOD if sheet.result_ok else SheetCheckPanel.BAD)
 	if calibrating():
 		calibration.refresh()
 		if calibration.result_text != "":  # the backend's answer, under the scrolled tab

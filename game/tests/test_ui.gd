@@ -381,6 +381,71 @@ func _test_device_test_tab(rs: Node) -> void:
 	game.free()
 	rs.clear_samples()
 
+## #230: the プリント tab tries the worksheet reader (POST /v1/sheet) with a connected camera.
+func _test_sheet_check_tab(rs: Node) -> void:
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	game.show_title()
+	game.open_settings()
+	st.show_tab(SettingsScreen.SHEET_TAB)
+	var p: SheetCheckPanel = st.sheet
+	st._process(0.0)
+	_ok(st.sheet_checking() and not st.testing() and not game.calibrating() and p._read_b.disabled
+		and not st._save_b.visible and st._cancel_b.text.begins_with("閉じる"),
+		"sheet check: the プリント tab shows; without a backend or a camera 撮って読む cannot be pressed", p._camera_state.text)
+	p.read_now()
+	_ok(not p.waiting() and not p.result_ok and p.result_text.contains("つながっていない"),
+		"sheet check: pressed anyway, it says why and sends nothing", p.result_text)
+	p.pick_camera("focus")
+	_ok(p.role == "focus" and p._camera_buttons["focus"].button_pressed and not p._camera_buttons["overview"].button_pressed,
+		"sheet check: the arm camera can be picked")
+	# an answer over the frame that was sent
+	p.shot = Image.create(640, 480, false, Image.FORMAT_RGB8)
+	p._rid = "sr1"
+	game.ws.ack.emit("sr1", false, {"reason": "timeout"})  # the link's own few seconds: keep waiting
+	var still := p.waiting()
+	game.ws.ack.emit("other", true, {"command": "sheet_read", "problems": []})  # not ours
+	game.ws.ack.emit("sr1", true, {"command": "sheet_read", "read_anything": true, "summary": "2 問（正解 1・まちがい 1）",
+		"seconds": 9.5, "paper": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]], "notes": ["形の正しくない枠を除外"],
+		"problems": [
+			{"number": 1, "answer_status": "correct", "student_answer": "12", "correct_answer": "12", "visible": "full",
+				"notes": [], "box": [100, 100, 900, 300], "answer_box": [600, 150, 880, 280]},
+			{"number": 2, "answer_status": "incorrect", "student_answer": "42", "correct_answer": "45", "visible": "partial",
+				"notes": ["計算し直した"], "box": [100, 400, 900, 600], "answer_box": null}]})
+	st._process(0.0)
+	_ok(still and not p.waiting() and p.result_ok and p._summary.text.contains("2 問") and p._summary.text.contains("9.5 秒")
+		and p._summary.text.contains("切り出し: あり") and p._list.text.contains("○ 1. 正解　答え「12」")
+		and p._list.text.contains("× 2. まちがい　答え「42」　正答 45（見切れ）　※計算し直した")
+		and p._list.text.contains("※ 形の正しくない枠を除外") and st._status.text.contains("プリント読み取り: 2 問")
+		and not p._live_b.disabled,
+		"sheet check: the answer is listed and kept over the frame (the link's early timeout does not end the wait)", p._list.text)
+	# the boxes land on the shown frame (kept aspect, centred)
+	var shown := SheetCheckPanel.frame_rect(Vector2(640, 480), Vector2(630, 470))
+	var r := SheetCheckPanel.box_rect([100, 100, 900, 300], shown)
+	_ok(shown.size.is_equal_approx(Vector2(626.6667, 470)) and is_equal_approx(shown.position.x, 1.6666667)
+		and r.position.is_equal_approx(shown.position + Vector2(62.66667, 47)) and r.size.is_equal_approx(Vector2(501.3333, 94))
+		and SheetCheckPanel.box_rect(null, shown) == Rect2(),
+		"sheet check: a 0..1000 box is drawn on the frame as shown", str(r))
+	# a refusal, and a sheet it could not read
+	p._rid = "sr2"
+	game.ws.ack.emit("sr2", false, {"command": "sheet_read", "reason": "学習支援 AI のトークンが違う"})
+	_ok(not p.waiting() and not p.result_ok and p.result_text.contains("トークンが違う"),
+		"sheet check: a refusal says why", p.result_text)
+	p.show_result({"read_anything": false, "summary": "問題を読めなかった", "problems": []})
+	_ok(not p.result_ok and p._summary.text.begins_with("読めなかった"), "sheet check: nothing read is not \"no problems\"",
+		p._summary.text)
+	# no answer at all
+	p._rid = "sr3"
+	p.tick_hidden(SheetCheckPanel.WAIT_S + 1.0)
+	_ok(not p.waiting() and p.result_text.contains("返事がない"), "sheet check: no answer in time ends the wait", p.result_text)
+	p.show_live()
+	_ok(p.shot == null and p.result.is_empty() and p._list.text == "", "sheet check: ライブに戻す clears the answer")
+	game._unhandled_input(_key(KEY_ESCAPE))
+	_ok(not game.settings_active() and not st.sheet_checking(), "sheet check: Esc closes the screen")
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
 func _test_calibration_summary() -> void:
 	# #120: the summary on top (one row per section, the next thing to do) and each card's badge
 	var game := _study_game()
