@@ -569,12 +569,14 @@ func _test_calibration_tab(rs: Node) -> void:
 		{"name": "tutor", "label": "学習支援 AI（ローカル LLM）", "status": "skip", "detail": "使っていない"}]})
 	game.ws.ack.emit("sv2", true, {"command": "services_check", "results": [
 		{"name": "jev", "label": "Jev（Cloudflare）", "status": "ok", "detail": "トークン有効"},
-		{"name": "ask", "label": "AI に試しに質問", "status": "ok", "detail": "claude が答えた: OK"}]})
+		{"name": "ask", "label": "AI に試しに質問", "status": "ok", "detail": "claude が答えた: OK"},
+		{"name": "sheet", "label": "プリント読み取り（/v1/sheet）", "status": "ok", "detail": "見本のプリントを読んだ: 6 問"}]})
 	cpp.refresh()
 	var svt: String = cpp._services.text
 	_ok(svt.contains("✓ Jev（Cloudflare）") and svt.contains("✗ VOICEVOX: つながらない") and svt.contains("－ 学習支援 AI")
-		and svt.contains("✓ AI に試しに質問: claude が答えた: OK"),
-		"calibration: the AI / outside services are listed, an ask adds its line (#114)", svt)
+		and svt.contains("✓ AI に試しに質問: claude が答えた: OK") and svt.contains("✓ プリント読み取り（/v1/sheet）: 見本のプリントを読んだ")
+		and svt.contains("✗ VOICEVOX"),
+		"calibration: the AI / outside services are listed, an ask adds its lines (#114, the worksheet reader #230)", svt)
 	# #110 / #165: the capture heights: the saved values fill the inputs, the stages and the state are shown
 	var cp: CalibrationPanel = st.calibration
 	game.ws.ack.emit("h1", true, {"command": "study_height_status", "usable": false, "stages": [],
