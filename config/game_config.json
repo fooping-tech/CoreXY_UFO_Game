@@ -263,6 +263,7 @@
     "camera_role": "overview",
     "stall_s": 180.0,
     "stall_min_gain": 5.0,
+    "locate_timeout_s": 20.0,
     "advice_timeout_s": 120.0,
     "explain_timeout_s": 150.0,
     "approach": {

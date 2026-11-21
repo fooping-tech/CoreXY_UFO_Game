@@ -178,6 +178,22 @@ def _token_key(url: str, token: str) -> str:
     return url + "#" + hashlib.sha256(token.encode()).hexdigest()[:16]
 
 
+def _cut(r: Any) -> None:
+    """Ends a response being read in another thread: shuts its socket down (a blocked recv
+    returns), or closes it when there is no socket to reach (a test's fake)."""
+    import socket
+    try:
+        sock = r.fp.raw._sock  # http.client.HTTPResponse -> SocketIO -> socket
+        sock.shutdown(socket.SHUT_RDWR)
+        return
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class SheetClient:
     # per server: at most CONCURRENCY requests at a time, a token the server refused, the time a 429 block ends
     CONCURRENCY = 2
@@ -204,10 +220,11 @@ class SheetClient:
             self.lock = SheetClient._locks.setdefault(
                 self.base, threading.BoundedSemaphore(max(int(concurrency or SheetClient.CONCURRENCY), 1)))
 
-    def _open(self, req: urllib.request.Request):
+    def _open(self, req: urllib.request.Request, timeout: float | None = None):
+        t = self.timeout_s if timeout is None else timeout
         if self.opener is not None:
-            return self.opener(req, timeout=self.timeout_s)
-        return urllib.request.urlopen(req, timeout=self.timeout_s, context=self.ctx)
+            return self.opener(req, timeout=t)
+        return urllib.request.urlopen(req, timeout=t, context=self.ctx)
 
     def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -216,20 +233,47 @@ class SheetClient:
         return h
 
     def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE,
-             on_problem: Callable[[dict], bool] | None = None) -> SheetResult:
+             on_problem: Callable[[dict], bool] | None = None, deadline_s: float | None = None,
+             label: str = "read") -> SheetResult:
         """One photo -> the sheet's problems. Blocking (~10 s; call it in a thread from async code).
         With `on_problem` the answer streams: it gets each problem as read; True from it ends the
-        reading there (the result then has the problems so far and `raw["stopped_early"]`)."""
+        reading there (the result then has the problems so far and `raw["stopped_early"]`).
+        `deadline_s` (#244): give up after that long in all, the wait for a free slot (another
+        reading may hold it) included -> SheetError "timeout"; without it the socket's timeout_s."""
         image = prepare_image(photo, long_side)
         self._may_send()  # fail fast before waiting for the lock...
         body = {"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}
         if on_problem is not None:
             body["stream"] = True
         data = json.dumps(body).encode()
-        with self.lock:
+        t0 = time.monotonic()
+        end = t0 + deadline_s if deadline_s is not None else None
+        got = self.lock.acquire() if end is None else self.lock.acquire(timeout=max(end - time.monotonic(), 0.0))
+        if not got:
+            log.info("sheet: %s gave up after %.1f s waiting for a free slot (the server is reading others)",
+                     label, time.monotonic() - t0)
+            raise SheetError("timeout", self.timeout_text(deadline_s))
+        waited = time.monotonic() - t0
+        try:
             self._may_send()  # ...and again: a request ahead of this one may have got a 401 / 429
-            raw = self._send(data, on_problem)
+            try:
+                raw = self._send(data, on_problem, end)
+            except SheetError as e:
+                log.info("sheet: %s failed after %.1f s (%.1f s waiting for a slot): %s", label,
+                         time.monotonic() - t0, waited, e.kind)
+                if e.kind == "timeout":
+                    raise SheetError("timeout", self.timeout_text(deadline_s)) from None
+                raise
+            log.info("sheet: %s answered in %.1f s (%.1f s waiting for a slot)", label, time.monotonic() - t0, waited)
             return parse_result(raw, image)
+        finally:
+            self.lock.release()
+
+    @staticmethod
+    def timeout_text(deadline_s: float | None) -> str:
+        if deadline_s is None:
+            return "AI が混んでいるみたい（返事が間に合わない）"
+        return f"AI が混んでいるみたい（{deadline_s:g} 秒たっても返事がない）"
 
     def _may_send(self) -> None:
         if _token_key(self.base, self.token) in SheetClient._refused:
@@ -238,19 +282,32 @@ class SheetClient:
         if wait > 0:
             raise SheetError("blocked", f"認証の失敗が続いたためサーバがブロック中（あと約 {wait / 60:.0f} 分）", 429)
 
-    def _send(self, body: bytes, on_problem: Callable[[dict], bool] | None = None) -> Any:
+    def _send(self, body: bytes, on_problem: Callable[[dict], bool] | None = None, end: float | None = None) -> Any:
         busy = list(self.busy_waits_s)
         server_retry = True
         while True:
             req = urllib.request.Request(self.url, body, self._headers(), method="POST")
+            left = None if end is None else end - time.monotonic()
+            if left is not None and left <= 0:
+                raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）")
             try:
-                with self._open(req) as r:
-                    if on_problem is not None:
-                        return self._events(r, on_problem)
-                    return json.loads(r.read().decode("utf-8"))
+                with self._open(req, left) as r:
+                    # review on #245: a read blocks between lines (or on bytes without a newline) past
+                    # the socket's timeout: at the deadline the connection is cut, which ends the read
+                    timer = threading.Timer(max(end - time.monotonic(), 0.0), _cut, (r,)) if end is not None else None
+                    if timer is not None:
+                        timer.daemon = True
+                        timer.start()
+                    try:
+                        if on_problem is not None:
+                            return self._events(r, on_problem, end)
+                        return json.loads(r.read().decode("utf-8"))
+                    finally:
+                        if timer is not None:
+                            timer.cancel()
             except urllib.error.HTTPError as e:
                 err = self._http_error(e)
-                if err.kind == "busy" and busy:
+                if err.kind == "busy" and busy and (end is None or time.monotonic() + busy[0] < end):
                     w = busy.pop(0)
                     log.info("sheet: the server is busy (503); again in %.0f s", w)
                     self.sleep(w)
@@ -261,6 +318,8 @@ class SheetClient:
                     continue
                 raise err from None
             except (OSError, ValueError) as e:  # cannot connect / timeout / certificate / not JSON
+                if end is not None and time.monotonic() >= end - 0.05 and not isinstance(e, ssl.SSLError):
+                    raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）") from None
                 if isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError):
                     raise SheetError("network", f"証明書を確かめられません（config/secrets/tutor_cert.pem と、URL の IP）: {e}") from None
                 if isinstance(e, ValueError):
@@ -268,12 +327,14 @@ class SheetClient:
                 raise SheetError("network", f"学習支援 AI に接続できません: {e}") from None
 
     @staticmethod
-    def _events(r: Any, on_problem: Callable[[dict], bool]) -> dict:
+    def _events(r: Any, on_problem: Callable[[dict], bool], end: float | None = None) -> dict:
         """The SSE answer (docs/ufo_api_spec.md §6.3): sheet.start, sheet.problem..., sheet.result, [DONE].
         The final sheet.result is the answer; a reading stopped early answers with what came."""
         start: dict = {}
         seen: list[dict] = []
         for raw_line in r:
+            if end is not None and time.monotonic() > end:  # coming, but too slowly
+                raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）")
             line = raw_line.decode("utf-8", "replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
             if not line.startswith("data:"):
                 continue
