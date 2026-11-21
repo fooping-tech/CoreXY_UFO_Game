@@ -331,6 +331,7 @@ def test_the_tab_payload_keeps_the_boxes_of_the_frame_and_the_paper_as_fractions
     assert d["paper"][0] == pytest.approx([10 / 900, 10 / 1200]) and d["counts"]["incorrect"] == 1
     assert d["read_anything"] and "3 問" in d["summary"] and d["image"] == {"width": 900, "height": 1200}
     json.dumps(d)  # goes over the WebSocket
+    assert d["response"] is res.raw  # the server's whole answer, shown as it is
     assert sheet_payload(parse_result({**ANSWER, "paper_px": None}, res.image))["paper"] is None
 
 

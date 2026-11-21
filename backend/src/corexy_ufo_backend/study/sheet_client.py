@@ -135,7 +135,8 @@ class SheetResult:
 
 def sheet_payload(res: SheetResult) -> dict[str, Any]:
     """What the game's プリント tab shows: per problem, the boxes on the 0..1000 scale of the
-    image sent (so of the camera frame), and the paper's corners as 0..1 of it."""
+    image sent (so of the camera frame), the paper's corners as 0..1 of it, and the server's
+    whole answer (`response`) to show as it is."""
     keys = ("number", "answer_status", "student_answer", "correct_answer", "visible", "notes", "box", "answer_box")
     paper = None
     corners, size = res.raw.get("paper_px"), res.raw.get("image") or {}
@@ -149,7 +150,8 @@ def sheet_payload(res: SheetResult) -> dict[str, Any]:
             "summary": res.summary(), "read_anything": res.read_anything, "paper": paper,
             "notes": [str(n) for n in res.raw.get("notes") or [] if isinstance(n, str)],
             "seconds": res.raw.get("seconds"), "model": str(res.raw.get("model", "")),
-            "image": {"width": res.image.width, "height": res.image.height}}
+            "image": {"width": res.image.width, "height": res.image.height},
+            "response": res.raw}  # the server's answer as it came (no secret, no image in it)
 
 
 def parse_result(raw: Any, image: SheetImage) -> SheetResult:
