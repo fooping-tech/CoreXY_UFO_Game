@@ -61,10 +61,32 @@ def test_calibration_from_pictures_finds_the_cameras_turn_and_scale():
     assert np.allclose(np.asarray(out["A"]) @ d, [144, 0], atol=1.0)
 
 
+def test_what_moves_with_the_camera_does_not_hide_the_sheets_move(monkeypatch):
+    """The claw / the arm's shadow stay put in the picture: a strong peak at 0 that is not the sheet
+    (the real arm's first try read "the picture did not move")."""
+    import corexy_ufo_backend.study_mode.navigation as nav
+    paper = (_paper().astype(float) * 0.25 + 180).astype(np.uint8)  # a faint print, far away
+    claw = cv2.GaussianBlur(np.random.default_rng(1).integers(0, 255, (360, 480)).astype(np.uint8), (5, 5), 0)
+    mask = np.zeros((360, 480), bool)
+    mask[220:, :] = True
+    mask[:, :90] = True
+
+    def with_claw(b: bytes) -> bytes:
+        im = cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_GRAYSCALE)
+        im[mask] = claw[mask]
+        return cv2.imencode(".jpg", im)[1].tobytes()
+    base, moves = with_claw(_view(paper)), [(with_claw(_view(paper, d)), *d) for d in MOVES]
+    out = calibrate_from_jpegs(base, moves)
+    assert np.allclose(out["A"], A_TRUE, atol=0.3) and max(out["residual_px"]) < 1.0
+    monkeypatch.setattr(nav, "STILL_PX", 0.0)  # without leaving out the still peak: refused, with the shifts
+    with pytest.raises(NavigationError, match=r"\(\+10,\+0\)mm→"):
+        calibrate_from_jpegs(base, moves)
+
+
 def test_a_still_picture_or_a_moved_sheet_is_not_kept():
     paper = _paper()
     still = _view(paper)
-    with pytest.raises(NavigationError, match="ほとんど動きません"):
+    with pytest.raises(NavigationError, match="ほとんど動きませんでした（"):
         calibrate_from_jpegs(still, [(still, *d) for d in MOVES])
     # the sheet slid during one shot: the shifts do not fit one A
     other = _paper(seed=9)

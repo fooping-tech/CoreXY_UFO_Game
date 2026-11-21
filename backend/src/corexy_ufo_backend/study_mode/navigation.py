@@ -91,8 +91,10 @@ def xy_to_uv(h_inv, x: float, y: float) -> tuple[float, float]:
 
 
 # ---------------------------------------------------------------- 先端カメラのキャリブレーション
-def phase_shift(img_a: np.ndarray, img_b: np.ndarray) -> tuple[float, float]:
-    """画像 a → b で、写っている物が何 px 動いたか（位相限定相関。サブピクセル）。グレースケールの 2 次元配列。"""
+def phase_shift(img_a: np.ndarray, img_b: np.ndarray, exclude_px: float = 0.0) -> tuple[float, float]:
+    """画像 a → b で、写っている物が何 px 動いたか（位相限定相関。サブピクセル）。グレースケールの 2 次元配列。
+    exclude_px > 0: ずれ 0 の近く（その半径の内）の山を見ない。カメラと一緒に動く物（爪・アームの影・
+    レンズの汚れ）は画像の中で止まって見え、紙の動きより強い山を 0 に作ることがある（#242）。"""
     a = img_a.astype(float) - img_a.mean()
     b = img_b.astype(float) - img_b.mean()
     win = np.outer(np.hanning(a.shape[0]), np.hanning(a.shape[1]))  # 端の影響を減らす
@@ -100,6 +102,11 @@ def phase_shift(img_a: np.ndarray, img_b: np.ndarray) -> tuple[float, float]:
     r = fb * np.conj(fa)
     r /= np.abs(r) + 1e-9
     c = np.fft.ifft2(r).real
+    if exclude_px > 0:
+        H0, W0 = c.shape
+        yy = np.minimum(np.arange(H0), H0 - np.arange(H0))[:, None]
+        xx = np.minimum(np.arange(W0), W0 - np.arange(W0))[None, :]
+        c = np.where(yy ** 2 + xx ** 2 <= exclude_px ** 2, c.min(), c)
     iy, ix = np.unravel_index(np.argmax(c), c.shape)
 
     def sub(cm, cc, cp):  # 放物線で頂点を細かく求める
@@ -127,6 +134,7 @@ def estimate_A(moves_mm: list[tuple[float, float]], shifts_px: list[tuple[float,
 
 # ------------------------------------------------------------------ the 校正 tab's calibration (#242)
 MAX_RESIDUAL_PX = 6.0  # a calibration whose shifts do not fit A within this is not kept
+STILL_PX = 4.0  # shifts this small are what moves with the camera (the claw), not the sheet
 CAL_EDGE = 640
 
 
@@ -161,15 +169,18 @@ def calibrate_from_jpegs(base: bytes, moves: list[tuple[bytes, float, float]]) -
         img, size2, _ = _gray_jpeg(data)
         if size2 != size:
             raise NavigationError("画像の大きさが違います")
-        sx, sy = phase_shift(b, img)
+        sx, sy = phase_shift(b, img, exclude_px=STILL_PX)
         mv.append((float(dx), float(dy)))
         sh.append((sx / s, sy / s))
     A = estimate_A(mv, sh)
     resid = [float(np.hypot(*(np.asarray(x) + A @ np.asarray(m)))) for m, x in zip(mv, sh)]
     ppm = float(abs(np.linalg.det(A)) ** 0.5)
+    seen = "、".join(f"({m[0]:+g},{m[1]:+g})mm→({x[0]:+.0f},{x[1]:+.0f})px" for m, x in zip(mv, sh))
     if ppm < 0.3:
-        raise NavigationError("アームを動かしても画像がほとんど動きませんでした（先端カメラの映像・プリントの上か）")
+        raise NavigationError(f"アームを動かしても画像がほとんど動きませんでした（{seen}）。"
+                              "先端カメラに文字が大きく写る高さ・プリントの真上か確かめる")
     if max(resid) > MAX_RESIDUAL_PX:
-        raise NavigationError(f"ずれの測り方がばらつきます（誤差 {max(resid):.1f} px）: 紙や手が動かないようにしてもう一度")
+        raise NavigationError(f"画像のずれがアームの動きと合いません（誤差 {max(resid):.1f} px。{seen}）。"
+                              "文字が写っているか、紙や手が動かなかったか確かめてもう一度")
     return {"A": A.round(4).tolist(), "image": list(size), "residual_px": [round(r, 2) for r in resid],
             "px_per_mm": round(ppm, 2), "shifts": [[round(a, 1), round(b2, 1)] for a, b2 in sh]}

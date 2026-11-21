@@ -480,7 +480,10 @@ func start_focus_calibration() -> void:
 		var cams: CameraHub = main.cameras if main != null else null
 		return cams.texture("focus").get_image() if cams != null and cams.has_feed("focus") else null
 	focus_cal.send = func(name: String, params: Dictionary) -> String: return main.ws.send_command(name, params)
-	var why := focus_cal.start(StudyServices.stage_names()[0])
+	var stage: String = StudyServices.stage_names()[0]
+	var why := focus_height_blocker(RobotState.z_mm, stage_z(stage), stage)
+	if why == "":
+		why = focus_cal.start(stage)
 	if why != "":
 		_set_result(false, "先端カメラの校正を始められない: " + why)
 	else:
@@ -503,10 +506,21 @@ func on_stop_key() -> void:
 		focus_cal.cancel("Space で止めました")
 		_set_result(false, focus_cal.progress_text())
 
+## The calibration is for HELP's capture height: the arm must be there (Z within 2 units).
+static func focus_height_blocker(z: float, stage_at: float, stage: String) -> String:
+	if is_nan(stage_at):
+		return "6 の撮影の高さがまだ使えない（2 の Z の上と下を記録する）"
+	if is_nan(z) or absf(z - stage_at) > 2.0:
+		return "先に 6 の「%s へ動かす（試す）」でアームを撮影の高さへ（いま Z %.0f、%s は Z %.0f）" % [stage, z, stage, stage_at]
+	return ""
+
 ## The arm-tip camera's calibration in words: {state, text}.
 static func focus_state(st: Dictionary, cal: FocusCalibrator) -> Dictionary:
 	if cal != null and cal.active():
 		return {"state": "wait", "text": "校正中"}
+	if cal != null and cal.state == FocusCalibrator.FAILED and not (st.get("heights") is Dictionary
+			and (st.heights as Dictionary).has(StudyServices.stage_names()[0])):
+		return {"state": "todo", "text": "できなかった: " + cal.error}
 	if st.is_empty():
 		return {"state": "wait", "text": "問い合わせ中"}
 	var heights: Dictionary = st.heights if st.get("heights") is Dictionary else {}
@@ -981,7 +995,8 @@ func refresh() -> void:
 			l.add_theme_color_override("font_color", colour)
 			_services_box.add_child(l)
 	_height.text = height_text(height_status)
-	_focus_label.text = focus_cal.progress_text() if focus_cal.active() else focus_state(focus_status, focus_cal).text
+	_focus_label.text = focus_cal.progress_text() if focus_cal.active() or focus_cal.state == FocusCalibrator.FAILED \
+		else focus_state(focus_status, focus_cal).text
 	_height.add_theme_color_override("font_color", GOOD if bool(height_status.get("usable", false)) else YELLOW)
 	if RobotState.source != "websocket":
 		_link.text = "ゲーム内の仮想クレーン（バックエンドなし）: 爪だけ試せる。Z・宿題の位置・カメラの校正には ./start.sh で起動する"

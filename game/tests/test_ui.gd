@@ -1007,6 +1007,13 @@ func _test_focus_calibrator() -> void:
 		fc.tick(0.1)
 	_ok(after_space == FocusCalibrator.FAILED and refused == "busy" and fc.state == FocusCalibrator.FAILED
 		and fc.error.contains("目的の位置"), "focus calibration: Space, a refusal or an arm that stayed end it", fc.error)
+	# the card says why it failed (it said "まだ" before); only at the capture height
+	var shown := CalibrationPanel.focus_state({"heights": {}}, fc)
+	var cp := CalibrationPanel
+	_ok(shown.state == "todo" and shown.text.contains("できなかった") and shown.text.contains("目的の位置")
+		and cp.focus_height_blocker(100.0, 40.0, "10cm").contains("撮影の高さへ")
+		and cp.focus_height_blocker(41.0, 40.0, "10cm") == "" and cp.focus_height_blocker(41.0, NAN, "10cm").contains("6 の"),
+		"focus calibration: a failure shows on the card; it starts only at the capture height", shown.text)
 	RobotState.x_mm = keep[0]
 	RobotState.y_mm = keep[1]
 	RobotState.homed = keep[2]
