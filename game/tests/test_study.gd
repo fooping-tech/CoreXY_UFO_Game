@@ -1005,6 +1005,20 @@ func _test_study_voice(rs: Node) -> void:
 	_ok(down and vo.state == StudyVoice.HEARING and sent[-1].type == "homework_listen_stop",
 		"study voice: the game's key handling gives the talk key's press and release", vo.state)
 	vo.cancel()
+	# review on #235: a lost link or an answer that never comes does not leave the voice stuck
+	ctl.speech.clear()
+	vo.press()
+	vo.release()
+	hw.link_lost.emit()
+	var after_lost: bool = vo.state == StudyVoice.IDLE and vo.note.contains("切れた")
+	vo.press()
+	vo.release()
+	hw._on_message({"type": "homework_heard", "request_id": str(sent[-1].request_id), "data": {"text": "やあ"}})
+	var waiting: bool = vo.state == StudyVoice.THINKING
+	vo.tick(StudyVoice.WAIT_S + 1.0)
+	_ok(after_lost and waiting and vo.state == StudyVoice.IDLE and ctl.speech.current.contains("こたえられない"),
+		"study voice: a lost link or no answer in time frees the voice again", str([after_lost, waiting, vo.state]))
+	ctl.speech.clear()
 	ctl.stop()
 	hw.link = real_link
 	spy.free()

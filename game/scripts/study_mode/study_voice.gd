@@ -21,7 +21,9 @@ const THINKING := "thinking"  # the tutor is answering
 const ANSWERING := "answering"  # its first sentences are being said, the rest is coming
 const FACES := {"excited": "excited", "happy": "happy", "normal": "normal", "sad": "sad", "surprised": "surprised",
 	"worried": "worried", "wink": "wink", "thinking": "worried", "praise": "happy", "celebrate": "excited"}
-const MAX_HISTORY := 10  # messages: the API takes 12 with the picture and the new question
+const MAX_HISTORY := 10
+## an answer that does not come in this long is given up (a lost link, a stuck server)
+const WAIT_S := 90.0  # messages: the API takes 12 with the picture and the new question
 
 var ctl: StudyModeController
 var enabled := true
@@ -38,6 +40,7 @@ var history: Array = []
 ## where the worksheet's picture comes from (the overview camera; tests give their own)
 var overview_source: Callable
 var _rid := ""
+var _waited_s := 0.0
 var _said := 0  # sentences of this answer already given to the speech
 var _held_s := 0.0
 var _seq := 0
@@ -55,6 +58,7 @@ func setup(c: StudyModeController) -> void:
 	var hw := _homework()
 	if hw != null:
 		hw.aux_message.connect(_on_aux)
+		hw.link_lost.connect(_on_link_lost)  # review on #235: never wait forever for a lost answer
 
 func _homework() -> HomeworkClient:
 	return ctl.services.homework if ctl != null and ctl.services != null else null
@@ -147,11 +151,26 @@ func tick(dt: float) -> void:
 		_held_s += dt
 		if _held_s >= max_s:
 			release()  # the backend stops at max_s too
+	elif state != IDLE:
+		_waited_s += dt
+		if _waited_s >= WAIT_S:
+			_fail("返事が来なかった", false)
 	if state != IDLE and not in_talk_state():
 		cancel()
 
+## The backend's link went away: the answer being waited for will not come.
+func _on_link_lost() -> void:
+	if state == IDLE:
+		return
+	_token += 1
+	_rid = ""
+	state = IDLE
+	note = "バックエンドとの つながりが切れた"
+	changed.emit()
+
 func _next_rid(kind: String) -> String:
 	_seq += 1
+	_waited_s = 0.0
 	return "sm-%s-%d" % [kind, _seq]
 
 func _on_aux(msg: Dictionary) -> void:

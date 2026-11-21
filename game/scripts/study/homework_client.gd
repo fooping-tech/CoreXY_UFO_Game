@@ -34,6 +34,8 @@ extends Node
 
 signal state_changed
 signal aux_message(msg: Dictionary)
+## the link to the backend went away: whatever was asked over it will not be answered (#233)
+signal link_lost
 
 var cameras: CameraHub
 var link: UfoWebSocketClient
@@ -333,6 +335,7 @@ func _apply_summary(data: Dictionary) -> void:
 	cost_usd = float(data.get("cost_usd", cost_usd))
 
 func _on_disconnected() -> void:
+	link_lost.emit()
 	if _locate_rid != "":
 		cancel_locate("バックエンドとの接続が切れたので、問題の読み取りをやめました（もう一度押す）")
 	if running():

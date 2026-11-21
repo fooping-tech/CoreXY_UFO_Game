@@ -122,10 +122,17 @@ async def test_a_microphone_waiting_for_permission_never_blocks_the_backend(monk
     import corexy_ufo_backend.homework.voice as voice_mod
     monkeypatch.setattr(voice_mod, "OPEN_TIMEOUT_S", 0.2)
     gate = threading.Event()
+    order = []
 
     class Waiting(FakeMic):
         def start(self):
             gate.wait(2)
+            threading.Event().wait(0.05)  # the microphone opens a moment after the permission
+            order.append("opened")
+
+        def stop(self):
+            order.append("closed")
+            return super().stop()
     mic = Waiting()
     v, _ = voice(mic)
     ticks = 0
@@ -141,8 +148,8 @@ async def test_a_microphone_waiting_for_permission_never_blocks_the_backend(monk
     gate.set()
     await beat
     assert e.value.kind == "mic" and "マイク" in str(e.value) and ticks == 10 and not v.listening
-    await asyncio.sleep(0.05)
-    assert mic.stopped == 1  # opened late, closed again
+    await asyncio.sleep(0.2)
+    assert mic.stopped == 1 and order == ["opened", "closed"]  # opened late, closed after it opened
 
 
 async def test_preload_loads_the_model_once_and_survives_a_failure():
@@ -189,6 +196,7 @@ class FakeTutor:
         for line in self.sentences:
             on_sentence(line)
         return {"message": "".join(self.sentences) + "のこりは？", "rest": ["のこりは？"], "spoken": list(self.sentences),
+                "server_target": getattr(self, "server_target", None),
                 "held_back": False, "action": "talk", "need_recapture": False, "visual_effect": "thinking", "notes": []}
 
 
@@ -214,6 +222,11 @@ async def test_the_service_talks_once_at_a_time_and_says_errors():
     await svc.talk("t1b", "もっと ヒント", B64, emit, target=2, history=[{"role": "user", "content": "x"}])
     await svc._talk_task
     assert ft.calls[-1]["target"] == 2 and ft.calls[-1]["turns"] == [{"role": "user", "content": "x"}]
+    # nothing named or talked about: the problem the tutor found is kept (review on #235)
+    ft.server_target = 4
+    await svc.talk("t1c", "うえから 2つめの もんだい", B64, emit)
+    await svc._talk_task
+    assert ft.calls[-1]["target"] is None and sent[-1]["data"]["target_problem"] == 4
     with pytest.raises(ValueError):
         await svc.talk("t3", "   ", B64, emit)
     svc._talk_factory = lambda: FakeTutor(StudyAdapterError("学習支援 AI に接続できません"))
@@ -315,7 +328,7 @@ def test_converse_stream_says_each_sentence_as_it_comes(monkeypatch):
     assert [m["role"] for m in body["messages"]] == ["user", "user", "assistant", "user"]
     assert body["messages"][0]["content"][0]["type"] == "image_url" and body["messages"][-1]["content"] == "もっと ヒント"
     assert said == ["いっしょに 考えよう。", "「1と1は いくつかな？」"]  # the unfinished tail waits for the checked text
-    assert r["rest"] == ["ゆびで かぞえてね"] and r["message"] == msg
+    assert r["rest"] == ["ゆびで かぞえてね"] and r["message"] == msg and r["server_target"] == 1
 
 
 def test_a_sentence_giving_the_answer_away_is_held_back(monkeypatch):

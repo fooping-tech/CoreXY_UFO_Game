@@ -233,11 +233,14 @@ class VoiceService:
             raise VoiceError("busy", "いまは聞けません（前の声を聞いているところ）")
         rec = self._recorder_factory()
         self._opening = True
+        loop = asyncio.get_running_loop()
+        opening = loop.run_in_executor(None, rec.start)
         try:  # VoiceError("mic") when the microphone cannot be opened
-            await asyncio.wait_for(asyncio.to_thread(rec.start), OPEN_TIMEOUT_S)
+            await asyncio.wait_for(asyncio.shield(opening), OPEN_TIMEOUT_S)
         except asyncio.TimeoutError:
-            # the thread may still be waiting for the permission; whatever it opens is closed
-            asyncio.get_running_loop().run_in_executor(None, _close_late, rec)
+            # still waiting for the permission: once that opening ends (opened or not), the
+            # microphone is closed again (review on #235: never before it has opened)
+            opening.add_done_callback(lambda _f: loop.run_in_executor(None, _close_late, rec))
             raise VoiceError("mic", "マイクを開けません（macOS の「設定 → プライバシーとセキュリティ → マイク」で、"
                                     "./start.sh を動かしているターミナルを許可する）") from None
         finally:

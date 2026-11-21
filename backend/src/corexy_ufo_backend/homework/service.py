@@ -345,7 +345,9 @@ class HomeworkService:
                                                            target=target, grade=grade, on_sentence=sentence,
                                                            answers=answers or []),
                                          self.config.explain_timeout_s)
-            res["target_problem"] = target
+            # the problem named or talked about; else the one the tutor found (e.g. "上から 2 つ目",
+            # review on #235), so the next question and a close-up know it
+            res["target_problem"] = target or res.get("server_target")
             res["latency_ms"] = round((time.monotonic() - t0) * 1000)
             res["first_ms"] = round(first[0] * 1000) if first else None
             if res.get("held_back") or res.get("notes"):

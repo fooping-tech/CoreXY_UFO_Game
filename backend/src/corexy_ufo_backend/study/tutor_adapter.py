@@ -278,7 +278,9 @@ class TutorStudyAdapter:
             rest = checked[len(spoken):]
         else:
             rest = [] if spoken else checked  # what was said cannot be unsaid
+        tp = g.get("target_problem")
         return {"message": message, "rest": rest, "spoken": spoken, "held_back": held,
+                "server_target": tp if isinstance(tp, int) and tp > 0 else None,
                 "action": str(g.get("action", "")), "need_recapture": bool(g.get("need_recapture", False)),
                 "visual_effect": str(g.get("visual_effect", "")), "notes": [str(n) for n in tr.get("notes") or []]}
 
