@@ -193,3 +193,33 @@ def test_direction_to_mm():
         cal.direction_to_mm("winch_up", 10)
     with pytest.raises(NavigationError):
         cal.direction_to_mm("up", 10, "5cm")
+
+
+def test_a_swinging_camera_is_calibrated_from_pictures_in_a_row():
+    """The claw swings on the rope for a long time: every picture is off where it rests by up to
+    ±3 mm, but 6 in a row go either side; the middle of their shifts is the move."""
+    paper = _paper()
+
+    def burst(d):
+        return [_view(paper, (d[0] + 3 * np.sin(k * 1.9 + 0.7), d[1] + 3 * np.cos(k * 1.9))) for k in range(6)]
+    out = calibrate_from_jpegs(burst((0, 0)), [(burst(d), *d) for d in MOVES])
+    assert np.allclose(out["A"], A_TRUE, atol=0.6) and max(out["residual_px"]) < 2.0
+
+
+async def test_focus_calibrate_takes_pictures_in_a_row_over_the_websocket(tmp_path):
+    cfg = BackendConfig()
+    cfg.focus_camera_path = section(tmp_path, "focus_camera")
+    robot = MockRobot()
+    await robot.connect()
+    srv, port = await start_server(robot, backend_cfg=cfg)
+    paper = _paper()
+    b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            ok = await _cmd(ws, "focus_calibrate", {"height": "10cm",
+                            "base_images_jpeg_base64": [b64(_view(paper, (0.5 * k, 0))) for k in (-1, 0, 1)],
+                            "moves": [{"images_jpeg_base64": [b64(_view(paper, (d[0] + 0.5 * k, d[1]))) for k in (-1, 0, 1)],
+                                       "dx": d[0], "dy": d[1]} for d in MOVES]}, rid="b1")
+            assert ok["type"] == "ack" and ok["data"]["px_per_mm"] == pytest.approx(6.0, abs=0.2)
+    finally:
+        await srv.stop()

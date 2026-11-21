@@ -16,9 +16,15 @@ const STEP_MM := 10.0
 ## The camera hangs on the rope with the claw: after a move it swings for a while. A picture is
 ## taken only once the picture itself stands still: frames SAMPLE_S apart (small and grey) differ
 ## by under STILL_DIFF (0..255, the mean) STILL_N times in a row, at least MIN_SETTLE_S after the
-## stop; not still after MAX_SETTLE_S = fail (the base picture too: the arm was just moved).
+## stop (the base picture too: the arm was just moved). Not still after STILL_WAIT_S (the real
+## claw swung on for longer than 20 s): BURST_N pictures BURST_S apart instead, smaller
+## (BURST_EDGE), and the backend takes the middle of their shifts (a swing goes either side of
+## where it rests). Each position's motion goes to the debug log (log).
 const MIN_SETTLE_S := 1.0
-const MAX_SETTLE_S := 20.0
+const STILL_WAIT_S := 4.0
+const BURST_N := 6
+const BURST_S := 0.5
+const BURST_EDGE := 400
 const SAMPLE_S := 0.2
 const STILL_DIFF := 2.0
 const STILL_N := 5
@@ -46,7 +52,7 @@ var error := ""
 var capture: Callable
 var send: Callable
 
-var _base := ""
+var _base_pics: Array[String] = []
 var _shots: Array[Dictionary] = []  # [{image_jpeg_base64, dx, dy}]
 var _next := 0
 var _target := Vector2.ZERO
@@ -57,6 +63,10 @@ var _sample_t := 0.0
 var _thumb: Image
 var _still := 0
 var last_motion := -1.0  # the last frame-to-frame difference (shown while waiting)
+var _burst: Array[String] = []  # pictures in a row while it swings
+var bursts := 0  # positions taken as a burst (shown in the result)
+## optional: a line for the debug log
+var log_line: Callable
 
 func active() -> bool:
 	return state in [MOVING, SETTLING, RETURNING, COMPUTING]
@@ -88,11 +98,13 @@ func start(at_height: String) -> String:
 	height = at_height
 	origin = Vector2(RobotState.x_mm, RobotState.y_mm)
 	_target = origin
-	_base = ""
+	_base_pics.clear()
+	_burst.clear()
 	_shots.clear()
 	result = {}
 	error = ""
 	_next = -1  # the base picture first, once the picture stands still
+	bursts = 0
 	_rid = ""
 	_settle()
 	return ""
@@ -107,16 +119,19 @@ func progress_text() -> String:
 		MOVING:
 			return "先端カメラの校正: %d / %d 枚目へ動いています（Space で止まる）" % [_next + 1, MOVES.size()]
 		SETTLING:
-			return "先端カメラの校正: %s 揺れが止まるのを待っています%s（Space で止まる）" % [
-				"基準の画像の前に" if _next < 0 else "%d / %d 枚目の前に" % [_next + 1, MOVES.size()],
+			var which := "基準の画像" if _next < 0 else "%d / %d 枚目" % [_next + 1, MOVES.size()]
+			if not _burst.is_empty():
+				return "先端カメラの校正: %s: 揺れているので続けて撮っています（%d / %d）（Space で止まる）" % [which, _burst.size(), BURST_N]
+			return "先端カメラの校正: %s の前に揺れが止まるのを待っています%s（Space で止まる）" % [which,
 				"（画像の動き %.1f）" % last_motion if last_motion >= 0.0 else ""]
 		RETURNING:
 			return "先端カメラの校正: もとの位置へ戻っています"
 		COMPUTING:
 			return "先端カメラの校正: 画像のずれを計算しています"
 		DONE:
-			return "先端カメラの校正ができました（%s: 1 mm で %.1f px、誤差 %s px）" % [height,
-				float(result.get("px_per_mm", 0.0)), str(result.get("residual_px", []))]
+			return "先端カメラの校正ができました（%s: 1 mm で %.1f px、誤差 %s px%s）" % [height,
+				float(result.get("px_per_mm", 0.0)), str(result.get("residual_px", [])),
+				"。揺れていたので %d か所は続けて撮った" % bursts if bursts > 0 else ""]
 		FAILED:
 			return "先端カメラの校正をやめました: " + error
 	return ""
@@ -154,7 +169,7 @@ func tick(dt: float) -> void:
 				_fail("アームが動き終わらない")
 		SETTLING:
 			_sample_t += dt
-			if _sample_t < SAMPLE_S:
+			if _sample_t < (BURST_S if not _burst.is_empty() else SAMPLE_S):
 				return
 			_sample_t = 0.0
 			var frame: Image = capture.call() if capture.is_valid() else null
@@ -166,17 +181,27 @@ func tick(dt: float) -> void:
 				last_motion = motion(_thumb, th)
 				_still = _still + 1 if last_motion < STILL_DIFF else 0
 			_thumb = th
-			if _still < STILL_N or _t < MIN_SETTLE_S:
-				if _t > MAX_SETTLE_S:
-					_fail("先端カメラの揺れが止まらない（画像の動き %.1f）: 爪が揺れていないか、カメラの前で何か動いていないか確かめる" % last_motion)
+			var pics: Array[String] = []
+			if not _burst.is_empty() or (_t >= STILL_WAIT_S and (_still < STILL_N)):
+				_burst.append(jpeg64(frame, BURST_EDGE))  # still swinging: pictures in a row
+				if _burst.size() < BURST_N:
+					return
+				pics = _burst.duplicate()
+				_burst.clear()
+				bursts += 1
+			elif _still < STILL_N or _t < MIN_SETTLE_S:
 				return
+			else:
+				pics.append(jpeg64(frame, BURST_EDGE))
+			_log("focus calibration: %s %s (motion %.1f)" % ["base" if _next < 0 else "move %d" % (_next + 1),
+				"burst of %d" % pics.size() if pics.size() > 1 else "still", last_motion])
 			if _next < 0:
-				_base = jpeg64(frame)
+				_base_pics = pics
 				_next = 0
 				_go(origin + MOVES[0] * STEP_MM, MOVING)
 				return
 			var d: Vector2 = MOVES[_next] * STEP_MM
-			_shots.append({"image_jpeg_base64": jpeg64(frame), "dx": d.x, "dy": d.y})
+			_shots.append({"images_jpeg_base64": pics, "dx": d.x, "dy": d.y})
 			_next += 1
 			if _next < MOVES.size():
 				_go(origin + MOVES[_next] * STEP_MM, MOVING)
@@ -186,7 +211,12 @@ func tick(dt: float) -> void:
 			if _t > 30.0:
 				_fail("バックエンドから返事がない")
 
+func _log(line: String) -> void:
+	if log_line.is_valid():
+		log_line.call(line)
+
 func _settle() -> void:
+	_burst.clear()
 	state = SETTLING
 	_t = 0.0
 	_sample_t = 0.0
@@ -225,23 +255,25 @@ func _go(target: Vector2, next_state: String) -> void:
 func _compute() -> void:
 	state = COMPUTING
 	_t = 0.0
-	_rid = str(send.call("focus_calibrate", {"height": height, "base_jpeg_base64": _base, "moves": _shots.duplicate()}))
-	_base = ""
+	_rid = str(send.call("focus_calibrate", {"height": height, "base_images_jpeg_base64": _base_pics.duplicate(),
+		"moves": _shots.duplicate()}))
+	_base_pics.clear()
 	_shots.clear()
 
 func _fail(reason: String) -> void:
 	error = reason
 	state = FAILED
 	_rid = ""
-	_base = ""
+	_base_pics.clear()
+	_burst.clear()
 	_shots.clear()
 
 ## A frame as a JPEG (longest edge MAX_EDGE), base64: what focus_calibrate reads.
-static func jpeg64(img: Image) -> String:
+static func jpeg64(img: Image, edge := MAX_EDGE) -> String:
 	var im := img.duplicate() as Image
 	if im.is_compressed():
 		im.decompress()
-	var k := float(MAX_EDGE) / maxf(im.get_width(), im.get_height())
+	var k := float(edge) / maxf(im.get_width(), im.get_height())
 	if k < 1.0:
 		im.resize(maxi(int(im.get_width() * k), 1), maxi(int(im.get_height() * k), 1), Image.INTERPOLATE_BILINEAR)
 	im.convert(Image.FORMAT_RGB8)

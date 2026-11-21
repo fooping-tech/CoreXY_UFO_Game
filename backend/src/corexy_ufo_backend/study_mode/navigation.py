@@ -159,19 +159,36 @@ def _gray_jpeg(data: bytes, max_edge: int = CAL_EDGE) -> tuple[np.ndarray, tuple
     return np.asarray(im, float), (W, H), s
 
 
-def calibrate_from_jpegs(base: bytes, moves: list[tuple[bytes, float, float]]) -> dict:
+def calibrate_from_jpegs(base, moves: list) -> dict:
     """The arm-tip camera's calibration from pictures (tools/calibrate_focus.py, done by the 校正 tab):
     a base picture and pictures after moving the arm (dx, dy) mm at the same height ->
-    {"A", "image", "residual_px", "px_per_mm", "shifts"}. NavigationError when unusable."""
-    b, size, s = _gray_jpeg(base)
+    {"A", "image", "residual_px", "px_per_mm", "shifts"}. NavigationError when unusable.
+
+    The camera hangs on the rope and may still swing: `base` and each move's picture may be a
+    list of pictures taken in a row. Each shift is then the median of all of them against the
+    first base picture, less the base's own (a swing goes either side of where it rests)."""
+    bases = list(base) if isinstance(base, (list, tuple)) else [base]
+    if not bases:
+        raise NavigationError("基準の画像がありません")
+    b, size, s = _gray_jpeg(bases[0])
+
+    def shift_of(pictures) -> tuple[float, float]:
+        out = []
+        for data in pictures:
+            img, size2, _ = _gray_jpeg(data)
+            if size2 != size:
+                raise NavigationError("画像の大きさが違います")
+            out.append(phase_shift(b, img, exclude_px=STILL_PX))
+        return tuple(float(v) for v in np.median(np.asarray(out), axis=0))
+    b0 = (0.0, 0.0)
+    if len(bases) > 1:  # the base frames against the first one: the first may be off the swing's middle
+        others = [phase_shift(b, _gray_jpeg(d)[0], exclude_px=0.0) for d in bases[1:]]
+        b0 = tuple(float(v) for v in np.median(np.asarray([(0.0, 0.0)] + others), axis=0))
     mv, sh = [], []
     for data, dx, dy in moves:
-        img, size2, _ = _gray_jpeg(data)
-        if size2 != size:
-            raise NavigationError("画像の大きさが違います")
-        sx, sy = phase_shift(b, img, exclude_px=STILL_PX)
+        sx, sy = shift_of(data if isinstance(data, (list, tuple)) else [data])
         mv.append((float(dx), float(dy)))
-        sh.append((sx / s, sy / s))
+        sh.append(((sx - b0[0]) / s, (sy - b0[1]) / s))
     A = estimate_A(mv, sh)
     resid = [float(np.hypot(*(np.asarray(x) + A @ np.asarray(m)))) for m, x in zip(mv, sh)]
     ppm = float(abs(np.linalg.det(A)) ** 0.5)

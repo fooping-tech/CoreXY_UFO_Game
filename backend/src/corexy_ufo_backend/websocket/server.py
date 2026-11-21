@@ -917,9 +917,15 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
             return self._nack(name, "校正の保存先がありません（設定ファイルの場所）")
         height = str(params.get("height", "10cm"))
         try:
-            base = base64.b64decode(str(params.get("base_jpeg_base64", "")), validate=True)
-            moves = [(base64.b64decode(str(m.get("image_jpeg_base64", "")), validate=True), float(m["dx"]), float(m["dy"]))
+            def pictures(d: dict, one: str, many: str) -> list[bytes]:
+                # one picture, or several in a row while the camera still swings (at most 12)
+                got = d.get(many) if isinstance(d.get(many), list) else [d.get(one, "")]
+                return [base64.b64decode(str(x), validate=True) for x in got[:12]]
+            base = pictures(params, "base_jpeg_base64", "base_images_jpeg_base64")
+            moves = [(pictures(m, "image_jpeg_base64", "images_jpeg_base64"), float(m["dx"]), float(m["dy"]))
                      for m in params.get("moves") or [] if isinstance(m, dict)]
+            if not all(base) or not all(all(m[0]) for m in moves):
+                base = []
         except (binascii.Error, ValueError, KeyError, TypeError):
             return self._nack(name, "画像か移動量が読めません")
         if not base or len(moves) < 2:

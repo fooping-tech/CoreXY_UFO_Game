@@ -263,7 +263,7 @@ func setup(m: Node) -> void:
 	_card("focus", "HELP で「〇ばんが わからない」と言われたとき、先端カメラの画像を見てアームを問題の真上へ動かすための校正。"
 		+ "アームを 1cm ずつ動かして、先端カメラの画像がどれだけずれるかを測る。2 の Z と原点復帰、6 の高さのあとで。")
 	_focus_label = _value()
-	_focus_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_focus_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_focus_label.custom_minimum_size = Vector2(WIDTH, 0)
 	_step("①", "文字の書いてあるプリントをステージに置き、動かないようにする")
 	_step("②", "6 の「10cm へ動かす（試す）」でアームを撮影の高さへ。矢印キーでプリントの真上へ（先端カメラに文字が写る所）")
@@ -480,6 +480,7 @@ func start_focus_calibration() -> void:
 		var cams: CameraHub = main.cameras if main != null else null
 		return cams.texture("focus").get_image() if cams != null and cams.has_feed("focus") else null
 	focus_cal.send = func(name: String, params: Dictionary) -> String: return main.ws.send_command(name, params)
+	focus_cal.log_line = func(line: String) -> void: main.debug_log.emit(line)
 	var stage: String = StudyServices.stage_names()[0]
 	var why := focus_height_blocker(RobotState.z_mm, stage_z(stage), stage)
 	if why == "":

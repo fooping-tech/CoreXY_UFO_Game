@@ -115,6 +115,9 @@ func setup() -> void:
 		_list.add_child(StudyHud.label("設定の一覧（config/game_config.json の settings_screen）が読めません", 20, Color("ff8a8a"), 4))
 
 	_status = StudyHud.label("", 18, YELLOW, 4)
+	# wraps: a long answer (the calibration's shifts, a path) never widens the panel off the screen (#242)
+	_status.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	_status.custom_minimum_size = Vector2(1, 0)
 	box.add_child(_status)
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_END

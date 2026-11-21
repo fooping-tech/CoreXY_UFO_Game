@@ -487,6 +487,12 @@ func _test_calibration_summary() -> void:
 	st.show_tab(SettingsScreen.CALIBRATION_TAB)
 	var cp: CalibrationPanel = st.calibration
 	cp.refresh()
+	# #242: a long answer (the shifts of a failed calibration) wraps, the panel stays on the screen
+	cp.result_text = "先端カメラの校正をやめました: 画像のずれがアームの動きと合いません（誤差 19.2 px。" + "(+10,+0)mm→(+5,+0)px".repeat(12) + "）"
+	st._status.text = cp.result_text
+	_ok(st._status.get_combined_minimum_size().x < 400.0,
+		"settings: a long calibration answer wraps (the panel is not pushed off the screen)", str(st._status.get_combined_minimum_size()))
+	cp.result_text = ""
 	var states := cp.section_states()
 	var by := {}
 	for x in states:
@@ -990,7 +996,8 @@ func _test_focus_calibrator() -> void:
 	var params: Dictionary = last[1]
 	var moves: Array = params.get("moves", [])
 	_ok(started == "" and targets == [Vector2(160, 100), Vector2(150, 110), Vector2(140, 100), Vector2(150, 90), Vector2(150, 100)]
-		and str(last[0]) == "focus_calibrate" and params.height == "10cm" and str(params.base_jpeg_base64).length() > 100
+		and str(last[0]) == "focus_calibrate" and params.height == "10cm" and (params.base_images_jpeg_base64 as Array).size() == 1
+		and str(params.base_images_jpeg_base64[0]).length() > 100 and (moves[0].images_jpeg_base64 as Array).size() == 1
 		and moves.size() == 4 and moves[0].dx == 10.0 and moves[1].dy == 10.0 and moves[3].dy == -10.0
 		and fc.state == FocusCalibrator.COMPUTING and before_still == 0,
 		"focus calibration: the base picture once still, 4 moves of 10 mm and back, then the pictures go to the backend", str(targets))
@@ -1023,19 +1030,33 @@ func _test_focus_calibrator() -> void:
 		return dark if flip[0] else frame
 	sent.clear()
 	fc.start("10cm")
-	for k in 50:
+	for k in 30:
 		fc.tick(0.1)
-	var waiting := fc.state == FocusCalibrator.SETTLING and sent.is_empty() and fc.progress_text().contains("揺れ")
-	for k in 200:
+	var waiting := fc.state == FocusCalibrator.SETTLING and sent.is_empty() and fc.progress_text().contains("揺れが止まる")
+	for k in 40:
 		fc.tick(0.1)
-	_ok(waiting and fc.state == FocusCalibrator.FAILED and fc.error.contains("揺れが止まらない") and sent.is_empty()
+	var burst_sent := sent.size() == 1 and str(sent[0][0]) == "move_xy"
+	for i in 6:
+		if sent.is_empty() or str(sent[-1][0]) != "move_xy":
+			break
+		var p2: Dictionary = sent[-1][1]
+		fc.on_ack("r%d" % sent.size(), true, {"command": "move_xy"})
+		RobotState.x_mm = p2.x
+		RobotState.y_mm = p2.y
+		for k in 80:
+			fc.tick(0.1)
+	var swung: Dictionary = sent[-1][1]
+	_ok(waiting and burst_sent and str(sent[-1][0]) == "focus_calibrate"
+		and (swung.base_images_jpeg_base64 as Array).size() == FocusCalibrator.BURST_N
+		and (swung.moves[2].images_jpeg_base64 as Array).size() == FocusCalibrator.BURST_N and fc.bursts == 5
 		and is_equal_approx(FocusCalibrator.motion(FocusCalibrator.thumb(frame), FocusCalibrator.thumb(frame)), 0.0),
-		"focus calibration: waits while the camera swings, gives up when it never stops", fc.error)
+		"focus calibration: while the camera keeps swinging, pictures in a row (the backend takes the middle)", str(fc.bursts))
 	fc.capture = func() -> Image: return frame
+	fc.cancel("テスト")
 	# the card says why it failed (it said "まだ" before); only at the capture height
 	var shown := CalibrationPanel.focus_state({"heights": {}}, fc)
 	var cp := CalibrationPanel
-	_ok(shown.state == "todo" and shown.text.contains("できなかった") and shown.text.contains("揺れが止まらない")
+	_ok(shown.state == "todo" and shown.text.contains("できなかった") and shown.text.contains("テスト")
 		and cp.focus_height_blocker(100.0, 40.0, "10cm").contains("撮影の高さへ")
 		and cp.focus_height_blocker(41.0, 40.0, "10cm") == "" and cp.focus_height_blocker(41.0, NAN, "10cm").contains("6 の"),
 		"focus calibration: a failure shows on the card; it starts only at the capture height", shown.text)
