@@ -7,7 +7,11 @@ and how it ends in FAULT. The safety rules are here, once:
 - the robot's stop (ABORT) is sent once per run, by the sequence or by the caller
   (send_stop=False), never twice;
 - a fault always sends the stop before it reports FAULT, then gives the running action
-  ABORT_WAIT_S to see the ABORT before it is cancelled.
+  ABORT_WAIT_S to see the ABORT before it is cancelled;
+- #269: a fault that is only a servo command answered with a failed result (the command is
+  over, nothing moves: SequenceFault.servo_ended) is stopped with STOP instead of ABORT, so
+  the firmware raises no alarm and keeps its homing. Not when a stop was asked for (that
+  stays ABORT), and ABORT after all when STOP cannot be sent or confirmed.
 
 A subclass keeps: active, error, last_result, _task, _action, _abort_reason, _stop_sent,
 robot, params (xy_feed_mm_min), _set_phase(), and sets FAULT_PHASE, label and _log.
@@ -77,11 +81,25 @@ class AbortableSequence:
         """What the FAULT phase and the log say (here: the reason and, if the stop failed, that)."""
         return self.error
 
-    async def _fault(self, reason: str) -> None:
+    async def _soft_stop_instead(self) -> bool:
+        """#269: STOP (no alarm, homing kept) in place of ABORT. False = not done (ABORT then)."""
+        if self._stop_sent:
+            return True
+        try:
+            await self.robot.soft_stop()
+        except Exception as e:  # not connected, not confirmed: the usual ABORT
+            self._log.warning("%s: STOP after a servo failure did not go through (%s): ABORT", self.label, e)
+            return False
+        self._stop_sent = True
+        self.error += " (servo error: stopped with STOP, no alarm)"
+        return True
+
+    async def _fault(self, reason: str, *, servo_ended: bool = False) -> None:
         action = self._action
         self.error = reason
         self.last_result = "fault"
-        await self._emergency_stop()
+        if not (servo_ended and not self._abort_reason and await self._soft_stop_instead()):
+            await self._emergency_stop()
         text = self._fault_text(reason)
         self._set_phase(self.FAULT_PHASE, text)
         self._log.error("%s: FAULT: %s", self.label, text)

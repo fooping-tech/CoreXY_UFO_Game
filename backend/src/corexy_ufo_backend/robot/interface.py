@@ -13,6 +13,13 @@ class RobotCommandError(Exception):
     pass
 
 
+class ServoFailed(RobotCommandError):
+    """#269: the firmware answered a servo command (SERVO_TURN) with a result other than PASS
+    (TIMEOUT, FAILED, REJECTED, multi_turn_lost, ...). The command is over: nothing of it runs
+    on, and XY is not moving. A sequence then stops with STOP (no alarm, homing kept) instead
+    of ABORT. No answer at all, a lost link, a NACK, ... stay plain RobotCommandError (ABORT)."""
+
+
 class RobotInterface(ABC):
     name: str = "robot"
     # The soft limits this robot enforces; None when it has none of its own (the server
