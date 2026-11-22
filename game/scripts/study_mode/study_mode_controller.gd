@@ -1,6 +1,6 @@
 class_name StudyModeController
 extends Node
-## UFOくん 勉強モード (#86): the experience as one state machine.
+## UFOくん 学習モード (#86): the experience as one state machine.
 ##
 ##   INTRO -> WAITING_FOR_WORKSHEET --the print found (#281: check_on_found)--> the answer check
 ##   INTRO -> WAITING_FOR_WORKSHEET --a thumbs-up held dialog_thumb_s first: the dialogue mode--> STUDYING
@@ -76,8 +76,8 @@ var _hand_pose := ""
 var _hand_since_ms := -1.0
 var _hand_used := ""  # a pose already acted on: nothing more until the hand changes
 ## keys of the study mode (study_mode.keys); the game's own keys stay as they are
-var keys := {"advance": KEY_ENTER, "fill_1": KEY_1, "fill_2": KEY_2, "fill_3": KEY_3, "grade_prev": KEY_COMMA,
-	"grade_next": KEY_PERIOD, "skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5, "rescan": KEY_R}
+var keys := {"advance": KEY_ENTER, "fill_1": KEY_1, "fill_2": KEY_2, "fill_3": KEY_3,
+	"skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5, "rescan": KEY_R}
 ## #237: the answer check
 var grading := StudyGrading.new()
 var grade_checking_s := 0.9  # "かくにん中…" before a problem's verdict
@@ -231,7 +231,7 @@ func start() -> void:
 func stop() -> void:
 	voice.reset()
 	sounds.music_stop()
-	services.abort("勉強モードを終えました")
+	services.abort("学習モードを終えました")
 	services.watch_stop()
 	speech.clear()
 	_set_state("OFF")
@@ -1115,10 +1115,6 @@ func handle_key(keycode: int) -> bool:
 		request_help()
 	elif keycode in [keys.fill_1, keys.fill_2, keys.fill_3] and services.mode == "simulated":
 		services.demo_fill({keys.fill_1: 1, keys.fill_2: 2, keys.fill_3: 3}[keycode])
-	elif keycode == keys.grade_prev:
-		change_grade(-1)
-	elif keycode == keys.grade_next:
-		change_grade(1)
 	elif keycode == keys.skip:
 		debug_skip()
 	elif keycode == keys.inject:

@@ -81,7 +81,7 @@ var _alarm_clear: Button
 ## each one is.
 const SECTIONS := [
 	["link", "つながりとモーター"], ["z", "Z の上下と原点復帰"], ["claw", "爪の開き・閉じ"],
-	["spot", "宿題を見に行く位置"], ["camera", "俯瞰カメラ → XY"], ["height", "勉強モードの撮影の高さ"],
+	["spot", "宿題を見に行く位置"], ["camera", "俯瞰カメラ → XY"], ["height", "学習モードの撮影の高さ"],
 	["focus", "先端カメラの校正（問題を見に行く）"], ["services", "AI・外部サービス"], ["easy", "かんたんモードの投入位置"],
 ]
 
@@ -253,7 +253,7 @@ func setup(m: Node) -> void:
 
 	# --- 6. the study mode's capture height
 	_card("height", "HELP でアームを下ろして撮る高さ。2 の Z の「下」の記録を机として、そこから 10cm 巻き上げた所"
-		+ "（爪先が机から 10cm）。2 の上下を記録すれば、そのまま勉強モードで使う（保存・確認は要らない）。")
+		+ "（爪先が机から 10cm）。2 の上下を記録すれば、そのまま学習モードで使う（保存・確認は要らない）。")
 	_height = _value()
 	_step("（任意）", "巻き上げドラムの半径が 15mm でなければ、入れて「保存」")
 	row = _row()
@@ -278,7 +278,7 @@ func setup(m: Node) -> void:
 	_ws_button(row, "先端カメラを校正する", func(): start_focus_calibration(), "primary")
 
 	# --- 8. the AI / outside services
-	_card("services", "勉強モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
+	_card("services", "学習モードで使う外部のサービスにつながるか（開くと自動で確かめる。推論・課金はしない）。"
 		+ "「AI に試しに質問する」は、サンプルのプリント 1 枚と短い質問を解説の AI に 1 回だけ送る。")
 	_services = _value()
 	_services.visible = false
@@ -611,7 +611,7 @@ static func height_text(st: Dictionary) -> String:
 	if not parts.is_empty():
 		lines.append("　".join(parts))
 	if bool(st.get("usable", false)):
-		lines.append("勉強モードで使う（Z の下 + 10cm）")
+		lines.append("学習モードで使う（Z の下 + 10cm）")
 	elif st.has("trial_problem"):
 		lines.append("このままでは使えない: " + str(st.trial_problem))
 	elif str(st.get("problem", "")) != "":

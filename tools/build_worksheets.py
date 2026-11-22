@@ -324,7 +324,7 @@ def svg(sheet: dict) -> str:
     parts.append(_t(28, 36, sheet["title"], 5.5))
     parts.append(_t(132, 36, "なまえ", 4.5))
     parts.append('<line x1="148" y1="37" x2="186" y2="37" stroke="#222" stroke-width="0.4"/>')
-    parts.append(_t(105, 292, f"{sheet['worksheet_id']}　UFOくん 勉強モード", 3.0, anchor="middle", fill="#777"))
+    parts.append(_t(105, 292, f"{sheet['worksheet_id']}　UFOくん 学習モード", 3.0, anchor="middle", fill="#777"))
     for prob in sheet["problems"]:
         x0, y0, x1, y1 = prob["region_mm"]
         hard = prob["difficulty"] == "challenge"
@@ -354,8 +354,8 @@ def svg(sheet: dict) -> str:
 def index_html(data: dict) -> str:
     items = "\n".join(f'<li><a href="{s["worksheet_id"]}.svg">{html.escape(s["grade_label"])}: '
                       f'{html.escape(s["title"])}</a></li>' for s in data["worksheets"])
-    return ("<!doctype html>\n<meta charset=\"utf-8\">\n<title>UFOくん 勉強モード サンプルプリント</title>\n"
-            "<h1>UFOくん 勉強モード サンプルプリント（A4）</h1>\n<p>各 SVG をブラウザで開き、A4・倍率 100%・余白なしで"
+    return ("<!doctype html>\n<meta charset=\"utf-8\">\n<title>UFOくん 学習モード サンプルプリント</title>\n"
+            "<h1>UFOくん 学習モード サンプルプリント（A4）</h1>\n<p>各 SVG をブラウザで開き、A4・倍率 100%・余白なしで"
             "印刷してください。四隅の黒い四角は位置合わせ用の基準マークです（切らない・隠さない）。</p>\n"
             f"<ul>\n{items}\n</ul>\n")
 

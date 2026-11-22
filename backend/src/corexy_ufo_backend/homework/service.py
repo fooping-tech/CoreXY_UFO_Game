@@ -243,7 +243,7 @@ class HomeworkService:
         """A local study session's images never go to the cloud (review on #234): what the
         worksheet reader cannot do is refused, never sent to Claude / Codex / Jev instead."""
         if self._local(s):
-            raise ValueError(f"{what}は勉強モード（ローカル LLM だけ、study.ai local）では使えません")
+            raise ValueError(f"{what}は学習モード（ローカル LLM だけ、study.ai local）では使えません")
 
     # ------------------------------------------------------------------ the voice dialogue (#233)
     @property

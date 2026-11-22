@@ -24,7 +24,7 @@
 `audio.move` / `audio.up` / `audio.down` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
 
-## 勉強モードの効果音（`se/`）
+## 学習モードの効果音（`se/`）
 
 `se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。使っている場面と規約は `se/README.md`。
 

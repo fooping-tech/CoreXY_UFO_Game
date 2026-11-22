@@ -63,7 +63,7 @@ Shift を押しながらの F6〜F8 は、開発者用の元の機能（練習�
 
 ### 仕組みと安全
 
-- `game/scripts/input/staff_remote.gd`（`StaffRemote`）が `devicehub_event` の `STAFF_ACTION` を操作名に、`REMOTE_INPUT` を手のイベント（`hand_control`）に変える。手のイベントは `GestureControl` にカメラの手と同じように入るので、ゲート（タイトル・勉強モード・アラーム・自動キャッチ中・実機の条件 `gesture.allow_real_robot` など）、強制停止のラッチ、古いイベントでの停止はそのまま効く。
+- `game/scripts/input/staff_remote.gd`（`StaffRemote`）が `devicehub_event` の `STAFF_ACTION` を操作名に、`REMOTE_INPUT` を手のイベント（`hand_control`）に変える。手のイベントは `GestureControl` にカメラの手と同じように入るので、ゲート（タイトル・学習モード・アラーム・自動キャッチ中・実機の条件 `gesture.allow_real_robot` など）、強制停止のラッチ、古いイベントでの停止はそのまま効く。
 - リモコンのイベントが来ている間（最後のフレームから 0.6 秒）はカメラの手を使わない。カメラに戻るときは手の流れを新しくする（つまんだままの手は一度離すまで動かない）。
 - リモコンは押している間 100 ms ごとに送り、離したら 1 回送って止まる。届かなくなったらゲームは 0.35 秒（`gesture.stale_ms`）で止める。フレームの番号が古いものは捨てる。
 - 押し始めは 1 フレーム目を「手が見えた」、2 フレーム目を「中心でつまんだ」として扱う（最初からつまんでいる手は `GestureControl` が止める、つまんだ位置がスティックの中心になる、ため）。動き出しは押してから約 0.2 秒。

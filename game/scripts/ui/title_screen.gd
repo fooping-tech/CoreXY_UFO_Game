@@ -1,6 +1,6 @@
 class_name TitleScreen
 extends CanvasLayer
-## The first screen (#90): pick the study mode (UFOくん 勉強モード, #86) or the game mode
+## The first screen (#90): pick the study mode (UFOくん 学習モード, #86) or the game mode
 ## (the crane game). Presentation only: it never writes RobotState and never sends a
 ## command. While it shows, main.gd holds the manual controls (jog keys, gestures, the
 ## auto catch); Space still stops. Esc in the game / the study mode comes back here.
@@ -23,6 +23,12 @@ const CYAN := Color("7ae0ff")
 const INK := Color("1d2433")
 const LOGO_FONT := "res://assets/fonts/Orbitron-Variable.ttf"
 const LOGO_LINES := ["SUMMON", "THE UFO"]
+## #283: the title's pictures (made with Codex's image generation, tools/build_title_art.py):
+## the pixel-art logo (neon letters) over a pixel-art meadow at dusk with animals
+## strolling by. Without the
+## files: the drawn logo and the night sky (#183).
+const LOGO_PNG := "res://assets/title/logo.png"
+const LOGO_W := 660.0  # the logo picture's width on the screen (its height follows)
 ## a hand picks a mode (#183): one finger = the first, two fingers = the second, held this long
 const HAND_HOLD_S := 1.5
 const HAND_POSES := {"point": 0, "peace": 1}
@@ -38,7 +44,9 @@ var _status: Label
 var gear: GearButton
 var _notice: Label
 var _t := 0.0
-var sky: NightSky
+var sky: NightSky  # the night (#183) when the meadow's picture is not there
+var meadow: Meadow  # #283
+var logo_rect: TextureRect  # #283: the logo picture (null = the drawn logo)
 ## the hand's choice: which card it holds (-1 none), how far (0..1), and whether a hand may
 ## choose yet (only after it was seen without a choosing shape: the shape that brought the
 ## player here does not choose again)
@@ -54,12 +62,20 @@ func setup(score_game := false) -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP  # clicks never reach the game behind
 	add_child(root)
-	# the night: mountains under the stars (drawn; the game behind is not seen)
-	sky = NightSky.new()
-	sky.name = "NightSky"
-	sky.set_anchors_preset(Control.PRESET_FULL_RECT)
-	sky.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.add_child(sky)
+	# #283: the bright meadow (a picture, animals pass); without it the night (#183, drawn).
+	# The game behind is not seen.
+	var back: Control
+	if ResourceLoader.exists(Meadow.BG):
+		meadow = Meadow.new()
+		meadow.name = "Meadow"
+		back = meadow
+	else:
+		sky = NightSky.new()
+		sky.name = "NightSky"
+		back = sky
+	back.set_anchors_preset(Control.PRESET_FULL_RECT)
+	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(back)
 
 	var centre := CenterContainer.new()
 	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -67,12 +83,25 @@ func setup(score_game := false) -> void:
 	root.add_child(centre)
 	var box := VBoxContainer.new()
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", 6)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	centre.add_child(box)
 
-	for line in LOGO_LINES:
-		box.add_child(logo_label(line, 104))
+	if ResourceLoader.exists(LOGO_PNG):
+		var tex: Texture2D = load(LOGO_PNG)
+		logo_rect = TextureRect.new()
+		logo_rect.name = "Logo"
+		logo_rect.texture = tex
+		logo_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		logo_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		logo_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		logo_rect.custom_minimum_size = Vector2(LOGO_W, LOGO_W * tex.get_height() / maxf(tex.get_width(), 1.0))
+		logo_rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		logo_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(logo_rect)
+	else:
+		for line in LOGO_LINES:
+			box.add_child(logo_label(line, 104))
 	var sub := StudyHud.label("CoreXY UFO キャッチャー", 24, CYAN, 8)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(sub)
@@ -83,14 +112,14 @@ func setup(score_game := false) -> void:
 	_ufo_atlas.region = Rect2(0, 0, 64, 64)
 	# the container places the holder; the UFO bobs inside it
 	var holder := Control.new()
-	holder.custom_minimum_size = Vector2(192, 176)
+	holder.custom_minimum_size = Vector2(192, 150)
 	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(holder)
 	_ufo = TextureRect.new()
 	_ufo.texture = _ufo_atlas
 	_ufo.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_ufo.size = Vector2(176, 176)
+	_ufo.size = Vector2(150, 150)
 	_ufo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_ufo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_ufo.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -102,28 +131,47 @@ func setup(score_game := false) -> void:
 	row.add_theme_constant_override("separation", 18)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(row)
-	_add_card(row, 0, "1", "勉強モード", "UFOくんと宿題をしよう\nゆびを 1ぽん みせて えらぶ")
+	_add_card(row, 0, "1", "学習モード", "UFOくんと宿題をしよう\nゆびを 1ぽん みせて えらぶ")
 	if score_game:
 		_add_card(row, 1, "2", "ゲームモード", "150 秒！ カプセルを Dial に入れて 高得点をねらおう\nゆびを 2ほん みせて えらぶ")
 	else:
 		_add_card(row, 1, "2", "ゲームモード", "UFO キャッチャーで遊ぼう\nゆびを 2ほん みせて えらぶ")
 
-	var keys := StudyHud.label("ゆび 1ぽん / 2ほん、1 / 2 キー、クリックで えらぶ\nS / 右上の歯車: 設定　Esc: タイトルに戻る　Space: 止める", 18, Color("c8d6f0"), 4)
+	# the help under the cards: on a soft dark band, so it reads over the bright meadow (#283)
+	var band := StudyHud.panel(Color(0.04, 0.07, 0.18, 0.72), Color(1, 1, 1, 0.0), 14, 0)
+	band.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(band)
+	var help := VBoxContainer.new()
+	help.add_theme_constant_override("separation", 4)
+	help.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	band.add_child(help)
+	var keys := StudyHud.label("ゆび 1ぽん / 2ほん、1 / 2 キー、クリックで えらぶ\nS / 右上の歯車: 設定　Esc: タイトルに戻る　Space: 止める", 18, Color("e8f0ff"), 4)
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	keys.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	keys.custom_minimum_size = Vector2(640, 0)
-	box.add_child(keys)
-	_status = StudyHud.label("", 16, Color("8fa3c4"), 3)
+	help.add_child(keys)
+	_status = StudyHud.label("", 16, Color("b4c4e0"), 3)
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_status.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY  # a long line wraps inside the screen
 	_status.custom_minimum_size = Vector2(640, 0)
-	box.add_child(_status)
+	help.add_child(_status)
 	_notice = StudyHud.label("", 18, YELLOW, 4)
 	_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_notice.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_notice.custom_minimum_size = Vector2(640, 0)
-	box.add_child(_notice)
+	_notice.visible = false
+	help.add_child(_notice)
 
+	if meadow != null:  # #283: the animals pass in front (below the menu: the path at the bottom)
+		var front := Control.new()
+		front.name = "Animals"
+		front.set_anchors_preset(Control.PRESET_FULL_RECT)
+		front.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		front.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		front.draw.connect(func(): meadow.draw_animals(front))
+		root.add_child(front)
+		meadow.front = front
 	# the settings (#93): a gear in the top-right corner
 	gear = GearButton.new()
 	gear.name = "Gear"
@@ -268,6 +316,7 @@ func choose(mode: String) -> void:
 func set_notice(text: String) -> void:
 	if _notice != null:
 		_notice.text = text
+		_notice.visible = text != ""
 
 func notice() -> String:
 	return _notice.text if _notice != null else ""
@@ -310,9 +359,12 @@ func _process(dt: float) -> void:
 	if not visible:
 		return
 	_t += dt
+	if logo_rect != null:
+		logo_rect.pivot_offset = logo_rect.size * 0.5
+		logo_rect.scale = Vector2.ONE * (1.0 + 0.015 * sin(_t * 1.6))  # a slow breath
 	if _ufo != null:
 		_ufo_atlas.region = Rect2(64 * (int(_t * UFO_FPS) % UFO_FRAMES), 0, 64, 64)
-		_ufo.position = Vector2(8.0, sin(_t * 2.2) * 6.0)  # a gentle bob inside its holder
+		_ufo.position = Vector2(21.0, sin(_t * 2.2) * 6.0)  # a gentle bob inside its holder
 	for i in range(_bars.size()):
 		_bars[i].value = hand_progress if i == hand_index else 0.0
 		_bars[i].modulate.a = 1.0 if i == hand_index else 0.0
@@ -350,7 +402,126 @@ class GearButton extends Button:
 		draw_circle(c, r * 0.24, Color(0.1, 0.14, 0.25, 1.0))
 
 
-## The title's background (#183): a night sky with stars and a moon over three ranges of
+## The title's background (#283): a pixel-art meadow at sunset (a picture made with Codex's
+## image generation, see tools/build_title_art.py), drawn to cover the screen with its pixels
+## kept square, and now and then an animal strolls along the path at the bottom (cow, chick,
+## pig, sheep) or a bird flies over the sky. Presentation only.
+class Meadow extends Control:
+	const BG := "res://assets/title/bg.png"
+	const DIR := "res://assets/title/"
+	## each animal: a strip of FRAMES walk frames facing right; speed in the picture's pixels a second
+	const FRAMES := 4
+	const KINDS := {
+		"cow": {"speed": 9.0, "fps": 5.0, "fly": false},
+		"pig": {"speed": 11.0, "fps": 6.0, "fly": false},
+		"sheep": {"speed": 8.0, "fps": 5.0, "fly": false},
+		"chick": {"speed": 14.0, "fps": 9.0, "fly": false},
+		"bird": {"speed": 26.0, "fps": 8.0, "fly": true},
+	}
+	## the path's line under the feet, as a part of the picture's height
+	const GROUND := 0.95
+	const MAX_AT_ONCE := 2
+	const GAP_S := Vector2(4.0, 9.0)  # seconds between two animals (random in this range)
+	var bg: Texture2D
+	var sheets := {}  # kind -> Texture2D
+	## the animals on the screen: {kind, x (picture px, the middle), y (feet / the body's middle
+	## for a bird), dir (+1 right, -1 left), t}
+	var walkers: Array = []
+	var rng := RandomNumberGenerator.new()
+	## where the animals are drawn: a layer over the menu (the title sets it); null = here
+	var front: Control
+	var _next := 1.5
+	var _t := 0.0
+
+	func _init() -> void:
+		rng.seed = 283
+		texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # square pixels, no blur
+		bg = load(BG)
+		for k in KINDS:
+			var path: String = DIR + k + ".png"
+			if ResourceLoader.exists(path):
+				sheets[k] = load(path)
+
+	## The picture's pixel on the screen (the scale that covers the screen) and where it starts.
+	func pixel() -> float:
+		if bg == null or size.x <= 0.0:
+			return 1.0
+		return maxf(size.x / bg.get_width(), size.y / bg.get_height())
+
+	func origin() -> Vector2:
+		return ((size - Vector2(bg.get_width(), bg.get_height()) * pixel()) * 0.5) if bg != null else Vector2.ZERO
+
+	## An animal of `kind` starts at one side (dir +1: from the left; 0: either). False when its
+	## strip is missing or the screen is full.
+	func spawn(kind: String, dir := 0) -> bool:
+		if not sheets.has(kind) or walkers.size() >= MAX_AT_ONCE or bg == null:
+			return false
+		var tex: Texture2D = sheets[kind]
+		var fw := tex.get_width() / float(FRAMES)
+		var d := dir if dir != 0 else (1 if rng.randf() < 0.5 else -1)
+		var w := float(bg.get_width())
+		var y := bg.get_height() * GROUND
+		if bool(KINDS[kind]["fly"]):
+			y = bg.get_height() * rng.randf_range(0.05, 0.22)
+		walkers.append({"kind": kind, "x": -fw if d > 0 else w + fw, "y": y, "dir": d, "t": 0.0})
+		return true
+
+	func tick(dt: float) -> void:
+		_t += dt
+		_next -= dt
+		if _next <= 0.0:
+			_next = rng.randf_range(GAP_S.x, GAP_S.y)
+			var kinds: Array = sheets.keys()
+			if not kinds.is_empty():
+				spawn(str(kinds[rng.randi() % kinds.size()]))
+		var w := float(bg.get_width()) if bg != null else 0.0
+		var kept: Array = []
+		for a in walkers:
+			var k: Dictionary = KINDS[a["kind"]]
+			a["t"] = float(a["t"]) + dt
+			a["x"] = float(a["x"]) + float(a["dir"]) * float(k["speed"]) * dt
+			var fw: float = sheets[a["kind"]].get_width() / float(FRAMES)
+			if float(a["x"]) > -fw - 1.0 and float(a["x"]) < w + fw + 1.0:
+				kept.append(a)
+		walkers = kept
+
+	func _process(dt: float) -> void:
+		if is_visible_in_tree():
+			tick(dt)
+			queue_redraw()
+			if front != null:
+				front.queue_redraw()
+
+	func _draw() -> void:
+		if bg == null:
+			return
+		draw_texture_rect(bg, Rect2(origin(), Vector2(bg.get_width(), bg.get_height()) * pixel()), false)
+		if front == null:
+			draw_animals(self)
+
+	## The animals, drawn on `ci` (this, or the layer over the menu: the same size).
+	func draw_animals(ci: CanvasItem) -> void:
+		if bg == null:
+			return
+		var px := pixel()
+		var o := origin()
+		for a in walkers:
+			var tex: Texture2D = sheets[a["kind"]]
+			var k: Dictionary = KINDS[a["kind"]]
+			var fw := tex.get_width() / FRAMES
+			var fh := tex.get_height()
+			var frame := int(float(a["t"]) * float(k["fps"])) % FRAMES
+			var foot := Vector2(float(a["x"]), float(a["y"]))
+			if bool(k["fly"]):
+				foot.y += sin(float(a["t"]) * 3.0) * 2.0 + fh * 0.5
+			# whole picture pixels, so the animal's pixels sit on the meadow's grid
+			var at := o + (foot - Vector2(fw * 0.5, fh)).round() * px
+			ci.draw_set_transform(at + Vector2(fw * px if int(a["dir"]) < 0 else 0.0, 0.0), 0.0, Vector2(px * float(a["dir"]), px))
+			ci.draw_texture_rect_region(tex, Rect2(Vector2.ZERO, Vector2(fw, fh)), Rect2(fw * frame, 0, fw, fh))
+		ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## The title's background before #283 (still used when the meadow's picture is missing): a night sky with stars and a moon over three ranges of
 ## mountains, drawn (no picture file). The stars twinkle; nothing else moves.
 class NightSky extends Control:
 	var _t := 0.0

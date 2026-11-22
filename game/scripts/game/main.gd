@@ -28,7 +28,7 @@ var shake: ScreenShake
 var cameras: CameraHub
 var study: Node
 var homework: Node
-## UFOくん 勉強モード (#86): the experience (F5 / --study-mode) and its screen
+## UFOくん 学習モード (#86): the experience (F5 / --study-mode) and its screen
 var study_mode: StudyModeController
 var study_hud: StudyHud
 ## SUMMON THE UFO, the 150 s score game (#138): its own screen over the crane's, its own state
@@ -1106,7 +1106,7 @@ func _handle_input(dt: float) -> void:
 	if study_mode != null and study_mode.blocks_manual_control():
 		halt = true
 		if kb != Vector3.ZERO:
-			jog_hint = "勉強モードでアームを使っている間は手動操作できない（Space で止める）"
+			jog_hint = "学習モードでアームを使っている間は手動操作できない（Space で止める）"
 		if gesture.is_active():
 			gesture.stop("study_mode")
 	# #242 review: the arm-tip camera's calibration owns the arm (a jog would change what it measures)
@@ -1689,7 +1689,7 @@ func gesture_gate() -> String:
 	if title_active():
 		return "タイトル画面（モードを選んでから）"
 	if study_mode != null and study_mode.active():
-		return "勉強モード（手は 1・2・3 本の指といいねで使う）"
+		return "学習モード（手は 1・2・3 本の指といいねで使う）"
 	if RobotState.auto_catch_active():
 		return "自動キャッチ中"
 	if RobotState.machine_state in ["ALARM", "ESTOP"]:
