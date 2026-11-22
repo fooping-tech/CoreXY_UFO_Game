@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ..config import BackendConfig, RobotLimits
-from ..robot.interface import RobotCommandError, RobotInterface
+from ..robot.interface import RobotCommandError, RobotInterface, ServoFailed
 from ..robot.state import MachineState, RobotSnapshot
 from .abortable import ABORT_WAIT_S, AbortableSequence  # noqa: F401 (ABORT_WAIT_S: as before)
 from .fault import SequenceFault
@@ -262,7 +262,7 @@ class AutoCatchSequencer(AbortableSequence):
                 await self._do_step(step)
             self._finish_ok()
         except SequenceFault as f:
-            await self._fault(str(f))
+            await self._fault(str(f), servo_ended=f.servo_ended)
         except asyncio.CancelledError:
             await self._fault("sequence cancelled")
             raise
@@ -337,7 +337,7 @@ class AutoCatchSequencer(AbortableSequence):
             if action.done():
                 exc = action.exception()
                 if exc is not None:
-                    raise SequenceFault(f"{step.phase} failed: {exc}")
+                    raise SequenceFault(f"{step.phase} failed: {exc}", servo_ended=isinstance(exc, ServoFailed))
                 if self._reached(step):
                     if step.kind == "xy":
                         await self._refresh_after_move()

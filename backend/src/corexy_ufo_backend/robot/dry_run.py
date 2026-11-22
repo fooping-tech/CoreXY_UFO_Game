@@ -23,11 +23,11 @@ import math
 import time
 
 from ..config import RobotLimits
-from .interface import RobotCommandError
+from .interface import RobotCommandError, ServoFailed
 from .mock_robot import MockRobot
 from .state import MachineState, RobotSnapshot
 
-FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "z_glitch", "disconnect")
+FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "z_glitch", "disconnect", "stop_unconfirmed")
 
 
 class DebouncedInput:
@@ -112,7 +112,7 @@ class DryRunRobot(MockRobot):
         self._require(homed=False)
         if "claw_fail" in self.faults:
             await asyncio.sleep(self.claw_move_s)
-            raise RobotCommandError("SERVO_TURN id=2 result=TIMEOUT (dry run: claw_fail)")
+            raise ServoFailed("SERVO_TURN id=2 result=TIMEOUT (dry run: claw_fail)")
         self._claw_moving = True
         try:
             while "claw_stall" in self.faults:  # never completes on its own; ABORT still ends it
@@ -133,6 +133,12 @@ class DryRunRobot(MockRobot):
     async def stop(self) -> None:
         self.commands.append("ABORT")
         await super().stop()
+
+    async def soft_stop(self) -> None:
+        self.commands.append("STOP")
+        if "stop_unconfirmed" in self.faults:  # #269: STOP not confirmed (the tests)
+            raise RobotCommandError("STOP not confirmed")
+        await super().soft_stop()
 
     # ---------------------------------------------------------------- simulation
     async def tick(self) -> None:

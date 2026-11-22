@@ -12,7 +12,7 @@ from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError
 from .claw import WHICH as CLAW_WHICH
 from .claw import deg_in_turn
-from .interface import RobotCommandError
+from .interface import RobotCommandError, ServoFailed
 from .real_constants import *  # noqa: F401,F403
 from .state import MachineState
 
@@ -53,10 +53,11 @@ class RealClawMixin:
             # but its counts restart from the angle in the turn
             self._forget_arm_counts()
             self.error = CLAW_SERVO_RESET_MSG
-            raise RobotCommandError(self.error)
+            raise ServoFailed(self.error)
         if res is None or not res.ok:
             self.error = r.completion or "arm servo failed"
-            raise RobotCommandError(self.error)
+            # a servo result: the command ended (#269); no result line: not known
+            raise ServoFailed(self.error) if res is not None else RobotCommandError(self.error)
 
     async def grab(self, close: bool) -> None:
         self._require()

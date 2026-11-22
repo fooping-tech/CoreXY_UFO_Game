@@ -357,6 +357,13 @@
     "settle_max_s": 30,
     "devices": "auto",
     "lights": true,
+    "mist": {
+      "enabled": true,
+      "capsule_s": 3,
+      "result_s": 8,
+      "study_s": 6,
+      "_note": "The Illumination's mist module: continuous mist for capsule_s when a capsule is taken in (the portal opens), for result_s when the result's score settles (FINAL SCORE, or the show skipped), and for study_s when the study mode's reward is shown (0 = none for that one). Sent and forgotten like the lights; the Illumination ends it by itself, and at STOP_ALL or a lost hub link."
+    },
     "dial_leds": true,
     "visual_quality": "high",
     "effects": true,

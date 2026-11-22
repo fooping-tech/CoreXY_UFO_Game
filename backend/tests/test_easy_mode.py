@@ -212,6 +212,8 @@ async def test_a_fault_in_any_part_ends_in_fault(fault, part, reason):
         await rig.seq.wait()
         assert rig.seq.state == "FAULT" and reason in rig.seq.error, rig.seq.error
         assert not rig.lock.locked()
+        if fault == "claw_fail":  # #269: a servo failure: STOP, no alarm, homing kept
+            assert "ABORT" not in rig.robot.commands and not rig.robot.alarm and rig.robot.homed
 
 
 async def test_motors_off_or_homing_lost_while_waiting_faults():

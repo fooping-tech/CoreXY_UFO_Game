@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import RobotLimits
-from ..robot.interface import RobotCommandError, RobotInterface
+from ..robot.interface import RobotCommandError, RobotInterface, ServoFailed
 from ..robot.state import MachineState
 from ..sequence.abortable import ABORT_WAIT_S, AbortableSequence  # noqa: F401 (ABORT_WAIT_S: as before)
 from ..sequence.fault import SequenceFault
@@ -386,7 +386,7 @@ class ApproachSequencer(AbortableSequence):
             self.last_result = "done"
             self._set_phase(ApproachPhase.IDLE, "done")
         except SequenceFault as f:
-            await self._fault(str(f))
+            await self._fault(str(f), servo_ended=f.servo_ended)
         except asyncio.CancelledError:
             await self._fault("sequence cancelled")
             raise
@@ -469,7 +469,7 @@ class ApproachSequencer(AbortableSequence):
             if action.done():
                 exc = action.exception()
                 if exc is not None:
-                    raise SequenceFault(f"{step.phase} failed: {exc}")
+                    raise SequenceFault(f"{step.phase} failed: {exc}", servo_ended=isinstance(exc, ServoFailed))
                 if step.kind == "claw":
                     # the servo command reported PASS: let the claws settle, still checking
                     t_done = self.clock()

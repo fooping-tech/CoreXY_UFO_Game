@@ -359,7 +359,28 @@ async def test_sensor_or_device_fault_mid_sequence(fault, reason):
         rig.robot.inject(fault)
         await rig.seq.wait()
         assert rig.seq.phase == Phase.FAULT and reason in rig.seq.error, rig.seq.error
-        assert "ABORT" in rig.robot.commands
+        if fault == "claw_fail":  # #269: the servo answered, nothing moves: STOP, no alarm
+            assert "ABORT" not in rig.robot.commands and "STOP" in rig.robot.commands
+            assert not rig.robot.alarm and rig.robot.homed and "no alarm" in rig.seq.error
+        else:
+            assert "ABORT" in rig.robot.commands
+
+
+async def test_a_servo_failure_still_aborts_when_stop_was_asked_or_not_confirmed():
+    """#269: STOP replaces ABORT only for a servo command answered with a failure."""
+    async with Rig() as rig:  # STOP not confirmed: ABORT after all
+        await rig.seq.start()
+        await rig.until(Phase.LOWER_TO_CATCH)
+        rig.robot.inject("claw_fail")
+        rig.robot.inject("stop_unconfirmed")
+        await rig.seq.wait()
+        assert rig.seq.phase == Phase.FAULT and "ABORT" in rig.robot.commands and rig.robot.alarm
+    async with Rig() as rig:  # a claw that never answers (stall): ABORT, as ever
+        await rig.seq.start()
+        await rig.until(Phase.LOWER_TO_CATCH)
+        rig.robot.inject("claw_stall")
+        await rig.seq.wait()
+        assert rig.seq.phase == Phase.FAULT and "ABORT" in rig.robot.commands
 
 
 async def test_position_reported_out_of_range_faults():

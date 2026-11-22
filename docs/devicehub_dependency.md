@@ -1,6 +1,6 @@
 # UFO-DeviceHub の Python コードを使う（#159）
 
-周辺機器のハブ（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub): ESP-NOW ハブ、イルミ、M5Dial ×2）と話す Python コード（ゲートウェイ・プロトコル・模擬ハブ・トレース）は、UFO-DeviceHub のリポジトリにあるものをそのまま使う。このリポジトリにコピーは置かない。
+周辺機器のハブ（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub): ESP-NOW ハブ、イルミ、M5Dial（システムごとに 1 台）、スタッフ用リモコン）と話す Python コード（ゲートウェイ・プロトコル・模擬ハブ・トレース）は、UFO-DeviceHub のリポジトリにあるものをそのまま使う。このリポジトリにコピーは置かない。
 
 | | |
 |---|---|
