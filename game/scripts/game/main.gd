@@ -1232,12 +1232,17 @@ func arm_recovery_reason() -> String:
 		return "アラームちゅう"
 	if not RobotState.homed and RobotState.machine_state != "HOMING":
 		return "げんてんふっきが いる"
+	if not RobotState.motors_enabled:
+		return "モーターが オフ"
 	return ""
 
 ## The recovery is running (the 校正 tab's preparation, started from here or there).
 func arm_recovering() -> bool:
 	return RobotState.source == "websocket" and bool(RobotState.calibration_prepare.get("active", false))
 
+## (The motors off count too: homed and without an alarm, the arm still cannot move until the
+## preparation switches them on. Seen with the staff remote: its ふっき did nothing then.)
+##
 ## Staff, from any screen (F9 = StaffControl's "recover", #260; or the button on the score game's
 ## screen): the alarm
 ## cleared, then the preparation (#167: motors, Z, the arm to the top, homing, the middle, the
