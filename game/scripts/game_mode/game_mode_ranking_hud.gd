@@ -31,6 +31,8 @@ const RANK_X := 176.0
 const SCORE_X := 618.0
 const SCORE_W := 410.0
 const EMPTY := "---"
+## #253: the open hand's gauge, between the board's plate and the keys' lines
+const EXIT_GAUGE := Rect2(160, 1149, 400, 10)
 const GOLD := Color("ffd23c")
 const SILVER := Color("d8e0f0")
 const BRONZE := Color("e0915a")
@@ -48,7 +50,7 @@ func setup(c: GameModeController) -> void:
 	_build_art(c, 31, "RankingArt", 41, "RankingParticles")
 	_place = _label(120, YELLOW, 600.0, 170.0)
 	_note = _label(20, Color("c8d6ff"), 1116.0, 30.0)
-	_keys = _label(24, Color.WHITE, 1154.0, 38.0)
+	_keys = _label(24, Color.WHITE, 1164.0, 76.0)  # two lines (#253: the open hand)
 
 # ------------------------------------------------------------------ what is on
 ## "" / "record" (NEW RECORD!) / "board" (HIGH SCORES).
@@ -107,8 +109,9 @@ func keys_text() -> String:
 		"record":
 			return "Enter：ランキングへ"
 		"board":
-			return "Enter：もう一回      T：練習から      Esc：タイトル" if ctl.phase != "IDLE" \
-				else "Enter：スタート      R：もどる      Esc：タイトル"
+			return ("Enter：もう一回      T：練習から      Esc：タイトル" if ctl.phase != "IDLE" \
+				else "Enter：スタート      R：もどる      Esc：タイトル") \
+				+ "\nパーを %d びょう：タイトルへ" % roundi(ctl.board_exit_hold_s)
 	return ""
 
 func _process(dt: float) -> void:
@@ -152,6 +155,7 @@ func _draw_front() -> void:
 			_draw_record()
 		"board":
 			_draw_board()
+			_draw_exit_gauge()
 
 ## "NEW RECORD!", on two lines: the letters jump in one after another and keep flashing.
 func _draw_record() -> void:
@@ -206,3 +210,13 @@ func _draw_board() -> void:
 		PixelText.draw_right(_front, str(rank), Vector2(RANK_X, y), sc, col if has else Color(col.r, col.g, col.b, 0.45), DARK)
 		var ssc := minf(sc, GameModeLayout.fit_scale(text, SCORE_W, sc))  # a very long score is drawn smaller, never over the place
 		PixelText.draw_right(_front, text, Vector2(SCORE_X, y + (PixelText.height(sc) - PixelText.height(ssc)) * 0.5), ssc, col if has else Color(REST.r, REST.g, REST.b, 0.35), DARK)
+
+## #253: how long the open hand has been held, under the board (empty until it is)
+func _draw_exit_gauge() -> void:
+	if ctl.board_hand_progress <= 0.0:
+		return
+	var r := EXIT_GAUGE
+	_front.draw_rect(r.grow(3.0), DARK)
+	_front.draw_rect(r, Color(0.12, 0.1, 0.32, 0.95))
+	_front.draw_rect(Rect2(r.position, Vector2(snappedf(r.size.x * ctl.board_hand_progress, 2.0), r.size.y)), YELLOW)
+	_front.draw_rect(r, YELLOW, false, 2.0)

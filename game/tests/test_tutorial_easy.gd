@@ -734,6 +734,29 @@ func _test_game_title_hand(rs: Node) -> void:
 	_ok(opened and carried_over and to_hard and to_easy and filling and let_go and started and only_title,
 		"game title (#183, #198): an open hand held 3 s starts (as Enter); one / two fingers and D choose no difficulty; nothing outside the title",
 		"%s %s %s %s %s %s %s %s" % [opened, carried_over, to_hard, to_easy, filling, let_go, started, only_title])
+	# #253: the high scores' board: an open hand held 3 s goes back to the top title (as Esc)
+	ctl._halt("test")
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	ctl.ranking_flow.toggle()  # R: the board
+	var board_up = ctl.ranking_view == "board" and ctl.ranking_hud.keys_text().contains("パー")
+	for i in 240:
+		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))  # already open when the board came up: not counted
+	var not_carried = ctl.board_hand_progress == 0.0 and ctl.active()
+	ctl.tick_board_hand(1.0 / 60.0, hand.call("fist"))
+	for i in 120:
+		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))
+	var b_filling = ctl.board_hand_progress > 0.6 and ctl.active() and not game.title_active()
+	ctl.tick_board_hand(1.0 / 60.0, {})  # let go: from the start again
+	var b_let_go = ctl.board_hand_progress == 0.0
+	for i in 185:
+		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))
+	var not_yet = ctl.active()  # the next tick goes
+	ctl.tick(1.0 / 60.0)
+	var to_title = game.title_active() and not ctl.active()
+	_ok(board_up and not_carried and b_filling and b_let_go and not_yet and to_title,
+		"high scores (#253): an open hand held 3 s on the board goes back to the top title (a hand already open when it came up does not count)",
+		"%s %s %s %s %s %s" % [board_up, not_carried, b_filling, b_let_go, not_yet, to_title])
 	# left on the title and chosen again with two fingers: that shape does not switch it either
 	ctl._halt("test")
 	game.show_title()
