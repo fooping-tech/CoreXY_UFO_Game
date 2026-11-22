@@ -180,6 +180,11 @@ func state_name() -> String:
 func is_active() -> bool:
 	return state == State.ACTIVE
 
+## The sequence number of the last accepted event (-1 = none since the stream began): a
+## second source of events (the staff remote) numbers its own after it.
+func last_sequence() -> int:
+	return _last_seq
+
 ## Milliseconds since the last accepted event (-1 = none yet).
 func age_ms(now_ms: float) -> float:
 	return -1.0 if _last_recv_ms < 0.0 else now_ms - _last_recv_ms
