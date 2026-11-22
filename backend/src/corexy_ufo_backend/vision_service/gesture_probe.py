@@ -219,10 +219,10 @@ def pinch_ends(recs: list[dict[str, Any]]) -> Counter[str]:
             continue
         if not _seen(r):
             out["lost:" + (r.get("reason") or "no_hand")] += 1
+        elif r.get("reason") == "outside_roi":  # HandControl resets outside the ROI before it looks at the shape
+            out["outside_roi"] += 1
         elif r.get("pose") in CLAW_POSES:
             out["shape:" + r["pose"]] += 1
-        elif r.get("reason") == "outside_roi":
-            out["outside_roi"] += 1
         else:
             out["opened"] += 1
     return out

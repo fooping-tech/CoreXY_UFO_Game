@@ -84,6 +84,9 @@ def test_pinch_ends_are_told_apart_shape_lost_and_opened():
             rec(0.56, "pinch", pinch=True), rec(0.6, "pinch", hands=2, reason="multiple_hands")]
     ends = gp.pinch_ends(recs)
     assert ends == {"shape:fist": 1, "lost:no_hand": 1, "opened": 1, "lost:multiple_hands": 1}
+    # outside the ROI the pinch is reset whatever the shape: not a shape cut
+    roi = [rec(0.0, "pinch", pinch=True), rec(0.03, "pinch", pose="fist", reason="outside_roi")]
+    assert gp.pinch_ends(roi) == {"outside_roi": 1}
     m = gp.key_metrics(gp.summarize(recs))["pinch"]
     assert m["cut_by_shape"] == 1 and m["right"] == pytest.approx(4 / 8)
 

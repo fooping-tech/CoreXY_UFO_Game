@@ -258,7 +258,8 @@ def cmd_replay(args: argparse.Namespace) -> None:
         v = getattr(args, key, None)
         if v is not None:
             g[key] = v
-    crop = parse_crop(args.crop)
+    # the recorded crop unless changed: the labels and the video belong to that crop
+    crop = parse_crop(args.crop) if args.crop else (tuple(meta["crop"]) if meta.get("crop") else None)
     changes = {k: getattr(args, k) for k in ("detection_confidence", "tracking_confidence", "pinch_start",
                                               "pinch_release", "lost_grace_ms", "delegate", "crop")
                if getattr(args, k, None) is not None}
@@ -288,8 +289,9 @@ def cmd_replay(args: argparse.Namespace) -> None:
     print(gp.report(summary, lost_grace_ms=grace, stale_ms=stale))
     base = folder / "replay-base.jsonl"
     if name != "base" and base.exists():
-        _, brecs = load(base)
-        bm = gp.key_metrics(gp.summarize(brecs, lost_grace_ms=grace), lost_grace_ms=grace)
+        bmeta, brecs = load(base)
+        bgrace = float(bmeta.get("gesture", {}).get("lost_grace_ms", grace))  # the baseline's own grace
+        bm = gp.key_metrics(gp.summarize(brecs, lost_grace_ms=bgrace), lost_grace_ms=bgrace)
         nm = gp.key_metrics(summary, lost_grace_ms=grace)
         print("基準（replay-base）との比較: seen = 手が見えた割合, right = 正しく判定された割合, stops = 操作が止まる見失い")
         for lab in nm:
