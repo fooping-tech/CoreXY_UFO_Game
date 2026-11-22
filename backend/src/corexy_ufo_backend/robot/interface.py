@@ -75,6 +75,11 @@ class RobotInterface(ABC):
     @abstractmethod
     async def move_xy(self, x: float, y: float, feed: float | None = None) -> None: ...
 
+    def travel_height_refusal(self) -> str:
+        """#276: why a move that nobody steers (park) may not go now because of the arm's
+        height ("" = it may: the arm is wound up). The real robot checks its Z; others: ""."""
+        return ""
+
     @abstractmethod
     async def move_z(self, z: float) -> None: ...
 
