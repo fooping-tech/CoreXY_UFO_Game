@@ -8,12 +8,11 @@ extends Control
 ## GUIDE_RECT; GestureHud draws the camera above it), never over the top of the field, and
 ## the window turns faint while a capsule comes in and plays (GameModeController.guide_alpha).
 ##
-##   playing by hand   the flow, one sign a row: つまむ = うごかす, グー = キャッチ,
-##                     ゆび 1 = ポータルへ (lit only while it counts; #200: the left portal only),
-##                     the fist's hold as a bar, and why a sign was not taken
-##   the crane moves   じどうで キャッチちゅう… / ゆび 1ぽんで ポータルへ！ (the hand, the time
-##                     left) / ひだりの ポータルへ はこぶよ, "いまは そうさ できないよ" and
-##                     "Space で とまる" all the time
+##   playing by hand   the flow, one sign a row: つまむ = うごかす, グー = キャッチ, and then
+##                     → じどうで ポータルへ (#266: no finger; the carry follows the catch by
+##                     itself), the fist's hold as a bar, and why a sign was not taken
+##   the crane moves   じどうで キャッチちゅう… / ポータルへ はこぶよ！ / ひだりの ポータルへ
+##                     はこぶよ, "いまは そうさ できないよ" and "Space で とまる" all the time
 ##   stopped (FAULT)   かかりの ひとを よんでね, the reason, and the staff's key
 
 const SCREEN := GameModeLayout.SCREEN
@@ -29,8 +28,9 @@ const RED := Color("ff6b6b")
 const DARK := Color("050818")
 const GLASS := Color(0.02, 0.03, 0.13, 0.9)
 const DIM := Color(0.55, 0.6, 0.75)
-## the flow's three signs: [hand picture, words, the sign it is in EasyModeControl]
-const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["point", "1ぽんで ポータルへ", "1"]]
+## the flow: [hand picture ("" = none), words, the sign it is in EasyModeControl ("auto" = what
+## the crane then does by itself, #266)]
+const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["", "→ じどうで ポータルへ", "auto"]]
 
 var ctl: GameModeController
 var _legend: Array[Label] = []
@@ -103,7 +103,7 @@ func sub_text() -> String:
 				return "いちど パーに してね"
 			if e.holding == "cancel":
 				return "パーを つづけると やりなおし（つめを ひらく）"
-			return "ゆび 1ぽんで ひだりの ポータルへ\nつかめなかったら パーを つづける　あと %d びょう" % int(ceil(e.wait_left_s))
+			return "ひだりの ポータルへ はこぶよ"
 		"DELIVER_DIAL_1", "CANCEL":
 			return (e.step_text() + "\n" if e.step_text() != "" else "") + "いまは そうさ できないよ"
 		"FAULT":
@@ -124,9 +124,9 @@ func _process(dt: float) -> void:
 	var panel := view() == "panel"
 	for i in _legend.size():
 		_legend[i].visible = not panel
-		# the numbers count only after a catch: dim while playing by hand
+		# what the crane does by itself after the catch: not a sign, dim
 		var sgn := str(LEGEND[i][2])
-		_legend[i].add_theme_color_override("font_color", DIM if sgn == "1" else (YELLOW if e.holding == sgn and sgn != "" else Color.WHITE))
+		_legend[i].add_theme_color_override("font_color", DIM if sgn == "auto" else (YELLOW if e.holding == sgn and sgn != "" else Color.WHITE))
 	_note.visible = not panel and e.note != ""
 	_note.text = e.note
 	_title.visible = panel
@@ -158,7 +158,8 @@ func _draw() -> void:
 		_frame(PANEL, CYAN)
 		for i in LEGEND.size():
 			var at := Vector2(PANEL.position.x + 14.0, row_y(i) + 1.0)
-			GestureTutorialHud.paint_hand(self, at, 1.0, str(LEGEND[i][0]))
+			if str(LEGEND[i][0]) != "":
+				GestureTutorialHud.paint_hand(self, at, 1.0, str(LEGEND[i][0]))
 			if e.holding == str(LEGEND[i][2]) and e.holding != "":
 				_bar(Rect2(PANEL.position.x + 46.0, row_y(i) + ROW_H - 6.0, 150, 5), e.progress, YELLOW)
 		return
@@ -166,12 +167,8 @@ func _draw() -> void:
 	_frame(PANEL, Color(col, 0.75 + 0.25 * sin(_t * 5.0)))
 	var bars_y := PANEL.position.y + 104.0
 	if e.state == "WAIT_DESTINATION":
-		# the one answer, on the portal's side (the left), in the Dial's colour
-		var lc: Color = ctl.lanes["left"].color
-		GestureTutorialHud.paint_hand(self, Vector2(PANEL.position.x + 10.0, PANEL.position.y + 4.0), 1.0, "point")
-		if e.holding == "1":
-			_bar(Rect2(PANEL.position.x + 20.0, bars_y + 10.0, PANEL.size.x - 40.0, 6), e.progress, lc)
-		elif e.holding == "cancel":  # the open hand kept up: the catch is given up when it is full
+		# #266: the carry is asked for by itself; only the open hand kept up (when it cannot be)
+		if e.holding == "cancel":  # the open hand kept up: the catch is given up when it is full
 			_bar(Rect2(PANEL.position.x + 20.0, bars_y + 10.0, PANEL.size.x - 40.0, 6), e.progress, Color.WHITE)
 		# the time left to choose
 		_bar(Rect2(PANEL.position.x + 20.0, bars_y, PANEL.size.x - 40.0, 6),

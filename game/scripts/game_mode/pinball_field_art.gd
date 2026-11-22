@@ -485,7 +485,9 @@ func _draw_capsules() -> void:
 				var sz := (4.0 + 12.0 * k) + 4.0 * combo_level * k
 				draw_rect(Rect2((tr[j] - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz).snapped(Vector2(2, 2))),
 					_a(col.lerp(Color.WHITE, 0.6 * k * k), 0.1 + 0.5 * k))
-		PinballField.draw_capsule_at(self, pos, field.capsule_rotation(id), col, 0.6 if field.capsule_held(id) else 1.0)
+		var k := 0.6 if field.capsule_held(id) else 1.0
+		if not CapsuleKinds.draw(self, field.capsule_kind(id), pos, k, _t, field.capsule_rotation(id)):  # #266: its kind's animation
+			PinballField.draw_capsule_at(self, pos, field.capsule_rotation(id), col, k)
 		if effects and field.capsule_flash(id) > 0.0:  # the hit flash
 			draw_circle(pos, PinballField.CAPSULE_R + 2.0, Color(1, 1, 1, 0.9))
 			draw_arc(pos, PinballField.CAPSULE_R + 8.0, 0, TAU, 20, Color(1, 1, 1, 0.6), 2.0)

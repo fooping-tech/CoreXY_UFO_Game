@@ -22,7 +22,8 @@ extends RefCounted
 ##         practice  one real capsule through a Dial and back (the game's own lane machine)
 ##   future  true = the step shows a way to play that is not built yet: the hand shape is
 ##           judged, nothing new moves, and the screen says so (none now; a config may set it)
-## The easy mode's steps (#169: easy_grab, easy_one; #200: no easy_two, the portal is on the left only) teach the shapes the round
+## The easy mode's step (#169: easy_grab; #200: no easy_two; #266: no easy_one, the catch carries
+## to the portal by itself) teaches the shape the round
 ## reads, with the same hold: in these steps only the hand is judged and nothing moves by
 ## itself; the practice capsule that follows is played with the real easy controls.
 ##
@@ -79,13 +80,10 @@ const STEPS := {
 		"sub": "つまんだまま てを うえに うごかすと アームが あがる、したで さがるよ。はなすと とまるよ",
 		"say": ["そのまま、うえ、したに、うごかそう！"]},
 	"easy_grab": {"kind": "pose", "art": "easy_grab", "poses": ["fist", "thumb"], "hold_s": 0.6, "claw_demo": true,
+		"goto_demo": 1,
 		"title": "グーで キャッチ！",
-		"sub": "ゲームでは UFOくんが じどうで おりて つかんで あがるよ（いまは つめだけ とじるよ）",
-		"say": ["グーで、キャッチ！"]},
-	"easy_one": {"kind": "pose", "art": "easy_one", "poses": ["point"], "hold_s": 0.6, "goto_demo": 1,
-		"title": "ゆび 1ぽんで ひだりの ポータルへ！",
-		"sub": "つかんだ あと、いちど パーに してから ゆびを 1ぽん。じどうで はこんで いれるよ",
-		"say": ["ゆび、いっぽんで、ひだりの ポータルへ！"]},
+		"sub": "ゲームでは UFOくんが じどうで つかんで、ひだりの ポータルまで はこんで いれるよ",
+		"say": ["グーで、キャッチ！", "あとは、じどうで、ポータルまで、はこぶよ！"]},
 	"rules": {"kind": "info", "art": "rules", "min_s": 6.0,
 		"title": "カプセルを ポータルに いれると とくてん！",
 		"sub": "いれた カプセルは おなじ ポータルから かえってくるよ",
@@ -93,7 +91,7 @@ const STEPS := {
 	"practice": {"kind": "practice", "art": "practice",
 		"title": "カプセルを ひとつ いれてみよう！",
 		"sub": "ひだりの ポータルに いれてね",
-		"sub_easy": "グーで キャッチ → パー → ゆび 1ぽんで ひだりの ポータルに いれてね",
+		"sub_easy": "グーで キャッチ → じどうで ひだりの ポータルに はいるよ",
 		"say": ["カプセルを、ひとつ、いれてみよう！"]},
 }
 
@@ -110,7 +108,7 @@ const MODES := {
 	},
 	"easy": {
 		# the easy mode is the pinch joystick's only (another hand scheme plays the hard mode)
-		"pinch_joystick": ["summon", "open", "pinch", "move", "easy_grab", "easy_one", "rules", "practice"],
+		"pinch_joystick": ["summon", "open", "pinch", "move", "easy_grab", "rules", "practice"],
 	},
 }
 

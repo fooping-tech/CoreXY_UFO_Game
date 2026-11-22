@@ -88,6 +88,9 @@ var effects := true
 var _marks: Array[Dictionary] = []
 ## #258: the capsules being collected (the show from the port up into UFOくん)
 var _collects: Array[Dictionary] = []
+## #266: the kind of the capsule the next collection show / drop is for (the controller sets it
+## just before play()): its colour, its sprite, its name in the show
+var collect_kind := "normal"
 var _ufo_tex: Texture2D
 var _top: Node2D
 var _t := 0.0
@@ -155,9 +158,9 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 		"capsule_transfer_trail":  # port -> the drop point under the UFO
 			_fly(p, at, secs, side, -160.0, 0.5, 1.0)
 		"capsule_collect":  # #258: the collection show, `secs` long (collect_at says what is where)
-			_collects.append({"a": p, "drop": at, "t": 0.0, "dur": maxf(secs, 0.1), "side": side})
+			_collects.append({"a": p, "drop": at, "t": 0.0, "dur": maxf(secs, 0.1), "side": side, "kind": collect_kind})
 		"capsule_materialize":  # the light from UFOくn down to the drop point; the capsule falls in it
-			_marks.append({"pos": at, "t": 0.0, "dur": 0.45, "side": side, "fall": maxf(secs, 0.05)})
+			_marks.append({"pos": at, "t": 0.0, "dur": 0.45, "side": side, "fall": maxf(secs, 0.05), "kind": collect_kind})
 			_sheet(moment, side, at)
 		"capsule_return":  # the exit -> the port, then the light runs to the Dial
 			_open_port(side)
@@ -431,11 +434,14 @@ func _draw() -> void:
 	# the drop marks: a short beam where the capsule appears
 	for m in _marks:
 		var k: float = 1.0 - m.t / m.dur
-		var col: Color = colors[m.side]
+		var mk := str(m.get("kind", "normal"))
+		var col: Color = CapsuleKinds.color_of(mk, colors[m.side])
 		draw_rect(Rect2(m.pos.x - 10.0 * k, ufo_pos.y + 20.0, 20.0 * k, m.pos.y - ufo_pos.y - 20.0), Color(col.r, col.g, col.b, 0.45 * k))
 		if m.has("fall") and m.t < m.fall:  # #258: the capsule drops out of UFOくん in the light
 			var fk: float = m.t / m.fall
-			PinballField.draw_capsule_at(self, Vector2(m.pos.x, lerpf(ufo_pos.y + 20.0, m.pos.y, fk * fk)), _t * 9.0, col, lerpf(0.5, 1.0, fk))
+			var fp := Vector2(m.pos.x, lerpf(ufo_pos.y + 20.0, m.pos.y, fk * fk))
+			if not CapsuleKinds.draw(self, mk, fp, lerpf(0.5, 1.0, fk), _t):  # upright as it comes in (#266)
+				PinballField.draw_capsule_at(self, fp, 0.0, col, lerpf(0.5, 1.0, fk))
 
 ## Above the sheets (z 7): the capsules in transit, UFOくん and the pop-ups stay readable.
 func _draw_top() -> void:
@@ -521,7 +527,8 @@ func _draw_top() -> void:
 			PixelText.draw_centered(top, s, Vector2(mr.get_center().x, py), minf(2.3, GameModeLayout.fit_scale(s, mr.size.x - 12.0, 2.3)), Color("ffe03c"), Color("050818"))
 
 func _draw_collect(top: Node2D, c: Dictionary) -> void:
-	var col: Color = colors[c.side]
+	var kind := str(c.get("kind", "normal"))
+	var col: Color = CapsuleKinds.color_of(kind, colors[c.side])
 	var s := collect_at(c)
 	var pos: Vector2 = s.pos
 	if s.part == "rise" or s.part == "up":  # a streak behind it
@@ -535,16 +542,27 @@ func _draw_collect(top: Node2D, c: Dictionary) -> void:
 			var a := _t * 1.6 + TAU * i / 12.0
 			var d := Vector2.from_angle(a)
 			top.draw_line(pos + d * 40.0, pos + d * (92.0 + 10.0 * sin(_t * 8.0 + i)), Color(col.r, col.g, col.b, 0.35), 6.0)
-	if s.scale > 0.0:
-		PinballField.draw_capsule_at(top, pos.snapped(Vector2(2, 2)), _t * (2.0 if s.part == "show" else 9.0), col, s.scale)
+	# upright all through the show (#266: it turns only on the field)
+	if s.scale > 0.0 and not CapsuleKinds.draw(top, kind, pos.snapped(Vector2(2, 2)), s.scale, _t):
+		PinballField.draw_capsule_at(top, pos.snapped(Vector2(2, 2)), 0.0, col, s.scale)
 	if s.text > 0.0:
 		var f := UiFonts.title()
 		var fs := int(round(lerpf(20.0, 44.0, s.text)))
 		var tw := f.get_string_size(COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		var tp := (COLLECT_MID + Vector2(-tw * 0.5, -96.0)).snapped(Vector2(2, 2))
+		# a kind's sprite has its flames / sprout above the capsule: the heading goes higher
+		var tp := (COLLECT_MID + Vector2(-tw * 0.5, -96.0 if kind == "normal" else -168.0)).snapped(Vector2(2, 2))
 		var tc := Color("ffe03c") if not effects or int(_t * 10.0) % 2 == 0 else Color.WHITE
 		top.draw_string_outline(f, tp, COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 10, Color("050818"))
 		top.draw_string(f, tp, COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, tc)
+		if kind != "normal":  # #266: its name and what it does, under the big capsule, on a dark band
+			var band := Rect2(Vector2(40.0, COLLECT_MID.y + 94.0), Vector2(GameModeLayout.SCREEN.x - 80.0, 84.0))
+			top.draw_rect(band, Color(0.015, 0.025, 0.09, 0.85 * s.text))
+			top.draw_rect(Rect2(band.position, Vector2(band.size.x, 4.0)), Color(col.r, col.g, col.b, s.text))
+			top.draw_rect(Rect2(band.position + Vector2(0, band.size.y - 4.0), Vector2(band.size.x, 4.0)), Color(col.r, col.g, col.b, s.text))
+			_collect_line(top, CapsuleKinds.display_name(kind), COLLECT_MID + Vector2(0, 118.0), int(round(lerpf(16.0, 34.0, s.text))),
+				col.lerp(Color.WHITE, 0.3), s.text)
+			_collect_line(top, str(CapsuleKinds.TRAITS.get(kind, "")), COLLECT_MID + Vector2(0, 156.0), int(round(lerpf(10.0, 20.0, s.text))),
+				Color("e8f0ff"), s.text)
 	if s.part == "light":  # UFOくん shines: rings out and rays down
 		var u: float = s.light
 		var at := ufo_pos + Vector2(0, 8)
@@ -555,6 +573,16 @@ func _draw_collect(top: Node2D, c: Dictionary) -> void:
 		for i in 8:
 			var d := Vector2.from_angle(PI * (0.15 + 0.7 * i / 7.0))  # downwards fan
 			top.draw_line(at + d * 30.0, at + d * (60.0 + 50.0 * u), Color(col.r, col.g, col.b, 0.6 * sin(u * PI)), 4.0)
+
+## One centred line of the collection show (the kind's name, its trait).
+func _collect_line(top: Node2D, text: String, centre: Vector2, fs: int, col: Color, a: float) -> void:
+	if text == "":
+		return
+	var f := UiFonts.title()
+	var tw := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := (centre + Vector2(-tw * 0.5, fs * 0.35)).snapped(Vector2(2, 2))
+	top.draw_string_outline(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 8, Color(0.02, 0.03, 0.09, a))
+	top.draw_string(f, tp, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col.r, col.g, col.b, a))
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)

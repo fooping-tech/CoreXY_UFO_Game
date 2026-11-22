@@ -20,7 +20,7 @@ const SCORE_RECT := GameModeLayout.SCORE_RECT
 const TIME_RECT := GameModeLayout.TIME_RECT
 const HOW_TO := ["クレーンで カプセルをつかむ", "左の ポータル（Dial）に 入れる", "ピンボールで 高得点をねらおう！"]
 ## the easy mode's three cards (#169): what the hand does there, each with its hand
-const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "ゆび 1ぽんで ひだりの ポータルへ じどうで はこぶ", "ピンボールで 高得点をねらおう！"]
+const HOW_TO_EASY := ["つまんで うごかす → グーで じどうキャッチ", "つかんだら じどうで ひだりの ポータルへ はこぶ", "ピンボールで 高得点をねらおう！"]
 ## the difficulty's line on the title, over START
 const MODE_RECT := Rect2(40, 712, 640, 82)
 ## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards

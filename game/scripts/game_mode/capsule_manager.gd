@@ -18,7 +18,7 @@ func create(source_dial: int, session: int, cycle: int, drop_x: float, late := f
 	_n += 1
 	var c := {"capsule_id": "c%d-%02x-%d-%d" % [session, source_dial, cycle, _n], "source_dial": source_dial,
 		"session": session, "cycle": cycle, "drop_x": drop_x, "late": late, "orphaned": false, "score": 0,
-		"goal": "", "release": ""}
+		"goal": "", "release": "", "kind": "normal"}
 	active[c.capsule_id] = c
 	return c
 

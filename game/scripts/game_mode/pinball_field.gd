@@ -349,19 +349,21 @@ func _build() -> void:
 		_rect(_area("goal", names[i], Vector2((edges[i] + edges[i + 1]) * 0.5, FLOOR_Y + 30.0)), Vector2(w, 44))
 
 # ------------------------------------------------------------------ capsules
-func spawn_capsule(id: String, x: float, color: Color) -> void:
+## `kind` / `p`: the capsule's kind and its values (CapsuleKinds, #266; {} = the field's own).
+func spawn_capsule(id: String, x: float, color: Color, kind := "normal", p := {}) -> void:
 	if _capsules.has(id):
 		return
 	var b := RigidBody2D.new()
 	b.name = "Capsule_" + id
 	b.collision_layer = LAYER_CAPSULE
 	b.collision_mask = LAYER_STATIC
-	b.gravity_scale = gravity_scale
-	b.physics_material_override = _material(bounce, 0.15)
+	b.gravity_scale = gravity_scale * float(p.get("gravity_k", 1.0))
+	var own_bounce := float(p.get("bounce", -1.0))
+	b.physics_material_override = _material(own_bounce if own_bounce >= 0.0 else bounce, 0.15)
 	b.contact_monitor = true
 	b.max_contacts_reported = 6
 	b.continuous_cd = RigidBody2D.CCD_MODE_CAST_RAY
-	b.linear_damp = 0.05
+	b.linear_damp = float(p.get("damp", 0.05))
 	b.angular_damp = 0.6
 	b.freeze = frozen
 	b.position = Vector2(clampf(x, LEFT + CAPSULE_R + 2.0, RIGHT - CAPSULE_R - 2.0), SPAWN_Y)
@@ -371,7 +373,8 @@ func spawn_capsule(id: String, x: float, color: Color) -> void:
 	_circle(b, CAPSULE_R)
 	b.body_entered.connect(_on_capsule_body.bind(id))
 	add_child(b)
-	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "flash": 0.0, "trail": PackedVector2Array(), "trail_t": 0.0}
+	_capsules[id] = {"body": b, "color": color, "age": 0.0, "slow": 0.0, "done": false, "held": 0.0, "warp": -1, "warps": 0, "flash": 0.0, "trail": PackedVector2Array(), "trail_t": 0.0,
+		"kind": kind, "p": p}
 
 ## Split a single *virtual* ball. All children share the one physical Dial/capsule,
 ## which is released only once by GameModeController after its last child exits.
@@ -388,7 +391,7 @@ func split_capsule(id: String, ids: Array[String]) -> Array[String]:
 		var child_id := ids[i]
 		if _capsules.has(child_id):
 			continue
-		spawn_capsule(child_id, original.position.x, src.color)
+		spawn_capsule(child_id, original.position.x, src.color, src.kind, src.p)  # the same kind
 		if not _capsules.has(child_id):
 			continue
 		made.append(child_id)
@@ -465,6 +468,10 @@ func capsule_ids() -> Array:
 func capsule_color(id: String) -> Color:
 	return _capsules[id].color if _capsules.has(id) else Color.WHITE
 
+## "normal" / "fire" / "water" / "green" (CapsuleKinds, #266)
+func capsule_kind(id: String) -> String:
+	return str(_capsules[id].kind) if _capsules.has(id) else "normal"
+
 func capsule_rotation(id: String) -> float:
 	return (_capsules[id].body as RigidBody2D).rotation if _capsules.has(id) and is_instance_valid(_capsules[id].body) else 0.0
 
@@ -487,7 +494,7 @@ func _on_capsule_body(body: Node, id: String) -> void:
 	if not kind in ["pin", "bumper", "spinner", "pop", "target", "sling"]:
 		return
 	var cap: RigidBody2D = _capsules[id].body
-	var kick := lerpf(1.0, settle_kick, settle_k(float(_capsules[id].age)))
+	var kick := lerpf(1.0, settle_kick, settle_k(float(_capsules[id].age))) * float(_capsules[id].p.get("kick_k", 1.0))
 	var n := int(str(body.get_meta("target")).get_slice("_", 1))
 	match kind:
 		"pop":
@@ -630,10 +637,10 @@ func advance(dt: float) -> void:
 		if b.position.y > FLOOR_Y + 90.0:  # past the sensors (it should never get here)
 			_exit(id, goal_at(b.position.x), b.position)
 			continue
-		if c.age >= max_stay_s:
+		if c.age >= max_stay_s * float(c.p.get("stay_k", 1.0)):
 			_exit(id, "timeout", b.position)
 			continue
-		b.gravity_scale = gravity_scale * lerpf(1.0, settle_gravity, settle_k(float(c.age)))
+		b.gravity_scale = gravity_scale * float(c.p.get("gravity_k", 1.0)) * lerpf(1.0, settle_gravity, settle_k(float(c.age)))
 		if b.linear_velocity.length() < stall_speed:
 			c.slow += dt
 			if c.slow >= stall_s:

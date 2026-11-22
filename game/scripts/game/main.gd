@@ -1370,7 +1370,7 @@ func feed_remote_hand(d: Dictionary, now_ms: float) -> void:
 		debug_log.emit("remote: the remote is the hand (the camera's hand waits)")
 	gesture.on_event(StaffRemote.hand_event(d, gesture.joystick, gesture.last_sequence() + 1), now_ms)
 
-## #183: the practice's finger steps (easy mode): the arm really goes over that Dial, at the
+## #183: the practice's carry (easy mode; #266: shown after the fist): the arm really goes over that Dial, at the
 ## carry's speed. Asked of the backend (easy_goto: XY only, refused unless the easy mode's
 ## values are usable and the arm is up); the virtual crane of --game-only does not move.
 func _on_tutorial_goto(destination: int) -> void:

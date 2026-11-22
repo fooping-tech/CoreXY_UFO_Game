@@ -136,6 +136,7 @@ func _gm_game() -> Node:
 	ctl.set_difficulty("hard")  # the config's default is easy since #179; the easy mode has its own tests
 	ctl.ranking.path = ""  # never the real file of high scores
 	ctl.ranking_enabled = false  # the ranking (#155) has its own tests
+	ctl.mock_kind = "normal"  # the capsule kinds (#266) have their own tests: plain capsules here
 	return game
 
 func _gm_step(ctl: GameModeController, secs: float) -> void:

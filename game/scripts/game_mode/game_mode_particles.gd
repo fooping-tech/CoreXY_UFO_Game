@@ -19,6 +19,7 @@ var _left := PackedFloat32Array()
 var _life := PackedFloat32Array()
 var _col := PackedColorArray()
 var _size := PackedFloat32Array()
+var _grav := PackedFloat32Array()  # times GRAVITY, per spark (< 0 = it rises, like an ember)
 var _next := 0
 var _rings: Array[Dictionary] = []
 var _ring_next := 0
@@ -33,6 +34,7 @@ func _ready() -> void:
 	_life.resize(MAX_SPARKS)
 	_col.resize(MAX_SPARKS)
 	_size.resize(MAX_SPARKS)
+	_grav.resize(MAX_SPARKS)
 	for i in MAX_RINGS:
 		_rings.append({"at": Vector2.ZERO, "left": 0.0, "dur": 1.0, "r0": 0.0, "r1": 0.0, "color": Color.WHITE})
 
@@ -44,7 +46,8 @@ func granted(count: int) -> int:
 
 ## Sparks fly from `at`. `dir` / `spread` (radians): the middle of the fan and its width
 ## (TAU = all round). `white`: how many of them are white instead of `color` (0..1).
-func burst(at: Vector2, color: Color, count: int, speed := 240.0, dir := -PI * 0.5, spread := TAU, white := 0.3) -> void:
+## `grav`: how much gravity pulls them (1 = falling sparks, < 0 = rising embers).
+func burst(at: Vector2, color: Color, count: int, speed := 240.0, dir := -PI * 0.5, spread := TAU, white := 0.3, grav := 1.0) -> void:
 	for i in granted(count):
 		var s := _free_slot()
 		var a := dir + (_rng.randf() - 0.5) * spread
@@ -54,6 +57,45 @@ func burst(at: Vector2, color: Color, count: int, speed := 240.0, dir := -PI * 0
 		_left[s] = _life[s]
 		_col[s] = Color.WHITE if _rng.randf() < white else color
 		_size[s] = 4.0 if _rng.randf() < 0.4 else 2.0
+		_grav[s] = grav
+
+## The capsule kinds' own particles (#266): what a capsule of `kind` leaves behind as it
+## moves ("trail", a few a call) and what flies off when it hits something ("hit").
+##   fire   embers rising, orange and yellow; a hit throws a ring of flame
+##   water  drops falling off it, blue and white; a hit splashes up and spreads a ripple
+##   green  leaves and sparkles drifting; a hit scatters green sparkles
+const KIND_COLORS := {"fire": [Color("ff3b1f"), Color("ff8a1f"), Color("ffe03c")],
+	"water": [Color("2f6cff"), Color("6fc8ff"), Color("e8f8ff")],
+	"green": [Color("1fb84a"), Color("7dff6a"), Color("d8ff9a")]}
+
+func kind_trail(kind: String, at: Vector2) -> void:
+	if not KIND_COLORS.has(kind):
+		return
+	var cols: Array = KIND_COLORS[kind]
+	var col: Color = cols[_rng.randi() % cols.size()]
+	match kind:
+		"fire":
+			burst(at + Vector2(_rng.randf_range(-10, 10), -6), col, 2, 90.0, -PI * 0.5, 1.2, 0.05, -0.35)
+		"water":
+			burst(at + Vector2(_rng.randf_range(-12, 12), 6), col, 1, 50.0, PI * 0.5, 1.6, 0.2, 0.9)
+		"green":
+			burst(at + Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-12, 12)), col, 1, 60.0, -PI * 0.5, TAU, 0.25, 0.08)
+
+func kind_hit(kind: String, at: Vector2) -> void:
+	if not KIND_COLORS.has(kind):
+		return
+	var cols: Array = KIND_COLORS[kind]
+	match kind:
+		"fire":
+			burst(at, cols[1], 12, 260.0, -PI * 0.5, TAU, 0.1, -0.3)
+			burst(at, cols[2], 6, 160.0, -PI * 0.5, PI, 0.2, -0.5)
+			ring(at, cols[0], 54.0, 0.3)
+		"water":
+			burst(at, cols[1], 12, 280.0, -PI * 0.5, PI * 0.8, 0.3, 1.4)
+			ring(at, cols[2], 64.0, 0.45, 12.0)
+		"green":
+			burst(at, cols[1], 10, 200.0, -PI * 0.5, TAU, 0.4, 0.1)
+			ring(at, cols[0], 48.0, 0.35)
 
 ## A ring spreads from `at` out to radius `r1`.
 func ring(at: Vector2, color: Color, r1 := 60.0, secs := 0.35, r0 := 8.0) -> void:
@@ -102,7 +144,7 @@ func advance(dt: float) -> void:
 		if _left[i] <= 0.0:
 			continue
 		_left[i] -= dt
-		_vel[i] = _vel[i] * (1.0 - 1.8 * dt) + Vector2(0, GRAVITY * dt)
+		_vel[i] = _vel[i] * (1.0 - 1.8 * dt) + Vector2(0, GRAVITY * _grav[i] * dt)
 		_pos[i] += _vel[i] * dt
 	for r in _rings:
 		if r.left > 0.0:
