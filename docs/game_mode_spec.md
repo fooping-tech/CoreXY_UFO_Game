@@ -286,6 +286,7 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 | カウントダウン | `SET_LIGHT_MODE GAME_READY` |
 | 開始 | `SET_LIGHT_MODE GAME_PLAY`、`TRIGGER_EFFECT GAME_START` |
 | 受取 | `TRIGGER_EFFECT BALL_RECEIVED` |
+| 回収演出（#277） | アップで登場した瞬間に `SET_LIGHT_MODE CUSTOM`（カプセルの種類の色: ファイヤー赤・ウォーター青・グリーン緑、ふつうは Dial の色。明るさ 255、120 ms で切り替え）、UFOくんが光る瞬間に `TRIGGER_EFFECT SCORE`、カプセルが盤面に落ちたらラウンドの照明（`GAME_PLAY` など）に戻す。停止・新しいラウンドで打ち切り |
 | 排出開始 | `TRIGGER_EFFECT BALL_RELEASED` |
 | 3 連スイッチ・ジャックポット | `TRIGGER_EFFECT SCORE` |
 | 残り 30 秒 | `SET_LIGHT_MODE GAME_PLAY`（明るく・速く） |

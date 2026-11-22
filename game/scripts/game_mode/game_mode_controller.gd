@@ -154,6 +154,8 @@ var power_duck_db := -8.0
 var power_duck_s := 0.7
 ## the exhibition light's base mode that was last sent ({} = none of the game's)
 var _light_sent: Dictionary = {}
+var _light_override := {}  # #277: the light of a capsule's entrance while _light_override_left > 0
+var _light_override_left := 0.0
 var _light_session := -1  # the hub session _light_sent went to (a new session = send again)
 var _light_devices: GameModeDevices = null
 ## What the screen is while this mode is closed (main.gd sets it every frame): "title" (the
@@ -908,6 +910,7 @@ func start(after_practice := false) -> void:
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
+	_light_override_left = 0.0
 	ranking_flow.flush()
 	score.reset()
 	_clear_powerups()
@@ -1070,6 +1073,8 @@ func tick(dt: float) -> void:
 		for live in _multi_balls.values():
 			balls += (live as Array).size()
 		fx.power_status.append("MULTI %d BALL" % balls)
+	if _light_override_left > 0.0:
+		_light_override_left = maxf(_light_override_left - dt, 0.0)
 	_sync_light()  # a power that ended, the last stretch: the light follows the state
 	# #258: the hand window steps aside (small in the corner, faint) while a capsule comes in and plays
 	_guide_k = move_toward(_guide_k, 0.0 if capsule_in_play() else 1.0, dt * 4.0)
@@ -1353,6 +1358,11 @@ func _tick_lane(l: Lane, dt: float) -> void:
 			if before > reveal_at and l.t <= reveal_at:
 				var rk := str(l.capsule.get("kind", "normal"))
 				sounds.play("reveal" if rk == "normal" else "reveal_" + rk)
+				_capsule_light(l, l.t + drop_s)  # #277: the shelf in the capsule's colour
+			# #277: UFOくん shines (the show's "light" part): the shelf flashes with it
+			var shine_at := absorb_s * (1.0 - GameModeVFX.COLLECT_UP)
+			if before > shine_at and l.t <= shine_at:
+				_light("TRIGGER_EFFECT", {"effect": "SCORE", "duration_ms": int(shine_at * 1000.0) + 200, "intensity": 255})
 			if l.t <= 0.0:
 				l.t = drop_s
 				_set_lane(l, "DROPPING")
@@ -2065,6 +2075,7 @@ func on_stop_key() -> void:
 		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
+	_light_override_left = 0.0  # #277: a stop ends a capsule's light too
 	_demo_claw_closed = false  # a stop: nothing more is asked of the claw
 	devices.stop_all()
 	_cmds.clear()
@@ -2201,6 +2212,8 @@ static func light_mode_for(phase_now: String, last_stretch: bool, gold: bool) ->
 func light_mode() -> Dictionary:
 	if not _active:
 		return light_scene_for(scene_outside)
+	if _light_override_left > 0.0 and not _light_override.is_empty():
+		return _light_override  # #277: a capsule's entrance
 	return light_mode_for(phase, phase in ["PLAYING", "SETTLING"] and time_left <= hurry_s,
 		power_lights and powerups.active("double"))
 
@@ -2236,6 +2249,15 @@ func lights_tick(dt: float) -> void:
 ## last sent. Called at every change of phase and once a tick. Best effort, like all lights.
 ## A new hub session (the Illumination went back to its own light) or another hub (mock /
 ## backend) sends it again.
+## #277: the shelf in the colour of the capsule coming in, for `secs` (to the end of its drop),
+## then the round's light again (light_mode() goes back by itself). Decoration, like all lights.
+func _capsule_light(l: Lane, secs: float) -> void:
+	var c := capsule_color(l)
+	_light_override = {"mode": "CUSTOM", "brightness": 255, "speed": 200, "transition_ms": 120,
+		"color": [int(round(c.r * 255.0)), int(round(c.g * 255.0)), int(round(c.b * 255.0))]}
+	_light_override_left = maxf(secs, 0.1)
+	_sync_light()
+
 func _sync_light() -> void:
 	if devices != _light_devices or devices.session_id() != _light_session:
 		_light_devices = devices
