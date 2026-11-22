@@ -1,8 +1,8 @@
-# 効果音（勉強モード）
+# 効果音（勉強モード・スコアゲームのカプセルの登場）
 
-このフォルダの効果音は「効果音ラボ」の **演出・アニメ** のページのもの。
+このフォルダの効果音は「効果音ラボ」のもの（`don` / `pico` / `jan` は **演出・アニメ**、`magic-*` は **戦闘** のページ）。
 
-- 出典: https://soundeffect-lab.info/sound/anime/
+- 出典: https://soundeffect-lab.info/sound/anime/ 、https://soundeffect-lab.info/sound/battle/
 - クレジット表記は不要。
 
 | ファイル | 使っている場面（`game/scripts/study_mode/study_sounds.gd` の `OWN_FILES` と `CUES`） |
@@ -10,6 +10,15 @@
 | `don.mp3` | 答え合わせで「せいかい」を出すとき、プリントを見つけたとき（ドン） |
 | `pico.mp3` | 答え合わせで「せいかい」を出すとき、プリントを見つけたとき（ピコーン） |
 | `jan.mp3` | ファンファーレ（ジャーン）: 答え合わせのあとの報酬の発表、ゲームの準備ができたとき |
+
+スコアゲームのカプセルの登場（#266、「カプセル回収！」でアップになる瞬間。`game/scripts/game_mode/game_mode_sounds.gd` の `OWN_FILES`）:
+
+| ファイル | 効果音名 | 使っている場面 |
+|---|---|---|
+| `magic-thunder1.mp3` | 雷魔法1 | ふつうのカプセル（`reveal`） |
+| `magic-fire2.mp3` | 火炎魔法2 | ファイヤーボールカプセル（`reveal_fire`） |
+| `magic-ice2.mp3` | 氷魔法2 | ウォーターボールカプセル（`reveal_water`） |
+| `magic-wind1.mp3` | 風魔法1 | グリーンボールカプセル（`reveal_green`） |
 
 ファイルが無いときは、ゲームが合成した音で代わりに鳴らす（止まらない）。
 

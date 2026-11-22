@@ -402,11 +402,61 @@
       "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
     },
     "debug_panel": false,
+    "capsule_kinds": {
+      "enabled": true,
+      "mock_kind": "random",
+      "memory_s": 20,
+      "fire": {
+        "gravity_k": 1.15,
+        "bounce": 0.6,
+        "damp": 0.02,
+        "kick_k": 1.35,
+        "stay_k": 0.85,
+        "hit_k": 2.0,
+        "goal_k": 1.0
+      },
+      "water": {
+        "gravity_k": 0.6,
+        "bounce": 0.25,
+        "damp": 0.9,
+        "kick_k": 0.8,
+        "stay_k": 1.4,
+        "hit_k": 1.0,
+        "goal_k": 2.0
+      },
+      "green": {
+        "gravity_k": 0.8,
+        "bounce": 0.8,
+        "damp": 0.05,
+        "kick_k": 1.1,
+        "stay_k": 1.15,
+        "hit_k": 1.3,
+        "goal_k": 1.3
+      },
+      "read": {
+        "roi": [
+          0.2,
+          0.15,
+          0.6,
+          0.7
+        ],
+        "min_sat": 0.45,
+        "min_val": 0.25,
+        "min_share": 0.05,
+        "dominance": 1.6,
+        "sample_hz": 6,
+        "min_votes": 3,
+        "min_ratio": 0.6
+      },
+      "_note": "#266 capsule kinds (docs/game_mode_spec.md §3.6). The arm camera (focus) is read while a capsule may hang in front of it (the easy mode: from CLOSE_CLAW to the end of the carry; by hand: all the time the Dials take one, the votes of memory_s seconds back), and the capsule taken into the portal becomes the colour most frames saw: red = fire (ファイヤーボールカプセル), blue = water (ウォーターボールカプセル), green = green (グリーンボールカプセル), nothing sure = normal. Per kind (times the field's value): gravity_k, damp (air), kick_k (bumpers/pops/slings), stay_k (time on the field), hit_k / goal_k (points); bounce is the capsule's own (< 0 = the field's). read: roi = [x, y, w, h] fractions of the frame; a pixel counts when saturation >= min_sat and value >= min_val; a frame is one colour when it covers min_share of the looked-at pixels and dominance times the next; the capsule's kind needs min_votes frames and min_ratio of the coloured ones; hues (0..1) may be overridden as {\"fire\": [0.93, 0.045], ...}. mock_kind: with no camera and mock Dials only (random / fire / water / green / normal). The thresholds are not measured on the real arm camera yet."
+    },
     "easy": {
       "hold_s": 0.6,
       "cancel_hold_s": 1.5,
       "wait_destination_s": 15,
       "request_timeout_s": 3.0,
+      "auto_retry_s": 1.0,
+      "auto_tries": 3,
       "dry_run": {"dial_1": [20, 100], "release_z": 70},
       "real": {
         "xy_tolerance_mm": 1.0, "z_tolerance": 1.0, "claw_settle_s": 0.5, "claw_span_min_deg": 5, "claw_span_max_deg": 355,
@@ -415,7 +465,7 @@
         "_xy_feed_note": "#194: the feed (mm/min) of the easy mode's XY moves to a Dial: the carry, and the practice's easy_goto. 9000 = 150 mm/s. At backend.xy_fast_feed_mm_min (15900 = 265 mm/s, the firmware's top) a 45-degree move, where one motor does nearly all the steps (about 1.4 times an axis move's step rate), ended in the firmware's alarm 'timed segment queue lost position confidence' on the machine (2026-11-19), and the practice's moves were too quick to watch. At 9000 the one-motor step rate of a diagonal stays under that of an axis move at 15900, which ran. Leave this out to use backend.xy_fast_feed_mm_min again.",
         "timeouts_s": {"open_claw": 6, "lower_to_catch": 20, "close_claw": 6, "raise_with_item": 20, "move_to_box": 45, "lower_to_release": 20, "release": 6, "raise_empty": 20}
       },
-      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). #198: nobody chooses a difficulty any more (no config key, no D key, no fingers on the title): the easy mode is always what is played; where it cannot be used (no backend, another hand scheme) the manual hand control is played and the title says why. cancel_hold_s: while the backend waits for the destination, an open hand held this long gives the catch up (the claw opens, try again), longer than the short open hand that separates the fist from the fingers. The easy mode: (pinch = XY only; a fist held hold_s = catch here by itself; then one finger = carry to the portal, Dial 1 on the left; #200: there is no Dial 2 on the right any more and two fingers mean nothing). The practice shows the same. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (Dial 1's XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
+      "_note": "The easy mode (#169; docs/game_mode_spec.md §3.4). #198: nobody chooses a difficulty any more (no config key, no D key, no fingers on the title): the easy mode is always what is played; where it cannot be used (no backend, another hand scheme) the manual hand control is played and the title says why. cancel_hold_s: while the backend waits for the destination and the carry cannot be asked for (the round over, the gate closed, refused auto_tries times), an open hand held this long gives the catch up (the claw opens, try again). auto_retry_s / auto_tries (#266): a refused carry is asked for again this much later, this many times in all, then the wait runs out. The easy mode: (pinch = XY only; a fist held hold_s = catch here by itself; and then, by itself, carry to the portal, Dial 1 on the left (#266: no finger is shown any more; #200: there is no Dial 2 on the right)). The practice shows the same. The easy mode needs the backend (its sequence runs there and holds the motion lock) and the pinch joystick scheme. wait_destination_s: how long the backend waits for the destination with the claw closed; after that it ends EXPIRED: nothing is moved or released, a person puts it right. request_timeout_s: the game waits this long for the backend's answer to easy_grab / easy_deliver before it stops in FAULT (never sent again by itself). dry_run: made-up drop points (XY mm) and release height (Z units) of the virtual crane only (--mock). The real crane's (Dial 1's XY, the catch height, the release height) are measured on the machine in the settings screen's 校正 tab, saved in config/calibration.json#easy_dials (not in Git), used only once confirmed there, and kept for the next sessions (recorded again only when Z is measured again). real: what is not a fact of the machine for the real crane's easy catch: tolerances, the claw settle time, the claw span bounds, how near home a limit switch is normal, the timeouts per step (s; a step that takes longer is a FAULT) and in total per part. The travel height is the Z top record, the XY feed backend.xy_feed_mm_min (xy_feed_mm_min here overrides it). auto_catch.real is not used by the easy mode."
     },
     "tutorial": {
       "voice_link_wait_s": 2.5,

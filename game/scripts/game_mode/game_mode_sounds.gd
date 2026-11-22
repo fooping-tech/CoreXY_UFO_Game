@@ -54,12 +54,19 @@ const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETU
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
 ## sounds that are only synthesised here (#149: no file was added for the practice)
 const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit", "new_record", "power_speed", "power_multi", "power_double"]
+## #266: the capsule's entrance (カプセル回収！ as it comes up big), files of 効果音ラボ (the battle
+## page's magic; game/assets/audio/se/README.md), not in the Kenney manifest. A missing file
+## falls back to the synthesised sound of the same key.
+const OWN_FILES := {"reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
+	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3"}
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
 ## two of a key (the counting blips come many a second and must never fill the players)
 const SYNTH_META := {"timeup_hit": {"priority": 2}, "result_count": {"priority": 0, "min_gap_ms": 40}, "score_lock": {"priority": 2},
 	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}, "new_record": {"priority": 2},
 	"power_speed": {"priority": 2, "min_gap_ms": 400}, "power_multi": {"priority": 2, "min_gap_ms": 400},
-	"power_double": {"priority": 2, "min_gap_ms": 400}}
+	"power_double": {"priority": 2, "min_gap_ms": 400},
+	"reveal": {"priority": 2, "min_gap_ms": 400}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
+	"reveal_water": {"priority": 2, "min_gap_ms": 400}, "reveal_green": {"priority": 2, "min_gap_ms": 400}}
 
 var enabled := true
 var volume_db := -8.0
@@ -184,6 +191,14 @@ func _ready() -> void:
 		"power_speed": StudySounds._sweep(320.0, 1900.0, 0.46, 0.5),
 		"power_multi": StudySounds._tones([[659.3, 0.09], [987.8, 0.09], [1568.0, 0.32]], 0.5),
 		"power_double": StudySounds._tones([[523.3, 0.10], [784.0, 0.10], [1046.5, 0.10], [1568.0, 0.48]], 0.5),
+		# #266: the capsule comes up big in the collection show (カプセル回収！): a chime, and
+		# each kind its own: fire a roar going up, water bubbles, green a sparkling climb (the
+		# stand-ins of OWN_FILES' magic sounds when those files are missing)
+		"reveal": StudySounds._tones([[1046.5, 0.07], [1568.0, 0.07], [2093.0, 0.35]], 0.45),
+		"reveal_fire": StudySounds._sweep(110.0, 880.0, 0.32, 0.5),
+		"reveal_water": StudySounds._tones([[784.0, 0.05], [0.0, 0.02], [1046.5, 0.05], [0.0, 0.02], [659.3, 0.05], [0.0, 0.02],
+			[1318.5, 0.05], [0.0, 0.02], [1046.5, 0.3]], 0.42),
+		"reveal_green": StudySounds._tones([[1318.5, 0.05], [1568.0, 0.05], [1975.5, 0.05], [2637.0, 0.05], [3136.0, 0.3]], 0.38),
 	}
 	load_manifest()
 	for i in PLAYERS:
@@ -308,6 +323,11 @@ func has_music(track: String) -> bool:
 func load_manifest(path := MANIFEST) -> void:
 	_files = {}
 	_meta = {}
+	if path == MANIFEST:  # the game's own files go with its own manifest (a test's other one: none)
+		for key in OWN_FILES:
+			var own := load_music_stream(AUDIO_DIR + str(OWN_FILES[key]), false)
+			if own != null:
+				_files[key] = own
 	if not FileAccess.file_exists(path):
 		return
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))

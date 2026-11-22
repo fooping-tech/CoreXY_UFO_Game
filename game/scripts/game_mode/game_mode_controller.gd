@@ -115,6 +115,22 @@ var devices: GameModeDevices
 var mock_hub: MockDialHub
 var backend_hub: BackendDialHub
 var score := ScoreManager.new()
+## #266: the capsule kinds (fire / water / green / normal) and the arm camera's colour votes
+var kinds := CapsuleKinds.new()
+var colour_reader := CapsuleKinds.Reader.new()
+var kinds_enabled := true
+## what a capsule is when no camera saw it and the Dials are mock ones ("random", a kind,
+## "normal"; config game_mode.capsule_kinds.mock_kind). Never with the real Dials.
+var mock_kind := "random"
+## where the colour frames come from: func() -> Image (null = none now). Unset: the arm
+## camera (CameraHub's focus role) when it shows a real picture. The tests set it.
+var colour_source := Callable()
+## the kind of the capsule taken in last (tests, the trace)
+var last_kind := ""
+var _sample_left := 0.0
+var _kind_trail_t := 0.0
+var _easy_was := ""
+var _kind_rng := RandomNumberGenerator.new()
 var powerups := PowerUpManager.new()
 ## MULTI BALL (#188): one real capsule, up to three balls on the screen.
 ##   _virtual_root   ball id on the field -> the real capsule's id (the capsule's own ball too)
@@ -446,6 +462,11 @@ func _configure(cfg: Dictionary) -> void:
 	release_retries = maxi(int(t.get("release_retries", release_retries)), 0)
 	if cfg.get("score") is Dictionary:
 		score.configure(cfg.score)
+	var ck: Dictionary = cfg.get("capsule_kinds", {}) if cfg.get("capsule_kinds") is Dictionary else {}
+	kinds.configure(ck)
+	kinds_enabled = bool(ck.get("enabled", kinds_enabled))
+	mock_kind = str(ck.get("mock_kind", mock_kind))
+	colour_reader.memory_s = clampf(float(ck.get("memory_s", colour_reader.memory_s)), 2.0, 120.0)
 	var pw: Dictionary = cfg.get("powerups", {}) if cfg.get("powerups") is Dictionary else {}
 	powerups.configure(pw)
 	powerups_on = bool(pw.get("enabled", powerups_on))
@@ -763,11 +784,13 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
-	if int(step.get("goto_demo", 0)) == 1:
-		tutorial_goto.emit(int(step.goto_demo))
+	# the claw first, then the carry (#266: one step shows both; the main scene sends the carry
+	# only once the claw's request is answered, review on #268)
 	if bool(step.get("claw_demo", false)):
 		_demo_claw_closed = true
 		tutorial_claw.emit("closed")
+	if int(step.get("goto_demo", 0)) == 1:
+		tutorial_goto.emit(int(step.goto_demo))
 	fx.react("big")
 	_trace("tutorial_ok", null, {"effect_id": str(step.get("id", ""))})
 
@@ -970,6 +993,8 @@ func tick(dt: float) -> void:
 	_expire_commands(dt)
 	fx.advance(dt)
 	particles.advance(dt)
+	_read_colours(dt)
+	_kind_particles(dt)
 	result_screen.advance(dt)
 	ranking_hud.advance(dt)
 	result_show.advance(dt)  # the result's timeline: its cues come out of this, in this tick
@@ -1262,18 +1287,26 @@ func _tick_lane(l: Lane, dt: float) -> void:
 				if l.retry_left <= 0.0:
 					_prepare(l)
 		"ABSORBING":
+			var before := l.t
 			l.t -= dt
+			# #266: the capsule comes up big (the show's "show" part): its sound
+			var reveal_at := absorb_s * (1.0 - GameModeVFX.COLLECT_RISE)
+			if before > reveal_at and l.t <= reveal_at:
+				var rk := str(l.capsule.get("kind", "normal"))
+				sounds.play("reveal" if rk == "normal" else "reveal_" + rk)
 			if l.t <= 0.0:
 				l.t = drop_s
 				_set_lane(l, "DROPPING")
+				fx.collect_kind = str(l.capsule.get("kind", "normal"))
 				fx.play("capsule_materialize", l.side, Vector2(l.capsule.drop_x, PinballField.SPAWN_Y), drop_s)
 				fx.react("drop")
-				particles.burst(Vector2(l.capsule.drop_x, PinballField.SPAWN_Y), l.color, 10, 180.0, PI * 0.5, 1.4)
+				particles.burst(Vector2(l.capsule.drop_x, PinballField.SPAWN_Y), capsule_color(l), 10, 180.0, PI * 0.5, 1.4)
 				sounds.play("drop")
 		"DROPPING":
 			l.t -= dt
 			if l.t <= 0.0:
-				field.spawn_capsule(l.capsule.capsule_id, l.capsule.drop_x, l.color)
+				var kind := str(l.capsule.get("kind", "normal"))
+				field.spawn_capsule(l.capsule.capsule_id, l.capsule.drop_x, capsule_color(l), kind, kinds.of(kind))
 				fx.play("capsule_portal_close", l.side)
 				_set_lane(l, "SIMULATING")
 		"RETURNING":
@@ -1297,6 +1330,81 @@ func _tick_lane(l: Lane, dt: float) -> void:
 			l.t -= dt
 			if l.t <= 0.0:
 				_set_lane(l, "CLOSED")
+
+# ------------------------------------------------------------------ the capsule kinds (#266)
+## The colour of the capsule a lane has: its kind's, or the Dial's for a normal one.
+func capsule_color(l: Lane) -> Color:
+	return CapsuleKinds.color_of(str(l.capsule.get("kind", "normal")), l.color) if not l.capsule.is_empty() else l.color
+
+## The kind of the capsule taken in now: what the arm camera's frames said; with no camera
+## and mock Dials, mock_kind (so the rehearsal shows the kinds). Off: always normal.
+func decide_kind() -> String:
+	if not kinds_enabled:
+		return "normal"
+	var k := colour_reader.decide(int(kinds.read.min_votes), float(kinds.read.min_ratio))
+	if k == "normal" and colour_reader.count() == 0 and not _camera_live() and devices.can_mock_ball():
+		if mock_kind == "random":
+			return ["fire", "water", "green"][_kind_rng.randi() % 3]
+		if CapsuleKinds.known(mock_kind):
+			return mock_kind
+	return k
+
+## The arm camera shows a real picture (not the static of no camera).
+func _camera_live() -> bool:
+	if colour_source.is_valid():
+		return true
+	var cams = main.get("cameras") if main != null else null
+	return cams != null and (cams.has_feed("focus") or cams.external_live("focus"))
+
+## A capsule may hang in front of the arm camera now: the easy mode's catch coming up and
+## its carry (a new catch starts the votes over); by hand, all the time the Dials take one.
+func _reading_colours() -> bool:
+	if not kinds_enabled or not _active or not _taking():
+		return false
+	var e = main.get("easy") if main != null else null
+	if easy_on() and e != null:
+		if e.state == "AUTO_GRAB":
+			return e.step in ["CLOSE_CLAW", "RAISE_WITH_ITEM"]
+		return e.state in ["WAIT_DESTINATION", "DELIVER_DIAL_1"]
+	return true
+
+func _read_colours(dt: float) -> void:
+	colour_reader.advance(dt)
+	var e = main.get("easy") if main != null else null
+	var es: String = str(e.state) if e != null else ""
+	if es == "AUTO_GRAB" and _easy_was != "AUTO_GRAB":
+		colour_reader.clear()  # a new catch: what was seen before is not this capsule
+	_easy_was = es
+	if not _reading_colours():
+		_sample_left = 0.0
+		return
+	_sample_left -= dt
+	if _sample_left > 0.0:
+		return
+	_sample_left = 1.0 / maxf(float(kinds.read.sample_hz), 0.5)
+	var img := _colour_frame()
+	if img != null:
+		colour_reader.add(str(CapsuleKinds.classify(img, kinds.read).kind))
+
+## One frame of the arm camera (null: none, or a headless run where nothing is drawn).
+func _colour_frame() -> Image:
+	if colour_source.is_valid():
+		return colour_source.call()
+	if DisplayServer.get_name() == "headless" or not _camera_live():
+		return null
+	var tex: Texture2D = main.cameras.texture("focus")
+	return tex.get_image() if tex != null else null
+
+## The kinds' particles on the field: a few for each capsule of a kind, every few frames.
+func _kind_particles(dt: float) -> void:
+	_kind_trail_t -= dt
+	if _kind_trail_t > 0.0 or not effects:
+		return
+	_kind_trail_t = 0.06
+	for id in field.capsule_ids():
+		var k := field.capsule_kind(id)
+		if k != "normal" and not field.capsule_held(id):
+			particles.kind_trail(k, field.capsule_position(id))
 
 ## A capsule is on its way in (the collection show, the drop from UFOくん): the UFO waits.
 func capsule_arriving() -> bool:
@@ -1344,6 +1452,11 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 		_led(l, "RETURN_FLOW")
 		fx.play("capsule_return", l.side, fx.port(l.side), return_s)
 		return
+	# #266: what the arm camera saw of it: its kind (normal when nothing sure)
+	c.kind = decide_kind()
+	last_kind = c.kind
+	colour_reader.clear()
+	_trace("capsule_kind", l, {"effect_id": c.kind})
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
 	backdrop.side_pulse(l.side)
@@ -1351,6 +1464,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
 	# #258: up from the port, big in the middle (カプセル回収！), up into UFOくん, its light
+	fx.collect_kind = c.kind
 	fx.play("capsule_collect", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
 	sounds.play("absorb")
 	_led(l, "INTAKE")
@@ -1493,9 +1607,12 @@ func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vecto
 	var c = capsules.get_capsule(root_id)
 	if c == null or not running():
 		return
-	var r := score.hit(capsule_id, kind, target, clock)
+	var ck := str(c.get("kind", "normal"))
+	var r := score.hit(capsule_id, kind, target, clock, float(kinds.of(ck).hit_k))  # #266: the kind's hits
 	if int(r.points) <= 0:
 		return
+	if ck != "normal" and kind in ["bumper", "pop", "sling", "spinner", "target"]:
+		particles.kind_hit(ck, pos)
 	c.score += int(r.points)
 	field.flash_capsule(capsule_id)
 	var l: Lane = _lane_of(c.source_dial)
@@ -1512,7 +1629,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 		return
 	c.goal = goal
 	if goal != "timeout":
-		var r := score.goal(capsule_id, goal, clock)
+		var r := score.goal(capsule_id, goal, clock, float(kinds.of(str(c.get("kind", "normal"))).goal_k))  # #266
 		if int(r.points) > 0:
 			c.score += int(r.points)
 			_present_score(r, pos, l)

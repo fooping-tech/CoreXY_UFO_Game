@@ -92,6 +92,8 @@ func _ready() -> void:
 	_s.game_mode._test_game_mode_powerups()
 	_s.game_mode._test_game_mode_ufo_and_mock_dials()
 	_s.game_mode._test_game_mode_round(rs)
+	_s.game_mode._test_capsule_colour_read()
+	_s.game_mode._test_capsule_kinds_game(rs)
 	_s.game_mode._test_game_mode_powerup_integration(rs)
 	_s.game_mode._test_game_mode_powerup_followup(rs)
 	_s.game_mode._test_game_mode_duplicates_and_sessions(rs)

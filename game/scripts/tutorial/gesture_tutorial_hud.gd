@@ -279,8 +279,6 @@ func _draw() -> void:
 			_draw_z_move()
 		"easy_grab":
 			_draw_easy_grab()
-		"easy_one":
-			_draw_easy_number("point", "1", CYAN)
 		"rules":
 			_draw_rules()
 		"practice":
@@ -486,7 +484,8 @@ func _draw_grab(s: Dictionary) -> void:
 		draw_hand(at, 1.75, "pinch" if art == "pinch_down" else (art if art in HAND_POSES else "open"))
 		_tag(i, str(hints[i][1]), at + Vector2(280, 28), Color("cfe0ff"), 460.0)
 
-## The easy mode's catch as three frames: down, catch, up (what the round does by itself).
+## The easy mode's catch as three frames: down, catch, up and away to the portal (what the round
+## does by itself; #266: the carry follows the catch, no finger).
 func _draw_easy_grab() -> void:
 	draw_hand(_hand_at(top_at + Vector2(0, -10)), 8.0, "fist")
 	for i in 3:
@@ -495,18 +494,12 @@ func _draw_easy_grab() -> void:
 		draw_rect(fr, Color(0.06, 0.08, 0.24, 0.9))
 		draw_rect(fr, PURPLE, false, 2.0)
 		_draw_claw(c + Vector2(0, [-20.0, 20.0, -20.0][i]), [0.0, 1.0, 1.0][i], CYAN)
-		if i != 1:
-			_arrow(c + Vector2(52, -40.0 if i == 0 else 40.0), c + Vector2(52, 40.0 if i == 0 else -40.0), YELLOW, 4.0)
-		_tag(i, ["おりる", "つかむ", "あがる"][i], c + Vector2(0, 110), Color("cfe0ff"))
-
-## The easy mode's carry: the finger shown, and the portal it means (Dial 1, on the left).
-func _draw_easy_number(pose: String, number: String, col: Color) -> void:
-	var side := -1.0
-	draw_hand(_hand_at(top_at + Vector2(0, -10)), 8.0, pose)
-	var dial := Vector2(360.0 + side * 190.0, 740.0)
-	_arrow(Vector2(360, 610), dial + Vector2(-side * 40.0, -70.0), YELLOW)
-	_draw_dial(dial, col, number)
-	_tag(0, "ひだりの ポータル", dial + Vector2(0, 80), col)
+		if i == 0:
+			_arrow(c + Vector2(52, -40.0), c + Vector2(52, 40.0), YELLOW, 4.0)
+		elif i == 2:  # up, and off to the left portal
+			_arrow(c + Vector2(52, 40.0), c + Vector2(30, -70.0), YELLOW, 4.0)
+			_arrow(c + Vector2(-20, -80.0), c + Vector2(-66, -80.0), YELLOW, 4.0)
+		_tag(i, ["おりる", "つかむ", "ポータルへ"][i], c + Vector2(0, 110), Color("cfe0ff"))
 
 ## A Dial's port: a ring in its colour with its number.
 func _draw_dial(c: Vector2, col: Color, number: String) -> void:

@@ -87,7 +87,8 @@ func chain_left_k(now: float) -> float:
 ## A capsule touched a target. `target` names the one thing hit ("pin_12", "bumper_1",
 ## "switch_0"...). Returns {points, base, mult, chain, kind, bonus: "" / "switch_bonus"};
 ## points 0 = not scored (cooldown, unknown kind).
-func hit(capsule_id: String, kind: String, target: String, now: float) -> Dictionary:
+## `kind_k`: the capsule kind's multiplier of this hit (#266: hit_k), in the score itself.
+func hit(capsule_id: String, kind: String, target: String, now: float, kind_k := 1.0) -> Dictionary:
 	var out := {"points": 0, "base": 0, "mult": 1.0, "chain": chain_now(now), "kind": kind, "bonus": ""}
 	if not table.has(kind) or kind.begins_with("goal") or kind == "jackpot" or kind == "switch_bonus":
 		return out
@@ -109,11 +110,12 @@ func hit(capsule_id: String, kind: String, target: String, now: float) -> Dictio
 			jackpot_until = now + jackpot_s
 			out.bonus = "switch_bonus"
 			counts["switch_bonus"] = int(counts.get("switch_bonus", 0)) + 1
-	return _add(out, kind, base, now)
+	return _add(out, kind, base, now, kind_k)
 
 ## A capsule left through a goal ("left" / "center" / "right"); anything else (the 15 s
 ## limit, a stop) ends the capsule without a goal score. Once per capsule.
-func goal(capsule_id: String, which: String, now: float) -> Dictionary:
+## `kind_k`: the capsule kind's multiplier of its goal (#266: goal_k), in the score itself.
+func goal(capsule_id: String, which: String, now: float, kind_k := 1.0) -> Dictionary:
 	var out := {"points": 0, "base": 0, "mult": 1.0, "chain": chain_now(now), "kind": "goal_" + which, "bonus": ""}
 	if _goal_done.has(capsule_id):
 		return out
@@ -127,7 +129,7 @@ func goal(capsule_id: String, which: String, now: float) -> Dictionary:
 		jackpots += 1
 		out.bonus = "jackpot"
 	out.kind = kind
-	return _add(out, kind, int(table[kind]), now)
+	return _add(out, kind, int(table[kind]), now, kind_k)
 
 func capsule_finished(capsule_id: String) -> bool:
 	return _goal_done.has(capsule_id)
@@ -138,8 +140,8 @@ func forget(capsule_id: String) -> void:
 		if str(k).begins_with(capsule_id + "|"):
 			_cool.erase(k)
 
-func _add(out: Dictionary, kind: String, base: int, now: float) -> Dictionary:
-	var m := multiplier(now) * power_multiplier
+func _add(out: Dictionary, kind: String, base: int, now: float, kind_k := 1.0) -> Dictionary:
+	var m := multiplier(now) * power_multiplier * maxf(kind_k, 0.0)
 	var pts := int(round(base * m))
 	score += pts
 	counts[kind] = int(counts.get(kind, 0)) + 1

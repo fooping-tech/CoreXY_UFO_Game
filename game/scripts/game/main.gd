@@ -699,6 +699,7 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 
 func _process(dt: float) -> void:
 	dev.capture_tick(dt)
+	_tick_tutorial_goto(dt)
 	if game_mode != null:
 		# the menu's music (#173): the title screen, and the score game's own title
 		# #181: the title screen at start has its own (top), the practice too; none in the 校正 tab
@@ -1370,15 +1371,43 @@ func feed_remote_hand(d: Dictionary, now_ms: float) -> void:
 		debug_log.emit("remote: the remote is the hand (the camera's hand waits)")
 	gesture.on_event(StaffRemote.hand_event(d, gesture.joystick, gesture.last_sequence() + 1), now_ms)
 
-## #183: the practice's finger steps (easy mode): the arm really goes over that Dial, at the
+## #183: the practice's carry (easy mode; #266: shown after the fist): the arm really goes over that Dial, at the
 ## carry's speed. Asked of the backend (easy_goto: XY only, refused unless the easy mode's
 ## values are usable and the arm is up); the virtual crane of --game-only does not move.
+## #266: the same step closes the claw first: while that request is still out, the carry
+## waits for its answer (TUTORIAL_GOTO_WAIT_S at most, then it is left out), so the arm
+## never sets off with the claw open.
+const TUTORIAL_GOTO_WAIT_S := 5.0
+var _tutorial_goto := {}  # {"destination", "left"} waiting for the claw's answer
+
 func _on_tutorial_goto(destination: int) -> void:
 	debug_log.emit("tutorial: to Dial %d" % destination)
+	_tutorial_goto = {}
 	if RobotState.auto_catch_active() or RobotState.easy_mode_active():
 		return
-	if RobotState.source == "websocket" and not ws.has_pending_motion():
-		_easy_send("easy_goto", {"destination": destination})
+	if RobotState.source != "websocket":
+		return
+	if ws.has_pending_motion():
+		_tutorial_goto = {"destination": destination, "left": TUTORIAL_GOTO_WAIT_S}
+		return
+	_easy_send("easy_goto", {"destination": destination})
+
+## The carry of the practice waiting for the claw's answer (every frame).
+func _tick_tutorial_goto(dt: float) -> void:
+	if _tutorial_goto.is_empty():
+		return
+	var in_practice: bool = game_mode != null and game_mode.active() and game_mode.phase == "TUTORIAL"
+	if not in_practice or RobotState.source != "websocket" or RobotState.auto_catch_active() or RobotState.easy_mode_active():
+		_tutorial_goto = {}
+		return
+	_tutorial_goto.left = float(_tutorial_goto.left) - dt
+	if not ws.has_pending_motion():
+		var dest := int(_tutorial_goto.destination)
+		_tutorial_goto = {}
+		_easy_send("easy_goto", {"destination": dest})
+	elif float(_tutorial_goto.left) <= 0.0:
+		debug_log.emit("tutorial: the claw did not answer in time: no carry")
+		_tutorial_goto = {}
 
 ## #183: the practice's fist step (easy mode): the claw closes as a show of what the fist
 ## does, and opens again with the next step. The same request as the hand's own (arm_goto:
@@ -1670,6 +1699,7 @@ func _update_gesture_presentation(dt: float) -> void:
 ## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
 ## no alarm; the debug panel's E-STOP sends ABORT).
 func stop_key() -> void:
+	_tutorial_goto = {}  # nothing of the practice's carry is sent after a stop
 	if study_mode != null:
 		study_mode.on_stop_key()
 	if game_mode != null:

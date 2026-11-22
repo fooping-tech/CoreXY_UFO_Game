@@ -909,3 +909,141 @@ func _test_game_mode_powerup_followup(rs: Node) -> void:
 	snd.duck(1.0, 0.0)
 	_ok(snd.pickup_duck() == 0.0, "pickup duck: no time or no dB = nothing")
 	snd.queue_free()
+
+## A camera frame: dark grey with a block of `col` covering `share` of it in the middle.
+static func _colour_frame(col: Color, share: float, second := Color.TRANSPARENT, second_share := 0.0) -> Image:
+	var img := Image.create(80, 60, false, Image.FORMAT_RGB8)
+	img.fill(Color(0.18, 0.18, 0.2))
+	var side := int(sqrt(share * 80 * 60))
+	img.fill_rect(Rect2i(40 - side / 2, 30 - side / 2, side, side), col)
+	if second_share > 0.0:
+		var s2 := int(sqrt(second_share * 80 * 60))
+		img.fill_rect(Rect2i(20, 18, s2, s2), second)
+	return img
+
+## #266: one frame's colour, the frames' votes, the values of the kinds, the sprites.
+func _test_capsule_colour_read() -> void:
+	var red := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.2))
+	var blue := CapsuleKinds.classify(_colour_frame(Color("2860f0"), 0.2))
+	var green := CapsuleKinds.classify(_colour_frame(Color("20c040"), 0.2))
+	var grey := CapsuleKinds.classify(_colour_frame(Color(0.6, 0.6, 0.62), 0.3))
+	var dark_red := CapsuleKinds.classify(_colour_frame(Color(0.15, 0.02, 0.02), 0.3))  # too dark to be sure
+	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.01))
+	var mixed := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.12, Color("2860f0"), 0.1))
+	var none := CapsuleKinds.classify(null)
+	_ok(red.kind == "fire" and blue.kind == "water" and green.kind == "green" and grey.kind == "" and dark_red.kind == ""
+		and speck.kind == "" and mixed.kind == "" and none.kind == "" and float(red.share) > 0.1,
+		"capsule kinds #266: a frame is red (fire), blue (water) or green when that colour fills enough of it; grey, dark, a speck or two colours close together are nothing",
+		"%s %s %s %s %s %s %s" % [red, blue, green, grey.kind, dark_red.kind, speck.kind, mixed])
+	var r := CapsuleKinds.Reader.new()
+	for k in ["fire", "", "fire", "water", "fire", "", "fire"]:
+		r.add(k)
+		r.advance(0.2)
+	var fire_wins: bool = r.decide(3, 0.6) == "fire"  # 4 of the 5 coloured frames
+	var r2 := CapsuleKinds.Reader.new()
+	r2.add("water")
+	r2.add("water")
+	var too_few: bool = r2.decide(3, 0.6) == "normal"
+	r2.add("green")
+	r2.add("green")
+	r2.add("water")
+	var too_split: bool = r2.decide(3, 0.7) == "normal"  # 3 of 5: not sure enough
+	r.advance(r.memory_s + 1.0)
+	var forgotten: bool = r.decide(3, 0.6) == "normal" and r.count() == 0
+	_ok(fire_wins and too_few and too_split and forgotten,
+		"capsule kinds #266: the capsule is the colour most frames saw, when enough of them did and clearly; old frames are forgotten",
+		"%s %s %s %s" % [fire_wins, too_few, too_split, forgotten])
+	var k := CapsuleKinds.new()
+	var defaults_ok: bool = k.of("normal").hit_k == 1.0 and k.of("fire").hit_k > 1.0 and k.of("water").goal_k > 1.0 \
+		and k.of("water").gravity_k < 1.0 and k.of("green").bounce > k.of("water").bounce and k.of("nope") == k.of("normal")
+	k.configure({"fire": {"hit_k": 99, "gravity_k": 1.5}, "read": {"min_votes": 5}})
+	var clamped: bool = k.of("fire").hit_k == 5.0 and k.of("fire").gravity_k == 1.5 and int(k.read.min_votes) == 5 \
+		and k.of("water").goal_k == 2.0
+	var tex := CapsuleKinds.sheet("fire")
+	var sprites: bool = tex != null and tex.get_width() == CapsuleKinds.FRAME * 8 and tex.get_height() == CapsuleKinds.FRAME * 2 \
+		and CapsuleKinds.sheet("water") != null and CapsuleKinds.sheet("green") != null and CapsuleKinds.sheet("normal") == null
+	var names: bool = CapsuleKinds.display_name("fire") == "ファイヤーボールカプセル" and CapsuleKinds.display_name("water") == "ウォーターボールカプセル" \
+		and CapsuleKinds.display_name("green") == "グリーンボールカプセル"
+	_ok(defaults_ok and clamped and sprites and names,
+		"capsule kinds #266: each kind has its own values (config overrides them, kept in range), its name and an 8-frame pixel-art sprite sheet (the capsule, which turns with the ball, and the kind's upright part)",
+		"%s %s %s %s" % [defaults_ok, clamped, sprites, names])
+
+## #266: the kind in the round: read from the arm camera, shown, played and scored.
+func _test_capsule_kinds_game(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var frame := _colour_frame(Color("e83020"), 0.2)
+	var frames := [0]
+	ctl.colour_source = func() -> Image:
+		frames[0] += 1
+		return frame
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	game._unhandled_input(_key(KEY_ENTER))
+	var title_no_read: bool = frames[0] == 0  # nothing is read before the round takes capsules
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	_gm_step(ctl, 1.0)
+	var read_some: bool = frames[0] >= 4 and frames[0] <= 8 and ctl.colour_reader.count("fire") >= 4  # about sample_hz a second
+	var l: GameModeController.Lane = ctl.lanes["left"]
+	ctl.kinds.params["fire"]["hit_k"] = 3.0
+	game._unhandled_input(_key(KEY_Z))
+	var c: Dictionary = l.capsule
+	var kind_set: bool = l.state == "ABSORBING" and str(c.kind) == "fire" and ctl.last_kind == "fire" and ctl.colour_reader.count() == 0
+	var show_kind: bool = not ctl.fx.collects().is_empty() and str(ctl.fx.collects()[0].kind) == "fire"
+	_gm_step(ctl, ctl.absorb_s * GameModeVFX.COLLECT_RISE * 0.5)
+	var no_sound_yet: bool = not ctl.sounds.log.has("reveal_fire")
+	_gm_step(ctl, ctl.absorb_s * GameModeVFX.COLLECT_RISE)
+	var sound: bool = no_sound_yet and ctl.sounds.log.count("reveal_fire") == 1 and not ctl.sounds.log.has("reveal")
+	var files: bool = GameModeSounds.OWN_FILES.keys().all(func(k): return ctl.sounds.source_of(k) == "file")
+	sound = sound and files  # the magic sounds of 効果音ラボ (se/), not synthesised
+	show_kind = show_kind and sound
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.1)
+	var id: String = str(c.capsule_id)
+	var on_field: bool = l.state == "SIMULATING" and ctl.field.capsule_kind(id) == "fire" \
+		and ctl.field.capsule_color(id) == CapsuleKinds.COLORS["fire"]
+	var body: RigidBody2D = ctl.field._capsules[id].body
+	var physics: bool = absf(body.gravity_scale - ctl.field.gravity_scale * ctl.kinds.of("fire").gravity_k) < 0.05 \
+		and is_equal_approx(body.physics_material_override.bounce, ctl.kinds.of("fire").bounce) \
+		and is_equal_approx(body.linear_damp, ctl.kinds.of("fire").damp)
+	ctl.particles.clear()
+	_gm_step(ctl, 0.2)
+	var trail: bool = ctl.particles.sparks() > 0
+	var before: int = int(c.score)
+	var total_before: int = ctl.score.score
+	ctl.field.target_hit.emit(id, "bumper", "bumper_0", ctl.field.capsule_position(id))
+	var gained: int = int(c.score) - before
+	# the round's own score (the result, the ranking) gets the same points (review on #268)
+	var scored: bool = gained > 0 and gained % 3 == 0 and ctl.score.score - total_before == gained
+	var made: Array[String] = ctl.field.split_capsule(id, ["k1", "k2"] as Array[String])
+	var children: bool = made.size() == 2 and ctl.field.capsule_kind("k1") == "fire" and ctl.field.capsule_kind("k2") == "fire"
+	ctl.field.remove_capsule("k1")
+	ctl.field.remove_capsule("k2")
+	_ok(title_no_read and read_some and kind_set and show_kind and on_field and physics and trail and scored and children,
+		"capsule kinds #266: the arm camera is read while the round takes capsules; the capsule taken in is the colour it saw (red = fire): the show (with its own sound as it comes up big), the field's colour and sprite, its physics, its particles and its points (hit_k) follow it, and a multiball's balls are the same kind",
+		"%s %s %s %s %s %s %s %s(%d) %s" % [title_no_read, read_some, kind_set, show_kind, on_field, physics, trail, scored, gained, children])
+	# nothing sure (grey frames): a normal capsule, as ever; off: always normal
+	ctl.colour_source = func() -> Image: return _colour_frame(Color(0.5, 0.5, 0.5), 0.3)
+	ctl.colour_reader.clear()
+	_gm_step(ctl, 1.0)
+	var plain: bool = ctl.decide_kind() == "normal"
+	ctl.colour_source = func() -> Image: return _colour_frame(Color("2860f0"), 0.25)
+	ctl.colour_reader.clear()
+	_gm_step(ctl, 1.0)
+	var water: bool = ctl.decide_kind() == "water"
+	ctl.kinds_enabled = false
+	var off: bool = ctl.decide_kind() == "normal"
+	ctl.kinds_enabled = true
+	# no camera, mock Dials: mock_kind (the rehearsal shows the kinds); with frames, never
+	ctl.colour_source = Callable()
+	ctl.colour_reader.clear()
+	ctl.mock_kind = "green"
+	var mock_green: bool = ctl.decide_kind() == "green"
+	ctl.mock_kind = "random"
+	var random_one: bool = ctl.decide_kind() in ["fire", "water", "green"]
+	ctl.mock_kind = "normal"
+	var mock_plain: bool = ctl.decide_kind() == "normal"
+	_ok(plain and water and off and mock_green and random_one and mock_plain,
+		"capsule kinds #266: frames with no clear colour make a normal capsule; blue makes water; switched off always normal; with no camera and mock Dials the config's mock_kind (random by default)",
+		"%s %s %s %s %s %s" % [plain, water, off, mock_green, random_one, mock_plain])
+	_gm_free(game, rs)

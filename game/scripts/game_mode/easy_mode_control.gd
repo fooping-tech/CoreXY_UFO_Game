@@ -4,11 +4,16 @@ extends RefCounted
 ##
 ##   pinch and move        XY (the hand stick, as ever; nothing of this script)
 ##   a fist held hold_s    catch here by itself          -> the backend's `easy_grab`
-##   one finger held       carry to the portal (Dial 1, on the left) -> `easy_deliver {destination: 1}`
-##   (#200: the portal is on the left only. Two fingers mean nothing any more.)
+##                         and then carry it to the portal (Dial 1, on the left) by itself
+##                         -> `easy_deliver {destination: 1}` (#266: no finger to show any more)
+##   (#200: the portal is on the left only. #266: one finger and two mean nothing.)
 ##
 ##   OFF -> MANUAL_XY --fist--> AUTO_GRAB --(the backend caught)--> WAIT_DESTINATION
-##       --one finger--> DELIVER_DIAL_1 --(the backend delivered)--> MANUAL_XY
+##       --(at once, #266)--> DELIVER_DIAL_1 --(the backend delivered)--> MANUAL_XY
+##   The carry is asked for by this script as soon as the backend waits for it (the fist was
+##   the player's choice of both). It is still new motion: not while the gate is closed or the
+##   round takes nothing; a refusal is tried again auto_retry_s later, auto_tries times at most,
+##   then the wait runs out like before (EXPIRED: nothing moves, staff).
 ##   MANUAL_XY --request_reset() (a game starts)--> RESET --(the backend: claw open, arm at
 ##       the top)--> MANUAL_XY. The easy mode cannot raise the arm by hand, so every game
 ##       starts from there (#177). A fist with the arm down needs nothing here: the backend's
@@ -53,9 +58,7 @@ signal delivered(destination: int)
 signal cue(name: String)
 
 const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL", "FAULT"]
-const SIGN_OF := {"fist": "grab", "thumb": "grab", "point": "1"}
-## said while the catch waits for its one finger and two are shown
-const TWO_FINGERS_NOTE := "ゆびは 1ぽん だけ だしてね"
+const SIGN_OF := {"fist": "grab", "thumb": "grab"}
 
 ## how long a sign must be held, unbroken (config game_mode.easy.hold_s)
 var hold_s := 0.6
@@ -66,6 +69,10 @@ var cancel_hold_s := 1.5
 var neutral_s := 0.2
 ## no answer to a request for this long: FAULT (the request is never sent again)
 var request_timeout_s := 3.0
+## a refused carry is asked for again after this long, this many times in all (config
+## game_mode.easy.auto_retry_s / auto_tries)
+var auto_retry_s := 1.0
+var auto_tries := 3
 ## Sends a backend command: func(name: String, params: Dictionary) -> String (the request
 ## id; "" = it could not be sent).
 var send: Callable
@@ -73,7 +80,7 @@ var send: Callable
 var state := "OFF"
 ## why the last sign was not taken, or why it stopped (for the screen; "" = nothing)
 var note := ""
-## the sign building up now ("" / "grab" / "1" / "cancel") and its hold, 0..1
+## the sign building up now ("" / "grab" / "cancel") and its hold, 0..1
 var holding := ""
 var progress := 0.0
 ## the hand must show the neutral shape before a sign counts
@@ -89,6 +96,9 @@ var resets_sent := 0
 var grabs_sent := 0
 var cancels_sent := 0
 var delivers_sent := 0
+## carries asked for for this catch, and the time until the next may be
+var _tries := 0
+var _retry_left := 0.0
 
 var _hold := 0.0
 var _neutral := 0.0
@@ -105,6 +115,8 @@ func configure(cfg: Dictionary) -> void:
 	neutral_s = clampf(float(cfg.get("neutral_s", neutral_s)), 0.05, 2.0)
 	request_timeout_s = clampf(float(cfg.get("request_timeout_s", request_timeout_s)), 0.5, 30.0)
 	wait_s = float(cfg.get("wait_destination_s", wait_s))
+	auto_retry_s = clampf(float(cfg.get("auto_retry_s", auto_retry_s)), 0.2, 10.0)
+	auto_tries = clampi(int(cfg.get("auto_tries", auto_tries)), 1, 10)
 
 func enabled() -> bool:
 	return state != "OFF"
@@ -167,6 +179,8 @@ func _forget() -> void:
 	grab_id = ""
 	step = ""
 	wait_left_s = 0.0
+	_tries = 0
+	_retry_left = 0.0
 
 func _set_state(s: String) -> void:
 	if s == state:
@@ -182,7 +196,7 @@ func _fault(why: String) -> void:
 		_set_state("FAULT")
 		cue.emit("fault")
 
-## What the hand shows, for this script: "grab" / "1" / "neutral" / "" (nothing that
+## What the hand shows, for this script: "grab" / "neutral" / "" (nothing that
 ## can be judged: no hand, a stale event, the camera gone, another shape).
 static func sign_of(hand: Dictionary) -> String:
 	if not bool(hand.get("fresh", false)) or not bool(hand.get("camera_ok", false)) or not bool(hand.get("detected", false)):
@@ -256,9 +270,11 @@ func on_ack(rid: String, ok: bool, data: Dictionary) -> void:
 		if reason in ["timeout", "socket_closed"]:
 			_fault("はこぶ へんじが こない（%s）" % reason)
 		else:
-			# refused: the backend is still waiting (or has just given up: its report says so)
+			# refused: the backend is still waiting (or has just given up: its report says so).
+			# Asked again auto_retry_s later, while tries are left (#266).
 			destination = 0
 			need_neutral = true
+			_retry_left = auto_retry_s
 			note = refusal_text(reason)
 			_set_state("WAIT_DESTINATION")
 			cue.emit("refused")
@@ -306,6 +322,8 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 				_fault("つうしんが きれた")
 			elif grab_id != "":
 				_follow(status)
+				if state == "WAIT_DESTINATION":
+					_tick_wait(dt, sgn, hand, world)  # #266: the carry is asked for in the same tick
 		"WAIT_DESTINATION":
 			if not link:
 				_fault("つうしんが きれた")
@@ -340,10 +358,6 @@ func _held(want: String, sgn: String, dt: float) -> bool:
 func _tick_manual(dt: float, sgn: String, hand: Dictionary, world: Dictionary, status: Dictionary) -> void:
 	if sgn != "grab":
 		_hold_reset()
-		if sgn == "1" and not need_neutral:
-			note = "さきに グーで キャッチしてね"
-		elif sgn == "neutral" and note == "さきに グーで キャッチしてね":
-			note = ""
 		return
 	if need_neutral:
 		_hold_reset()
@@ -385,7 +399,22 @@ func _tick_manual(dt: float, sgn: String, hand: Dictionary, world: Dictionary, s
 	cue.emit("grab")
 
 func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> void:
-	# an open hand kept up (not the pinch, not the short one before the fingers): give it up
+	# #266: the carry first, by itself, as soon as it may be asked for
+	_retry_left = maxf(_retry_left - dt, 0.0)
+	if _tries < auto_tries and _retry_left <= 0.0:
+		if not bool(world.get("taking", false)):
+			# the round is over: nothing new is carried into a Dial that takes nothing
+			note = "じかんぎれ。かかりの ひとが カプセルを もどすよ"
+		elif str(world.get("gate", "")) != "":
+			# the hand may not move the robot now (the window lost its focus, the hand control
+			# is off, ...): a carry is new motion, so it waits for the gate (review on #170)
+			note = str(world.get("gate", ""))
+		else:
+			_hold_reset()
+			_deliver(1)
+			return
+	# the carry cannot be asked for (or was refused auto_tries times): an open hand kept up
+	# gives the catch up (not the pinch)
 	if sgn == "neutral" and str(hand.get("pose", "")) == "open" and not bool(hand.get("pinch", false)) and not need_neutral:
 		if str(world.get("gate", "")) != "":
 			_hold_reset()
@@ -413,36 +442,13 @@ func _tick_wait(dt: float, sgn: String, hand: Dictionary, world: Dictionary) -> 
 		_rid_left = request_timeout_s
 		_set_state("CANCEL")
 		return
-	if sgn != "1":
+	if holding == "cancel":
 		_hold_reset()
-		if sgn == "" and str(hand.get("pose", "")) == "peace" and bool(hand.get("detected", false)) and bool(hand.get("fresh", false)):
-			note = TWO_FINGERS_NOTE  # #200: two fingers carried to the right portal once
-		return
-	if note == TWO_FINGERS_NOTE:
-		note = ""
-	if need_neutral:
-		_hold_reset()
-		note = "いちど パーに してから ゆびを だしてね"
-		return
-	if not bool(world.get("taking", false)):
-		# the round is over: nothing new is carried into a Dial that takes nothing
-		_hold_reset()
-		note = "じかんぎれ。かかりの ひとが カプセルを もどすよ"
-		return
-	if str(world.get("gate", "")) != "":
-		# the hand may not move the robot now (the window lost its focus, the hand control is
-		# off, ...): a carry is new motion, so its sign is not read either (review on #170)
-		_hold_reset()
-		note = str(world.get("gate", ""))
-		return
-	if holding != "" and holding != sgn:
-		_hold_reset()  # another hold was building up: this one starts over
-	if not _held(sgn, sgn, dt):
-		return
-	var dest := int(sgn)
-	_hold_reset()
-	need_neutral = true
-	_neutral = 0.0
+
+## The carry to `dest` (#266: by itself, once the catch is up).
+func _deliver(dest: int) -> void:
+	_tries += 1
+	_retry_left = auto_retry_s
 	var rid := str(send.call("easy_deliver", {"destination": dest, "grab_id": grab_id})) if send.is_valid() else ""
 	if rid == "":
 		note = "バックエンドに おくれなかった"
@@ -539,7 +545,7 @@ func title_text() -> String:
 		"AUTO_GRAB":
 			return "じどうで キャッチちゅう…"
 		"WAIT_DESTINATION":
-			return "ゆび 1ぽんで ポータルへ！"
+			return "ポータルへ はこぶよ！"
 		"DELIVER_DIAL_1":
 			return "ひだりの ポータルへ はこぶよ"
 		"CANCEL":
@@ -550,7 +556,7 @@ func title_text() -> String:
 
 ## The backend's step in plain words.
 const STEP_JA := {"OPEN_CLAW": "つめを ひらく", "LOWER_TO_CATCH": "おりる", "CLOSE_CLAW": "つかむ", "RAISE_WITH_ITEM": "あがる",
-	"WAIT_DESTINATION": "ゆびの かずを まっている", "MOVE_TO_DIAL": "はこぶ", "LOWER_TO_RELEASE": "おりる", "RELEASE": "はなす",
+	"WAIT_DESTINATION": "はこぶ じゅんび", "MOVE_TO_DIAL": "はこぶ", "LOWER_TO_RELEASE": "おりる", "RELEASE": "はなす",
 	"RAISE_EMPTY": "あがる"}
 
 func step_text() -> String:
