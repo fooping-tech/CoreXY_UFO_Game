@@ -137,6 +137,7 @@ func _gm_game() -> Node:
 	ctl.ranking.path = ""  # never the real file of high scores
 	ctl.ranking_enabled = false  # the ranking (#155) has its own tests
 	ctl.mock_kind = "normal"  # the capsule kinds (#266) have their own tests: plain capsules here
+	ctl.board_max_s = 1000.0  # the board's own way back to the title (#271) has its own test
 	return game
 
 func _gm_step(ctl: GameModeController, secs: float) -> void:

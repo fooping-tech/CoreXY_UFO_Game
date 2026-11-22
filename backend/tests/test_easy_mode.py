@@ -783,3 +783,17 @@ def test_portal_keepout_from_the_config():
     assert e.portal_keepout_mm == 45.0 and e.near_portal(20.0, 130.0) != "" and e.near_portal(20.0, 150.0) == ""
     assert EasyParams.from_raw({"game_mode": {"easy": {}}}, "dry_run").portal_keepout_mm == 60.0
     assert EasyParams.from_raw({"game_mode": {"easy": {"portal_keepout_mm": -5}}}, "dry_run").portal_keepout_mm == 0.0
+
+
+async def test_the_status_says_why_a_catch_would_be_refused():
+    """#275: the game starts no score game while the easy catch would be refused."""
+    async with EasyRig() as rig:
+        assert rig.seq.status()["blockers"] == []
+        rig.robot.homed = False
+        assert any("not homed" in b for b in rig.seq.status()["blockers"])
+        rig.robot.homed = True
+        rig.jogging = True  # a jog passes by itself: no reason to hold a game back
+        assert rig.seq.status()["blockers"] == []
+        rig.jogging = False
+    async with EasyRig(easy=easy_params(confirmed=False, profile="real")) as rig:
+        assert rig.seq.status()["blockers"] != []

@@ -519,6 +519,12 @@ static func refusal_text(reason: String) -> String:
 		return "アラームちゅう（かかりの ひとを よんでね）"
 	if r.contains("not homed"):
 		return "げんてんふっきが いるよ（かかりの ひとを よんでね）"
+	if r.contains("z reference not set"):  # #275
+		return "アームの たかさが まだ きまっていない（校正タブ: Z の うえを きろく）"
+	if r.contains("claw open / closed"):  # #275
+		return "つめの ひらき・とじが まだ（校正タブで きろく）"
+	if r.contains("robot not connected"):  # #275
+		return "ロボットに つながっていない"
 	if r.contains("motors not enabled"):
 		return "モーターが オフ（かかりの ひとを よんでね）"
 	if r.contains("below safe_z"):

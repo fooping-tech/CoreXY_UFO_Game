@@ -154,6 +154,8 @@ var power_duck_db := -8.0
 var power_duck_s := 0.7
 ## the exhibition light's base mode that was last sent ({} = none of the game's)
 var _light_sent: Dictionary = {}
+var _light_override := {}  # #277: the light of a capsule's entrance while _light_override_left > 0
+var _light_override_left := 0.0
 var _light_session := -1  # the hub session _light_sent went to (a new session = send again)
 var _light_devices: GameModeDevices = null
 ## What the screen is while this mode is closed (main.gd sets it every frame): "title" (the
@@ -277,6 +279,8 @@ var _demo_left := 1.0
 var tutorial := GestureTutorialController.new()
 var tutorial_hud: GestureTutorialHud
 var tutorial_speech: StudySpeech
+## #271: what UFOくん says when the round's time is up
+const TIME_UP_LINE := "ゲーム終了！！"
 ## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
 var tutorial_auto := true
 ## what the practice shows: the round's own difficulty as it is played (set when it starts)
@@ -456,6 +460,7 @@ func _configure(cfg: Dictionary) -> void:
 	rank_hold_s = clampf(float(rk.get("hold_s", rank_hold_s)), 0.0, 20.0)
 	rank_record_s = clampf(float(rk.get("record_s", rank_record_s)), 0.0, 20.0)
 	board_exit_hold_s = clampf(float(rk.get("exit_hold_s", board_exit_hold_s)), 0.5, 20.0)
+	board_max_s = clampf(float(rk.get("board_max_s", board_max_s)), 2.0, 120.0)
 	countdown_s = float(cfg.get("countdown_s", countdown_s))
 	hurry_s = float(cfg.get("hurry_s", hurry_s))
 	warning_s = float(cfg.get("warning_s", warning_s))
@@ -572,7 +577,9 @@ func tick_title_hand(dt: float, hand: Dictionary) -> void:
 ## #253: the high scores' board by hand: an open hand held board_exit_hold_s goes back to the
 ## top title (as Esc), so the next player needs no keyboard. As on the title, an open hand
 ## counts only after the hand was seen in another shape (or not at all) since the board came up.
-var board_exit_hold_s := 3.0
+var board_exit_hold_s := 1.0  # #271: 3 s -> 1 s
+## #271: after a round the board goes back to the top title by itself after this long (s)
+var board_max_s := 8.0
 var board_hand_progress := 0.0
 var _board_hand_armed := false
 var _board_hand_entry := "?"
@@ -583,6 +590,14 @@ func tick_board_hand(dt: float, hand: Dictionary) -> void:
 		board_hand_progress = 0.0
 		_board_hand_entry = "?"
 		_board_hand_armed = false
+		return
+	if phase == "RESULT" and ranking_view_t >= board_max_s:  # #271: nobody there: on by itself
+		board_hand_progress = 0.0
+		_board_hand_entry = "?"
+		_board_hand_armed = false
+		if not _board_exit_pending:
+			_trace("board_exit", null, {"result": "%g s -> title" % board_max_s})
+		_board_exit_pending = true
 		return
 	var pose := str(hand.get("pose", "")) if bool(hand.get("fresh", false)) and bool(hand.get("detected", false)) else ""
 	if _board_hand_entry == "?":
@@ -608,7 +623,27 @@ func today_best() -> int:
 
 ## The line over START on the title: nothing when the easy mode is played (#198: there is no
 ## choice to show), or why it is not and what is played instead.
+## #275: why no game may start now: the easy mode is played and the backend would refuse its
+## catch (not homed, an alarm, the motors off, the values not recorded, ...). "" = it may.
+func start_blocked() -> String:
+	if demo or not easy_on() or main == null or not main.has_method("easy_blocker"):
+		return ""
+	return str(main.easy_blocker())
+
+## A start asked for while start_blocked(): nothing starts; the title says why (once a sound).
+func _refuse_start() -> bool:
+	var why := start_blocked()
+	if why == "":
+		return false
+	message = why
+	sounds.play("fault")
+	_trace("start_refused", null, {"result": why})
+	return true
+
 func difficulty_text() -> String:
+	var why := start_blocked()
+	if why != "":  # #275
+		return "はじめられないよ: " + why + "\nスタッフ: F9 で ふっき"
 	if easy_on():
 		return ""
 	return (easy_block + "\n" if easy_block != "" else "") + "→ てで ぜんぶ そうさして あそぶ"
@@ -702,7 +737,7 @@ func begin() -> void:
 ## The practice (#149): the spell, the hand shapes one by one, one real capsule, then the
 ## round. Nothing of it reaches the round: the round starts from a full reset.
 func start_tutorial() -> void:
-	if not _active or running():
+	if not _active or running() or _refuse_start():
 		return
 	_reset_round()
 	_set_phase("TUTORIAL")
@@ -849,7 +884,7 @@ func _tick_gauge_sound(dt: float) -> void:
 ## `after_practice`: what the Dials reported in the practice stays known (a repeated
 ## BALL_RECEIVED of the practice capsule is still old), everything else starts new.
 func start(after_practice := false) -> void:
-	if not _active or running():
+	if not _active or running() or _refuse_start():
 		return
 	var known := {}
 	var seen := _seen.duplicate()
@@ -875,6 +910,7 @@ func start(after_practice := false) -> void:
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
+	_light_override_left = 0.0
 	ranking_flow.flush()
 	score.reset()
 	_clear_powerups()
@@ -1037,6 +1073,8 @@ func tick(dt: float) -> void:
 		for live in _multi_balls.values():
 			balls += (live as Array).size()
 		fx.power_status.append("MULTI %d BALL" % balls)
+	if _light_override_left > 0.0:
+		_light_override_left = maxf(_light_override_left - dt, 0.0)
 	_sync_light()  # a power that ended, the last stretch: the light follows the state
 	# #258: the hand window steps aside (small in the corner, faint) while a capsule comes in and plays
 	_guide_k = move_toward(_guide_k, 0.0 if capsule_in_play() else 1.0, dt * 4.0)
@@ -1138,6 +1176,8 @@ func _time_up() -> void:
 	settle_left = settle_max_s
 	sounds.set_bgm(false)
 	sounds.play("timeup")
+	if not demo:
+		tutorial_speech.say([TIME_UP_LINE])  # #271: UFOくん calls the end
 	result_show.time_up()  # the picture and the thud; SETTLING goes on by itself
 	_trace("time_up", null, {})
 	_close_idle_lanes()
@@ -1318,6 +1358,11 @@ func _tick_lane(l: Lane, dt: float) -> void:
 			if before > reveal_at and l.t <= reveal_at:
 				var rk := str(l.capsule.get("kind", "normal"))
 				sounds.play("reveal" if rk == "normal" else "reveal_" + rk)
+				_capsule_light(l, l.t + drop_s)  # #277: the shelf in the capsule's colour
+			# #277: UFOくん shines (the show's "light" part): the shelf flashes with it
+			var shine_at := absorb_s * (1.0 - GameModeVFX.COLLECT_UP)
+			if before > shine_at and l.t <= shine_at:
+				_light("TRIGGER_EFFECT", {"effect": "SCORE", "duration_ms": int(shine_at * 1000.0) + 200, "intensity": 255})
 			if l.t <= 0.0:
 				l.t = drop_s
 				_set_lane(l, "DROPPING")
@@ -2030,6 +2075,7 @@ func on_stop_key() -> void:
 		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
+	_light_override_left = 0.0  # #277: a stop ends a capsule's light too
 	_demo_claw_closed = false  # a stop: nothing more is asked of the claw
 	devices.stop_all()
 	_cmds.clear()
@@ -2166,6 +2212,8 @@ static func light_mode_for(phase_now: String, last_stretch: bool, gold: bool) ->
 func light_mode() -> Dictionary:
 	if not _active:
 		return light_scene_for(scene_outside)
+	if _light_override_left > 0.0 and not _light_override.is_empty():
+		return _light_override  # #277: a capsule's entrance
 	return light_mode_for(phase, phase in ["PLAYING", "SETTLING"] and time_left <= hurry_s,
 		power_lights and powerups.active("double"))
 
@@ -2201,6 +2249,15 @@ func lights_tick(dt: float) -> void:
 ## last sent. Called at every change of phase and once a tick. Best effort, like all lights.
 ## A new hub session (the Illumination went back to its own light) or another hub (mock /
 ## backend) sends it again.
+## #277: the shelf in the colour of the capsule coming in, for `secs` (to the end of its drop),
+## then the round's light again (light_mode() goes back by itself). Decoration, like all lights.
+func _capsule_light(l: Lane, secs: float) -> void:
+	var c := capsule_color(l)
+	_light_override = {"mode": "CUSTOM", "brightness": 255, "speed": 200, "transition_ms": 120,
+		"color": [int(round(c.r * 255.0)), int(round(c.g * 255.0)), int(round(c.b * 255.0))]}
+	_light_override_left = maxf(secs, 0.1)
+	_sync_light()
+
 func _sync_light() -> void:
 	if devices != _light_devices or devices.session_id() != _light_session:
 		_light_devices = devices

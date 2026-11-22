@@ -406,7 +406,9 @@
       "enabled": true,
       "hold_s": 1.2,
       "record_s": 3.2,
-      "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once."
+      "exit_hold_s": 1.0,
+      "board_max_s": 8,
+      "_note": "The high scores (#155; docs/game_mode_spec.md §3.3): the ten best final scores (the score with its end bonuses) in user://game_mode/rankings.tsv (tab separated: rank, score, timestamp, id). No name is asked for or kept. A round that reached its result is offered by itself when the result's show is over; 0 points, a score that would be 11th or lower, the practice, a stopped round, the demo (--game-mode-demo) and a shortened round (--game-mode-seconds) make no record. enabled: false = no record and no board (the result ends as before). hold_s: how long the final score stands before NEW RECORD! / the board. record_s: how long NEW RECORD! is shown. Enter moves on at once. exit_hold_s (#253, #271: 1 s): an open hand held this long on the board goes back to the top title. board_max_s (#271): after a round the board goes back to the top title by itself after this long."
     },
     "debug_panel": false,
     "capsule_kinds": {

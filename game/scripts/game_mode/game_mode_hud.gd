@@ -236,7 +236,7 @@ func _process(dt: float) -> void:
 	_recover_button.visible = rec != "" and ctl.main != null and ctl.main.has_method("arm_recovering") and not ctl.main.arm_recovering()
 	_mode.text = ctl.difficulty_text()
 	_mode.visible = title and _mode.text != ""  # #198: nothing to say while the easy mode is played
-	_mode.add_theme_color_override("font_color", CYAN if ctl.easy_on() else (Color("ffd24a") if ctl.difficulty == "easy" else MAGENTA))
+	_mode.add_theme_color_override("font_color", Color("ff6b6b") if ctl.start_blocked() != "" else CYAN if ctl.easy_on() else (Color("ffd24a") if ctl.difficulty == "easy" else MAGENTA))
 	for i in _how.size():
 		_how[i].visible = title
 		_how[i].text = HOW_TO_EASY[i] if ctl.easy_on() else HOW_TO[i]
