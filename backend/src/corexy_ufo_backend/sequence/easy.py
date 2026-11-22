@@ -124,6 +124,8 @@ class EasyParams:
     catch_z: float | None = None  # real only: where the claw closes (the dry run: auto_catch.dry_run)
     stale_z: bool = False  # real only: Z was measured again since the heights were recorded
     saved_at: str = ""  # when the values were last recorded (shown: "the last session's values")
+    # #270: no catch that goes down within this many mm (XY) of a portal (0 = no keep-out)
+    portal_keepout_mm: float = 60.0
 
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None, profile: str, saved: dict[str, Any] | None = None) -> "EasyParams":
@@ -132,6 +134,7 @@ class EasyParams:
         gm = (raw or {}).get("game_mode")
         e = gm.get("easy") if isinstance(gm, dict) and isinstance(gm.get("easy"), dict) else {}
         wait = _num(e.get("wait_destination_s"))
+        keep = _num(e.get("portal_keepout_mm"))
         d = (saved if profile == "real" else e.get("dry_run")) or {}
         if not isinstance(d, dict):
             d = {}
@@ -139,7 +142,21 @@ class EasyParams:
                    release_z=_num(d.get("release_z")), wait_destination_s=wait if wait is not None else 15.0,
                    confirmed=d.get("confirmed") is True if profile == "real" else True,
                    catch_z=_num(d.get("catch_z")) if profile == "real" else None,
-                   saved_at=str(d.get("saved_at", "")) if profile == "real" else "")
+                   saved_at=str(d.get("saved_at", "")) if profile == "real" else "",
+                   portal_keepout_mm=max(keep, 0.0) if keep is not None else 60.0)
+
+    def near_portal(self, x: float, y: float) -> str:
+        """#270: "" or why a catch may not go down at (x, y): too near a portal's XY."""
+        if self.portal_keepout_mm <= 0 or not (math.isfinite(x) and math.isfinite(y)):
+            return ""
+        for n in DESTINATIONS:
+            d = self.dials.get(n)
+            if d is None:
+                continue
+            dist = math.hypot(x - d[0], y - d[1])
+            if dist < self.portal_keepout_mm:
+                return f"near the portal (Dial {n}, {dist:.0f} mm < {self.portal_keepout_mm:g} mm)"
+        return ""
 
     def problems(self, catch: AutoCatchParams, limits: RobotLimits, *, need_confirmed: bool = True) -> list[str]:
         """Why a delivery may not run with these values ([] = it may)."""
@@ -382,6 +399,11 @@ class EasySequencer(AutoCatchSequencer):
         errs = self.preconditions(any_height=low or reset)
         if not reset:
             errs += self.easy.problems(self.params, self.limits)
+            if not low:  # #270: it would go down onto the portal (coming up from low is fine)
+                s = self.robot.snapshot()
+                near = self.easy.near_portal(s.x, s.y)
+                if near:
+                    errs.append(near)
         if errs:
             raise RobotCommandError(("easy reset" if reset else "easy catch") + " refused: " + "; ".join(errs))
         if self.lock.locked():  # taken while refresh_status was waiting
