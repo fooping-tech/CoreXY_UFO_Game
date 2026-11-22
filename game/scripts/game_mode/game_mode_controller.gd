@@ -260,6 +260,8 @@ var _demo_left := 1.0
 var tutorial := GestureTutorialController.new()
 var tutorial_hud: GestureTutorialHud
 var tutorial_speech: StudySpeech
+## #271: what UFOくん says when the round's time is up
+const TIME_UP_LINE := "ゲーム終了！！"
 ## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
 var tutorial_auto := true
 ## what the practice shows: the round's own difficulty as it is played (set when it starts)
@@ -439,6 +441,7 @@ func _configure(cfg: Dictionary) -> void:
 	rank_hold_s = clampf(float(rk.get("hold_s", rank_hold_s)), 0.0, 20.0)
 	rank_record_s = clampf(float(rk.get("record_s", rank_record_s)), 0.0, 20.0)
 	board_exit_hold_s = clampf(float(rk.get("exit_hold_s", board_exit_hold_s)), 0.5, 20.0)
+	board_max_s = clampf(float(rk.get("board_max_s", board_max_s)), 2.0, 120.0)
 	countdown_s = float(cfg.get("countdown_s", countdown_s))
 	hurry_s = float(cfg.get("hurry_s", hurry_s))
 	warning_s = float(cfg.get("warning_s", warning_s))
@@ -550,7 +553,9 @@ func tick_title_hand(dt: float, hand: Dictionary) -> void:
 ## #253: the high scores' board by hand: an open hand held board_exit_hold_s goes back to the
 ## top title (as Esc), so the next player needs no keyboard. As on the title, an open hand
 ## counts only after the hand was seen in another shape (or not at all) since the board came up.
-var board_exit_hold_s := 3.0
+var board_exit_hold_s := 1.0  # #271: 3 s -> 1 s
+## #271: after a round the board goes back to the top title by itself after this long (s)
+var board_max_s := 8.0
 var board_hand_progress := 0.0
 var _board_hand_armed := false
 var _board_hand_entry := "?"
@@ -561,6 +566,14 @@ func tick_board_hand(dt: float, hand: Dictionary) -> void:
 		board_hand_progress = 0.0
 		_board_hand_entry = "?"
 		_board_hand_armed = false
+		return
+	if phase == "RESULT" and ranking_view_t >= board_max_s:  # #271: nobody there: on by itself
+		board_hand_progress = 0.0
+		_board_hand_entry = "?"
+		_board_hand_armed = false
+		if not _board_exit_pending:
+			_trace("board_exit", null, {"result": "%g s -> title" % board_max_s})
+		_board_exit_pending = true
 		return
 	var pose := str(hand.get("pose", "")) if bool(hand.get("fresh", false)) and bool(hand.get("detected", false)) else ""
 	if _board_hand_entry == "?":
@@ -1116,6 +1129,8 @@ func _time_up() -> void:
 	settle_left = settle_max_s
 	sounds.set_bgm(false)
 	sounds.play("timeup")
+	if not demo:
+		tutorial_speech.say([TIME_UP_LINE])  # #271: UFOくん calls the end
 	result_show.time_up()  # the picture and the thud; SETTLING goes on by itself
 	_trace("time_up", null, {})
 	_close_idle_lanes()

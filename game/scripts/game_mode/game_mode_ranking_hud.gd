@@ -111,7 +111,7 @@ func keys_text() -> String:
 		"board":
 			return ("Enter：もう一回      T：練習から      Esc：タイトル" if ctl.phase != "IDLE" \
 				else "Enter：スタート      R：もどる      Esc：タイトル") \
-				+ "\nパーを %d びょう：タイトルへ" % roundi(ctl.board_exit_hold_s)
+				+ "\nパーを %d びょう：タイトルへ" % maxi(roundi(ctl.board_exit_hold_s), 1)
 	return ""
 
 func _process(dt: float) -> void:
