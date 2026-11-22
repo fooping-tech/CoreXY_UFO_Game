@@ -16,7 +16,8 @@ import pytest
 from corexy_ufo_backend import services_check as sc
 from corexy_ufo_backend.study import StudyConfig, make_sheet_client
 from corexy_ufo_backend.study.sheet_client import (MAX_BYTES, SheetClient, SheetError, box_to_pixels, parse_result,
-                                                   find_paper, paper_view, prepare_image, zoom_region)
+                                                   find_paper, order_corners, paper_view, prepare_image,
+                                                   zoom_region)
 
 TOKEN = "sheet-secret-token-456"
 URL = "https://192.0.2.10:8444"
@@ -666,3 +667,19 @@ def test_without_a_sheet_or_reading_nothing_on_it_the_whole_frame_is_read():
     with pytest.raises(SheetError):
         client(server).read_sheet(desk_with_sheet())
     assert len(server.calls) == 1  # a refused token is not sent again for the whole frame
+
+
+def test_corners_stay_four_distinct_ones_however_the_sheet_is_turned():
+    # review on #255: about 45 degrees, the x + y / y - x extremes picked one corner twice
+    diamond = np.float32([(600, 103), (303, 400), (700, 797), (997, 500)])
+    tl, tr, br, bl = order_corners(diamond)
+    assert len({tuple(p) for p in (tl, tr, br, bl)}) == 4
+    # clockwise on the screen (y down): the turn tl -> tr -> br is positive
+    u, v = tr - tl, br - tr
+    assert u[0] * v[1] - u[1] * v[0] > 0
+    # an upright sheet in any order: the usual corners
+    up = order_corners(np.float32([(100, 300), (100, 10), (400, 300), (400, 10)]))
+    assert up.tolist() == [[100, 10], [400, 10], [400, 300], [100, 300]]
+    # the warp of the turned sheet is a real one
+    m = cv2.getPerspectiveTransform(np.float32([tl, tr, br, bl]), np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
+    assert abs(np.linalg.det(m)) > 1e-6

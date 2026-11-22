@@ -296,9 +296,18 @@ def find_paper(arr: np.ndarray) -> np.ndarray | None:
             break
     if quad is None:
         quad = cv2.boxPoints(cv2.minAreaRect(c)).astype(np.float32)
-    ssum, sdiff = quad.sum(1), np.diff(quad, axis=1).ravel()
-    return np.array([quad[np.argmin(ssum)], quad[np.argmin(sdiff)], quad[np.argmax(ssum)], quad[np.argmax(sdiff)]],
-                    np.float32)
+    return order_corners(quad)
+
+
+def order_corners(quad: np.ndarray) -> np.ndarray:
+    """The four corners as top-left, top-right, bottom-right, bottom-left: in turn round the
+    middle (clockwise on the screen, y down), starting from the one nearest the top-left. Four
+    distinct corners however the sheet is turned (picking each by the extremes of x + y and
+    y - x can pick one corner twice near 45 degrees: review on #255)."""
+    q = np.asarray(quad, np.float32).reshape(4, 2)
+    c = q.mean(axis=0)
+    q = q[np.argsort(np.arctan2(q[:, 1] - c[1], q[:, 0] - c[0]))]
+    return np.roll(q, -int(np.argmin(q.sum(1))), axis=0).astype(np.float32)
 
 
 def paper_view(data: bytes, long_side: int = LONG_SIDE) -> tuple[bytes, np.ndarray, np.ndarray, int, int] | None:
