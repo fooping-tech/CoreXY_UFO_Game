@@ -638,6 +638,21 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
 	_gm_step(ctl, 5.0)
 	_ok(ctl.phase == "RESULT" and ctl.guide_hidden(), "game mode #258: no hand window on the result (its corner would cover the lines)")
+	var mist_of := func(): return hub.executed.filter(func(e): return e[0] == GameModeDevices.ILLUMINATION and e[1] == "SET_MIST").map(func(e): return e[2])
+	var m0: Array = mist_of.call()
+	var capsule_mists := m0.filter(func(m): return int(m.duration_s) == ctl.mist_capsule_s)
+	var result_before := m0.filter(func(m): return int(m.duration_s) == ctl.mist_result_s).size()
+	_gm_step(ctl, 20.0)  # the result's show runs to its FINAL SCORE
+	var m1: Array = mist_of.call()
+	_ok(not capsule_mists.is_empty() and capsule_mists[0].pattern == "CONTINUOUS" and result_before == 0
+		and ctl.result_show.log.has("final") and m1.size() == m0.size() + 1
+		and m1[-1].pattern == "CONTINUOUS" and int(m1[-1].duration_s) == ctl.mist_result_s,
+		"game mode: mist for mist_capsule_s when a capsule is taken in; the result's mist only when its score settles (FINAL SCORE), once",
+		"%s -> %s" % [str(m0), str(m1)])
+	ctl.mist_enabled = false
+	_ok(not ctl.mist_burst(5), "mist off by config: nothing is sent")
+	ctl.mist_enabled = true
+	_ok(not ctl.mist_burst(0), "0 s: no mist")
 	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"
 		and hub.count(GM_L, "RELEASE_BALL") == 1 and _gm_sent(hub, GM_R) == 0 and hub.dials[GM_L].op_mode == "STANDBY"
 		and hub.dials[GM_L].cycle == 1 and ctl.hud.result_lines().contains("1500") and ctl.capsules.finished.size() == 1,
@@ -804,11 +819,40 @@ func _test_game_mode_powerup_followup(rs: Node) -> void:
 	# ---- the light's mode is a function of the state
 	var f := GameModeController.light_mode_for
 	_ok(f.call("COUNTDOWN", false, false).mode == "GAME_READY" and f.call("RESULT", true, true).mode == "RESULT"
-		and f.call("IDLE", true, true).is_empty() and f.call("STOPPED", false, true).is_empty(),
-		"light: READY in the countdown, RESULT at the end, not the game's outside a round")
+		and f.call("IDLE", true, true).mode == "IDLE" and f.call("STOPPED", false, true).is_empty()
+		and f.call("TUTORIAL", false, false).is_empty(),
+		"light: READY in the countdown, RESULT at the end, the title show on the score game's title, not the game's otherwise")
+	var g := GameModeController.light_scene_for
+	_ok(g.call("title").mode == "IDLE" and g.call("study").mode == "STUDY" and int(g.call("study").brightness) == 255
+		and g.call("").is_empty() and g.call("settings").is_empty(),
+		"light outside the score game: the title show, the bright study light, nothing elsewhere")
 	_ok(f.call("PLAYING", false, false).speed == 128 and f.call("PLAYING", true, false).speed == 230
 		and f.call("PLAYING", true, true).mode == "CUSTOM" and f.call("SETTLING", true, false).speed == 230,
 		"light: rainbow, the fast rainbow in the last stretch, gold over both while x2 runs")
+	# ---- the light while the score game is closed: the title's show, the study light
+	var outside := _gm_game()
+	var oc: GameModeController = outside.game_mode
+	oc.lights_tick(0.1)
+	var ohub := oc.mock_hub
+	var o0 := _gm_light_modes(ohub)
+	oc.scene_outside = "study"
+	oc.lights_tick(0.1)
+	oc.lights_tick(0.1)
+	var o1 := _gm_light_modes(ohub)
+	oc.scene_outside = ""
+	oc.lights_tick(0.1)
+	var o2 := _gm_light_modes(ohub)
+	ohub.restart_session()
+	ohub.connected = true
+	oc.scene_outside = "title"
+	oc.lights_tick(0.1)
+	var o3 := _gm_light_modes(ohub)
+	_ok(o1.size() == o0.size() + 1 and o1[-1].mode == "STUDY" and o2.size() == o1.size()
+		and o3.size() == o2.size() + 1 and o3[-1].mode == "IDLE",
+		"closed score game: the study light once, nothing for another screen, the title show (again after a new hub session)",
+		str(o3))
+	remove_child(outside)
+	outside.free()
 	var game := _gm_game()
 	var ctl := _gm_playing(game)
 	var hub := ctl.mock_hub

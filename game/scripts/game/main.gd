@@ -332,6 +332,8 @@ func _setup_study_mode() -> void:
 	backdrop.visible = false
 	study_mode.state_changed.connect(func(_p, c):
 		backdrop.visible = c != "OFF"
+		if c == "REWARD_REVEAL" and game_mode != null:  # the reward's show opens in the mist
+			game_mode.mist_burst(game_mode.mist_study_s)
 		if gesture_hud != null:
 			gesture_hud.hidden_by_study = c != "OFF")
 	if bool(GameConfig.get_value("study_mode", "autostart", false)):
@@ -706,6 +708,10 @@ func _process(dt: float) -> void:
 		game_mode.sounds.menu_on = game_mode.active() and game_mode.phase == "IDLE"
 		game_mode.sounds.tutorial_on = game_mode.active() and game_mode.phase == "TUTORIAL"
 		game_mode.sounds.silent = calibrating()
+		# the shelf's light outside the score game: the title's show, the study mode's desk light
+		var studying: bool = study_mode != null and study_mode.active()
+		game_mode.scene_outside = "study" if studying else ("title" if title_active() else "")
+		game_mode.lights_tick(dt)
 	if title_active():
 		title.set_status(_title_status())
 		if not settings_active():  # #183: one finger / two fingers pick a mode

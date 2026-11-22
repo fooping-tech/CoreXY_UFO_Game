@@ -138,6 +138,23 @@ var power_duck_db := -8.0
 var power_duck_s := 0.7
 ## the exhibition light's base mode that was last sent ({} = none of the game's)
 var _light_sent: Dictionary = {}
+var _light_session := -1  # the hub session _light_sent went to (a new session = send again)
+var _light_devices: GameModeDevices = null
+## What the screen is while this mode is closed (main.gd sets it every frame): "title" (the
+## app's title / mode choice), "study" (the study mode), "" (anything else: the light is left).
+var scene_outside := ""
+## The shelf's light outside a round. The title: the Illumination's lively IDLE show (many
+## colours). Study: the bright desk light (the warm COB tape full, the WS2811 a bright white).
+const TITLE_LIGHT := {"mode": "IDLE", "brightness": 200, "speed": 128, "transition_ms": 600}
+const STUDY_LIGHT := {"mode": "STUDY", "brightness": 255, "speed": 128, "transition_ms": 800}
+## The Illumination's mist (config game_mode.mist): a capsule taken in (the portal opens), the
+## result's score settling (FINAL SCORE), the study mode's reward. Seconds of continuous mist;
+## the Illumination stops it by itself (and at its own maximum, at STOP_ALL, at a lost hub
+## link). 0 = no mist for that one.
+var mist_enabled := true
+var mist_capsule_s := 3
+var mist_result_s := 8
+var mist_study_s := 6
 var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
@@ -428,6 +445,11 @@ func _configure(cfg: Dictionary) -> void:
 	warning_s = float(cfg.get("warning_s", warning_s))
 	settle_max_s = float(cfg.get("settle_max_s", settle_max_s))
 	lights = bool(cfg.get("lights", lights))
+	var mc: Dictionary = cfg.get("mist", {}) if cfg.get("mist") is Dictionary else {}
+	mist_enabled = bool(mc.get("enabled", mist_enabled))
+	mist_capsule_s = clampi(int(mc.get("capsule_s", mist_capsule_s)), 0, 60)
+	mist_result_s = clampi(int(mc.get("result_s", mist_result_s)), 0, 60)
+	mist_study_s = clampi(int(mc.get("study_s", mist_study_s)), 0, 60)
 	dial_leds = bool(cfg.get("dial_leds", dial_leds))
 	visual_quality = str(cfg.get("visual_quality", visual_quality))
 	effects = bool(cfg.get("effects", effects))
@@ -1206,6 +1228,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 		"bonus_lock":
 			sounds.play("score_lock", "", 1.26)
 		"final":
+			mist_burst(mist_result_s)  # the score is settled: the shelf fills with mist
 			if int(d.get("points", 0)) > 0:
 				sounds.play("final_hit")
 				sounds.play("result")  # the fanfare
@@ -1232,6 +1255,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 			# skipped, or shown without the show: the fanfare still marks the result, once
 			if str(d.get("how", "")) in ["skipped", "plain"] and not result_show.log.has("final"):
 				sounds.play("result")
+				mist_burst(mist_result_s)  # the score settled without its show: the mist all the same
 
 ## Paper falls from the top of the screen in the three neon colours.
 func _confetti(bursts: int) -> void:
@@ -1346,6 +1370,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 		return
 	l.t = absorb_s
 	_set_lane(l, "ABSORBING")
+	mist_burst(mist_capsule_s)  # the portal opens in a cloud
 	backdrop.side_pulse(l.side)
 	fx.react("call")
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
@@ -1405,6 +1430,8 @@ func _collect_powerup(capsule_id: String, kind: String, pos: Vector2) -> void:
 		particles.ring(pos, Color("3ff0ff"), 120.0, 0.5)
 		backdrop.pulse(Color("ffe03c"), 0.9)
 		_shake(0.5)
+	if power_lights:  # the shelf flashes with the screen's pickup
+		_light("TRIGGER_EFFECT", {"effect": "CATCH", "duration_ms": 600, "intensity": 230})
 	if power_sounds:
 		sounds.play({"speed": "power_speed", "multiball": "power_multi", "double": "power_double"}[kind])
 		sounds.duck(power_duck_s, power_duck_db)  # the tune steps back under the pickup's sound
@@ -1988,7 +2015,12 @@ func _mock_ball(side: String) -> bool:
 # ------------------------------------------------------------------ lights / trace
 ## The Illumination: decoration. Sent and forgotten (a refusal is only traced).
 func _light(name: String, params: Dictionary) -> bool:
-	if not lights or not devices.available():
+	if not lights:
+		return false
+	return _illumination(name, params)
+
+func _illumination(name: String, params: Dictionary) -> bool:
+	if not devices.available():
 		return false
 	var rid := devices.command(GameModeDevices.ILLUMINATION, name, params)
 	_cmds[rid] = {"lane": null, "what": "light", "left": command_timeout_s}
@@ -2000,6 +2032,8 @@ func _light(name: String, params: Dictionary) -> bool:
 ## fast rainbow, because that is what the state says. {} = not the game's to set.
 static func light_mode_for(phase_now: String, last_stretch: bool, gold: bool) -> Dictionary:
 	match phase_now:
+		"IDLE":  # the score game's own title
+			return TITLE_LIGHT
 		"COUNTDOWN":
 			return {"mode": "GAME_READY", "brightness": 160, "speed": 128, "transition_ms": 300}
 		"PLAYING", "SETTLING":
@@ -2013,12 +2047,48 @@ static func light_mode_for(phase_now: String, last_stretch: bool, gold: bool) ->
 	return {}
 
 func light_mode() -> Dictionary:
+	if not _active:
+		return light_scene_for(scene_outside)
 	return light_mode_for(phase, phase in ["PLAYING", "SETTLING"] and time_left <= hurry_s,
 		power_lights and powerups.active("double"))
 
+## The light of a screen outside the score game ({} = not the game's to set).
+static func light_scene_for(scene: String) -> Dictionary:
+	match scene:
+		"title":
+			return TITLE_LIGHT
+		"study":
+			return STUDY_LIGHT
+	return {}
+
+## The mist for `seconds` (the result here; main.gd: the study mode's reward). Decoration like
+## the lights: sent and forgotten, never waited for. false = not sent (off, 0 s, no hub).
+func mist_burst(seconds: int) -> bool:
+	if not mist_enabled or seconds <= 0:
+		return false
+	if not _active:
+		use_devices(devices_wanted)
+	return _illumination("SET_MIST", {"pattern": "CONTINUOUS", "duration_s": seconds})
+
+## While this mode is closed (main.gd, every frame): the title's and the study mode's light.
+## Nothing else of the mode runs; the answers to the light commands still time out here.
+func lights_tick(dt: float) -> void:
+	if _active:
+		return
+	use_devices(devices_wanted)
+	devices.tick(dt)
+	_expire_commands(dt)
+	_sync_light()
+
 ## The one place SET_LIGHT_MODE is sent from: when what the state asks for is not what was
 ## last sent. Called at every change of phase and once a tick. Best effort, like all lights.
+## A new hub session (the Illumination went back to its own light) or another hub (mock /
+## backend) sends it again.
 func _sync_light() -> void:
+	if devices != _light_devices or devices.session_id() != _light_session:
+		_light_devices = devices
+		_light_session = devices.session_id()
+		_light_sent = {}
 	var want := light_mode()
 	if want.is_empty():
 		_light_sent = {}

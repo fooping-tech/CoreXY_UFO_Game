@@ -283,12 +283,13 @@ cd CoreXY_UFO_Game/game
 
 ### テストタブ（設定画面）
 
-設定画面の「テスト」タブで、周辺機器（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub): ESP-NOW ハブ M5AtomS3R、イルミ ATOM、M5Dial ×2）の動作を確かめる。UFO-DeviceHub のブラウザの試験画面（`pc.web_console`）と同じ操作を、ゲームのバックエンド経由で行う（#108）。
+設定画面の「テスト」タブで、周辺機器（[UFO-DeviceHub](https://github.com/fooping-tech/UFO-DeviceHub): ESP-NOW ハブ M5AtomS3R、イルミ ATOM、M5Dial（システムごとに 1 台）、スタッフ用リモコン）の動作を確かめる。UFO-DeviceHub のブラウザの試験画面（`pc.web_console`）と同じ操作を、ゲームのバックエンド経由で行う（#108）。
 
 - 使うには: 設定タブの「実機」で「周辺機器のハブを使う」をオンにして保存し、`./start.sh` で起動し直す（`config/local_settings.json` の `devicehub.enabled`）。ハブのポートは `auto`（ロボット（Core2）のポートは試さない）・ポート名・`mock`（実機なしの模擬ハブ）。システム番号（1 / 2）が違うハブにはつながない。
 - **試験画面（`pc.web_console`）とは同時に使えない**（シリアルポートは 1 つのプログラムだけ。バックエンドは排他で開く）。先に試験画面を止める。
-- できること: 機器の一覧（状態・RTT・セッション・fw）と診断（GET_DIAG）／照明モード（明るさ・速さ・フェード・色）／ミスト（連続・BREATH・PUFF・OFF、時間）／演出（TRIGGER_EFFECT、時間・強さ）／蒸気リレー（パルス・OFF）／M5Dial ×2（GAME・STANDBY・受取待ち・解除・排出）／イベントのログ（ボール受取・排出・リレー完了など）。
+- できること: 機器の一覧（状態・RTT・セッション・fw）と診断（GET_DIAG）／照明モード（明るさ・速さ・フェード・色）／ミスト（連続・BREATH・PUFF・OFF、時間）／演出（TRIGGER_EFFECT、時間・強さ）／蒸気リレー（パルス・OFF）／M5Dial（GAME・STANDBY・受取待ち・解除・排出）／イベントのログ（ボール受取・排出・リレー完了など）。
 - **ミスト・リレー・サーボが実際に動く**。止めるときは STOP ALL か Space（テストタブを開いている間は、Space でハブにも STOP_ALL を送る）。クレーンには何も送らない。
+- ゲームが自分で送る照明とミスト（テストタブとは別）: タイトル画面は IDLE（棚のにぎやかな演出）、勉強モードは STUDY（電球色の COB 全灯 + 白っぽい明るい色）、スコアゲームは状態と演出に合わせたモードと TRIGGER_EFFECT。ミストはカプセルが投入されたとき `game_mode.mist.capsule_s`（3 秒）、結果発表でスコアが確定したとき `game_mode.mist.result_s`（8 秒）、勉強のごほうび発表で `game_mode.mist.study_s`（6 秒）だけ出す（`game_mode.mist.enabled` で止められる。`game_mode.lights` が false なら照明は送らない）。
 - 通信の中身（プロトコル・セッション・ACK・再送）は UFO-DeviceHub の Python パッケージ `ufo-devicehub` をそのまま使う（`external/UFO-DeviceHub/` の clone。コピーではない。上の「UFO-DeviceHub のコードを使う」）。このゲームだけのコードは `backend/src/corexy_ufo_backend/devicehub/service.py`。
 - **実機のハブ・イルミ・M5Dial では未検証**（UFO-DeviceHub の模擬ハブで確認）。
 
