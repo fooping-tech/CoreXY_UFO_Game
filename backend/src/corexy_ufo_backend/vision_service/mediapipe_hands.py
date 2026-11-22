@@ -120,7 +120,9 @@ class MediaPipeHandTracker(HandTracker):
         elif start:
             threading.Thread(target=self._build_next, name="hand-landmarker-build", daemon=True).start()
 
-    def track(self, frame_bgr: Any) -> HandResult:
+    def track(self, frame_bgr: Any, ts_ms: int | None = None) -> HandResult:
+        """`ts_ms`: the frame's time for MediaPipe's VIDEO mode (a replayed video, #256);
+        by default the clock. Kept strictly increasing either way."""
         import cv2  # type: ignore
 
         t0 = time.perf_counter()
@@ -129,7 +131,8 @@ class MediaPipeHandTracker(HandTracker):
         else:
             image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         # VIDEO mode needs strictly increasing timestamps
-        ts = max(int((time.monotonic() - self._t0) * 1000), self._last_ts + 1)
+        now = int((time.monotonic() - self._t0) * 1000) if ts_ms is None else int(ts_ms)
+        ts = max(now, self._last_ts + 1)
         self._last_ts = ts
         self._maybe_swap()
         res = self._landmarker.detect_for_video(image, ts)
@@ -139,6 +142,8 @@ class MediaPipeHandTracker(HandTracker):
             top = handed[0] if handed else None
             out.handedness.append(top.category_name if top else "?")
             out.scores.append(float(top.score) if top else 0.0)
+        for hand in res.hand_world_landmarks or []:
+            out.world.append([(lm.x, lm.y, lm.z) for lm in hand])
         out.detected = bool(out.landmarks)
         if out.landmarks:
             out.gesture = classify_gesture(out.landmarks[0])
