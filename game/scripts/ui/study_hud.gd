@@ -801,7 +801,8 @@ static func key_help(state: String, mode: String) -> String:
 		parts.append("1/2/3 記入（模擬）")
 	elif state in StudyVoice.TALK_STATES:
 		parts.append("V 押して話す")  # #233
-	parts.append_array(["F6 スキップ", "F7 失敗注入", "F8 最初から", "F5 終了", "Esc タイトル"])
+	# #260: the staff's keys (StaffControl), then the developers' (Shift)
+	parts.append_array(["F6 とばす", "F7 ゲームへ", "F8 メニュー", "F9 ふっき", "Shift+F7 失敗注入", "Shift+F8 最初から", "F5 終了"])
 	return "  ".join(parts)
 
 ## #232: the sheet as it goes to the local LLM server, from the overview camera now and then.

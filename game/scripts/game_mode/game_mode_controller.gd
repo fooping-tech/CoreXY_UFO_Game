@@ -198,6 +198,9 @@ var message := ""
 var session := 0
 ## seconds since start() (the score's clock)
 var clock := 0.0
+## the hand window (#258): 1 = full, 0 = stepped aside (small in the corner, faint) while a
+## capsule comes in and plays
+var _guide_k := 1.0
 
 # ---- tuning (config game_mode; docs/game_mode_spec.md §5) ----
 var duration_s := 150.0
@@ -205,7 +208,7 @@ var countdown_s := 3.0
 var hurry_s := 30.0
 var warning_s := 10.0
 var settle_max_s := 30.0
-var absorb_s := 0.85
+var absorb_s := 1.95  # #258: the collection show
 var drop_s := 0.25
 var return_s := 0.9
 var release_sync_s := 0.6
@@ -987,12 +990,11 @@ func tick(dt: float) -> void:
 		for live in _multi_balls.values():
 			balls += (live as Array).size()
 		fx.power_status.append("MULTI %d BALL" % balls)
-	# under the easy mode's strip / panel (#169) when that is on the screen
-	fx.power_top = 12.0
-	if easy_on() and (phase in ["COUNTDOWN", "PLAYING", "SETTLING"]) and main != null and main.get("easy") != null:
-		fx.power_top = 212.0 if (main.easy.busy() or main.easy.faulted()) else 96.0
 	_sync_light()  # a power that ended, the last stretch: the light follows the state
-	if phase != "STOPPED":
+	# #258: the hand window steps aside (small in the corner, faint) while a capsule comes in and plays
+	_guide_k = move_toward(_guide_k, 0.0 if capsule_in_play() else 1.0, dt * 4.0)
+	# #258: UFOくん waits where it is while a capsule is collected and dropped from it
+	if phase != "STOPPED" and not capsule_arriving():
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
 	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
@@ -1296,7 +1298,34 @@ func _tick_lane(l: Lane, dt: float) -> void:
 			if l.t <= 0.0:
 				_set_lane(l, "CLOSED")
 
-## A capsule is taken in: the drop point is where the UFO is now, and it never changes.
+## A capsule is on its way in (the collection show, the drop from UFOくん): the UFO waits.
+func capsule_arriving() -> bool:
+	return lanes.values().any(func(l): return l.state in ["ABSORBING", "DROPPING"])
+
+## A capsule comes in or is on the field: the hand window turns faint (#258).
+func capsule_in_play() -> bool:
+	return lanes.values().any(func(l): return l.state in ["ABSORBING", "DROPPING", "SIMULATING"])
+
+## #258: the hand window shows while the round is played (the countdown, the round, the
+## settling) and with the practice capsule (a banner over the field). Not on the score game's
+## title and result / ranking screens (its corner would cover their cards and lines), nor in
+## the practice's steps (they show the hand camera beside their hand pictures).
+func guide_hidden() -> bool:
+	if phase == "TUTORIAL":
+		return practice == ""
+	return not (phase in ["COUNTDOWN", "PLAYING", "SETTLING"]) or ranking_view != ""
+
+## How much of the hand window shows now (1 = all; GUIDE_FAINT while a capsule plays).
+func guide_alpha() -> float:
+	return lerpf(GameModeLayout.GUIDE_FAINT, 1.0, _guide_k)
+
+## How big the hand window is now (1; GUIDE_SMALL in the bottom right corner while a capsule plays).
+func guide_scale() -> float:
+	var e := _guide_k * _guide_k * (3.0 - 2.0 * _guide_k)
+	return lerpf(GameModeLayout.GUIDE_SMALL, 1.0, e)
+
+## A capsule is taken in: the drop point is where the UFO is now, and it never changes (the
+## UFO waits there until the capsule is dropped, #258).
 func _take(l: Lane, cycle: int, late: bool) -> void:
 	var c = capsules.create(l.device, session, cycle, ufo.x(), late)
 	if c == null:
@@ -1321,7 +1350,8 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	fx.react("call")
 	fx.play("capsule_portal_open", l.side, Vector2.ZERO, absorb_s)
 	fx.play("capsule_absorb", l.side, Vector2.ZERO, absorb_s)
-	fx.play("capsule_transfer_trail", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
+	# #258: up from the port, big in the middle (カプセル回収！), up into UFOくん, its light
+	fx.play("capsule_collect", l.side, Vector2(c.drop_x, PinballField.SPAWN_Y), absorb_s)
 	sounds.play("absorb")
 	_led(l, "INTAKE")
 	_light("TRIGGER_EFFECT", {"effect": "BALL_RECEIVED", "duration_ms": 800, "intensity": 200})
@@ -1911,8 +1941,6 @@ func handle_key(keycode: int) -> bool:
 				ranking_flow.toggle()
 				return true
 			return false
-		KEY_F6, KEY_F7, KEY_F8:
-			return _staff_key(keycode)
 		KEY_F2, KEY_F3, KEY_F4:
 			# the staff's / the developer's: take that power now (#188)
 			if not power_debug_keys or phase != "PLAYING":
@@ -1923,20 +1951,20 @@ func handle_key(keycode: int) -> bool:
 			return _mock_ball("left")
 	return false
 
-## Staff keys of the practice (function keys: not hit by accident). F6 = this step again,
-## F7 = on to the next step, F8 = leave the practice out. A capsule on its way through the
-## practice is never left behind: F7 / F8 wait until it is back. Dials waiting for the
-## practice capsule are disarmed before the round's countdown (in which nothing is taken).
-func _staff_key(keycode: int) -> bool:
+## The staff's steps of the practice (#260: StaffControl; F6 = "next" on to the next step,
+## F7 = "all" the practice left out, Shift+F6 = "retry" this step again). A capsule on its way
+## through the practice is never left behind: next / all wait until it is back. Dials waiting
+## for the practice capsule are disarmed before the round's countdown (nothing is taken then).
+func staff_step(kind: String) -> bool:
 	if phase != "TUTORIAL":
 		return false
 	if practice_busy():
 		tutorial.guide = "カプセルが もどるまで まってね"
 		return true
-	match keycode:
-		KEY_F6:
+	match kind:
+		"retry":
 			tutorial.retry_step()
-		KEY_F7, KEY_F8:
+		"next", "all":
 			if practice == "open":
 				# the Dials are waiting for a capsule: they are closed first (a capsule that lands
 				# meanwhile goes straight back out), and only then does the round start
@@ -1945,7 +1973,7 @@ func _staff_key(keycode: int) -> bool:
 				tutorial.guide = "ポータルを とじているよ…"
 			elif practice == "closing":
 				pass  # already on its way
-			elif keycode == KEY_F7 and tutorial.kind() != "practice":
+			elif kind == "next" and tutorial.kind() != "practice":
 				tutorial.skip_step()
 			else:
 				tutorial.skip_all()

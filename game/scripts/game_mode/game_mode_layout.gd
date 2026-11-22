@@ -7,10 +7,13 @@ extends RefCounted
 ##
 ## From the top:
 ##   HUD        y    0 ..  114   SCORE (left), TIME (right)
-##   STATUS     y  130 ..  242   the hand (left), the combo (middle), the arm camera (right)
+##   STATUS     y  130 ..  242   the messages (left, #258), the combo (middle), the arm camera (right)
 ##   RAIL       y  250 ..  352   UFOくん going left and right
 ##   FIELD      y  352 .. 1100   the pinball field, tall
 ##   DIALS      y 1100 .. 1280   Dial 1's port bottom left (#200: the only port)
+##   GUIDE      x 400 .. 708, y 820 .. 1268   the hand window (#258): the hand camera and what
+##              the hand should do now, bottom right, over the field's corner (faint while a
+##              capsule comes in and is on the field)
 ##
 ## Dial 1 is the left of the screen, as the real Dial stands beside the monitor. Nothing here is a robot coordinate: this is the picture only.
 
@@ -25,9 +28,11 @@ const TIME_RECT := Rect2(368, 10, 340, 104)
 ## the staff's key hint, small, over the status row
 const HINT_Y := 116.0
 
-# ---- the status row: the hand, the combo, the arm camera
+# ---- the status row: the messages, the combo, the arm camera
 const STATUS_Y := 130.0
-const GESTURE_RECT := Rect2(12, 130, 232, 112)
+## #258: the round's short messages (COMBO, the power timers) here, outside the field (the
+## hand panel that sat here is the guide window now)
+const MESSAGE_RECT := Rect2(12, 130, 232, 112)
 const SCOPE_RECT := Rect2(476, 130, 232, 112)
 ## the combo and the jackpot notice, between the two panels
 const COMBO_RECT := Rect2(252, 130, 216, 112)
@@ -40,6 +45,18 @@ const FIELD_LEFT := 30.0
 const FIELD_RIGHT := 690.0
 const FIELD_TOP := 352.0
 const FIELD_FLOOR := 1066.0
+
+# ---- the hand window (#258), bottom right: one rounded window, the camera on top (GUIDE_SPLIT
+# high: the camera, the hand's state, the stick), the easy mode's guide under it
+const GUIDE_RECT := Rect2(400, 820, 308, 448)
+const GUIDE_SPLIT := 300.0
+## the camera in the window (4:3)
+const GUIDE_CAM := Rect2(8, 8, 292, 219)
+const GUIDE_RADIUS := 14
+## while a capsule comes in and plays the window steps aside (#258): this small, into the
+## bottom right corner (GUIDE_RECT.end stays put), and this faint
+const GUIDE_SMALL := 0.42
+const GUIDE_FAINT := 0.6
 
 # ---- the Dial's port (#200: the left one only; the right of this band is empty sky)
 const DIALS_Y := 1100.0
