@@ -59,6 +59,8 @@ var gesture_gate_reason := ""
 ## itself, one / two fingers = carry to Dial 1 / 2). Its own state; it only asks the backend
 ## for the sequence (`_easy_send`) and follows the backend's report.
 var easy := EasyModeControl.new()
+## #260: the staff's operations (F6..F10 now; an outside device later): StaffControl.run()
+var staff := StaffControl.new(self)
 ## The backend's link is open, as the hand control's gate and the easy mode see it (the
 ## tests put a stand-in here; commands still go out through `ws` only).
 var backend_link: Callable = func() -> bool: return RobotState.source == "websocket" and ws.enabled and ws.is_open()
@@ -1199,6 +1201,20 @@ func _on_easy_cue(name: String) -> void:
 			sfx.play_cue("lost")
 
 # ------------------------------------------------------------ recovery from the game's screen (#179)
+## Shift + F6..F8: what those keys did before #260, for the developers: the practice's step
+## again (score game), the next failure injected / the study mode from the start (study mode).
+func _developer_key(keycode: int) -> bool:
+	if keycode == KEY_F6 and game_mode != null and game_mode.active():
+		return game_mode.staff_step("retry")
+	if study_mode != null and study_mode.active():
+		if keycode == KEY_F7:
+			study_mode.debug_next_failure()
+			return true
+		if keycode == KEY_F8:
+			study_mode.start()
+			return true
+	return false
+
 ## The arm cannot be used as it is (the backend's robot): an alarm (a stop that had to cut a
 ## moving servo with ABORT, an emergency stop), or homing lost. "" = it can.
 func arm_recovery_reason() -> String:
@@ -1214,7 +1230,8 @@ func arm_recovery_reason() -> String:
 func arm_recovering() -> bool:
 	return RobotState.source == "websocket" and bool(RobotState.calibration_prepare.get("active", false))
 
-## Staff, from the game's screen (F10, or the button on the score game's screen): the alarm
+## Staff, from any screen (F9 = StaffControl's "recover", #260; or the button on the score game's
+## screen): the alarm
 ## cleared, then the preparation (#167: motors, Z, the arm to the top, homing, the middle, the
 ## claw open). The same two commands as the debug panel's 「アラーム解除」 and the 校正 tab's
 ## 「準備をまとめて実行」, in that order; the backend refuses whatever is not in order. The
@@ -1639,6 +1656,13 @@ func _unhandled_input(ev: InputEvent) -> void:
 			fullscreen_override = "off" if fullscreen_wanted() else "on"
 			apply_window_mode()
 			return
+		# #260: the staff's operations, the same on every screen (before the screens' own keys)
+		var staff_action := StaffControl.action_for_key(ev.keycode, ev.shift_pressed)
+		if staff_action != "" and not text_entry_focused():
+			staff.run(staff_action, "key")
+			return
+		if ev.shift_pressed and _developer_key(ev.keycode):
+			return
 		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)
 			return
@@ -1647,14 +1671,6 @@ func _unhandled_input(ev: InputEvent) -> void:
 			return
 		if ev.keycode == KEY_ESCAPE and title != null and not text_entry_focused():
 			show_title()
-			return
-		# staff: the arm out of an alarm / without homing, from the game's own screen (#179)
-		if ev.keycode == KEY_F10 and game_mode != null and game_mode.active():
-			recover_arm()
-			return
-		# staff: the easy mode out of its stop (#169), after the crane was put right by hand
-		if ev.keycode == KEY_F9 and easy.faulted():
-			easy.reset()
 			return
 		# the study mode's keys first (Enter, its HELP key, F5..F8, ...); Space stays the game's stop
 		if study_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
