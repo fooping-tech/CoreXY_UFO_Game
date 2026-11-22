@@ -41,6 +41,12 @@ var last_input: Dictionary = {}
 var last_action := ""
 ## frames in a row with the move key held (0 = not held)
 var move_frames := 0
+## the move key was held when the stream lapsed (review on #263): when the frames come back
+## with it still held, that is NOT a new press. The pinch is passed on as it is (at the centre)
+## so GestureControl's forced-stop latch holds until a real release frame (move = false).
+var held_over := false
+## the last accepted frame had the move key held
+var _last_move := false
 
 ## The remote's input is the hand now.
 func present(now_ms: float) -> bool:
@@ -65,8 +71,11 @@ func accept_frame(d: Dictionary, now_ms: float) -> bool:
 	if f < 0 or (not restarted and not frame_newer(f, last_frame)):
 		dropped += 1
 		return false
+	var move := bool(d.get("move", false))
 	if not present(now_ms):
-		move_frames = 0  # a new stream: a held key starts as a new press
+		move_frames = 0  # a new stream: a new press starts staged ...
+		held_over = move and _last_move  # ... unless the key was never let go
+	_last_move = move
 	last_frame = f
 	last_frame_ms = now_ms
 	frames += 1
@@ -129,6 +138,11 @@ func staged(d: Dictionary) -> Dictionary:
 	var out := d.duplicate()
 	if not bool(d.get("move", false)):
 		move_frames = 0
+		held_over = false  # a real release: the next press is a new one
+		return out
+	if held_over:
+		out["x"] = 0  # still held across the gap: a pinch that moves nothing, latched
+		out["y"] = 0
 		return out
 	move_frames += 1
 	if move_frames <= 2:

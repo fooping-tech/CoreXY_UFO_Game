@@ -66,6 +66,7 @@ var staff := StaffControl.new(self)
 var remote := StaffRemote.new()
 ## whose hand events GestureControl is reading: "camera" (the backend's vision) or "remote"
 var hand_source := "camera"
+var _remote_scheme_logged := false
 ## The backend's link is open, as the hand control's gate and the easy mode see it (the
 ## tests put a stand-in here; commands still go out through `ws` only).
 var backend_link: Callable = func() -> bool: return RobotState.source == "websocket" and ws.enabled and ws.is_open()
@@ -231,7 +232,8 @@ func _ready() -> void:
 	ws.hand_control.connect(_on_hand_control.bind(ws))
 	vision_ws.hand_control.connect(_on_hand_control.bind(vision_ws))
 	ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
-	ws.message_received.connect(_on_remote_message)
+	ws.message_received.connect(_on_remote_message.bind(ws))
+	vision_ws.message_received.connect(_on_remote_message.bind(vision_ws))
 	ws.ack.connect(_on_claw_ack)
 	vision_ws.disconnected.connect(func(): gesture.reset_stream("ws_disconnect"))
 	if bool(GameConfig.get_value("study", "enabled", false)):
@@ -1326,7 +1328,13 @@ func _on_hand_control(data: Dictionary, recv_ms: float, link: UfoWebSocketClient
 ## to StaffControl like F6..F10 / Space; its input is a hand for GestureControl (the camera's
 ## events wait meanwhile). The gesture control is switched on by the remote's first input:
 ## a person picked it up to steer.
-func _on_remote_message(msg: Dictionary) -> void:
+##
+## The backend link in use carries them: `ws` with the backend's robot, the listen-only
+## `vision_ws` while the game drives its own MockRobot (review on #263; never both, so an
+## event is handled once).
+func _on_remote_message(msg: Dictionary, link: UfoWebSocketClient = null) -> void:
+	if link != null and (link == ws) != (RobotState.source == "websocket"):
+		return
 	var now := float(Time.get_ticks_msec())
 	var r := remote.on_message(msg, now)
 	if r.has("staff"):
@@ -1338,6 +1346,17 @@ func _on_remote_message(msg: Dictionary) -> void:
 func feed_remote_hand(d: Dictionary, now_ms: float) -> void:
 	if gesture_sim or _gesture_demo_t >= 0.0:
 		return  # the developer's simulated hand owns it
+	# the remote is a pinch joystick: under another scheme its shapes would mean other things
+	# (pose_direction: peace closes the claw, a finger steers). Not used then (review on #263).
+	if gesture.scheme.id() != PinchJoystickScheme.ID:
+		if not _remote_scheme_logged:
+			_remote_scheme_logged = true
+			debug_log.emit("remote: input not used (gesture.scheme is %s; the remote needs %s)"
+				% [gesture.scheme.id(), PinchJoystickScheme.ID])
+			if gesture_hud != null:
+				gesture_hud.flash("リモコンは「つまんで動かす」方式のときだけ", 2.0)
+		return
+	_remote_scheme_logged = false
 	if not gesture.enabled:
 		debug_log.emit("remote: hand control on (the staff remote steers)")
 		set_gesture_enabled(true)

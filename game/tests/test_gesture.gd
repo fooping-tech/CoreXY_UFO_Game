@@ -670,6 +670,29 @@ func _test_staff_remote_logic() -> void:
 	var restart := r.accept_frame({"frame": 1}, 100.0 + r.restart_ms + 1.0)  # rebooted: numbers start over
 	_ok(a1 and not late and not same and a2 and present and restart and r.dropped == 2 and r.frames == 3,
 		"staff remote: frames in order only (late / repeated dropped), a long pause starts the numbering over; the remote is the hand while its frames come")
+	# a new press is staged (open hand, pinch at the centre, then the tilt); a key still held
+	# across a lapse of the stream is NOT a new press: the pinch goes on (latched), no fake release
+	var q := StaffRemote.new()
+	var t0 := 10000.0
+	q.accept_frame({"frame": 1, "move": true}, t0)
+	var p1 := q.staged({"move": true, "x": 50, "y": 0})
+	q.accept_frame({"frame": 2, "move": true}, t0 + 100.0)
+	var p2 := q.staged({"move": true, "x": 50, "y": 0})
+	q.accept_frame({"frame": 3, "move": true}, t0 + 200.0)
+	var p3 := q.staged({"move": true, "x": 50, "y": 0})
+	var staged_ok: bool = not p1["move"] and p2["move"] and p2["x"] == 0 and p3["move"] and p3["x"] == 50
+	q.accept_frame({"frame": 4, "move": true}, t0 + 200.0 + q.hold_ms + 300.0)  # back after a lapse, still held
+	var h1 := q.staged({"move": true, "x": 80, "y": 0})
+	q.accept_frame({"frame": 5, "move": true}, t0 + 200.0 + q.hold_ms + 400.0)
+	var h2 := q.staged({"move": true, "x": 80, "y": 0})
+	var held_ok: bool = q.held_over and h1["move"] and h1["x"] == 0 and h2["move"] and h2["x"] == 0
+	q.accept_frame({"frame": 6, "move": false}, t0 + 200.0 + q.hold_ms + 500.0)
+	q.staged({"move": false, "x": 0, "y": 0})
+	q.accept_frame({"frame": 7, "move": true}, t0 + 200.0 + 2.0 * q.hold_ms + 900.0)  # a real new press after a pause
+	var n1 := q.staged({"move": true, "x": 0, "y": 0})
+	_ok(staged_ok and held_ok and not q.held_over and not n1["move"],
+		"staff remote: a new press is staged; a key held across a lapse stays a latched pinch until a real release (review #263)",
+		"%s %s %s %s %s %s" % [p1, p2, p3, h1, h2, n1])
 	var none := r.on_message({"type": "devicehub_event", "data": {"name": "BALL_RECEIVED", "data": {"cycle": 1}}}, 0.0)
 	var st := r.on_message({"type": "devicehub_event", "data": {"name": "STAFF_ACTION", "source": 48, "data": {"action": "SKIP", "code": 2}}}, 0.0)
 	var other := r.on_message({"type": "robot_state", "data": {}}, 0.0)
@@ -780,6 +803,42 @@ func _test_staff_remote_game(rs: Node) -> void:
 	send.call({"move": false, "x": 0, "y": 0, "pose": "OPEN"})
 	_ok(vz_up > 1.0 and vz_down < -1.0 and mode == "z", "staff remote: Z mode, forward = the arm up, backward = down",
 		"%s %s %s" % [vz_up, vz_down, mode])
+	# review #263: the key held across a lapse of the stream (> the remote's hold time): the stick
+	# stops on the stale input and does NOT start again until the key is really let go
+	for i in range(6):
+		send.call({"move": true, "z": false, "x": 100, "y": 0, "pose": "OPEN"})
+	OS.delay_msec(int(game.remote.hold_ms) + 150)
+	game._handle_input(dt)
+	var lapsed_at: Vector3 = game.mock.target
+	for i in range(10):
+		send.call({"move": true, "z": false, "x": 100, "y": 0, "pose": "OPEN"})
+	var still_latched: bool = game.mock.target == lapsed_at and game.gesture.state == GestureControl.State.WAITING_RELEASE
+	send.call({"move": false, "x": 0, "y": 0, "pose": "OPEN"})
+	for i in range(10):
+		send.call({"move": true, "z": false, "x": 100, "y": 0, "pose": "OPEN"})
+	var moves_again: bool = game.mock.target.x > lapsed_at.x + 1.0
+	send.call({"move": false, "x": 0, "y": 0, "pose": "OPEN"})
+	_ok(still_latched and moves_again, "staff remote: a key held across a lapse stays stopped until it is let go, then a new press moves (review #263)",
+		"%s %s %s" % [still_latched, moves_again, game.gesture.state_name()])
+	# review #263: under the pose_direction scheme the remote's input is not used
+	game.gesture.set_scheme(PoseDirectionScheme.ID)
+	var before: int = game.gesture.events
+	send.call({"move": true, "z": false, "x": 100, "y": 0, "pose": "OPEN"})
+	send.call({"move": false, "x": 0, "y": 0, "pose": "PEACE"})
+	var refused: bool = game.gesture.events == before
+	game.gesture.set_scheme(PinchJoystickScheme.ID)
+	_ok(refused, "staff remote: not used under another gesture scheme (its shapes would mean other things)")
+	# review #263: the events come on the backend link in use (the game's own mock: the listen-only vision link)
+	game.show_title()
+	game.ws.message_received.emit(_remote_msg("STAFF_ACTION", {"action": "SWITCH", "code": 5}))
+	var ignored_ws: bool = game.title_active()
+	game.vision_ws.message_received.emit(_remote_msg("STAFF_ACTION", {"action": "NEXT", "code": 1}))
+	var via_vision: bool = game.staff.last[0] == "next"
+	_ok(ignored_ws and via_vision, "staff remote: with the game's own mock its events come on the vision link (the other link is not read)",
+		"%s %s %s" % [ignored_ws, via_vision, game.staff.last])
+	if game.study_mode != null and game.study_mode.active():
+		game.study_mode.stop()
+	game.show_title()
 	# the staff operations: as the keys
 	game._on_remote_message(_remote_msg("STAFF_ACTION", {"action": "MENU", "code": 3}))
 	var to_menu: bool = game.title_active() and game.staff.last[0] == "menu"
