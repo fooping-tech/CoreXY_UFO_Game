@@ -36,7 +36,7 @@ description: >
 | 実機・通信・安全 | `backend/src/corexy_ufo_backend/robot/real_robot.py`, `serial_service/`, `websocket/server.py`, `network/websocket_client.gd` | [references/robot-protocol.md](references/robot-protocol.md), `docs/firmware_protocol.md` |
 | 自動キャッチ（1 ボタン） | `backend/.../sequence/auto_catch.py`（状態機械）, `sequence/params.py`（校正値・範囲検査）, `robot/dry_run.py`（仮想クレーン・故障注入）, `main.gd::request_auto_catch` | `docs/auto_catch.md`。シーケンスはバックエンドがモーションロックを持って実行し、ゲームは表示と手動ロックだけ。異常は必ず FAULT + ABORT。`auto_catch.real` は実機で測って `confirmed` を立てるまで null のまま（推測で埋めない） |
 | Z 軸・座標変換 | `robot/robot_state.gd`, `config/game_config.json`, `real_robot.py::move_z` | [references/architecture.md](references/architecture.md) §3, [robot-protocol.md](references/robot-protocol.md) §3 |
-| ハンドジェスチャー | `backend/.../vision_service/hand_control.py`, `mediapipe_hands.py`（Tasks API）, `input/gesture_control.gd`（安全の枠）, `input/gesture_scheme.gd` / `input/pinch_joystick_scheme.gd` / `input/pose_direction_scheme.gd`（方式）, `input/hand_joystick.gd`, `input/control_arbiter.gd`, `ui/gesture_hud.gd`, `main.gd::_handle_input` | README「ハンドジェスチャー・ジョイスティック」。JOG を送るのは `_send_jog` だけ（調停の後）。強制停止はラッチ（指を離して新しくつまむまで再開しない）。鮮度は受信側の単調時計と sequence で判定。`gesture.allow_real_robot` は実機で確かめるまで false |
+| ハンドジェスチャー | `backend/.../vision_service/hand_control.py`, `mediapipe_hands.py`（Tasks API）, `input/gesture_control.gd`（安全の枠）, `input/gesture_scheme.gd` / `input/pinch_joystick_scheme.gd` / `input/pose_direction_scheme.gd`（方式）, `input/hand_joystick.gd`, `input/control_arbiter.gd`, `ui/gesture_hud.gd`, `main.gd::_handle_input` | README「ハンドジェスチャー・ジョイスティック」。JOG を送るのは `_send_jog` だけ（調停の後）。強制停止はラッチ（指を離して新しくつまむまで再開しない）。鮮度は受信側の単調時計と sequence で判定。`gesture.allow_real_robot` は実機で確かめるまで false。認識の不具合は推測で直さず、まず `tools/gesture_probe.py`（#256、`docs/gesture_probe.md`）で記録して「見失い」か「形の誤判定」かを切り分け、replay で設定を比べる |
 | 設定画面（#93、タイトルの歯車） | `ui/settings_screen.gd`, `game_config.gd::save_local / load_local`, backend `config.py::local_overrides`, `game_config.json` の `settings_screen` 節 | 保存先は Git に入らない `config/local_settings.json`。ゲームとバックエンドはスキーマにある項目・値だけを重ねる。**校正・安全の値をスキーマに足さない**。テストは `GameConfig.drop_local()` / `CXUFO_NO_LOCAL_SETTINGS=1` で手元のファイルを無視する |
 | 校正タブ（#98、設定画面） | `ui/calibration_panel.gd`, `settings_screen.gd::calibrating`, `main.gd::calibrating / homework_for_calibration / CALIBRATION_KEYS` | 校正タブの間だけ `_handle_input` の title の halt を外し、[ ] Q A を通す。ジェスチャー・自動キャッチは止めたまま。ボタンは既存のコマンド（z_set / arm_set / homework_spot_set / camera_map_*）を送るだけで、関門はバックエンド。実機での校正は未検証 |
 | 起動時のタイトル（#90） | `ui/title_screen.gd`, `main.gd::show_title / _on_title_chosen` | README「タイトル画面」。演出だけ（RobotState を書かない、コマンドを送らない）。表示中は `_handle_input` が halt、キーはタイトルが受け取る（Space・F1 / Tab は通す）。ヘッドレスでは出さない |
@@ -153,7 +153,7 @@ godot --headless --path game res://tests/test_runner.tscn
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
 #   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 578 件）
+# Python バックエンド（基準 586 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 

@@ -46,3 +46,6 @@ config/calibration.json.tmp
 
 # #230: tools/read_sheet.py draws the boxes on a worksheet photo (a child's handwriting): never in Git
 *.sheet.jpg
+
+# #256: tools/gesture_probe.py records (frames of hands and the room): never in Git
+/logs/
