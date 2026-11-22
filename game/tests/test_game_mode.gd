@@ -590,7 +590,8 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	hub.mock_ball(GM_L)
 	_gm_step(ctl, 0.6)
 	var settling: bool = ctl.phase == "SETTLING" and l.state == "ABSORBING" \
-		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup")
+		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup") \
+		and ctl.tutorial_speech.current == GameModeController.TIME_UP_LINE  # #271: UFOくん says the end
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s - 0.5)
 	_ok(hurry and warned and settling and l.state == "SIMULATING" and ctl.time_left == 0.0,
 		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the capsule in play goes on",
