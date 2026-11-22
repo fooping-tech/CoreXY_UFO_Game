@@ -752,3 +752,17 @@ def test_the_repo_config_carries_to_a_dial_slower_than_the_fast_feed():
     assert p.xy_feed_mm_min == p.xy_feed_max_mm_min == 9000.0 < cfg.fast_feed()
     # one motor's step rate on a diagonal at this feed is under an axis move's at the fast feed
     assert p.xy_feed_mm_min * 2 ** 0.5 < cfg.fast_feed()
+
+
+async def test_the_status_says_why_a_catch_would_be_refused():
+    """#275: the game starts no score game while the easy catch would be refused."""
+    async with EasyRig() as rig:
+        assert rig.seq.status()["blockers"] == []
+        rig.robot.homed = False
+        assert any("not homed" in b for b in rig.seq.status()["blockers"])
+        rig.robot.homed = True
+        rig.jogging = True  # a jog passes by itself: no reason to hold a game back
+        assert rig.seq.status()["blockers"] == []
+        rig.jogging = False
+    async with EasyRig(easy=easy_params(confirmed=False, profile="real")) as rig:
+        assert rig.seq.status()["blockers"] != []
