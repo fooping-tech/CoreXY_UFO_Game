@@ -34,6 +34,10 @@ class FakeFirmware(SerialTransport):
         # CoreXY_UFO #11: SERVO_STATUS says tracking=LOST and a jog sets multi-turn
         # again (JOG servo ... tracking=RESET). False: the older firmware (#62)
         self.reports_lost = True
+        # #248: one SERVO_TURN's limit per servo; reports_max_turns = CONFIG prints it
+        # (CoreXY_UFO #16), else the firmware before it (3 for all, no line)
+        self.max_turns = {1: 3.0, 2: 3.0}
+        self.reports_max_turns = False
         self.move_delay = 0.01
         self.queue_full_once = False
         self.reject_next_xy = False
@@ -214,8 +218,9 @@ class FakeFirmware(SerialTransport):
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=multi_turn_lost (retry)")
             elif not self.test_mode:
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=test_mode_off")
-            elif abs(turns) > 3.0:
-                self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over")
+            elif abs(turns) > self.max_turns[sid]:
+                self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over "
+                           f"max={self.max_turns[sid]:.1f}")
             else:
                 target = self.servo_abs[sid] + int(turns * 4096)
                 short = self.servo_stop_short.get(sid)
@@ -243,6 +248,14 @@ class FakeFirmware(SerialTransport):
             self.alarm_reason = "abort requested"
             self.homed = False
             self._emit("ABORT complete")
+        elif name == "CONFIG":
+            self._emit("ACK QUEUED CONFIG")
+            self._emit("BOARD=M5STACK_CORE2 SIMULATION_MODE=0")
+            if self.reports_max_turns:
+                self._emit(f"SERVO_LIMITS max_turns id1={self.max_turns[1]:.1f} id2={self.max_turns[2]:.1f} "
+                           "abs_limit_counts=28000 speed=2400")
+            self._emit("MOTION steps_per_mm=80.000")
+            self._emit("JOB_BEGIN auto_home=0 HOME park_after_home=1")
         elif name == "ALARM_CLEAR":
             self._emit("ACK QUEUED ALARM_CLEAR")
             self.alarm = False

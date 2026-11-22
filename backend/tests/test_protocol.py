@@ -54,3 +54,15 @@ def test_builders_and_validation():
         P.validate_line("X" * 200)
     with pytest.raises(ValueError):
         P.validate_line("XY 1 2\nABORT")
+
+
+def test_servo_turn_limits_from_config():
+    # #248 (CoreXY_UFO #16): the drum's per-command limit, under both names it had
+    assert P.parse_max_turns("SERVO_LIMITS max_turns id1=6.0 id2=3.0 abs_limit_counts=28000 speed=2400") == {1: 6.0, 2: 3.0}
+    assert P.parse_max_turns("SERVO_TURN max_turns id1=6.0 id2=3.0 abs_limit_counts=28000 speed=2400") == {1: 6.0, 2: 3.0}
+    assert P.parse_max_turns("SERVO_TURN id=1 value=3.00 result=PASS target=1 actual=1") is None
+    assert P.parse_max_turns("MOTION steps_per_mm=80.000") is None
+    assert P.turns_over_max("SERVO_TURN id=1 value=6.00 result=REJECTED reason=turns_over max=3.0") == 3.0
+    assert P.turns_over_max("SERVO_TURN id=1 value=6.00 result=REJECTED reason=turns_over") is None
+    assert P.COMPLETION_PATTERNS["CONFIG"].match("SERVO_LIMITS max_turns id1=6.0 id2=3.0")
+    assert P.COMPLETION_PATTERNS["CONFIG"].match("JOB_BEGIN auto_home=0 HOME park_after_home=1")
