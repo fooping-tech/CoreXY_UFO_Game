@@ -16,7 +16,7 @@ import pytest
 from corexy_ufo_backend import services_check as sc
 from corexy_ufo_backend.study import StudyConfig, make_sheet_client
 from corexy_ufo_backend.study.sheet_client import (MAX_BYTES, SheetClient, SheetError, box_to_pixels, parse_result,
-                                                   prepare_image)
+                                                   prepare_image, zoom_region)
 
 TOKEN = "sheet-secret-token-456"
 URL = "https://192.0.2.10:8444"
@@ -351,6 +351,10 @@ async def test_the_server_reads_a_frame_with_sheet_read(monkeypatch):
             if data == b"refuse":
                 raise SheetError("auth", "トークンが違う", 401)
             return parse_result(ANSWER, prepare_image(data))
+
+        def read_zoomed(self, data, calc=True, crop=True):
+            seen.append("zoomed")
+            return self.read(data, calc, crop)
     monkeypatch.setattr(study, "make_sheet_client", lambda cfg: Fake())
     robot = MockRobot()
     await robot.connect()
@@ -363,10 +367,12 @@ async def test_the_server_reads_a_frame_with_sheet_read(monkeypatch):
             m = await cmd(ws, "sheet_read", {"image_jpeg_base64": base64.b64encode(frame).decode(), "crop": False}, rid="a")
             assert m["type"] == "ack" and m["data"]["command"] == "sheet_read"
             assert [p["number"] for p in m["data"]["problems"]] == [1, 2, 3] and seen[-1] == (len(frame), True, False)
-            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": base64.b64encode(b"refuse").decode()}, rid="b")
-            assert m["type"] == "nack" and "トークン" in m["data"]["reason"]
+            assert seen[-2] == "zoomed"  # #252: the answer check's read looks again at a small sheet
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": base64.b64encode(b"refuse").decode(), "zoom": False},
+                          rid="b")
+            assert m["type"] == "nack" and "トークン" in m["data"]["reason"] and seen[-2] != "zoomed"
             m = await cmd(ws, "sheet_read", {"image_jpeg_base64": "!!"}, rid="c")
-            assert m["type"] == "nack" and len(seen) == 2
+            assert m["type"] == "nack" and len(seen) == 3
     finally:
         await srv.stop()
 
@@ -546,3 +552,51 @@ def test_a_deadline_holds_when_the_server_drips_bytes_without_a_newline():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+# ------------------------------------------------------------------ the second, closer look (#252)
+
+SMALL = {**ANSWER, "image": {"width": 1280, "height": 960}, "paper_px": None, "problems": [
+    {"number": 1, "box": [300, 300, 700, 400], "answer_box": [420, 330, 540, 390], "visible": "full",
+     "answer_status": "incorrect", "student_answer": "159", "correct_answer": "26", "notes": [],
+     "box_px": [384, 288, 896, 384], "answer_box_px": [537, 316, 691, 374]},
+    {"number": 2, "box": [300, 600, 700, 700], "answer_box": [420, 630, 540, 690], "visible": "full",
+     "answer_status": "blank", "student_answer": "", "correct_answer": "6", "notes": []}]}
+CLOSE = {**ANSWER, "image": {"width": 1800, "height": 1500}, "paper_px": None, "problems": [
+    {"number": 1, "box": [0, 0, 1000, 500], "answer_box": [250, 100, 500, 400], "visible": "full",
+     "answer_status": "correct", "student_answer": "26", "correct_answer": "26", "notes": [],
+     "box_px": [0, 0, 1800, 750], "answer_box_px": [450, 150, 900, 600]},
+    {"number": 2, "box": [0, 500, 1000, 1000], "answer_box": [250, 600, 500, 900], "visible": "full",
+     "answer_status": "correct", "student_answer": "6", "correct_answer": "6", "notes": []}]}
+
+
+def test_the_zoom_region_is_the_problems_with_a_margin_or_none_when_they_fill_the_photo():
+    assert zoom_region(SMALL["problems"]) == (240.0, 240.0, 760.0, 760.0)  # 0.15 x 400 around
+    assert zoom_region([{"box": [10, 20, 990, 980]}]) is None
+    assert zoom_region([]) is None and zoom_region([{"box": None}]) is None
+
+
+def test_a_small_uncut_sheet_is_read_again_closer_and_put_back_on_the_photo():
+    server = FakeServer(SMALL, CLOSE)
+    res = client(server).read_zoomed(jpeg(1280, 960))
+    assert len(server.calls) == 2 and server.calls[1]["body"]["crop"] is False
+    b64 = server.calls[1]["body"]["image"].split(",", 1)[1]
+    import base64
+    sent = cv2.imdecode(np.frombuffer(base64.b64decode(b64), np.uint8), cv2.IMREAD_COLOR)
+    assert max(sent.shape[:2]) == 1800  # the piece enlarged to the long side the reader is sent at
+    assert [p["answer_status"] for p in res.problems] == ["correct", "correct"]
+    # the second look's boxes on the first photo: its whole picture is the region 240..760
+    assert res.problems[0]["box"] == pytest.approx([240.0, 240.0, 760.0, 500.0], abs=1.0)
+    assert res.problems[0]["answer_box_px"] == list(box_to_pixels(res.problems[0]["answer_box"], 1280, 960))
+    assert res.image.width == 1280 and res.raw["image"] == {"width": 1280, "height": 960}
+    assert res.raw["zoom"]["first_counts"]["incorrect"] == 1 and res.counts["correct"] == 2
+
+
+def test_no_second_look_when_the_server_cut_the_paper_out_or_it_reads_nothing():
+    server = FakeServer(ANSWER)  # paper_px given: the server already cut it out
+    assert client(server).read_zoomed(jpeg(900, 1200)).counts["incorrect"] == 1 and len(server.calls) == 1
+    server = FakeServer(SMALL, {**CLOSE, "problems": []})
+    res = client(server).read_zoomed(jpeg(1280, 960))
+    assert len(server.calls) == 2 and res.problems[0]["student_answer"] == "159"  # the first answer kept
+    server = FakeServer(SMALL, 400)
+    assert client(server).read_zoomed(jpeg(1280, 960)).problems[0]["student_answer"] == "159"

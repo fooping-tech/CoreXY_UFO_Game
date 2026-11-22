@@ -46,6 +46,12 @@ LONG_SIDE = 1800
 MIN_TIMEOUT_S = 120.0  # ~10 s a sheet, more with the chat API busy or the model just loaded
 BUSY_WAITS_S = (5.0, 10.0, 20.0)  # 503: wait, then try again
 BLOCK_S = 600.0  # 429: the server blocks the IP for 10 minutes
+# The answer check's second look: when the server did not cut the paper out (paper_px null: a
+# light desk, shadows) and the problems take less than ZOOM_MAX_SPAN of the photo's width or
+# height, the photo is cut to them (ZOOM_MARGIN of their size around) and read again: the
+# handwriting is too small for the reader in a whole overview frame (26 read as "159").
+ZOOM_MAX_SPAN = 0.7
+ZOOM_MARGIN = 0.15
 
 
 class SheetError(Exception):
@@ -154,6 +160,86 @@ def sheet_payload(res: SheetResult) -> dict[str, Any]:
             "seconds": res.raw.get("seconds"), "model": str(res.raw.get("model", "")),
             "image": {"width": res.image.width, "height": res.image.height},
             "response": res.raw}  # the server's answer as it came (no secret, no image in it)
+
+
+def problems_region(problems: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
+    """The problems' boxes together (0..1000 of the image read), or None without any."""
+    boxes = [p.get("box") for p in problems]
+    boxes = [b for b in boxes if isinstance(b, (list, tuple)) and len(b) == 4
+             and all(isinstance(v, (int, float)) for v in b) and b[2] > b[0] and b[3] > b[1]]
+    if not boxes:
+        return None
+    return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+
+
+def zoom_region(problems: list[dict[str, Any]], margin: float = ZOOM_MARGIN,
+                max_span: float = ZOOM_MAX_SPAN) -> tuple[float, float, float, float] | None:
+    """Where to look again (0..1000 of the photo): the problems with a margin around, or None
+    when they already fill the photo (or there are none)."""
+    r = problems_region(problems)
+    if r is None:
+        return None
+    x1, y1, x2, y2 = r
+    w, h = x2 - x1, y2 - y1
+    if w >= max_span * 1000 and h >= max_span * 1000:
+        return None
+    m = margin * max(w, h)
+    return (max(x1 - m, 0.0), max(y1 - m, 0.0), min(x2 + m, 1000.0), min(y2 + m, 1000.0))
+
+
+def crop_photo(data: bytes, region: tuple[float, float, float, float]) -> tuple[bytes, tuple[int, int, int, int], int, int]:
+    """The photo cut to `region` (0..1000) -> (JPEG, the pixel rect, photo width, photo height)."""
+    arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None:
+        raise SheetError("image", "画像として読めません")
+    h, w = arr.shape[:2]
+    x1, y1 = int(region[0] * w / 1000), int(region[1] * h / 1000)
+    x2, y2 = int(round(region[2] * w / 1000)), int(round(region[3] * h / 1000))
+    x2, y2 = max(x2, x1 + 1), max(y2, y1 + 1)
+    part = arr[y1:y2, x1:x2]
+    # enlarged to the long side the reader is sent at: the handwriting gets more of the
+    # model's picture than in the small piece of the frame
+    ph, pw = part.shape[:2]
+    up = LONG_SIDE / max(pw, ph)
+    if up > 1.0:
+        part = cv2.resize(part, (round(pw * up), round(ph * up)), interpolation=cv2.INTER_CUBIC)
+    ok, buf = cv2.imencode(".jpg", part, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not ok:
+        raise SheetError("image", "画像を切り出せません")
+    return buf.tobytes(), (x1, y1, x2, y2), w, h
+
+
+def map_zoomed(first: SheetResult, zoomed: SheetResult, rect: tuple[int, int, int, int],
+               photo_w: int, photo_h: int) -> SheetResult:
+    """The second look's answer put back on the first photo: its boxes on the 0..1000 scale
+    (and in pixels) of the image first read, so whoever draws them needs to know nothing."""
+    x0, y0, x1, y1 = rect
+    cw, ch = x1 - x0, y1 - y0
+
+    def back(b: Any) -> Any:
+        if not (isinstance(b, (list, tuple)) and len(b) == 4 and all(isinstance(v, (int, float)) for v in b)):
+            return b
+        return [round((x0 + b[0] * cw / 1000) * 1000 / photo_w, 1), round((y0 + b[1] * ch / 1000) * 1000 / photo_h, 1),
+                round((x0 + b[2] * cw / 1000) * 1000 / photo_w, 1), round((y0 + b[3] * ch / 1000) * 1000 / photo_h, 1)]
+
+    img = first.image
+    problems = []
+    for p in zoomed.problems:
+        q = dict(p)
+        for k in ("box", "answer_box"):
+            q[k] = back(q.get(k))
+            px = box_to_pixels(q[k], img.width, img.height)
+            if f"{k}_px" in q and px is not None:
+                q[f"{k}_px"] = list(px)
+        problems.append(q)
+    raw = dict(zoomed.raw)
+    raw["problems"] = problems
+    raw["image"] = first.raw.get("image") or {"width": img.width, "height": img.height}
+    raw["paper_px"] = None
+    raw["zoom"] = {"region": [round(x0 * 1000 / photo_w, 1), round(y0 * 1000 / photo_h, 1),
+                              round(x1 * 1000 / photo_w, 1), round(y1 * 1000 / photo_h, 1)],
+                   "first_counts": first.counts}
+    return SheetResult(raw, img, problems)
 
 
 def parse_result(raw: Any, image: SheetImage) -> SheetResult:
@@ -268,6 +354,28 @@ class SheetClient:
             return parse_result(raw, image)
         finally:
             self.lock.release()
+
+    def read_zoomed(self, photo: bytes, *, calc: bool = True, crop: bool = True,
+                    label: str = "read") -> SheetResult:
+        """read(), then once more on the problems cut out of the photo when the server could not
+        cut the paper out and they are small in it (see ZOOM_MAX_SPAN). The answer is on the
+        first photo either way. A second look that reads nothing (or fails) keeps the first."""
+        first = self.read(photo, calc=calc, crop=crop, label=label)
+        region = None if first.cropped else zoom_region(first.problems)
+        if region is None:
+            return first
+        try:
+            jpeg, rect, w, h = crop_photo(photo, region)
+            zoomed = self.read(jpeg, calc=calc, crop=False, label=label + " (zoomed)")
+        except SheetError as e:
+            log.info("sheet: the zoomed look failed (%s): the first answer is kept", e.kind)
+            return first
+        if not zoomed.read_anything:
+            log.info("sheet: the zoomed look read nothing: the first answer is kept")
+            return first
+        log.info("sheet: zoomed to %s of the photo: %s -> %s", [round(v) for v in region],
+                 first.summary(), zoomed.summary())
+        return map_zoomed(first, zoomed, rect, w, h)
 
     @staticmethod
     def timeout_text(deadline_s: float | None) -> str:

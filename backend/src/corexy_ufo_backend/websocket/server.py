@@ -963,7 +963,9 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         study = replace(StudyConfig.from_raw(cfg.raw if cfg is not None else {}), root=str(REPO_ROOT))
         try:
             client = make_sheet_client(study)
-            res = await asyncio.to_thread(client.read, data, calc=params.get("calc") is not False,
+            # #252: a small sheet in the frame is cut out and read again (the answer check's misreads)
+            read = client.read if params.get("zoom") is False else client.read_zoomed
+            res = await asyncio.to_thread(read, data, calc=params.get("calc") is not False,
                                           crop=params.get("crop") is not False)
         except SheetError as e:
             return self._nack(name, str(e))
