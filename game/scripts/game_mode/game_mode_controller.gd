@@ -1870,8 +1870,6 @@ func handle_key(keycode: int) -> bool:
 				ranking_flow.toggle()
 				return true
 			return false
-		KEY_F6, KEY_F7, KEY_F8:
-			return _staff_key(keycode)
 		KEY_F2, KEY_F3, KEY_F4:
 			# the staff's / the developer's: take that power now (#188)
 			if not power_debug_keys or phase != "PLAYING":
@@ -1882,20 +1880,20 @@ func handle_key(keycode: int) -> bool:
 			return _mock_ball("left")
 	return false
 
-## Staff keys of the practice (function keys: not hit by accident). F6 = this step again,
-## F7 = on to the next step, F8 = leave the practice out. A capsule on its way through the
-## practice is never left behind: F7 / F8 wait until it is back. Dials waiting for the
-## practice capsule are disarmed before the round's countdown (in which nothing is taken).
-func _staff_key(keycode: int) -> bool:
+## The staff's steps of the practice (#260: StaffControl; F6 = "next" on to the next step,
+## F7 = "all" the practice left out, Shift+F6 = "retry" this step again). A capsule on its way
+## through the practice is never left behind: next / all wait until it is back. Dials waiting
+## for the practice capsule are disarmed before the round's countdown (nothing is taken then).
+func staff_step(kind: String) -> bool:
 	if phase != "TUTORIAL":
 		return false
 	if practice_busy():
 		tutorial.guide = "カプセルが もどるまで まってね"
 		return true
-	match keycode:
-		KEY_F6:
+	match kind:
+		"retry":
 			tutorial.retry_step()
-		KEY_F7, KEY_F8:
+		"next", "all":
 			if practice == "open":
 				# the Dials are waiting for a capsule: they are closed first (a capsule that lands
 				# meanwhile goes straight back out), and only then does the round start
@@ -1904,7 +1902,7 @@ func _staff_key(keycode: int) -> bool:
 				tutorial.guide = "ポータルを とじているよ…"
 			elif practice == "closing":
 				pass  # already on its way
-			elif keycode == KEY_F7 and tutorial.kind() != "practice":
+			elif kind == "next" and tutorial.kind() != "practice":
 				tutorial.skip_step()
 			else:
 				tutorial.skip_all()
