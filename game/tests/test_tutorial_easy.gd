@@ -341,6 +341,18 @@ func _test_easy_mode_game(rs: Node) -> void:
 	feed.call("open", 20)
 	feed.call("fist", 60)
 	var not_before_the_round = be.sent.is_empty() and e.note.contains("ゲームちゅう")  # the title: no catch
+	# #275: while the backend would refuse the catch (not homed, ...) no game starts
+	be.status = {"blockers": ["not homed"]}
+	feed.call("open", 2)
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.start_tutorial()
+	feed.call("open", 2)
+	ctl.hud._process(0.016)
+	var held_back: bool = ctl.phase == "IDLE" and ctl.start_blocked().contains("げんてんふっき") \
+		and ctl.difficulty_text().contains("F9") and ctl.hud._mode.text.contains("はじめられない")
+	be.status = {}
+	feed.call("open", 2)
+	not_before_the_round = not_before_the_round and held_back and ctl.start_blocked() == ""
 	game._unhandled_input(_key(KEY_ENTER))
 	feed.call("open", 2)
 	# the round starts: the arm is brought to its start, and the hand waits meanwhile

@@ -586,7 +586,27 @@ func today_best() -> int:
 
 ## The line over START on the title: nothing when the easy mode is played (#198: there is no
 ## choice to show), or why it is not and what is played instead.
+## #275: why no game may start now: the easy mode is played and the backend would refuse its
+## catch (not homed, an alarm, the motors off, the values not recorded, ...). "" = it may.
+func start_blocked() -> String:
+	if demo or not easy_on() or main == null or not main.has_method("easy_blocker"):
+		return ""
+	return str(main.easy_blocker())
+
+## A start asked for while start_blocked(): nothing starts; the title says why (once a sound).
+func _refuse_start() -> bool:
+	var why := start_blocked()
+	if why == "":
+		return false
+	message = why
+	sounds.play("fault")
+	_trace("start_refused", null, {"result": why})
+	return true
+
 func difficulty_text() -> String:
+	var why := start_blocked()
+	if why != "":  # #275
+		return "はじめられないよ: " + why + "\nスタッフ: F9 で ふっき"
 	if easy_on():
 		return ""
 	return (easy_block + "\n" if easy_block != "" else "") + "→ てで ぜんぶ そうさして あそぶ"
@@ -680,7 +700,7 @@ func begin() -> void:
 ## The practice (#149): the spell, the hand shapes one by one, one real capsule, then the
 ## round. Nothing of it reaches the round: the round starts from a full reset.
 func start_tutorial() -> void:
-	if not _active or running():
+	if not _active or running() or _refuse_start():
 		return
 	_reset_round()
 	_set_phase("TUTORIAL")
@@ -827,7 +847,7 @@ func _tick_gauge_sound(dt: float) -> void:
 ## `after_practice`: what the Dials reported in the practice stays known (a repeated
 ## BALL_RECEIVED of the practice capsule is still old), everything else starts new.
 func start(after_practice := false) -> void:
-	if not _active or running():
+	if not _active or running() or _refuse_start():
 		return
 	var known := {}
 	var seen := _seen.duplicate()

@@ -296,10 +296,24 @@ class EasySequencer(AutoCatchSequencer):
         errs = self.easy.problems(self.params, self.limits)
         return errs + [e for e in validate(self.params, self.limits, self.backend) if e not in errs]
 
+    # what is only a moment's (another motion, a jog, a run going on): not a reason to hold a game back
+    _PASSING = ("busy", "robot busy", "auto catch already running")
+
+    def blockers(self) -> list[str]:
+        """#275: why a catch would be refused now, the robot's state included (homing, alarm,
+        motors, the Z reference, the claw, the recorded values), but not what passes by itself
+        (another motion, a jog). The game starts no score game while there is one. [] while a
+        run goes on (it was allowed)."""
+        if self.active:
+            return []
+        errs = self.preconditions(any_height=True) + self.easy.problems(self.params, self.limits)
+        return [e for e in dict.fromkeys(errs) if not e.startswith(self._PASSING)]
+
     def status(self) -> dict:
         now = self.clock()
         waiting = self.active and self.state == "WAIT_DESTINATION"
         return {
+            "blockers": self.blockers(),
             "active": self.active,
             "state": self.state,
             "step": str(self.phase),
