@@ -1155,7 +1155,17 @@ func _test_park_requests(rs: Node) -> void:
 	ctl.phase = "RESULT"
 	game._tick_park(1.0)
 	var on_result: bool = game.parks_sent == 3
+	# review on #279: Space ends a parking still to come, and its late "busy" re-arms nothing
 	ctl.phase = "IDLE"
+	game.request_park("test")
+	var stop_rid := "late-one"
+	game._park_rid = stop_rid
+	game.stop_key()
+	game._on_park_ack(stop_rid, false, {"reason": "busy: jog active"})
+	var sent_before: int = game.parks_sent
+	for i in 10:
+		game._tick_park(0.5)
+	on_result = on_result and game.park_want == "" and game.parks_sent == sent_before
 	game.ws._pending.clear()
 	RobotState.source = saved[0]
 	RobotState.connected = saved[1]

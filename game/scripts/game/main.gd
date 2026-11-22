@@ -1779,6 +1779,9 @@ func _update_gesture_presentation(dt: float) -> void:
 ## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
 ## no alarm; the debug panel's E-STOP sends ABORT).
 func stop_key() -> void:
+	# #276 (review on #279): a stop ends any parking still to come; a late answer re-arms nothing
+	park_want = ""
+	_park_rid = ""
 	_tutorial_goto = {}  # nothing of the practice's carry is sent after a stop
 	if study_mode != null:
 		study_mode.on_stop_key()
