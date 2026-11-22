@@ -24,9 +24,10 @@ const LINES := {
 	"mode": [Rect2(380, 266, 300, 28), Rect2(380, 10, 316, 26)],
 	"speech": [Rect2(40, 302, 640, 32), Rect2(20, 250, 680, 32)],
 	"title": [Rect2(30, 826, 660, 90), Rect2(20, 36, 680, 44)],
-	"sub": [Rect2(30, 916, 660, 52), Rect2(190, 1128, 340, 72)],
+	# #258: in the practice, beside the port and left of the hand window (GameModeLayout.GUIDE_RECT)
+	"sub": [Rect2(30, 916, 660, 52), Rect2(172, 1112, 222, 156)],
 	"guide": [Rect2(30, 968, 660, 40), Rect2(20, 80, 680, 34)],
-	"status": [Rect2(30, 1010, 660, 62), Rect2(190, 1204, 340, 60)],
+	"status": [Rect2(30, 1010, 660, 62), Rect2(172, 1240, 222, 30)],
 }
 ## the practice capsule: only a banner, so the field and the ports are in view
 const BANNER := Rect2(8, 4, 704, 114)
@@ -215,6 +216,7 @@ func _process(dt: float) -> void:
 		labels[key].position = r.position
 		labels[key].size = r.size
 	_title.add_theme_font_size_override("font_size", 30)
+	_sub.add_theme_font_size_override("font_size", 18 if practice else 22)  # the narrow column beside the port
 	_guide.pivot_offset = _guide.size * 0.5
 	_guide.scale = Vector2.ONE * (1.0 + 0.03 * sin(_t * 5.0))
 	for tag in _tags:

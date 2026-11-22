@@ -82,13 +82,12 @@ var _banner := {"text": "", "t": 9.0, "level": 0}
 var _power_notice := {"text": "", "kind": "", "t": 9.0}
 var _power_queue: Array[Dictionary] = []
 var power_status: Array[String] = []
-## where the small timers start, from the field's top (lower while the easy mode's strip or
-## panel is there)
-var power_top := 12.0
 var power_portals := {"left": false}
 ## false: the pop-ups do not jump or blink (a debug switch)
 var effects := true
 var _marks: Array[Dictionary] = []
+## #258: the capsules being collected (the show from the port up into UFOくん)
+var _collects: Array[Dictionary] = []
 var _ufo_tex: Texture2D
 var _top: Node2D
 var _t := 0.0
@@ -120,6 +119,7 @@ func reset() -> void:
 	reactions.clear()
 	ufo_mood = "normal"
 	_marks.clear()
+	_collects.clear()
 	played.clear()
 	_port_fx = {"left": null}
 	for c in get_children():
@@ -154,8 +154,10 @@ func play(moment: String, side: String, at := Vector2.ZERO, secs := 0.5) -> void
 			_sheet(moment, side, p, {"duration": secs})
 		"capsule_transfer_trail":  # port -> the drop point under the UFO
 			_fly(p, at, secs, side, -160.0, 0.5, 1.0)
-		"capsule_materialize":
-			_marks.append({"pos": at, "t": 0.0, "dur": 0.45, "side": side})
+		"capsule_collect":  # #258: the collection show, `secs` long (collect_at says what is where)
+			_collects.append({"a": p, "drop": at, "t": 0.0, "dur": maxf(secs, 0.1), "side": side})
+		"capsule_materialize":  # the light from UFOくn down to the drop point; the capsule falls in it
+			_marks.append({"pos": at, "t": 0.0, "dur": 0.45, "side": side, "fall": maxf(secs, 0.05)})
 			_sheet(moment, side, at)
 		"capsule_return":  # the exit -> the port, then the light runs to the Dial
 			_open_port(side)
@@ -294,6 +296,39 @@ func _close_port(side: String) -> void:
 func port_sheet_running(side: String) -> bool:
 	return is_instance_valid(_port_fx[side]) and not (_port_fx[side] as Node).is_queued_for_deletion()
 
+## #258: the collection show, in parts of its time: up from the port (シュッと), big in the
+## middle of the field with カプセル回収！, up into UFOくん (getting small), UFOくん's light.
+const COLLECT_RISE := 0.16
+const COLLECT_SHOW := 0.62
+const COLLECT_UP := 0.8
+const COLLECT_TEXT := "カプセル回収！"
+## where the capsule is shown big
+const COLLECT_MID := Vector2(GameModeLayout.CX, GameModeLayout.CENTRE.y - 40.0)
+
+## What the show of `c` draws at its time: {"part": rise / show / up / light, "pos", "scale"
+## (the capsule's, 0 = inside UFOくん), "text" (the words' 0..1 size, 0 = none), "light" (0..1)}.
+func collect_at(c: Dictionary) -> Dictionary:
+	var k: float = clampf(c.t / c.dur, 0.0, 1.0)
+	var to: Vector2 = ufo_pos + Vector2(0, 10)
+	if k < COLLECT_RISE:
+		var e := 1.0 - pow(1.0 - k / COLLECT_RISE, 3.0)  # fast out of the port, slowing into the middle
+		return {"part": "rise", "pos": (c.a as Vector2).lerp(COLLECT_MID, e), "scale": lerpf(0.8, 1.6, e), "text": 0.0, "light": 0.0}
+	if k < COLLECT_SHOW:
+		var u := (k - COLLECT_RISE) / (COLLECT_SHOW - COLLECT_RISE)
+		var pop := minf(u / 0.18, 1.0)
+		var sc := lerpf(1.6, 4.6, pop) + (0.5 * sin(pop * PI) if effects else 0.0) + (0.12 * sin(u * 30.0) if effects and pop >= 1.0 else 0.0)
+		return {"part": "show", "pos": COLLECT_MID, "scale": sc, "text": minf(u / 0.12, 1.0), "light": 0.0}
+	if k < COLLECT_UP:
+		var u := (k - COLLECT_SHOW) / (COLLECT_UP - COLLECT_SHOW)
+		var e := u * u  # it shoots off upwards
+		return {"part": "up", "pos": COLLECT_MID.lerp(to, e), "scale": lerpf(4.6, 0.5, e), "text": maxf(0.0, 1.0 - u * 3.0), "light": 0.0}
+	var u := (k - COLLECT_UP) / (1.0 - COLLECT_UP)
+	return {"part": "light", "pos": to, "scale": 0.0, "text": 0.0, "light": u}
+
+## The collection shows running now (tests).
+func collects() -> Array[Dictionary]:
+	return _collects
+
 ## A capsule in transit; the trail sheet follows it (a node moved along the path).
 func _fly(a: Vector2, b: Vector2, secs: float, side: String, arc: float, k0: float, k1: float) -> void:
 	var node := Node2D.new()
@@ -325,7 +360,7 @@ func advance(dt: float) -> void:
 	_t += dt
 	for side in _port_open.keys():
 		_port_open[side] = move_toward(_port_open[side], _port_want[side], dt * 4.0)
-	for list in [_flights, _marks]:
+	for list in [_flights, _marks, _collects]:
 		for f in list.duplicate():
 			f.t += dt
 			var node = f.get("node")
@@ -398,6 +433,9 @@ func _draw() -> void:
 		var k: float = 1.0 - m.t / m.dur
 		var col: Color = colors[m.side]
 		draw_rect(Rect2(m.pos.x - 10.0 * k, ufo_pos.y + 20.0, 20.0 * k, m.pos.y - ufo_pos.y - 20.0), Color(col.r, col.g, col.b, 0.45 * k))
+		if m.has("fall") and m.t < m.fall:  # #258: the capsule drops out of UFOくん in the light
+			var fk: float = m.t / m.fall
+			PinballField.draw_capsule_at(self, Vector2(m.pos.x, lerpf(ufo_pos.y + 20.0, m.pos.y, fk * fk)), _t * 9.0, col, lerpf(0.5, 1.0, fk))
 
 ## Above the sheets (z 7): the capsules in transit, UFOくん and the pop-ups stay readable.
 func _draw_top() -> void:
@@ -412,6 +450,9 @@ func _draw_top() -> void:
 			else:
 				var sz := 9.0 - j
 				top.draw_rect(Rect2((q - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz)), Color(col.r, col.g, col.b, 0.7 - 0.1 * j))
+	# #258: the collection: light behind UFOくん, the capsule, カプセル回収！
+	for c in _collects:
+		_draw_collect(top, c)
 	# UFOくん
 	if ufo_visible and _ufo_tex != null:
 		var size := Vector2(64, 64) * UFO_SCALE
@@ -442,7 +483,10 @@ func _draw_top() -> void:
 		if not (bk > 0.7 and int(_banner.t * 20.0) % 2 == 0):
 			var bs := 4.0 + (2.0 if _banner.level >= 3 else 0.0) + (2.0 if _banner.t < 0.08 else 0.0)
 			var bc: Color = BANNER_COLORS[clampi(_banner.level, 0, 3)]
-			var bp := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 170.0 - 20.0 * bk).snapped(Vector2(2, 2))
+			# #258: in the status row's message slot, outside the field
+			var mr := GameModeLayout.MESSAGE_RECT
+			bs = minf(bs, GameModeLayout.fit_scale(_banner.text, mr.size.x - 12.0, bs))
+			var bp := Vector2(mr.get_center().x, mr.position.y + 40.0 - 8.0 * bk).snapped(Vector2(2, 2))
 			PixelText.draw_centered(top, _banner.text, bp + Vector2(4, 4), bs, Color(0.02, 0.03, 0.1, 0.8))
 			PixelText.draw_centered(top, _banner.text, bp, bs, bc if int(_banner.t * 10.0) % 2 == 0 else Color.WHITE, Color("050818"))
 
@@ -455,7 +499,6 @@ func _draw_top() -> void:
 		var size := minf(7.5, 660.0 / maxf(PixelText.width(word, 1.0), 1.0))
 		if effects:
 			size *= 1.12 if t < 0.12 else 1.0 + 0.025 * sin(t * 28.0)
-		# under the easy mode's panel (#169, down to FIELD_TOP + 200)
 		var centre := Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + 330.0)
 		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 170)), Color(0.015, 0.025, 0.09, 0.87))
 		top.draw_rect(Rect2(Vector2(36, centre.y - 86), Vector2(648, 5)), col)
@@ -472,7 +515,46 @@ func _draw_top() -> void:
 	for i in power_status.size():
 		var s: String = power_status[i]
 		if PixelText.supports(s):
-			PixelText.draw_centered(top, s, Vector2(GameModeLayout.CX, GameModeLayout.FIELD_TOP + power_top + 26.0 * i), 2.3, Color("ffe03c"), Color("050818"))
+			# #258: the status row's message slot, from its bottom up (outside the field)
+			var mr := GameModeLayout.MESSAGE_RECT
+			var py := mr.end.y - 14.0 - 26.0 * (power_status.size() - 1 - i)
+			PixelText.draw_centered(top, s, Vector2(mr.get_center().x, py), minf(2.3, GameModeLayout.fit_scale(s, mr.size.x - 12.0, 2.3)), Color("ffe03c"), Color("050818"))
+
+func _draw_collect(top: Node2D, c: Dictionary) -> void:
+	var col: Color = colors[c.side]
+	var s := collect_at(c)
+	var pos: Vector2 = s.pos
+	if s.part == "rise" or s.part == "up":  # a streak behind it
+		var back := Vector2(0, 1) if s.part == "rise" else (pos - COLLECT_MID).normalized() * -1.0
+		for j in range(1, 7):
+			var q := pos + back * 14.0 * j
+			var sz := 12.0 - j
+			top.draw_rect(Rect2((q - Vector2(sz, sz) * 0.5).snapped(Vector2(2, 2)), Vector2(sz, sz)), Color(col.r, col.g, col.b, 0.75 - 0.1 * j))
+	if s.part == "show" and effects:  # turning rays behind the big capsule
+		for i in 12:
+			var a := _t * 1.6 + TAU * i / 12.0
+			var d := Vector2.from_angle(a)
+			top.draw_line(pos + d * 40.0, pos + d * (92.0 + 10.0 * sin(_t * 8.0 + i)), Color(col.r, col.g, col.b, 0.35), 6.0)
+	if s.scale > 0.0:
+		PinballField.draw_capsule_at(top, pos.snapped(Vector2(2, 2)), _t * (2.0 if s.part == "show" else 9.0), col, s.scale)
+	if s.text > 0.0:
+		var f := UiFonts.title()
+		var fs := int(round(lerpf(20.0, 44.0, s.text)))
+		var tw := f.get_string_size(COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var tp := (COLLECT_MID + Vector2(-tw * 0.5, -96.0)).snapped(Vector2(2, 2))
+		var tc := Color("ffe03c") if not effects or int(_t * 10.0) % 2 == 0 else Color.WHITE
+		top.draw_string_outline(f, tp, COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 10, Color("050818"))
+		top.draw_string(f, tp, COLLECT_TEXT, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, tc)
+	if s.part == "light":  # UFOくん shines: rings out and rays down
+		var u: float = s.light
+		var at := ufo_pos + Vector2(0, 8)
+		for r in 3:
+			var rk := fmod(u * 1.5 + r / 3.0, 1.0)
+			top.draw_arc(at, 30.0 + 90.0 * rk, 0.0, TAU, 32, Color(col.r, col.g, col.b, 0.8 * (1.0 - rk)), 6.0)
+		top.draw_circle(at, 36.0 * (1.0 - absf(u - 0.5)), Color(1, 1, 1, 0.55 * sin(u * PI)))
+		for i in 8:
+			var d := Vector2.from_angle(PI * (0.15 + 0.7 * i / 7.0))  # downwards fan
+			top.draw_line(at + d * 30.0, at + d * (60.0 + 50.0 * u), Color(col.r, col.g, col.b, 0.6 * sin(u * PI)), 4.0)
 
 func _along(f: Dictionary, k: float) -> Vector2:
 	var e := k * k * (3.0 - 2.0 * k)

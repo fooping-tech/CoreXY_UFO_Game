@@ -258,11 +258,27 @@ func _test_game_mode_round(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_Z))
 	var absorbing: bool = l.state == "ABSORBING" and ctl.capsules.active.size() == 1
 	var c: Dictionary = l.capsule
-	var left_fx: bool = ctl.fx.played.has("capsule_portal_open:left") and ctl.fx.played.has("capsule_transfer_trail:left") \
-		and ctl.fx.streaming("left", true) and ctl.fx.flights() == 1
+	var left_fx: bool = ctl.fx.played.has("capsule_portal_open:left") and ctl.fx.played.has("capsule_collect:left") \
+		and ctl.fx.streaming("left", true) and ctl.fx.collects().size() == 1
 	var sheets_in: bool = ctl.fx.port_sheet_running("left") \
-		and ["capsule_portal_open", "capsule_absorb", "capsule_transfer_trail"].all(func(id): return VFXManager.spawned_log.has(id))
-	_gm_step(ctl, ctl.absorb_s + 0.02)
+		and ["capsule_portal_open", "capsule_absorb"].all(func(id): return VFXManager.spawned_log.has(id))
+	# #258: the collection show: up from the port, big in the middle with カプセル回収！, up
+	# into UFOくん (which waits meanwhile), its light
+	var parts := []
+	var mid_big := false
+	for i in 40:
+		_gm_step(ctl, ctl.absorb_s / 40.0)
+		if ctl.fx.collects().is_empty():
+			break
+		var at: Dictionary = ctl.fx.collect_at(ctl.fx.collects()[0])
+		if parts.is_empty() or parts[-1] != at.part:
+			parts.append(at.part)
+		mid_big = mid_big or (at.part == "show" and at.scale > 3.0 and at.text > 0.9 and at.pos == GameModeVFX.COLLECT_MID)
+	var show_ok: bool = parts == ["rise", "show", "up", "light"] and mid_big and is_equal_approx(ctl.ufo.x(), x_at_switch)
+	_ok(show_ok and is_equal_approx(ctl.guide_alpha(), GameModeLayout.GUIDE_FAINT) and is_equal_approx(ctl.guide_scale(), GameModeLayout.GUIDE_SMALL),
+		"game mode #258: a capsule taken in rises from the port, is shown big in the middle (カプセル回収！), goes up into UFOくん and its light; UFOくん waits; the hand window steps aside (small in the corner, faint)",
+		"%s big=%s ufo=%.1f/%.1f guide=%.2f" % [parts, mid_big, ctl.ufo.x(), x_at_switch, ctl.guide_alpha()])
+	_gm_step(ctl, 0.05)
 	var dropping: bool = l.state == "DROPPING" and not ctl.field.has_capsule(c.capsule_id)
 	_gm_step(ctl, ctl.drop_s + 0.02)
 	var sheets_drop: bool = not ctl.fx.port_sheet_running("left") and VFXManager.spawned_log.has("capsule_materialize") \
@@ -276,9 +292,9 @@ func _test_game_mode_round(rs: Node) -> void:
 		"%s %s %s" % [sheets_in, sheets_drop, baked])
 	var cap_x := ctl.field.capsule_position(c.capsule_id).x
 	_ok(absorbing and left_fx and dropping and l.state == "SIMULATING" and is_equal_approx(c.drop_x, x_at_switch)
-		and is_equal_approx(cap_x, x_at_switch) and absf(ctl.ufo.x() - x_at_switch) > 50.0
-		and c.source_dial == GM_L and c.cycle == 1 and c.session == hub.session and is_equal_approx(ctl.absorb_s + ctl.drop_s, 1.1),
-		"game mode: BALL_RECEIVED fixes the drop X (the UFO moves on); port -> UFO -> drop in 1.1 s; the capsule knows its Dial, cycle, session",
+		and is_equal_approx(cap_x, x_at_switch) and absf(ctl.ufo.x() - x_at_switch) < 8.0
+		and c.source_dial == GM_L and c.cycle == 1 and c.session == hub.session and is_equal_approx(ctl.absorb_s + ctl.drop_s, 2.2),
+		"game mode: BALL_RECEIVED fixes the drop X under UFOくん, which waits there (#258); port -> UFO -> drop in 2.2 s; the capsule knows its Dial, cycle, session",
 		"%s x=%.1f/%.1f ufo=%.1f %s" % [l.state, cap_x, x_at_switch, ctl.ufo.x(), c])
 	# #200: there is no right portal: its old key does nothing, and a capsule a Dial 2 still
 	# plugged in reports is not the game's (nothing appears, nothing is released there)
@@ -309,6 +325,8 @@ func _test_game_mode_round(rs: Node) -> void:
 	_gm_step(ctl, MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S)
 	var back: bool = l.state == "READY" and l.released == 1 and hub.dials[GM_L].state == "ARMED" and hub.dials[GM_L].cycle == 2 \
 		and hub.count(GM_L, "RELEASE_BALL") == 1
+	_ok(is_equal_approx(ctl.guide_scale(), 1.0) and is_equal_approx(ctl.guide_alpha(), 1.0),
+		"game mode #258: the hand window is back to full size once the capsule has left the field")
 	game._unhandled_input(_key(KEY_Z))  # the next capsule comes in through the same port
 	var again: bool = l.state == "ABSORBING" and ctl.fx.streaming("left", true)
 	_gm_step(ctl, 3.0)
@@ -384,7 +402,7 @@ func _test_game_mode_duplicates_and_sessions(rs: Node) -> void:
 	var arming: bool = l.state == "ARMING" and hub.dials[GM_L].state == "ARMED"
 	hub.mock_ball(GM_L)
 	var taken_early: bool = l.state == "ABSORBING" and not l.capsule.is_empty()
-	_gm_step(ctl, 1.2)  # the late ACK changes nothing
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.1)  # the late ACK changes nothing
 	var rid := str(l.capsule.capsule_id)
 	var in_play: bool = l.state == "SIMULATING" and ctl.field.has_capsule(rid)
 	hub.latency_s = 0.03
@@ -572,7 +590,7 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_gm_step(ctl, 0.6)
 	var settling: bool = ctl.phase == "SETTLING" and l.state == "ABSORBING" \
 		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup")
-	_gm_step(ctl, 1.0)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s - 0.5)
 	_ok(hurry and warned and settling and l.state == "SIMULATING" and ctl.time_left == 0.0,
 		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the capsule in play goes on",
 		"%s %s %s %s" % [hurry, warned, settling, l.state])
