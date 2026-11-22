@@ -17,21 +17,25 @@ const SIZE := Vector2(460, 100)
 const RING_R := 38.0
 ## The mini camera view (4:3).
 const CAM_RECT := Rect2(8, 6, 117, 88)
-## The compact form for the score game (#141; portrait since #157): it sits on the left of
-## the status row over the UFO's rail (the camera, the stick beside it, the state under
-## them), so nothing of it lies over the field, the goals or a Dial's port.
-const COLUMN_SIZE := GameModeLayout.GESTURE_RECT.size
-const COLUMN_POS := GameModeLayout.GESTURE_RECT.position
-const COLUMN_RING_R := 30.0
+## The score game's form (#141; #258): the top of the rounded hand window bottom right
+## (GameModeLayout.GUIDE_RECT): a big camera, the hand's state and the stick under it. The
+## easy mode's guide (EasyModeHud) is the rest of the window, under it.
+const COLUMN_SIZE := Vector2(GameModeLayout.GUIDE_RECT.size.x, GameModeLayout.GUIDE_SPLIT)
+const COLUMN_POS := GameModeLayout.GUIDE_RECT.position
+const COLUMN_RING_R := 28.0
 
 ## #237: the study mode shows its own camera picture: the gesture's mini camera stays hidden
 ## meanwhile (the hand is still read: 1 / 2 / 3 fingers, a thumbs-up)
 var hidden_by_study := false
+## #258: the score game's practice shows its own camera: no hand window meanwhile
+var hidden_by_tutorial := false
 var gesture: GestureControl
 ## Why the robot may not be moved now ("" = it may), from the main scene.
 var gate := ""
-## true: the tall form in the left column (the main scene sets it while the score game is up)
+## true: the score game's window form (the main scene sets it while the score game is up)
 var column := false
+## the window goes on under this part (the easy mode's guide is shown): no round corners at the bottom
+var guide_lower := false
 var _flash := ""
 var _flash_left := 0.0
 var _t := 0.0
@@ -79,6 +83,36 @@ func flash(text: String, secs := 0.9) -> void:
 func place(play_w: float, h: float) -> void:
 	position = COLUMN_POS if column else Vector2(16.0, h - SIZE.y - 16.0)
 	size = panel_size()
+	var cr := cam_rect()
+	if _cam != null and _cam.size != cr.size:
+		_cam.position = cr.position
+		_cam.size = cr.size
+		_overlay.size = cr.size
+		_cam_fx.position = cr.position
+		_cam_fx.size = cr.size
+
+## The camera picture in the panel: big in the score game's window.
+func cam_rect() -> Rect2:
+	return GameModeLayout.GUIDE_CAM if column else CAM_RECT
+
+## A part of the rounded window (#258): dark glass, a neon rim, round corners on the outer
+## side only (`top` / `bottom`), so two parts drawn one under the other read as one window.
+static func paint_window(ci: CanvasItem, r: Rect2, top: bool, bottom: bool, rim: Color, fill := Color(0.02, 0.05, 0.16, 0.92)) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = rim
+	sb.set_border_width_all(3)
+	if not top:
+		sb.border_width_top = 0
+	if not bottom:
+		sb.border_width_bottom = 0
+	var rad := GameModeLayout.GUIDE_RADIUS
+	sb.corner_radius_top_left = rad if top else 0
+	sb.corner_radius_top_right = rad if top else 0
+	sb.corner_radius_bottom_left = rad if bottom else 0
+	sb.corner_radius_bottom_right = rad if bottom else 0
+	sb.anti_aliasing = false  # the pixel look
+	ci.draw_style_box(sb, r)
 
 func panel_size() -> Vector2:
 	return COLUMN_SIZE if column else SIZE
@@ -86,13 +120,13 @@ func panel_size() -> Vector2:
 ## The stick ring's centre and radius in the panel.
 func ring() -> Array:
 	if column:
-		return [Vector2(CAM_RECT.end.x + 16.0 + COLUMN_RING_R + 6.0, 8.0 + COLUMN_RING_R + 4.0), COLUMN_RING_R]
+		return [Vector2(COLUMN_SIZE.x - 12.0 - COLUMN_RING_R, GameModeLayout.GUIDE_CAM.end.y + 8.0 + COLUMN_RING_R), COLUMN_RING_R]
 	return [Vector2(CAM_RECT.end.x + 12.0 + RING_R, SIZE.y * 0.5), RING_R]
 
 func step(dt: float) -> void:
 	_t += dt
 	_flash_left -= dt
-	visible = gesture != null and gesture.enabled and not hidden_by_study
+	visible = gesture != null and gesture.enabled and not hidden_by_study and not hidden_by_tutorial
 	if visible:
 		_overlay.gesture = gesture
 		_cam.visible = _hub != null and _hub.has_feed("overview")
@@ -194,20 +228,24 @@ func _draw() -> void:
 	# pixel-style panel: dark fill, 2 px border, notched corners
 	var psize := panel_size()
 	var r := Rect2(Vector2.ZERO, psize)
-	draw_rect(r, Color(NAVY, (0.92 if column else 0.78) * a))
 	var border := Color(PINK if live else CYAN, (0.95 if live else 0.5))
-	draw_rect(r.grow(-1.0), border, false, 2.0)
-	for c in [Vector2(0, 0), Vector2(psize.x - 4, 0), Vector2(0, psize.y - 4), Vector2(psize.x - 4, psize.y - 4)]:
-		draw_rect(Rect2(c, Vector2(4, 4)), Color(NAVY, 1.0))
+	if column:  # the top of the rounded window (#258)
+		paint_window(self, r, true, not guide_lower, Color(PINK, 0.95) if live else Color(CYAN, 0.9))
+	else:
+		draw_rect(r, Color(NAVY, 0.78 * a))
+		draw_rect(r.grow(-1.0), border, false, 2.0)
+		for c in [Vector2(0, 0), Vector2(psize.x - 4, 0), Vector2(0, psize.y - 4), Vector2(psize.x - 4, psize.y - 4)]:
+			draw_rect(Rect2(c, Vector2(4, 4)), Color(NAVY, 1.0))
+	var cr := cam_rect()
 
 	# mini camera: a dark frame when there is no picture (the hand dot still shows)
 	if not _cam.visible:
-		draw_rect(CAM_RECT, Color(0.0, 0.0, 0.0, 0.6))
+		draw_rect(cr, Color(0.0, 0.0, 0.0, 0.6))
 		for i in range(1, 3):
-			var x := CAM_RECT.position.x + CAM_RECT.size.x * i / 3.0
-			var y := CAM_RECT.position.y + CAM_RECT.size.y * i / 3.0
-			draw_line(Vector2(x, CAM_RECT.position.y), Vector2(x, CAM_RECT.end.y), Color(CYAN, 0.15), 1.0)
-			draw_line(Vector2(CAM_RECT.position.x, y), Vector2(CAM_RECT.end.x, y), Color(CYAN, 0.15), 1.0)
+			var x := cr.position.x + cr.size.x * i / 3.0
+			var y := cr.position.y + cr.size.y * i / 3.0
+			draw_line(Vector2(x, cr.position.y), Vector2(x, cr.end.y), Color(CYAN, 0.15), 1.0)
+			draw_line(Vector2(cr.position.x, y), Vector2(cr.end.x, y), Color(CYAN, 0.15), 1.0)
 
 	# stick ring (only for a scheme that steers with a stick)
 	var c0: Vector2 = ring()[0]
@@ -242,14 +280,15 @@ func _draw() -> void:
 	var frac := clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
 	var n := int(roundf(frac * 10.0))
 	var speed := "%2d mm/s" % int(roundf(g.velocity.length()))
-	if column:  # the gauge under the ring, the state along the bottom; the hint and the speed stay out
+	if column:  # under the camera: the state, the gauge under it, the stick on the right; the hint and the speed stay out
+		var tw := c0.x - rr - 24.0
+		var ty := cr.end.y + 32.0
+		draw_string(f, Vector2(13, ty + 1.0), t[0], HORIZONTAL_ALIGNMENT_LEFT, tw, 18, Color(0, 0, 0, 0.7 * a))
+		draw_string(f, Vector2(12, ty), t[0], HORIZONTAL_ALIGNMENT_LEFT, tw, 18, Color(PINK if live else Color.WHITE, a))
 		for i in range(10):
 			var on := i < n
 			var col := (GOLD if i >= 7 else CYAN) if on else Color(CYAN, 0.18)
-			draw_rect(Rect2(Vector2(c0.x - 44.0 + i * 9.0, c0.y + rr + 8.0), Vector2(7.0, 6.0)), Color(col, a if on else 0.6))
-		var ty := psize.y - 5.0
-		draw_string(f, Vector2(7, ty + 1.0), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(0, 0, 0, 0.7 * a))
-		draw_string(f, Vector2(6, ty), t[0], HORIZONTAL_ALIGNMENT_CENTER, psize.x - 12.0, 14, Color(PINK if live else Color.WHITE, a))
+			draw_rect(Rect2(Vector2(12.0 + i * 14.0, ty + 14.0), Vector2(10.0, 7.0)), Color(col, a if on else 0.6))
 		return
 	var tx := c0.x + rr + 14.0
 	_text(f, Vector2(tx, 34), t[0], 18, Color(PINK if live else Color.WHITE, a))
@@ -267,7 +306,7 @@ func _draw_cam_fx() -> void:
 	if gesture == null:
 		return
 	var g := gesture
-	var r := Rect2(Vector2.ZERO, CAM_RECT.size)
+	var r := Rect2(Vector2.ZERO, cam_rect().size)
 	var out := g.left_view and not g.detected
 	var near := g.detected and g.edge != Vector2.ZERO
 	var col := Color(CYAN, 0.6)
