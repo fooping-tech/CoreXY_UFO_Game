@@ -1436,3 +1436,61 @@ func _test_study_voice_goes_to_look(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## #281: the print found goes straight to the answer check; the voice dialogue needs the
+## dialogue mode, entered with a thumbs-up held 3 s before the print is found or at the summary.
+func _test_study_check_on_found_and_dialog(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	ctl.check_on_found = true
+	ctl.dialog_needs_thumb = true
+	ctl.start()
+	_study_pump(game, 15.0, func(): return ctl.state == "WAITING_FOR_WORKSHEET")
+	var waiting_blocked: bool = ctl.voice.blocker().contains("いいね") \
+		and StudyHud.key_help("WAITING_FOR_WORKSHEET", "simulated", "off").contains("👍")
+	_study_pump(game, 10.0, func(): return ctl.state not in ["WAITING_FOR_WORKSHEET"])
+	var to_check: bool = ctl.state in StudyModeController.CHECK_STATES and ctl.completion_fired and ctl.study_started_ms >= 0
+	ctl.stop()
+	# a thumbs-up held 3 s while waiting: the dialogue mode, then the homework time as before
+	ctl.start()
+	_study_pump(game, 15.0, func(): return ctl.state == "WAITING_FOR_WORKSHEET")
+	var t0 := 100000.0
+	ctl.hand_tick("thumb", t0)
+	ctl.hand_tick("thumb", t0 + 1500.0)
+	var half: bool = not ctl.dialog_mode and ctl.dialog_progress > 0.4 and ctl.dialog_progress < 0.6
+	ctl.hand_tick("open", t0 + 1600.0)  # let go: from the start again
+	ctl.hand_tick("thumb", t0 + 1700.0)
+	ctl.hand_tick("thumb", t0 + 4600.0)
+	var not_yet: bool = not ctl.dialog_mode
+	ctl.hand_tick("thumb", t0 + 4800.0)
+	var on: bool = ctl.dialog_mode and ctl.voice.blocker() != "" and not ctl.voice.blocker().contains("いいね")
+	_study_pump(game, 10.0, func(): return ctl.state != "WAITING_FOR_WORKSHEET")
+	var studying: bool = ctl.state == "STUDYING" and not ctl.completion_fired
+	# not in the middle of the check
+	ctl.stop()
+	ctl.state = "GRADING_QUESTION"
+	ctl.dialog_mode = false
+	ctl.hand_tick("thumb", t0)
+	ctl.hand_tick("thumb", t0 + 5000.0)
+	var not_in_grading: bool = not ctl.dialog_mode
+	# at the summary: on, and talking is allowed there
+	ctl.state = "REVIEW_SUMMARY"
+	ctl.hand_tick("thumb", t0 + 6000.0)
+	ctl.hand_tick("thumb", t0 + 9100.0)
+	var at_summary: bool = ctl.dialog_mode and ctl.voice.in_talk_state()
+	# review on #282: a problem named at the summary is not the arm's HELP (that runs only in
+	# the homework time): the summary stays
+	ctl.voice._ask("1ばんが わからない")
+	at_summary = at_summary and ctl.state == "REVIEW_SUMMARY" and ctl.voice.target_problem != 1
+	# review on #282: nothing read on the print found: the summary (R reads again), no reward
+	ctl.state = "GRADING_QUESTION"
+	ctl.grading.reset([])
+	ctl.reward = {}
+	ctl._summary()
+	var unread: bool = ctl.state == "REVIEW_SUMMARY" and ctl.reward.is_empty() and not ctl.grading.checked
+	at_summary = at_summary and unread
+	ctl.state = "OFF"
+	_ok(waiting_blocked and to_check and half and not_yet and on and studying and not_in_grading and at_summary,
+		"study #281: the print found goes straight to the answer check; talking needs the dialogue mode, a thumbs-up held 3 s while waiting for the print (then the homework time as before) or at the check's summary, never in the middle of the check",
+		"%s %s %s %s %s %s %s %s" % [waiting_blocked, to_check, half, not_yet, on, studying, not_in_grading, at_summary])
+	_gm_free(game, rs)
