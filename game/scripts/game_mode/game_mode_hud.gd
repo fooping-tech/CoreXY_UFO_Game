@@ -101,7 +101,7 @@ func setup(c: GameModeController) -> void:
 	_recover.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 	_recover_button = Button.new()
 	_recover_button.name = "RecoverButton"
-	_recover_button.text = "ふっきする（F10）"
+	_recover_button.text = "ふっきする（F9）"
 	_recover_button.focus_mode = Control.FOCUS_NONE  # Space / Enter never press it: the stop key stays the stop key
 	_recover_button.add_theme_font_size_override("font_size", 22)
 	_recover_button.position = Vector2(RECOVER_RECT.position.x + 170.0, RECOVER_RECT.end.y - 52.0)
@@ -252,7 +252,7 @@ func _process(dt: float) -> void:
 	if ctl.devices != null and ctl.devices.can_mock_ball():
 		hint += "   Mock: Z = Dial に入れる"
 	if ctl.phase == "TUTORIAL":
-		hint = "Space: 止める　Esc: タイトル　F6 やりなおし / F7 つぎへ / F8 とばす"
+		hint = "Space: 止める　F6 つぎへ / F7 ぜんぶ とばす / Shift+F6 やりなおし　F8 メニュー"
 		if ctl.practice != "" and ctl.devices != null and ctl.devices.can_mock_ball():
 			hint += "   Mock: Z"
 	_hint.text = hint
