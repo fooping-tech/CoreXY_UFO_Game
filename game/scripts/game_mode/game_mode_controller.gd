@@ -422,6 +422,7 @@ func _configure(cfg: Dictionary) -> void:
 	ranking_enabled = bool(rk.get("enabled", ranking_enabled))
 	rank_hold_s = clampf(float(rk.get("hold_s", rank_hold_s)), 0.0, 20.0)
 	rank_record_s = clampf(float(rk.get("record_s", rank_record_s)), 0.0, 20.0)
+	board_exit_hold_s = clampf(float(rk.get("exit_hold_s", board_exit_hold_s)), 0.5, 20.0)
 	countdown_s = float(cfg.get("countdown_s", countdown_s))
 	hurry_s = float(cfg.get("hurry_s", hurry_s))
 	warning_s = float(cfg.get("warning_s", warning_s))
@@ -524,6 +525,39 @@ func tick_title_hand(dt: float, hand: Dictionary) -> void:
 	title_hand = ""
 	title_hand_progress = 0.0
 	begin()
+
+## #253: the high scores' board by hand: an open hand held board_exit_hold_s goes back to the
+## top title (as Esc), so the next player needs no keyboard. As on the title, an open hand
+## counts only after the hand was seen in another shape (or not at all) since the board came up.
+var board_exit_hold_s := 3.0
+var board_hand_progress := 0.0
+var _board_hand_armed := false
+var _board_hand_entry := "?"
+var _board_exit_pending := false
+
+func tick_board_hand(dt: float, hand: Dictionary) -> void:
+	if ranking_view != "board" or not _active:
+		board_hand_progress = 0.0
+		_board_hand_entry = "?"
+		_board_hand_armed = false
+		return
+	var pose := str(hand.get("pose", "")) if bool(hand.get("fresh", false)) and bool(hand.get("detected", false)) else ""
+	if _board_hand_entry == "?":
+		_board_hand_entry = pose
+	if pose != _board_hand_entry or pose != "open":
+		_board_hand_armed = true
+		_board_hand_entry = ""
+	if not _board_hand_armed or pose != "open":
+		board_hand_progress = 0.0
+		return
+	board_hand_progress = minf(board_hand_progress + dt / maxf(board_exit_hold_s, 0.05), 1.0)
+	if board_hand_progress < 1.0:
+		return
+	board_hand_progress = 0.0
+	_board_hand_armed = false
+	_board_hand_entry = "?"
+	_trace("board_exit", null, {"result": "open hand -> title"})
+	_board_exit_pending = true  # the next tick goes (show_title closes this mode: not inside its tick)
 
 ## #183: the best score of today (GameModeRankingFlow); the title's HUD reads it here.
 func today_best() -> int:
@@ -927,6 +961,11 @@ func _present_state() -> void:
 
 ## One step of the game mode's time (60 Hz from the physics tick; the tests call it).
 func tick(dt: float) -> void:
+	if _board_exit_pending:  # #253: the open hand's hold on the board ended in the last tick
+		_board_exit_pending = false
+		if main != null and main.has_method("show_title"):
+			main.show_title()  # as Esc: this mode is closed, nothing more of it this tick
+			return
 	devices.tick(dt)
 	_expire_commands(dt)
 	fx.advance(dt)
@@ -959,7 +998,9 @@ func tick(dt: float) -> void:
 		ufo.advance(dt)
 	fx.ufo_pos = ufo.position()
 	fx.ufo_visible = phase != "IDLE"  # on the title screen the UFO is the big one in the middle
-	tick_title_hand(dt, main.hand_for_menus() if main != null and main.has_method("hand_for_menus") and not demo else {})
+	var menu_hand: Dictionary = main.hand_for_menus() if main != null and main.has_method("hand_for_menus") and not demo else {}
+	tick_title_hand(dt, menu_hand)
+	tick_board_hand(dt, menu_hand)
 	match phase:
 		"TUTORIAL":
 			if practice != "":
