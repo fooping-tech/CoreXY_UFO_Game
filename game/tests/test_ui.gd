@@ -553,6 +553,20 @@ func _test_calibration_summary() -> void:
 	_ok(up.state == "ok" and up.text == "実機" and motors_off.state == "todo" and str(motors_off.text).contains("モーターが無効")
 		and CalibrationPanel.link_state("mock", false, true, true, "", {}).state == "todo",
 		"calibration link: connected is as before (done with the motors on, the motors' hint, no backend)", str(up))
+	# #249: the alarm is cleared from the top card too (the debug panel's command, nothing moves)
+	game.ws._pending.clear()
+	cp._alarm_clear.pressed.emit()
+	var sent: Array = game.ws._pending.values().map(func(p): return str(p.type))
+	var was_shown := st.visible
+	st.visible = true  # the panel's answers are shown only while the tab is on the screen
+	var shown := cp.is_visible_in_tree()
+	cp._on_ack("r", true, {"command": "clear_alarm"})
+	st.visible = was_shown
+	_ok(cp._alarm_clear.get_parent() == cp._prepare.get_parent() and sent == ["clear_alarm"]
+		and shown and cp.result_text.contains("原点復帰"),
+		"calibration: アラーム解除 beside the preparation sends clear_alarm and says homing is next", "%s %s" % [sent, cp.result_text])
+	game.ws._pending.clear()
+	cp.result_text = ""
 	cp.link_info = {}
 	cp._on_ack("r", true, {"command": "list_ports", "ports": [], "robot": missing})
 	_ok(cp.link_info.get("problem") == "port_missing" and cp.result_text == "",

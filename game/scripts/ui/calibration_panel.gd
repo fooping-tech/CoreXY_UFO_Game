@@ -75,6 +75,7 @@ var _summary_shown := ""
 ## #167: the one-button preparation
 var _prepare: Button
 var _prepare_label: Label
+var _alarm_clear: Button
 
 ## The sections in order (#120): key, title. The summary lists them; section_states() says how
 ## each one is.
@@ -92,7 +93,7 @@ const COMMANDS := {
 	"homework_spot_set": "宿題の位置の記録",
 	"camera_map_add": "カメラの点の追加", "camera_map_undo": "カメラの点を戻す",
 	"camera_map_clear": "カメラの点を消す",
-	"calibration_prepare": "準備をまとめて実行", "study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
+	"calibration_prepare": "準備をまとめて実行", "clear_alarm": "アラーム解除", "study_height_set": "撮影の高さの保存", "study_height_confirm": "撮影の高さの確認", "move_z": "Z の移動",
 	"focus_calibrate": "先端カメラの校正",
 	"easy_dial_set": "かんたんモードの投入位置の記録", "easy_dial_confirm": "かんたんモードの投入位置の確認",
 }
@@ -132,6 +133,10 @@ func setup(m: Node) -> void:
 	var prow := HBoxContainer.new()
 	tv.add_child(prow)
 	_prepare = _ws_button(prow, "準備をまとめて実行", func(): main.ws.send_command("calibration_prepare"), "primary")
+	# #249: an alarm (a failed homing, the stop key...) is cleared here too, not only in the
+	# debug panel. Moves nothing; homing is needed again after it
+	_alarm_clear = _ws_button(prow, "アラーム解除", func(): main.ws.send_command("clear_alarm"))
+	_alarm_clear.tooltip_text = "アラームを解除する（機械は動かない）。解除したら原点復帰からやり直す"
 	_prepare_label = StudyHud.label("", 15, MUTED, 2)
 	_prepare_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_prepare_label.custom_minimum_size = Vector2(WIDTH, 0)
@@ -824,6 +829,8 @@ func _on_ack(_rid: String, ok: bool, data: Dictionary) -> void:
 		("%s は断られました: %s" % [COMMANDS[cmd], reason_text(str(data.get("reason", "")))])
 	if cmd == "calibration_prepare" and ok:
 		result_text = "準備を始めた（進み具合は上の「準備のようす」に出る）"
+	if cmd == "clear_alarm" and ok:
+		result_text = "アラームを解除しました（次は原点復帰）"
 	if cmd == "z_restore":
 		var r: Dictionary = data.restore if ok and data.get("restore") is Dictionary else {}
 		restore_estimate = {} if r.is_empty() or bool(r.get("applied", false)) or bool(r.get("too_far", false)) else r
