@@ -2,7 +2,8 @@ class_name StudyModeController
 extends Node
 ## UFOくん 勉強モード (#86): the experience as one state machine.
 ##
-##   INTRO -> WAITING_FOR_WORKSHEET -> STUDYING
+##   INTRO -> WAITING_FOR_WORKSHEET --the print found (#281: check_on_found)--> the answer check
+##   INTRO -> WAITING_FOR_WORKSHEET --a thumbs-up held dialog_thumb_s first: the dialogue mode--> STUDYING
 ##   STUDYING --HELP (Y, or 1 / 2 / 3 fingers then a thumbs-up: #136)--> HELP_LOCATING -> HELP_MOVING -> CAPTURE_10CM -> CAPTURE_5CM
 ##            -> CAPTURE_LANDING -> AI_EXPLAINING -> RESUME_STUDY -> STUDYING
 ##   STUDYING --3 problems stably filled / grown-up's Enter--> the answer check (#236, #237):
@@ -60,6 +61,16 @@ var hand_help_enabled := true
 var hand_hold_ms := 600.0
 var hand_offer_s := 12.0
 var offer_problem := 0  # offered and waiting for a thumbs-up (0 = none)
+## #281: the print found goes straight to the answer check (study_mode.check_on_found)
+var check_on_found := true
+## #281: the voice dialogue needs the dialogue mode, entered with a thumbs-up held
+## dialog_thumb_s, before the print is found or at the check's summary (study_mode.dialog)
+var dialog_needs_thumb := true
+var dialog_thumb_s := 3.0
+const DIALOG_ENTRY_STATES := ["WAITING_FOR_WORKSHEET", "REVIEW_SUMMARY"]
+var dialog_mode := false
+var dialog_progress := 0.0  # the thumbs-up's hold, 0..1 (the HUD)
+var _thumb_since_ms := -1.0
 var _offer_until_ms := 0.0
 var _hand_pose := ""
 var _hand_since_ms := -1.0
@@ -169,6 +180,11 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 		help_problem = default_help_problem
 		var code := OS.find_keycode_from_string(str(h.get("key", "Y")))
 		help_keycode = code if code != KEY_NONE else KEY_Y
+	check_on_found = bool(GameConfig.get_value("study_mode", "check_on_found", check_on_found))
+	var dg = GameConfig.get_value("study_mode", "dialog", {})
+	if dg is Dictionary:
+		dialog_needs_thumb = bool(dg.get("needs_thumb", dialog_needs_thumb))
+		dialog_thumb_s = clampf(float(dg.get("thumb_s", dialog_thumb_s)), 0.5, 10.0)
 	var hh = GameConfig.get_value("study_mode", "hand_help", {})
 	if hh is Dictionary:
 		hand_help_enabled = bool(hh.get("enabled", hand_help_enabled))
@@ -233,6 +249,9 @@ func reset_story() -> void:
 	reveal_current = 0
 	if voice != null:
 		voice.reset()
+	dialog_mode = false
+	dialog_progress = 0.0
+	_thumb_since_ms = -1.0
 	offer_problem = 0
 	_hand_used = ""
 	_hand_since_ms = -1.0
@@ -324,6 +343,13 @@ func _on_speech_done() -> void:
 func _on_worksheet_seen() -> void:
 	if state != "WAITING_FOR_WORKSHEET":
 		return
+	if check_on_found and not dialog_mode:  # #281: straight to the answer check
+		study_started_ms = Time.get_ticks_msec()
+		sounds.cue("found")
+		GameState.post_event("study_started", {"worksheet_id": worksheet.get("worksheet_id", "")})
+		_complete([{"text": "プリントを見つけたよ！", "face": "happy"},
+			{"text": "UFOくんと答え合わせしよう！", "face": "excited"}])
+		return
 	_set_state("STUDYING")
 	study_started_ms = Time.get_ticks_msec()
 	sounds.cue("found")
@@ -363,22 +389,25 @@ func elapsed_s() -> float:
 
 ## Fired once per story (a repeated reading / key press never starts the check twice): every
 ## problem written -> the answer check with UFOくん (#237), not the celebration yet.
-func _complete() -> void:
+func _complete(lines: Array = []) -> void:
 	if completion_fired:
 		return
 	completion_fired = true
 	study_final_s = elapsed_s()
 	_set_state("ANSWER_CHECK_READY")
 	GameState.post_event("study_complete", {"elapsed_s": study_final_s, "by": tracker.completed_by})
-	grading.reset(tracker.numbers)  # the problems written (a real print: the ones read on it)
+	# the problems written (a real print: the ones read on it; #281: found and checked at once,
+	# a real print's problems are the ones the check reads)
+	grading.reset([] if lines.size() > 0 and services.reads_whole_sheet() else tracker.numbers)
 	grading.used_help = used_help
 	shown.clear()
 	reveal_current = 0
 	combo = 0
 	sounds.music_play("check")  # the answer check's music (study_check.mp3)
 	sounds.cue("check_start")
-	_say([{"text": "ぜんぶ書けたね！", "face": "excited"},
-		{"text": "UFOくんと答え合わせしよう！", "face": "happy"}], _scan.bind(false))
+	if lines.is_empty():
+		lines = [{"text": "ぜんぶ書けたね！", "face": "excited"}, {"text": "UFOくんと答え合わせしよう！", "face": "happy"}]
+	_say(lines, _scan.bind(false))
 
 # ------------------------------------------------------------------ the answer check (#237)
 ## Read the whole sheet once (the reader is called once; the problems are then shown one by one).
@@ -586,6 +615,7 @@ static func cleanup_enabled() -> bool:
 ## while the study mode runs. A pose counts after hand_hold_ms; once acted on, the same
 ## pose does nothing more until the hand changes (a held thumb does not start twice).
 func hand_tick(pose: String, now_ms: float) -> void:
+	_dialog_thumb(pose, now_ms)
 	if offer_problem > 0 and now_ms > _offer_until_ms:
 		offer_problem = 0
 		services.trace("hand help: the offer timed out")
@@ -611,6 +641,38 @@ func hand_tick(pose: String, now_ms: float) -> void:
 		offer_problem = 0
 		services.trace("hand help: thumbs-up for problem %d" % n)
 		request_help(n, true)
+
+## #281: a thumbs-up held dialog_thumb_s before the print is found or at the check's summary:
+## the dialogue mode (the voice dialogue may be used from then on, this story).
+func _dialog_thumb(pose: String, now_ms: float) -> void:
+	if not dialog_needs_thumb or dialog_mode or state not in DIALOG_ENTRY_STATES or pose != "thumb":
+		_thumb_since_ms = -1.0
+		dialog_progress = 0.0
+		return
+	if _thumb_since_ms < 0.0:
+		_thumb_since_ms = now_ms
+	dialog_progress = clampf((now_ms - _thumb_since_ms) / (dialog_thumb_s * 1000.0), 0.0, 1.0)
+	if dialog_progress < 1.0:
+		changed.emit()
+		return
+	enter_dialog()
+
+func enter_dialog() -> void:
+	if dialog_mode:
+		return
+	dialog_mode = true
+	dialog_progress = 0.0
+	_thumb_since_ms = -1.0
+	_hand_used = "thumb"  # this thumb is used up (it starts no help offer as well)
+	sounds.play("chime")
+	services.trace("dialogue mode on (thumbs-up)")
+	if state == "WAITING_FOR_WORKSHEET":
+		_say([{"text": "いいね！ おはなし しながら 宿題を しよう！", "face": "excited"},
+			{"text": "プリントを 置いてね。V キーか マイクの ボタンで 話しかけてね。", "face": "happy"}])
+	else:
+		_say([{"text": "いいね！ わからない ところを おはなし しよう！", "face": "excited"},
+			{"text": "V キーか マイクの ボタンで 話しかけてね。", "face": "happy"}])
+	changed.emit()
 
 ## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
 ## The problem Y helps with (#237): on a real print (read by the camera) the one the child seems

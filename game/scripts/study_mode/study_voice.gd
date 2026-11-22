@@ -68,7 +68,10 @@ func _homework() -> HomeworkClient:
 const TALK_STATES := ["STUDYING", "RESUME_STUDY"]
 
 func in_talk_state() -> bool:
-	return ctl != null and ctl.state in TALK_STATES
+	if ctl == null:
+		return false
+	# #281: the check's summary too, once the dialogue mode is on
+	return ctl.state in TALK_STATES or (ctl.dialog_mode and ctl.state == "REVIEW_SUMMARY")
 
 ## Why the child cannot talk to UFOくん now ("" when they can).
 func blocker() -> String:
@@ -76,6 +79,8 @@ func blocker() -> String:
 		return "声の対話は オフ（study_mode.voice.enabled）"
 	if ctl == null or not ctl.active():
 		return "勉強モードではない"
+	if ctl.dialog_needs_thumb and not ctl.dialog_mode:  # #281
+		return "いいね 👍 を %d びょう みせると おはなしモード" % roundi(ctl.dialog_thumb_s)
 	if ctl.services.mode == "simulated":
 		return "模擬の勉強モード（カメラのときだけ話せる）"
 	var hw := _homework()

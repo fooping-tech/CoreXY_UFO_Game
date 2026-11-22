@@ -747,7 +747,7 @@ func refresh() -> void:
 	_error.visible = st in ["ERROR"] and ctl.error_text != ""
 	_error_text.text = ctl.error_text + "\n（Enter で続ける）"
 	_error.position = Vector2(40, vs.y * 0.5)
-	_keys.text = key_help(st, ctl.services.mode)
+	_keys.text = key_help(st, ctl.services.mode, "off" if ctl.dialog_needs_thumb and not ctl.dialog_mode else "on")
 
 static func banner_text(st: String, r: Dictionary) -> String:
 	if st == "GAME_READY_WITH_REWARD":
@@ -789,7 +789,8 @@ static func study_time_text(secs: float) -> String:
 		return "%d時間%d分%d秒" % [s / 3600, (s / 60) % 60, s % 60]
 	return "%d分%02d秒" % [s / 60, s % 60]
 
-static func key_help(state: String, mode: String) -> String:
+## `dialog` (#281): "on" (the dialogue mode is on, or not needed), "off" (a thumbs-up enters it)
+static func key_help(state: String, mode: String, dialog := "on") -> String:
 	var parts := ["Enter 次へ/確認", "指 1・2・3 → いいね 解説（Y も）", "Space 止める"]
 	if state in ["INTRO", "WAITING_FOR_WORKSHEET"]:
 		parts.append(", . 学年")
@@ -799,8 +800,10 @@ static func key_help(state: String, mode: String) -> String:
 		parts.append("R もう一度読む")
 	elif mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
-	elif state in StudyVoice.TALK_STATES:
+	elif state in StudyVoice.TALK_STATES and dialog == "on":
 		parts.append("V 押して話す")  # #233
+	if dialog == "off" and state in StudyModeController.DIALOG_ENTRY_STATES:
+		parts.append("👍 3びょう おはなし")  # #281
 	# #260: the staff's keys (StaffControl), then the developers' (Shift)
 	parts.append_array(["F6 とばす", "F7 ゲームへ", "F8 メニュー", "F9 ふっき", "Shift+F7 失敗注入", "Shift+F8 最初から", "F5 終了"])
 	return "  ".join(parts)

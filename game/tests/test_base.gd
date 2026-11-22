@@ -96,6 +96,10 @@ func _study_game(mode := "simulated") -> Node:
 	game.study_mode.services.set_mode(mode)
 	game.study_mode.speech.voice_on = false
 	game.study_mode.sounds.enabled = false
+	# #281: these tests go through the homework time and talk without a thumbs-up; the print
+	# checked at once and the dialogue mode have their own test
+	game.study_mode.check_on_found = false
+	game.study_mode.dialog_needs_thumb = false
 	return game
 
 func _key(code: int) -> InputEventKey:
