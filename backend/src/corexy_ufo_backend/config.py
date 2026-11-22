@@ -104,10 +104,25 @@ class BackendConfig:
     # after homing, and the easy mode's carry to a Dial. None = xy_feed_mm_min. The firmware
     # clamps an XY feed to its MAX_FEED_MM_MIN (15909.9)
     xy_fast_feed_mm_min: float | None = None
+    # #276: where the arm waits out of the way of the screen (`park`): park_mm [x, y], or by
+    # default the left back corner (x_min, y_max) park_margin_mm inside; at park_feed_mm_min
+    park_mm: tuple[float, float] | None = None
+    park_margin_mm: float = 20.0
+    park_feed_mm_min: float = 3000.0
 
     def fast_feed(self) -> float:
         f = self.xy_fast_feed_mm_min
         return f if f is not None and f > 0 else self.xy_feed_mm_min
+
+    def park_point(self) -> tuple[float, float]:
+        """#276: where `park` takes the arm: park_mm when it is inside the soft limits, else the
+        left back corner (x_min, y_max: +Y is the back) park_margin_mm inside."""
+        lim = self.limits
+        p = self.park_mm
+        if p is not None and lim.xy_inside(p[0], p[1]):
+            return p
+        m = max(self.park_margin_mm, 0.0)
+        return (min(lim.x_min + m, lim.x_max), max(lim.y_max - m, lim.y_min))
 
     def home_center(self) -> tuple[float, float] | None:
         """Where the arm goes after homing (None = it stays at home). A configured point
@@ -274,6 +289,12 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     if (isinstance(hc, list) and len(hc) == 2
             and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in hc)):
         cfg.home_center_mm = (float(hc[0]), float(hc[1]))
+    pk = b.get("park_mm")
+    if (isinstance(pk, list) and len(pk) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in pk)):
+        cfg.park_mm = (float(pk[0]), float(pk[1]))
+    cfg.park_margin_mm = min(max(float(b.get("park_margin_mm", 20.0)), 0.0), 100.0)
+    cfg.park_feed_mm_min = min(max(float(b.get("park_feed_mm_min", 3000.0)), 300.0), 15900.0)
     cfg.serial_rx_stall_s = float(b.get("serial_rx_stall_s", 5.0))
     cfg.serial_reopen_s = float(b.get("serial_reopen_s", 3.0))
     url = str(data.get("network", {}).get("websocket_url", "ws://127.0.0.1:8765"))

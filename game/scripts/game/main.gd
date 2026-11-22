@@ -252,6 +252,7 @@ func _ready() -> void:
 	easy.configure(easy_cfg if easy_cfg is Dictionary else {})
 	easy.send = _easy_send
 	ws.ack.connect(easy.on_ack)
+	ws.ack.connect(_on_park_ack)
 	easy.delivered.connect(_on_easy_delivered)
 	easy.cue.connect(_on_easy_cue)
 	easy.state_changed.connect(func(from: String, to: String): debug_log.emit("easy mode: %s -> %s%s" % [from, to,
@@ -702,6 +703,7 @@ static func motion_intensities(anchor_vel: Vector3, rope_rate_cm_s: float) -> Ve
 func _process(dt: float) -> void:
 	dev.capture_tick(dt)
 	_tick_tutorial_goto(dt)
+	_tick_park(dt)
 	if game_mode != null:
 		# the menu's music (#173): the title screen, and the score game's own title
 		# #181: the title screen at start has its own (top), the practice too; none in the 校正 tab
@@ -1391,6 +1393,78 @@ func feed_remote_hand(d: Dictionary, now_ms: float) -> void:
 ## #183: the practice's carry (easy mode; #266: shown after the fist): the arm really goes over that Dial, at the
 ## carry's speed. Asked of the backend (easy_goto: XY only, refused unless the easy mode's
 ## values are usable and the arm is up); the virtual crane of --game-only does not move.
+## #276: the arm out of the way of the screen (the backend's `park`: the left back corner,
+## slowly) when the study mode or the score game opens and when a round has ended (its
+## result). Only with the backend; the backend refuses it while anything else moves, a jog is
+## on or the arm is not wound up. A "busy" refusal is asked again PARK_RETRY_S later, for
+## PARK_WINDOW_S at most; nothing while a round is being played.
+const PARK_RETRY_S := 0.8
+const PARK_WINDOW_S := 15.0
+var park_want := ""  # why the arm is to be parked ("" = not)
+var parks_sent := 0
+var _park_left := 0.0
+var _park_try := 0.0
+var _park_rid := ""
+var _park_screen := ""
+var _park_phase := ""
+
+func request_park(why: String) -> void:
+	if RobotState.source != "websocket":
+		return
+	park_want = why
+	_park_left = PARK_WINDOW_S
+	_park_try = 0.0
+
+func _park_now_ok() -> bool:
+	if not RobotState.connected or not RobotState.homed or not RobotState.motors_enabled \
+			or RobotState.machine_state in ["ALARM", "ESTOP"]:
+		return false
+	if RobotState.auto_catch_active() or RobotState.easy_mode_active() or ws.has_pending_motion():
+		return false
+	# never while a round is played (the start's own move, the hand's moves)
+	return game_mode == null or not game_mode.active() or game_mode.phase in ["IDLE", "RESULT"]
+
+func _tick_park(dt: float) -> void:
+	var s := staff.screen()
+	if s != _park_screen:
+		if s in ["study", "score"]:
+			request_park("mode " + s)
+		_park_screen = s
+	var ph: String = game_mode.phase if game_mode != null and game_mode.active() else ""
+	if ph != _park_phase:
+		if ph == "RESULT":
+			request_park("round over")
+		_park_phase = ph
+	if park_want == "":
+		return
+	_park_left -= dt
+	if _park_left <= 0.0:
+		debug_log.emit("park: not done in time (%s)" % park_want)
+		park_want = ""
+		return
+	_park_try -= dt
+	if _park_try > 0.0 or not _park_now_ok():
+		return
+	_park_try = PARK_RETRY_S
+	var rid := ws.send_command("park", {})
+	if rid == "":
+		return
+	parks_sent += 1
+	debug_log.emit("park: to the waiting point (%s)" % park_want)
+	_park_rid = rid
+	park_want = ""
+
+func _on_park_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if rid == "" or rid != _park_rid:
+		return
+	_park_rid = ""
+	if ok:
+		return
+	var reason := str(data.get("reason", ""))
+	debug_log.emit("park refused: %s" % reason)
+	if reason.contains("busy") and _park_left > 0.0:
+		park_want = "again"  # another motion was just ending: once more, inside the same window
+
 ## #266: the same step closes the claw first: while that request is still out, the carry
 ## waits for its answer (TUTORIAL_GOTO_WAIT_S at most, then it is left out), so the arm
 ## never sets off with the claw open.
@@ -1716,6 +1790,9 @@ func _update_gesture_presentation(dt: float) -> void:
 ## Space: the game's stop (the mock halts, the backend gets soft_stop: a decelerating stop,
 ## no alarm; the debug panel's E-STOP sends ABORT).
 func stop_key() -> void:
+	# #276 (review on #279): a stop ends any parking still to come; a late answer re-arms nothing
+	park_want = ""
+	_park_rid = ""
 	_tutorial_goto = {}  # nothing of the practice's carry is sent after a stop
 	if study_mode != null:
 		study_mode.on_stop_key()

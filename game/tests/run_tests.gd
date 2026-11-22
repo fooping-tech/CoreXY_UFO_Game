@@ -115,6 +115,7 @@ func _ready() -> void:
 	_s.tutorial_easy._test_gesture_tutorial_more_steps()
 	_s.tutorial_easy._test_gesture_tutorial_done_say()
 	_s.tutorial_easy._test_tutorial_claw_demo(rs)
+	_s.tutorial_easy._test_park_requests(rs)
 	_s.tutorial_easy._test_game_title_hand(rs)
 	_s.tutorial_easy._test_gesture_tutorial_game(rs)
 	_s.tutorial_easy._test_easy_mode_logic()

@@ -324,6 +324,15 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         if not enable and self._busy:
             await self.stop()
 
+    def travel_height_refusal(self) -> str:
+        """#276: the arm must be wound up (at its recorded top) for a move nobody steers."""
+        if self._z_reference() is None:
+            return "Z reference not set (z_set top)"
+        top = self._z_point_units("top")
+        if abs(self._z_units_est - top) > self.cfg.home_z_tolerance:
+            return f"the arm is not wound up (Z {self._z_units_est:.1f}, top {top:.0f})"
+        return ""
+
     def _home_z_refusal(self) -> str:
         """Why XY may not home now ("" = it may): the arm must be wound up first."""
         if not self.cfg.home_requires_z_top:

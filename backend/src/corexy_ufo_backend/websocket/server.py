@@ -7,6 +7,8 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
   home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z},
+  park (#276: the arm to its waiting point, the left back corner by default, at backend.park_feed_mm_min;
+  refused while another motion runs, a jog is on, or the arm is not wound up),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
   measured counts per unit, saved; clear = start over), z_restore {apply, turns?} (#106: the
   last session's top / bottom after a power cycle; apply false = the estimate only, true =
@@ -795,6 +797,21 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                 await self.robot.arm_zero()
             elif name == "arm_set":
                 await self.robot.arm_set(str(params["which"]))
+            elif name == "park":
+                # #276: the arm out of the way of the screen (the left back corner), slowly.
+                # Nobody steers it: only when nothing else moves and the arm is wound up.
+                if self.backend_cfg is None:
+                    return self._nack(name, "park: no backend config")
+                if self._motion_lock.locked():
+                    return self._nack(name, "busy: another motion command is running")
+                if self._jog_owner is not None:
+                    return self._nack(name, "busy: jog active")
+                why = self.robot.travel_height_refusal()
+                if why:
+                    return self._nack(name, f"park refused: {why}")
+                x, y = self.backend_cfg.park_point()
+                async with self._motion_lock:
+                    await self.robot.move_xy(x, y, self.backend_cfg.park_feed_mm_min)
             else:
                 async with self._motion_lock:
                     if name == "home":
