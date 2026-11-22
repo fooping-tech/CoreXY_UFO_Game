@@ -125,6 +125,8 @@ func _test_easy_mode_logic() -> void:
 			"nack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "easy catch refused: not homed"})
 				results.append(e4.state == "MANUAL_XY" and e4.note.contains("げんてんふっき"))
+				# #270: the backend refuses a catch that would go down onto the portal
+				results.append(EasyModeControl.refusal_text("easy catch refused: near the portal (Dial 1, 30 mm < 60 mm)").contains("ポータルの ちかく"))
 			"timeout_ack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "timeout"})
 				results.append(e4.state == "FAULT")
@@ -1150,3 +1152,66 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	_ok(not ctl.active() and not ctl.tutorial.active() and not ctl.tutorial_hud.showing(),
 		"Esc in the practice: back to the title, the practice is over", str(ctl.phase))
 	_gm_free(game, rs)
+
+## #276: the arm is parked (the backend's park) when a mode opens and when a round ends;
+## a busy refusal is asked again; never while a round is played; never without the backend.
+func _test_park_requests(rs: Node) -> void:
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var saved := [RobotState.source, RobotState.connected, RobotState.homed, RobotState.motors_enabled, RobotState.machine_state]
+	game.ws._pending.clear()
+	game.show_title()
+	game._tick_park(0.1)
+	game._unhandled_input(_key(KEY_3))
+	game._tick_park(0.1)
+	var mock_nothing: bool = game.parks_sent == 0  # the game's own mock: no backend, nothing
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.homed = true
+	RobotState.motors_enabled = true
+	RobotState.machine_state = "IDLE"
+	game.show_title()
+	game._tick_park(0.1)
+	game._unhandled_input(_key(KEY_3))  # the score game opens
+	game._tick_park(0.1)
+	var sent_names := func() -> Array: return game.ws._pending.values().map(func(p): return str(p.type))
+	var on_open: bool = game.parks_sent == 1 and sent_names.call().has("park")
+	var rid := str(game._park_rid)
+	game.ws._pending.clear()
+	game._on_park_ack(rid, false, {"reason": "busy: another motion command is running"})
+	game._tick_park(GameControlParkWait.RETRY)
+	var again: bool = game.parks_sent == 2
+	game.ws._pending.clear()
+	game._on_park_ack(str(game._park_rid), true, {})
+	ctl.phase = "PLAYING"
+	game.request_park("test")
+	for i in 10:
+		game._tick_park(0.5)
+	var not_in_play: bool = game.parks_sent == 2
+	ctl.phase = "RESULT"
+	game._tick_park(1.0)
+	var on_result: bool = game.parks_sent == 3
+	# review on #279: Space ends a parking still to come, and its late "busy" re-arms nothing
+	ctl.phase = "IDLE"
+	game.request_park("test")
+	var stop_rid := "late-one"
+	game._park_rid = stop_rid
+	game.stop_key()
+	game._on_park_ack(stop_rid, false, {"reason": "busy: jog active"})
+	var sent_before: int = game.parks_sent
+	for i in 10:
+		game._tick_park(0.5)
+	on_result = on_result and game.park_want == "" and game.parks_sent == sent_before
+	game.ws._pending.clear()
+	RobotState.source = saved[0]
+	RobotState.connected = saved[1]
+	RobotState.homed = saved[2]
+	RobotState.motors_enabled = saved[3]
+	RobotState.machine_state = saved[4]
+	_ok(mock_nothing and on_open and again and not_in_play and on_result,
+		"park (#276): the arm is parked when the score game opens and when a round ends (its result); a busy refusal is asked again; nothing while a round is played or without the backend",
+		"%s %s %s %s %s" % [mock_nothing, on_open, again, not_in_play, on_result])
+	_gm_free(game, rs)
+
+class GameControlParkWait:
+	const RETRY := 1.0
