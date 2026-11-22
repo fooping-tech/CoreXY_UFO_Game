@@ -735,6 +735,9 @@ async def test_easy_goto_moves_xy_to_a_dial_and_nothing_else(server):
             await asyncio.sleep(0.02)
         else:
             raise AssertionError(f"easy_goto never settled: pos={robot.pos}, vel={robot.vel}")
+        # #270: no catch goes down over the portal: away from it first
+        assert (await _cmd(ws, "c0", "easy_grab"))["type"] == "nack"
+        robot.pos[0] = robot.target[0] = x + 100.0
         # while the easy catch runs: busy
         assert (await _cmd(ws, "c", "easy_grab"))["type"] == "ack"
         r = await _cmd(ws, "g3", "easy_goto", destination=1)
@@ -752,3 +755,45 @@ def test_the_repo_config_carries_to_a_dial_slower_than_the_fast_feed():
     assert p.xy_feed_mm_min == p.xy_feed_max_mm_min == 9000.0 < cfg.fast_feed()
     # one motor's step rate on a diagonal at this feed is under an axis move's at the fast feed
     assert p.xy_feed_mm_min * 2 ** 0.5 < cfg.fast_feed()
+
+
+async def test_no_catch_goes_down_near_the_portal():
+    """#270: a fist over (or near) the portal does not lower the arm onto the Dial."""
+    async with EasyRig() as rig:
+        rig.robot.pos[0], rig.robot.pos[1] = 20.0 + 30.0, 100.0  # 30 mm from Dial 1
+        rig.robot.target = list(rig.robot.pos)
+        with pytest.raises(RobotCommandError, match="near the portal"):
+            await rig.seq.start_grab()
+        assert rig.robot.commands == [] and not rig.lock.locked() and not rig.seq.active
+    async with EasyRig() as rig:  # far enough: as ever
+        rig.robot.pos[0], rig.robot.pos[1] = 20.0 + 80.0, 100.0
+        rig.robot.target = list(rig.robot.pos)
+        await rig.seq.start_grab()
+        await rig.until_state("WAIT_DESTINATION")
+    async with EasyRig(easy=easy_params(portal_keepout_mm=0.0)) as rig:  # 0 = off
+        rig.robot.pos[0], rig.robot.pos[1] = 20.0, 100.0
+        rig.robot.target = list(rig.robot.pos)
+        await rig.seq.start_grab()
+        await rig.until_state("WAIT_DESTINATION")
+
+
+def test_portal_keepout_from_the_config():
+    raw = {"game_mode": {"easy": {"portal_keepout_mm": 45, "dry_run": {"dial_1": [20, 100], "release_z": 70}}}}
+    e = EasyParams.from_raw(raw, "dry_run")
+    assert e.portal_keepout_mm == 45.0 and e.near_portal(20.0, 130.0) != "" and e.near_portal(20.0, 150.0) == ""
+    assert EasyParams.from_raw({"game_mode": {"easy": {}}}, "dry_run").portal_keepout_mm == 60.0
+    assert EasyParams.from_raw({"game_mode": {"easy": {"portal_keepout_mm": -5}}}, "dry_run").portal_keepout_mm == 0.0
+
+
+async def test_the_status_says_why_a_catch_would_be_refused():
+    """#275: the game starts no score game while the easy catch would be refused."""
+    async with EasyRig() as rig:
+        assert rig.seq.status()["blockers"] == []
+        rig.robot.homed = False
+        assert any("not homed" in b for b in rig.seq.status()["blockers"])
+        rig.robot.homed = True
+        rig.jogging = True  # a jog passes by itself: no reason to hold a game back
+        assert rig.seq.status()["blockers"] == []
+        rig.jogging = False
+    async with EasyRig(easy=easy_params(confirmed=False, profile="real")) as rig:
+        assert rig.seq.status()["blockers"] != []

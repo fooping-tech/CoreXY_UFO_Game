@@ -206,7 +206,8 @@ func _test_game_mode_scope(rs: Node) -> void:
 	var ctl: GameModeController = _gm_playing(game)
 	var sc := ctl.scope
 	ctl._process(0.016)
-	var hidden: bool = not sc.visible and sc.source_role() == "" and sc.state() == "NO SIGNAL"
+	# #271: no arm camera: NO SIGNAL on the scope (never the overview camera in its place)
+	var hidden: bool = sc.visible and not sc._cam.visible and sc.source_role() == "" and sc.state() == "NO SIGNAL"
 	ctl.demo = true  # the rehearsal's made-up picture stands in for the camera
 	ctl._process(0.016)
 	var shown: bool = sc.visible and sc.source_role() == "demo" and sc.state() == "DEMO"

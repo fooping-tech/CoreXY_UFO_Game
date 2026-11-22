@@ -14,8 +14,9 @@ extends Control
 ## cancelled. Nothing is measured here.
 ##
 ## Presentation only: it shows the camera and decides nothing. Without the arm's camera it
-## shows the overview camera; with no camera at all it stays hidden (the planet is there
-## instead).
+## says NO SIGNAL (#271: it never stands in the overview camera, which looked like the arm's
+## and hid that the arm camera was gone); with no camera hub at all (--game-only, the tests)
+## it stays hidden (the planet is there instead).
 
 const RECT := GameModeLayout.SCOPE_RECT
 const RADIUS := 44.0
@@ -84,8 +85,7 @@ func setup(h: CameraHub) -> void:
 func centre() -> Vector2:
 	return Vector2(RADIUS + 12.0, RECT.size.y * 0.5)  # on the left of its panel; the words beside it
 
-## Which camera the disc shows: "focus" (the arm), "overview" (when the arm has none),
-## "demo" or "".
+## Which camera the disc shows: "focus" (the arm), "demo" or "" (none: NO SIGNAL).
 func source_role() -> String:
 	if demo:
 		return "demo"
@@ -93,9 +93,7 @@ func source_role() -> String:
 		return ""
 	if hub.has_feed("focus"):
 		return "focus"
-	if hub.has_feed("overview"):
-		return "overview"
-	return ""
+	return ""  # #271: never the overview camera in its place
 
 ## The last stabilized frame's header ({} when the picture is not the backend's stream).
 func stream_header() -> Dictionary:
@@ -130,9 +128,14 @@ static func shake_of(header: Dictionary) -> float:
 func step(dt: float, show: bool) -> void:
 	_t += dt
 	var role := source_role()
-	visible = show and role != ""
+	visible = show and (role != "" or hub != null)  # NO SIGNAL shows (the arm camera is gone)
 	_demo_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS if visible and role == "demo" else SubViewport.UPDATE_DISABLED
 	if not visible:
+		return
+	_cam.visible = role != ""
+	if role == "":
+		queue_redraw()
+		_art.queue_redraw()
 		return
 	_cam.texture = _demo_view.get_texture() if role == "demo" else hub.texture(role)
 	if role == "demo":

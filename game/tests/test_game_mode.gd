@@ -590,7 +590,8 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	hub.mock_ball(GM_L)
 	_gm_step(ctl, 0.6)
 	var settling: bool = ctl.phase == "SETTLING" and l.state == "ABSORBING" \
-		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup")
+		and not ctl.sounds.bgm_on and ctl.sounds.log.has("timeup") \
+		and ctl.tutorial_speech.current == GameModeController.TIME_UP_LINE  # #271: UFOくん says the end
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s - 0.5)
 	_ok(hurry and warned and settling and l.state == "SIMULATING" and ctl.time_left == 0.0,
 		"game mode: the last 30 s hurry, the last 10 s warn; at 0 s the capsule in play goes on",
@@ -1042,7 +1043,20 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 	var files: bool = GameModeSounds.OWN_FILES.keys().all(func(k): return ctl.sounds.source_of(k) == "file")
 	sound = sound and files  # the magic sounds of 効果音ラボ (se/), not synthesised
 	show_kind = show_kind and sound
+	# #277: the shelf's light in the capsule's colour as it comes up big, a flash as UFOくん
+	# shines, the round's light again once it has dropped
+	var lights_of := func() -> Array:
+		return ctl.mock_hub.executed.filter(func(e): return e[0] == GameModeDevices.ILLUMINATION and e[1] == "SET_LIGHT_MODE")
+	var fc: Color = CapsuleKinds.COLORS["fire"]
+	var custom: Array = lights_of.call()
+	var light_in: bool = not custom.is_empty() and str(custom[-1][2].mode) == "CUSTOM" \
+		and custom[-1][2].color == [int(round(fc.r * 255.0)), int(round(fc.g * 255.0)), int(round(fc.b * 255.0))]
+	var flashes_before: int = ctl.mock_hub.count(GameModeDevices.ILLUMINATION, "TRIGGER_EFFECT")
 	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.1)
+	var after: Array = lights_of.call()
+	var light_back: bool = str(after[-1][2].mode) != "CUSTOM" and after.size() > custom.size() \
+		and ctl.mock_hub.count(GameModeDevices.ILLUMINATION, "TRIGGER_EFFECT") == flashes_before + 1
+	show_kind = show_kind and light_in and light_back
 	var id: String = str(c.capsule_id)
 	var on_field: bool = l.state == "SIMULATING" and ctl.field.capsule_kind(id) == "fire" \
 		and ctl.field.capsule_color(id) == CapsuleKinds.COLORS["fire"]
@@ -1064,7 +1078,7 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 	ctl.field.remove_capsule("k1")
 	ctl.field.remove_capsule("k2")
 	_ok(title_no_read and read_some and kind_set and show_kind and on_field and physics and trail and scored and children,
-		"capsule kinds #266: the arm camera is read while the round takes capsules; the capsule taken in is the colour it saw (red = fire): the show (with its own sound as it comes up big), the field's colour and sprite, its physics, its particles and its points (hit_k) follow it, and a multiball's balls are the same kind",
+		"capsule kinds #266: the arm camera is read while the round takes capsules; the capsule taken in is the colour it saw (red = fire): the show (with its own sound as it comes up big, the shelf's light in its colour, #277), the field's colour and sprite, its physics, its particles and its points (hit_k) follow it, and a multiball's balls are the same kind",
 		"%s %s %s %s %s %s %s %s(%d) %s" % [title_no_read, read_some, kind_set, show_kind, on_field, physics, trail, scored, gained, children])
 	# nothing sure (grey frames): a normal capsule, as ever; off: always normal
 	ctl.colour_source = func() -> Image: return _colour_frame(Color(0.5, 0.5, 0.5), 0.3)

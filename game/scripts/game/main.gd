@@ -1158,6 +1158,17 @@ func easy_problem() -> String:
 		return "かんたんモードはバックエンド接続時だけ（実機なしなら ./start.sh --mock）"
 	return ""
 
+## #275: why the backend would refuse the easy mode's catch now, in plain words ("" = it would
+## not): not homed, an alarm, the motors off, the values not recorded, ... (what passes by
+## itself, a jog or another motion, is not reported). The score game starts nothing meanwhile.
+func easy_blocker() -> String:
+	if RobotState.source != "websocket" or not RobotState.connected:
+		return ""
+	var bl = RobotState.easy_mode.get("blockers", [])
+	if not (bl is Array) or (bl as Array).is_empty():
+		return ""
+	return EasyModeControl.refusal_text(str(bl[0]))
+
 ## The easy mode is on: the score game is open with difficulty easy and it is usable.
 func easy_wanted() -> bool:
 	if game_mode == null:

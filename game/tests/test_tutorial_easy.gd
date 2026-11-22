@@ -125,6 +125,8 @@ func _test_easy_mode_logic() -> void:
 			"nack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "easy catch refused: not homed"})
 				results.append(e4.state == "MANUAL_XY" and e4.note.contains("げんてんふっき"))
+				# #270: the backend refuses a catch that would go down onto the portal
+				results.append(EasyModeControl.refusal_text("easy catch refused: near the portal (Dial 1, 30 mm < 60 mm)").contains("ポータルの ちかく"))
 			"timeout_ack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "timeout"})
 				results.append(e4.state == "FAULT")
@@ -341,6 +343,18 @@ func _test_easy_mode_game(rs: Node) -> void:
 	feed.call("open", 20)
 	feed.call("fist", 60)
 	var not_before_the_round = be.sent.is_empty() and e.note.contains("ゲームちゅう")  # the title: no catch
+	# #275: while the backend would refuse the catch (not homed, ...) no game starts
+	be.status = {"blockers": ["not homed"]}
+	feed.call("open", 2)
+	game._unhandled_input(_key(KEY_ENTER))
+	ctl.start_tutorial()
+	feed.call("open", 2)
+	ctl.hud._process(0.016)
+	var held_back: bool = ctl.phase == "IDLE" and ctl.start_blocked().contains("げんてんふっき") \
+		and ctl.difficulty_text().contains("F9") and ctl.hud._mode.text.contains("はじめられない")
+	be.status = {}
+	feed.call("open", 2)
+	not_before_the_round = not_before_the_round and held_back and ctl.start_blocked() == ""
 	game._unhandled_input(_key(KEY_ENTER))
 	feed.call("open", 2)
 	# the round starts: the arm is brought to its start, and the hand waits meanwhile
@@ -717,7 +731,7 @@ func _test_game_title_hand(rs: Node) -> void:
 	_ok(opened and carried_over and to_hard and to_easy and filling and let_go and started and only_title,
 		"game title (#183, #198): an open hand held 3 s starts (as Enter); one / two fingers and D choose no difficulty; nothing outside the title",
 		"%s %s %s %s %s %s %s %s" % [opened, carried_over, to_hard, to_easy, filling, let_go, started, only_title])
-	# #253: the high scores' board: an open hand held 3 s goes back to the top title (as Esc)
+	# #253: the high scores' board: an open hand held board_exit_hold_s (#271: 1 s) goes back to the top title (as Esc)
 	ctl._halt("test")
 	game.show_title()
 	game._unhandled_input(_key(KEY_2))
@@ -727,18 +741,40 @@ func _test_game_title_hand(rs: Node) -> void:
 		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))  # already open when the board came up: not counted
 	var not_carried = ctl.board_hand_progress == 0.0 and ctl.active()
 	ctl.tick_board_hand(1.0 / 60.0, hand.call("fist"))
-	for i in 120:
+	var hold_n := int(ctl.board_exit_hold_s * 60.0)
+	for i in int(hold_n * 0.7):
 		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))
-	var b_filling = ctl.board_hand_progress > 0.6 and ctl.active() and not game.title_active()
+	var b_filling = ctl.board_hand_progress > 0.6 and ctl.active() and not game.title_active() and is_equal_approx(ctl.board_exit_hold_s, 1.0)
 	ctl.tick_board_hand(1.0 / 60.0, {})  # let go: from the start again
 	var b_let_go = ctl.board_hand_progress == 0.0
-	for i in 185:
+	for i in hold_n + 5:
 		ctl.tick_board_hand(1.0 / 60.0, hand.call("open"))
 	var not_yet = ctl.active()  # the next tick goes
 	ctl.tick(1.0 / 60.0)
 	var to_title = game.title_active() and not ctl.active()
+	# #271: after a round the board goes back to the top title by itself after board_max_s (8 s);
+	# the board opened with R on the score game's title does not
+	ctl._halt("test")
+	game.show_title()
+	game._unhandled_input(_key(KEY_2))
+	ctl.ranking_flow.toggle()
+	ctl.board_max_s = 8.0  # (the config's: _gm_game() sets it out of the way)
+	ctl.ranking_view_t = ctl.board_max_s + 1.0
+	ctl.tick_board_hand(1.0 / 60.0, {})
+	ctl.tick(1.0 / 60.0)
+	var r_stays: bool = ctl.active() and ctl.ranking_view == "board"
+	ctl.phase = "RESULT"
+	ctl.ranking_view = "board"
+	ctl.ranking_view_t = ctl.board_max_s - 0.5
+	ctl.tick_board_hand(1.0 / 60.0, {})
+	var before_max: bool = ctl.active() and not ctl._board_exit_pending
+	ctl.ranking_view_t = ctl.board_max_s + 0.01
+	ctl.tick_board_hand(1.0 / 60.0, {})
+	ctl.tick(1.0 / 60.0)
+	var max_title: bool = game.title_active() and not ctl.active() and is_equal_approx(GameModeController.new().board_max_s, 8.0)
+	to_title = to_title and r_stays and before_max and max_title
 	_ok(board_up and not_carried and b_filling and b_let_go and not_yet and to_title,
-		"high scores (#253): an open hand held 3 s on the board goes back to the top title (a hand already open when it came up does not count)",
+		"high scores (#253, #271): an open hand held 1 s on the board goes back to the top title (a hand already open when it came up does not count); after a round it goes there by itself after 8 s",
 		"%s %s %s %s %s %s" % [board_up, not_carried, b_filling, b_let_go, not_yet, to_title])
 	# left on the title and chosen again with two fingers: that shape does not switch it either
 	ctl._halt("test")
