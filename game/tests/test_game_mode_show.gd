@@ -151,24 +151,32 @@ func _test_game_mode_juice(rs: Node) -> void:
 		and ctl.backdrop.light_color().r > ctl.backdrop.light_color().b,
 		"game mode juice: the sky and its light change with the time left (calm, the last 30 s, the last 10 s)",
 		"%d %d %d" % [calm, hurry, last])
-	# portrait (#157): the hand panel sits on the left of the status row: clear of the score, the
-	# UFO's rail, the field and the Dial's port
+	# #258: the hand window bottom right: the camera big on top (GestureHud), the easy mode's guide
+	# right under it (EasyModeHud), one rounded window over the field's corner, clear of the
+	# Dial's port, the score and the UFO's rail; the practice's words beside the port stay clear of it
 	var screen_rect := Rect2(Vector2.ZERO, GameModeLayout.SCREEN)
 	game.gesture_hud.column = true
 	game.gesture_hud.place(720.0, 1280.0)
 	var card := Rect2(game.gesture_hud.position, game.gesture_hud.size)
+	var win := GameModeLayout.GUIDE_RECT
+	var lower := EasyModeHud.PANEL
+	var cam: Rect2 = game.gesture_hud.cam_rect()
 	var field_rect := Rect2(PinballField.LEFT - 12.0, PinballField.TOP - 30.0, PinballField.RIGHT - PinballField.LEFT + 24.0,
 		PinballField.FLOOR_Y - PinballField.TOP + 98.0)
 	var port := Rect2(GameModeVFX.PORTS["left"] - Vector2(40, 40), Vector2(80, 100))
 	var rail := Rect2(ctl.ufo.x_min - 64.0, ctl.ufo.y - 52.0, ctl.ufo.x_max - ctl.ufo.x_min + 128.0, 116)  # (the sprite's own top rows are empty)
-	_ok(not card.intersects(field_rect) and not card.intersects(GameModeHud.SCORE_RECT) and not card.intersects(port)
-		and not card.intersects(rail) and not GameModeHud.SCORE_RECT.intersects(rail) and not GameModeHud.TIME_RECT.intersects(rail)
-		and not GameModeHud.SCORE_RECT.intersects(GameModeHud.TIME_RECT) and screen_rect.encloses(card) and screen_rect.encloses(rail)
-		and screen_rect.encloses(GameModeHud.SCORE_RECT) and screen_rect.encloses(GameModeHud.TIME_RECT)
-		and not card.intersects(GameModeLayout.COMBO_RECT) and not card.intersects(ArmScope.RECT)
-		and game.gesture_hud.ring()[0].x + game.gesture_hud.ring()[1] < card.size.x and GestureHud.CAM_RECT.end.y < card.size.y,
-		"game mode layout: the hand panel (camera, stick, state) is on the left of the status row: it covers neither the score, the UFO's rail, the field nor the Dial's port",
-		str(card))
+	var practice_sub: Rect2 = GestureTutorialHud.LINES["sub"][1]
+	_ok(screen_rect.encloses(win) and win.encloses(card) and card.position == win.position and win.position.x > GameModeLayout.CX
+		and win.end.y > GameModeLayout.FIELD_FLOOR and is_equal_approx(lower.position.y, card.end.y) and is_equal_approx(lower.end.y, win.end.y)
+		and lower.position.x == win.position.x and lower.size.x == win.size.x
+		and not win.intersects(port) and not win.intersects(rail) and not win.intersects(GameModeHud.SCORE_RECT)
+		and not win.intersects(practice_sub) and not win.intersects(GameModeLayout.MESSAGE_RECT)
+		and cam.size.x >= 280.0 and is_equal_approx(cam.size.x / cam.size.y, 4.0 / 3.0) and Rect2(Vector2.ZERO, card.size).encloses(cam)
+		and game.gesture_hud._cam.size == cam.size
+		and game.gesture_hud.ring()[0].x + game.gesture_hud.ring()[1] < card.size.x and game.gesture_hud.ring()[0].y + game.gesture_hud.ring()[1] < card.size.y
+		and game.gesture_hud.ring()[0].y - game.gesture_hud.ring()[1] > cam.end.y,
+		"game mode layout #258: the hand window is bottom right (a big camera on top, the stick and the state under it, the easy guide under that), clear of the Dial's port, the score, the rail and the practice's words",
+		"%s %s %s" % [card, lower, cam])
 	# the field is tall, the Dial's port is under it, on the left (#200: the only one)
 	var pl: Vector2 = GameModeVFX.PORTS["left"]
 	_ok(PinballField.FLOOR_Y - PinballField.TOP > PinballField.RIGHT - PinballField.LEFT and screen_rect.encloses(field_rect)
@@ -179,7 +187,7 @@ func _test_game_mode_juice(rs: Node) -> void:
 		"game mode layout: portrait: the field is taller than wide and inside the screen; the one port (Dial 1) is bottom left, its light runs off the left side")
 	game.gesture_hud.column = false
 	game.gesture_hud.place(720.0, 1280.0)
-	_ok(game.gesture_hud.size == GestureHud.SIZE, "game mode layout: outside the score game the hand panel is the wide one as before")
+	_ok(game.gesture_hud.size == GestureHud.SIZE and game.gesture_hud._cam.size == GestureHud.CAM_RECT.size, "game mode layout: outside the score game the hand panel is the wide one as before (its small camera)")
 	ctl.close()
 	_ok(ctl.pixel_view.render_target_update_mode == SubViewport.UPDATE_DISABLED and ctl.screen.position == Vector2.ZERO,
 		"game mode pixels: the canvas stops drawing when the score game is closed")
@@ -745,7 +753,7 @@ func _test_game_mode_result_show(rs: Node) -> void:
 		and not show.active() and l.state == "ABSORBING",
 		"game mode result: at 0 s TIME UP! (the thud, the flash and the shake at once) while the round settles as before",
 		"%s %s %s" % [ctl.phase, str(show.log), screen.mode()])
-	_gm_step(ctl, 1.0)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s - 0.5)
 	var id2 := str(l.capsule.capsule_id)
 	ctl.field.target_hit.emit(id2, "star", "star", Vector2(640, 505))
 	ctl.field.capsule_exited.emit(id2, "left", Vector2(300, 660))
@@ -1208,13 +1216,13 @@ func _test_portrait_layout(rs: Node) -> void:
 	# the regions, top to bottom, none over another, all inside the screen
 	var rail := Rect2(L.FIELD_LEFT, L.UFO_Y - 52.0, L.FIELD_RIGHT - L.FIELD_LEFT, 104.0)
 	var field := Rect2(L.FIELD_LEFT, L.FIELD_TOP, L.FIELD_RIGHT - L.FIELD_LEFT, L.FIELD_FLOOR - L.FIELD_TOP)
-	var regions := [L.SCORE_RECT, L.TIME_RECT, L.GESTURE_RECT, L.COMBO_RECT, L.SCOPE_RECT, rail]
+	var regions := [L.SCORE_RECT, L.TIME_RECT, L.MESSAGE_RECT, L.COMBO_RECT, L.SCOPE_RECT, rail]
 	var clear := true
 	for i in regions.size():
 		clear = clear and screen.encloses(regions[i])
 		for j in range(i + 1, regions.size()):
 			clear = clear and not (regions[i] as Rect2).intersects(regions[j])
-	_ok(clear and L.SCORE_RECT.end.y <= L.STATUS_Y and L.GESTURE_RECT.end.y <= rail.position.y and rail.end.y <= L.FIELD_TOP + 2.0
+	_ok(clear and L.SCORE_RECT.end.y <= L.STATUS_Y and L.MESSAGE_RECT.end.y <= rail.position.y and rail.end.y <= L.FIELD_TOP + 2.0
 		and L.FIELD_FLOOR < L.DIALS_Y and screen.encloses(field) and field.size.y > field.size.x * 1.05
 		and L.SCORE_RECT.size.x >= 320.0 and L.TIME_RECT.size.x >= 320.0 and L.SCORE_RECT.end.x < L.CX and L.TIME_RECT.position.x > L.CX,
 		"portrait layout: score and clock on top (half the width each), the hand, the combo and the arm camera under them, the UFO's rail, the tall field, the Dials at the foot; nothing over anything else")
@@ -1282,7 +1290,7 @@ func _test_portrait_layout(rs: Node) -> void:
 		and screen.encloses(Rect2(L.SCORE_RECT.position + held, L.SCORE_RECT.size)) and screen.encloses(Rect2(L.TIME_RECT.position + held, L.TIME_RECT.size))
 		and screen.encloses(GestureTutorialHud.PANEL) and screen.encloses(GameModeHud.START_RECT)
 		and GameModeResultScreen.CENTRE.y > L.FIELD_TOP and GameModeResultScreen.CENTRE.y < L.FIELD_FLOOR
-		and GameModeResultScreen.CONFETTI_Y < L.SCREEN.y and GameModeRankingHud.TITLE_Y > L.GESTURE_RECT.end.y,
+		and GameModeResultScreen.CONFETTI_Y < L.SCREEN.y and GameModeRankingHud.TITLE_Y > L.MESSAGE_RECT.end.y,
 		"portrait game: every line of the HUD, the practice, the result and the ranking is inside the screen; in the biggest shake the score and the clock move only a quarter as far and never leave it",
 		"%s %s %s" % [hud_inside, str(moved), str(held)])
 	game.shake.trauma = 0.0

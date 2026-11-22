@@ -976,6 +976,7 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_ENTER))  # Enter in the practice: nothing
 	var enter_nothing := ctl.phase == "TUTORIAL" and ctl.tutorial.kind() == "summon"
 	var hud_on := ctl.tutorial_hud.showing() and ctl.hud.title_showing() == false
+	var window_hidden := ctl.guide_hidden()  # #258: the steps show the camera beside the hand pictures
 	for i in 60 * 150:
 		if ctl.tutorial.kind() == "practice":
 			break
@@ -991,6 +992,8 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	_gm_step(ctl, 0.5)
 	var left: GameModeController.Lane = ctl.lanes["left"]
 	var armed := ctl.practice == "open" and left.state == "READY" and _gm_sent(ctl.mock_hub, GM_R) == 0
+	_ok(window_hidden and not ctl.guide_hidden() and ctl.practice == "open",
+		"tutorial #258: no hand window during the practice's steps (their own camera is beside the hand pictures); the practice capsule (a banner over the field) has it")
 	var n0 := ctl.mock_hub.executed.size()
 	game._unhandled_input(_key(KEY_F7))  # #260: F7 = skip all; staff may leave it out now (no capsule on its way)...
 	var closing_first := ctl.phase == "TUTORIAL" and ctl.practice == "closing"  # ...the Dial is closed first

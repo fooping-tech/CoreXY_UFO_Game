@@ -1579,8 +1579,16 @@ func _on_gesture_state(from: int, to: int, why: String) -> void:
 ## UFO cues and the HUD (render frame).
 func _update_gesture_presentation(dt: float) -> void:
 	gesture_hud.gate = gesture_gate_reason
-	gesture_hud.column = game_mode != null and game_mode.active()  # beside the pinball field, not over it
+	# #258: in the score game the hand window bottom right, the easy mode's guide under it;
+	# faint while a capsule comes in and plays
+	gesture_hud.column = game_mode != null and game_mode.active()
+	gesture_hud.guide_lower = gesture_hud.column and game_mode.easy_hud != null and game_mode.easy_hud.showing()
+	gesture_hud.modulate.a = game_mode.guide_alpha() if gesture_hud.column else 1.0
+	gesture_hud.hidden_by_tutorial = gesture_hud.column and game_mode.guide_hidden()
 	gesture_hud.place(_play_w, get_viewport_rect().size.y)
+	# into the window's bottom right corner while a capsule plays (the easy guide does the same)
+	gesture_hud.pivot_offset = GameModeLayout.GUIDE_RECT.end - gesture_hud.position if gesture_hud.column else Vector2.ZERO
+	gesture_hud.scale = Vector2.ONE * (game_mode.guide_scale() if gesture_hud.column else 1.0)
 	gesture_hud.step(dt)
 	var face := ""
 	var steer := Vector2.ZERO
