@@ -235,7 +235,9 @@ func _ask(text: String) -> void:
 	# arm's camera looks closer, the tutor explains: the usual HELP; a grown-up's Enter first on
 	# the real crane). Nothing named: the dialogue answers.
 	var named := number_in(text)
-	if named > 0 and in_talk_state():
+	# (review on #282: at the check's summary the arm's HELP does not run: the tutor answers,
+	# about that problem, from the sheet's picture)
+	if named > 0 and in_talk_state() and ctl.state in TALK_STATES:
 		_rid = ""
 		state = IDLE
 		note = ""

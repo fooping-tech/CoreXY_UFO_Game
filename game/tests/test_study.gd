@@ -1478,6 +1478,17 @@ func _test_study_check_on_found_and_dialog(rs: Node) -> void:
 	ctl.hand_tick("thumb", t0 + 6000.0)
 	ctl.hand_tick("thumb", t0 + 9100.0)
 	var at_summary: bool = ctl.dialog_mode and ctl.voice.in_talk_state()
+	# review on #282: a problem named at the summary is not the arm's HELP (that runs only in
+	# the homework time): the summary stays
+	ctl.voice._ask("1ばんが わからない")
+	at_summary = at_summary and ctl.state == "REVIEW_SUMMARY" and ctl.voice.target_problem != 1
+	# review on #282: nothing read on the print found: the summary (R reads again), no reward
+	ctl.state = "GRADING_QUESTION"
+	ctl.grading.reset([])
+	ctl.reward = {}
+	ctl._summary()
+	var unread: bool = ctl.state == "REVIEW_SUMMARY" and ctl.reward.is_empty() and not ctl.grading.checked
+	at_summary = at_summary and unread
 	ctl.state = "OFF"
 	_ok(waiting_blocked and to_check and half and not_yet and on and studying and not_in_grading and at_summary,
 		"study #281: the print found goes straight to the answer check; talking needs the dialogue mode, a thumbs-up held 3 s while waiting for the print (then the homework time as before) or at the check's summary, never in the middle of the check",

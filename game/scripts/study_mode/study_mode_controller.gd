@@ -490,6 +490,15 @@ func review_hint(n: int) -> String:
 	return str(hints[0]) if not hints.is_empty() else "もういちど 問題を ゆっくり 読んでみよう"
 
 func _summary() -> void:
+	if grading.numbers.is_empty():
+		# review on #282: the print was found and checked at once, but nothing was read on it
+		# (the reader failed or saw no problem): never a reward for nothing checked. The
+		# summary, where R reads it again (and a grown-up's Enter may still go on).
+		_set_state("REVIEW_SUMMARY")
+		_say([{"text": "プリントが うまく よめなかったよ。", "face": "worried"},
+			{"text": "紙の 位置や 手で かくれていないかを 見て、もういちど 見せてね。", "face": "normal"}])
+		_ask_adult("review", "置きなおしたら R でもう一度読む ／ このまま Enter でつぎへ")
+		return
 	grading.checked = true
 	var look := grading.to_look_again()
 	if look.is_empty():
