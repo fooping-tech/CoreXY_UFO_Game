@@ -992,7 +992,7 @@ func _test_gesture_tutorial_game(rs: Node) -> void:
 	_gm_step(ctl, 0.5)
 	var left: GameModeController.Lane = ctl.lanes["left"]
 	var armed := ctl.practice == "open" and left.state == "READY" and _gm_sent(ctl.mock_hub, GM_R) == 0
-	_ok(window_hidden and not ctl.guide_hidden(),
+	_ok(window_hidden and not ctl.guide_hidden() and ctl.practice == "open",
 		"tutorial #258: no hand window during the practice's steps (their own camera is beside the hand pictures); the practice capsule (a banner over the field) has it")
 	var n0 := ctl.mock_hub.executed.size()
 	game._unhandled_input(_key(KEY_F8))  # staff may leave it out now (no capsule on its way)...

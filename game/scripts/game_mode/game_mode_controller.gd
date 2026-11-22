@@ -1265,10 +1265,14 @@ func capsule_arriving() -> bool:
 func capsule_in_play() -> bool:
 	return lanes.values().any(func(l): return l.state in ["ABSORBING", "DROPPING", "SIMULATING"])
 
-## #258: the practice's steps show the hand camera beside their hand pictures: no hand window
-## meanwhile (the practice capsule, a banner over the field, keeps it).
+## #258: the hand window shows while the round is played (the countdown, the round, the
+## settling) and with the practice capsule (a banner over the field). Not on the score game's
+## title and result / ranking screens (its corner would cover their cards and lines), nor in
+## the practice's steps (they show the hand camera beside their hand pictures).
 func guide_hidden() -> bool:
-	return phase == "TUTORIAL" and tutorial_hud != null and tutorial_hud.showing() and practice == ""
+	if phase == "TUTORIAL":
+		return practice == ""
+	return not (phase in ["COUNTDOWN", "PLAYING", "SETTLING"]) or ranking_view != ""
 
 ## How much of the hand window shows now (1 = all; GUIDE_FAINT while a capsule plays).
 func guide_alpha() -> float:

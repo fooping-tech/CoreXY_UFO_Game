@@ -81,7 +81,7 @@ func easy() -> EasyModeControl:
 func showing() -> bool:
 	if ctl == null or not ctl.active() or not ctl.easy_on() or easy() == null or not easy().enabled():
 		return false
-	if ctl.ranking_view != "":
+	if ctl.ranking_view != "" or ctl.guide_hidden():
 		return false
 	return ctl.phase in ["COUNTDOWN", "PLAYING", "SETTLING"] or (ctl.phase == "TUTORIAL" and ctl.practice != "")
 

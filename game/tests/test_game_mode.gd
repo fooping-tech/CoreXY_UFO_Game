@@ -237,6 +237,7 @@ func _test_game_mode_round(rs: Node) -> void:
 	_ok(third and not game.title_active() and ctl.active() and ctl.phase == "IDLE" and ctl.layer.visible
 		and ctl.devices == ctl.mock_hub and game.debug_ui.layer > GameModeController.LAYER,
 		"game mode: the title's second card (the game mode) opens it (waiting for Enter), on the Dials simulated in the game")
+	_ok(ctl.guide_hidden(), "game mode #258: no hand window on the score game's title (its corner would cover the cards)")
 	game._unhandled_input(_key(KEY_Z))  # no capsule is taken before the start
 	var hub := ctl.mock_hub
 	game._unhandled_input(_key(KEY_ENTER))
@@ -325,7 +326,7 @@ func _test_game_mode_round(rs: Node) -> void:
 	_gm_step(ctl, MockDialHub.SERVO_HOLD_S + MockDialHub.SERVO_SETTLE_S)
 	var back: bool = l.state == "READY" and l.released == 1 and hub.dials[GM_L].state == "ARMED" and hub.dials[GM_L].cycle == 2 \
 		and hub.count(GM_L, "RELEASE_BALL") == 1
-	_ok(is_equal_approx(ctl.guide_scale(), 1.0) and is_equal_approx(ctl.guide_alpha(), 1.0),
+	_ok(is_equal_approx(ctl.guide_scale(), 1.0) and is_equal_approx(ctl.guide_alpha(), 1.0) and not ctl.guide_hidden(),
 		"game mode #258: the hand window is back to full size once the capsule has left the field")
 	game._unhandled_input(_key(KEY_Z))  # the next capsule comes in through the same port
 	var again: bool = l.state == "ABSORBING" and ctl.fx.streaming("left", true)
@@ -636,6 +637,7 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	ctl.field.target_hit.emit(id, "star", "star", Vector2(640, 505))
 	ctl.field.capsule_exited.emit(id, "center", Vector2(640, 660))
 	_gm_step(ctl, 5.0)
+	_ok(ctl.phase == "RESULT" and ctl.guide_hidden(), "game mode #258: no hand window on the result (its corner would cover the lines)")
 	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"
 		and hub.count(GM_L, "RELEASE_BALL") == 1 and _gm_sent(hub, GM_R) == 0 and hub.dials[GM_L].op_mode == "STANDBY"
 		and hub.dials[GM_L].cycle == 1 and ctl.hud.result_lines().contains("1500") and ctl.capsules.finished.size() == 1,
