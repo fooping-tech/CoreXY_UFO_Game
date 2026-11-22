@@ -124,6 +124,8 @@ func _ready() -> void:
 	_s.game_mode_show._test_game_mode_music_files(rs)
 	_s.ui._test_arm_recovery(rs)
 	_s.ui._test_staff_control(rs)
+	_s.gesture._test_staff_remote_logic()
+	_s.gesture._test_staff_remote_game(rs)
 	_s.ui._test_fonts()
 	print("\n%d passed, %d failed" % [TestBase._passes, TestBase._fails])
 	get_tree().quit(0 if TestBase._fails == 0 else 1)
