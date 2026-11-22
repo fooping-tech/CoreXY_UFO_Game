@@ -6,7 +6,7 @@ Mapping of game commands onto the firmware (see docs/firmware_protocol.md):
                     `TEST_MODE ON`, which is sent on the first Z/arm command.
   home           -> `HOME`              wait `HOME complete`
   move_xy        -> `XY x y F`          wait `ACK_XY` / `NACK_XY`
-  move_z         -> `SERVO_TURN 1 t`    (chunks of <= 3 turns) wait result=
+  move_z         -> `SERVO_TURN 1 t`    (chunks of the CONFIG limit, 6 or 3 turns) wait result=
   grab/release   -> `SERVO_TURN 2 ±t`   wait result=
   stop           -> `ABORT`             (firmware sets ALARM + clears HOMED)
   soft_stop      -> `STOP`              wait `STOP complete` (decelerates, no alarm, stays homed)
@@ -71,6 +71,9 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         self._z_saved: dict = self._load_z_points()
         self._z_saved_t = 0.0
         self._state = MachineState.UNKNOWN
+        # #248: one SERVO_TURN's limit for the drum; the firmware's CONFIG says (6 since
+        # CoreXY_UFO #16), else the old 3. move_z splits a longer move and stops at each seam
+        self.z_max_turns = MAX_TURNS_PER_COMMAND
         self._pos_xy = [0.0, 0.0]
         self._xy_measured = False
         # POS LIMIT_X / LIMIT_Y and the XY of that same POS: the switches are only
@@ -131,6 +134,22 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
             self._note_z_status(st)
         except SerialError:
             pass
+        await self._ask_servo_limits()
+
+    async def _ask_servo_limits(self) -> None:
+        """#248: the drum's per-command turn limit from CONFIG (read-only). No line (older
+        firmware) or no answer: 3 turns as before."""
+        self.z_max_turns = MAX_TURNS_PER_COMMAND
+        try:
+            r = await self.serial.send("CONFIG", timeout=3.0)
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            log.info("CONFIG not answered (%s): Z moves in %.1f-turn steps", e, self.z_max_turns)
+            return
+        for line in [*r.lines, r.completion or ""]:
+            limits = P.parse_max_turns(line)
+            if limits and Z_SERVO_ID in limits:
+                self.z_max_turns = limits[Z_SERVO_ID]
+        log.info("Z moves in steps of up to %.1f turns", self.z_max_turns)
 
     async def disconnect(self) -> None:
         # Best effort: never leave the machine moving when the host goes away.

@@ -340,10 +340,18 @@ class RealZMixin:
             await self._ensure_test_mode()
             remaining = total_turns
             while abs(remaining) > 1e-3:
-                chunk = max(-MAX_TURNS_PER_COMMAND, min(MAX_TURNS_PER_COMMAND, remaining))
+                # #248: as few pieces as the firmware takes (the drum stops at each seam)
+                most = self.z_max_turns
+                chunk = max(-most, min(most, remaining))
                 eta = abs(chunk) * COUNTS_PER_TURN / SERVO_SPEED_COUNTS_PER_S + 3.0
                 r = await self.serial.send(P.cmd_servo_turn(Z_SERVO_ID, chunk), timeout=eta + 5.0)
                 res = P.parse_servo_result(r.completion or "")
+                over = P.turns_over_max(r.completion or "") if res is not None and res.reason == "turns_over" else None
+                if over is not None and 0 < over < abs(chunk):
+                    # refused before moving: this firmware takes less (an older one); go on in its steps
+                    log.warning("SERVO_TURN %.2f over the firmware's %.1f turns: smaller steps", chunk, over)
+                    self.z_max_turns = over
+                    continue
                 if res is not None and "multi_turn_lost" in res.raw:
                     # the drum servo's power was cut: refused unmoved; the next turn
                     # goes through but its counts restart, so the Z points are gone

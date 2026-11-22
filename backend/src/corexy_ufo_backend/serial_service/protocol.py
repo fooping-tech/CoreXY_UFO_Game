@@ -46,6 +46,9 @@ COMPLETION_PATTERNS: dict[str, re.Pattern[str]] = {
     "LIMIT_STATUS": re.compile(r"^LIMIT_STATUS\b"),
     "TEST_JOG": re.compile(r"^TEST_JOG result="),
     "STOP": re.compile(r"^STOP complete\b"),
+    # #248: CONFIG prints many lines with no end marker; the servo turn limits (newer
+    # firmware) or JOB_BEGIN (its last line, also on older firmware) ends the wait
+    "CONFIG": re.compile(r"^((SERVO_LIMITS|SERVO_TURN) max_turns|JOB_BEGIN)\b"),
 }
 
 JOG_TIMEOUT_S = 0.25  # firmware ends a jog session this long after the last JOG line
@@ -181,6 +184,29 @@ def parse_pos_line(line: str) -> PosReport | None:
 
 
 # --- servo lines ------------------------------------------------------------------
+_MAX_TURNS_RE = re.compile(r"^(?:SERVO_LIMITS|SERVO_TURN) max_turns (?P<rest>.*)$")
+_MAX_TURNS_ID_RE = re.compile(r"\bid(\d+)=(\d+(?:\.\d+)?)")
+_TURNS_OVER_RE = re.compile(r"\breason=turns_over max=(\d+(?:\.\d+)?)")
+
+
+def parse_max_turns(line: str) -> dict[int, float] | None:
+    """CONFIG's per-servo SERVO_TURN limit (CoreXY_UFO #16, 2026-11-20):
+    `SERVO_LIMITS max_turns id1=6.0 id2=3.0 ...` (first named `SERVO_TURN max_turns`).
+    None for any other line; older firmware has no such line (3 turns for every servo)."""
+    m = _MAX_TURNS_RE.match(line)
+    if not m:
+        return None
+    out = {int(i): float(v) for i, v in _MAX_TURNS_ID_RE.findall(m.group("rest"))}
+    return {i: v for i, v in out.items() if v > 0} or None
+
+
+def turns_over_max(line: str) -> float | None:
+    """`... result=REJECTED reason=turns_over max=3.0`: the limit that refused the turn
+    (refused before moving)."""
+    m = _TURNS_OVER_RE.search(line)
+    return float(m.group(1)) if m else None
+
+
 @dataclass
 class ServoResult:
     command: str

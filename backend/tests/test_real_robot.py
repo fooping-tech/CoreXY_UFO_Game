@@ -85,6 +85,61 @@ async def test_z_chunking_over_three_turns():
     await r.disconnect()
 
 
+async def _z_robot(reports: bool, fw_max: float):
+    """A robot whose Z range is ~4.9 turns (100 units x 200 counts), on a firmware that
+    takes fw_max turns per SERVO_TURN (and says so in CONFIG when reports)."""
+    cfg = BackendConfig(limits=RobotLimits(z_max=100.0), z_counts_per_unit=200.0)
+    svc = SerialService("fake", transport_factory=FakeFirmware)
+    r = RealRobot(cfg, svc)
+    orig_open = FakeFirmware.open
+
+    async def open_with(self):
+        self.reports_max_turns = reports
+        self.max_turns = {1: fw_max, 2: 3.0}
+        await orig_open(self)
+    FakeFirmware.open = open_with
+    try:
+        await r.connect()
+    finally:
+        FakeFirmware.open = orig_open
+    return r, svc
+
+
+async def test_z_moves_in_one_turn_command_when_the_firmware_takes_six():
+    # #248: the firmware says 6 turns for the drum: the whole range in one SERVO_TURN (no seam stop)
+    r, svc = await _z_robot(True, 6.0)
+    assert "CONFIG" in svc.transport.sent and r.z_max_turns == 6.0
+    await r.enable_motors(True)
+    await r.home()
+    await r.set_z_zero()
+    await r.move_z(0.0)
+    sent = [l for l in svc.transport.sent if l.startswith("SERVO_TURN 1")]
+    assert len(sent) == 1 and sent[0] == "SERVO_TURN 1 -4.88281"
+    assert abs(r.snapshot().z) < 0.5
+    await r.disconnect()
+
+
+async def test_z_keeps_three_turns_on_older_firmware():
+    # no SERVO_LIMITS line in CONFIG: 3 turns as before
+    r, svc = await _z_robot(False, 3.0)
+    assert "CONFIG" in svc.transport.sent and r.z_max_turns == 3.0
+    await r.disconnect()
+
+
+async def test_z_refused_over_the_limit_goes_on_in_smaller_steps():
+    # the backend thinks 6 but the firmware takes 3 (reflashed): refused unmoved, then 3 + rest
+    r, svc = await _z_robot(False, 3.0)
+    r.z_max_turns = 6.0
+    await r.enable_motors(True)
+    await r.home()
+    await r.set_z_zero()
+    await r.move_z(0.0)
+    sent = [l for l in svc.transport.sent if l.startswith("SERVO_TURN 1")]
+    assert sent == ["SERVO_TURN 1 -4.88281", "SERVO_TURN 1 -3.00", "SERVO_TURN 1 -1.88281"]
+    assert r.z_max_turns == 3.0 and abs(r.snapshot().z) < 0.5 and "turns_over" not in r.snapshot().error
+    await r.disconnect()
+
+
 async def test_stop_sets_alarm_and_clear(robot):
     await robot.enable_motors(True)
     await robot.home()
