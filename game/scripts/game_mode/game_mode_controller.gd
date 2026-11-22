@@ -784,11 +784,13 @@ func _on_tutorial_step(_index: int, step: Dictionary) -> void:
 ## The one "OK" of a step: the chime, UFOくん's wink, stars. Once per step.
 func _on_tutorial_ok(_index: int, step: Dictionary) -> void:
 	sounds.play("tutorial_ok")
-	if int(step.get("goto_demo", 0)) == 1:
-		tutorial_goto.emit(int(step.goto_demo))
+	# the claw first, then the carry (#266: one step shows both; the main scene sends the carry
+	# only once the claw's request is answered, review on #268)
 	if bool(step.get("claw_demo", false)):
 		_demo_claw_closed = true
 		tutorial_claw.emit("closed")
+	if int(step.get("goto_demo", 0)) == 1:
+		tutorial_goto.emit(int(step.goto_demo))
 	fx.react("big")
 	_trace("tutorial_ok", null, {"effect_id": str(step.get("id", ""))})
 
@@ -1605,11 +1607,10 @@ func _on_target_hit(capsule_id: String, kind: String, target: String, pos: Vecto
 	var c = capsules.get_capsule(root_id)
 	if c == null or not running():
 		return
-	var r := score.hit(capsule_id, kind, target, clock)
+	var ck := str(c.get("kind", "normal"))
+	var r := score.hit(capsule_id, kind, target, clock, float(kinds.of(ck).hit_k))  # #266: the kind's hits
 	if int(r.points) <= 0:
 		return
-	var ck := str(c.get("kind", "normal"))
-	r.points = int(round(int(r.points) * float(kinds.of(ck).hit_k)))  # #266: the kind's hits
 	if ck != "normal" and kind in ["bumper", "pop", "sling", "spinner", "target"]:
 		particles.kind_hit(ck, pos)
 	c.score += int(r.points)
@@ -1628,8 +1629,7 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 		return
 	c.goal = goal
 	if goal != "timeout":
-		var r := score.goal(capsule_id, goal, clock)
-		r.points = int(round(int(r.points) * float(kinds.of(str(c.get("kind", "normal"))).goal_k)))  # #266
+		var r := score.goal(capsule_id, goal, clock, float(kinds.of(str(c.get("kind", "normal"))).goal_k))  # #266
 		if int(r.points) > 0:
 			c.score += int(r.points)
 			_present_score(r, pos, l)

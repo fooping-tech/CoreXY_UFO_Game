@@ -825,6 +825,40 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	var no_feed = not hud.camera_rect().has_area()
 	_ok(attached and no_feed, "tutorial camera (#183): the practice has the hand camera's view attached; without a camera picture nothing is shown and the hand stays in the middle",
 		"%s %s" % [attached, no_feed])
+	# #266 (review on #268): the fist step closes the claw and then carries: with the backend the
+	# carry waits for the claw's answer, so the arm never sets off with the claw open
+	ctl.open()
+	ctl.set_difficulty("easy")
+	ctl.start_tutorial()
+	var src_before: String = RobotState.source
+	RobotState.source = "websocket"
+	game.backend_link = func() -> bool: return true
+	var sent_names := func() -> Array: return game.ws._pending.values().map(func(p): return str(p.type))
+	game.ws._pending.clear()
+	game.ws._pending["claw"] = {"sent_ms": Time.get_ticks_msec(), "type": "arm_goto"}  # the claw's request, unanswered
+	game._on_tutorial_goto(1)
+	var waits: bool = not sent_names.call().has("easy_goto") and not game._tutorial_goto.is_empty()
+	game._tick_tutorial_goto(0.5)
+	waits = waits and not sent_names.call().has("easy_goto")
+	game.ws._pending.erase("claw")  # answered
+	game._tick_tutorial_goto(1.0 / 60.0)
+	var then_carry: bool = sent_names.call() == ["easy_goto"] and game._tutorial_goto.is_empty()
+	game.ws._pending.clear()
+	game.ws._pending["claw"] = {"sent_ms": Time.get_ticks_msec(), "type": "arm_goto"}
+	game._on_tutorial_goto(1)
+	game._tick_tutorial_goto(game.TUTORIAL_GOTO_WAIT_S + 0.1)
+	var gives_up: bool = game._tutorial_goto.is_empty() and not sent_names.call().has("easy_goto")
+	game._on_tutorial_goto(1)
+	game.stop_key()
+	game.ws._pending.erase("claw")
+	game._tick_tutorial_goto(1.0 / 60.0)
+	var stop_drops: bool = not sent_names.call().has("easy_goto")
+	game.ws._pending.clear()
+	RobotState.source = src_before
+	ctl._halt("test")
+	_ok(waits and then_carry and gives_up and stop_drops,
+		"tutorial carry (#266): the claw's request goes first and the carry over Dial 1 only after its answer; no answer in time, or a stop: no carry",
+		"%s %s %s %s" % [waits, then_carry, gives_up, stop_drops])
 	_gm_free(game, rs)
 
 ## #179: the moving step says its own words when it is done, and the next step waits for them.

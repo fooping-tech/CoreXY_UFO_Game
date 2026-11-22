@@ -1010,9 +1010,11 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 	_gm_step(ctl, 0.2)
 	var trail: bool = ctl.particles.sparks() > 0
 	var before: int = int(c.score)
+	var total_before: int = ctl.score.score
 	ctl.field.target_hit.emit(id, "bumper", "bumper_0", ctl.field.capsule_position(id))
 	var gained: int = int(c.score) - before
-	var scored: bool = gained > 0 and gained % 3 == 0
+	# the round's own score (the result, the ranking) gets the same points (review on #268)
+	var scored: bool = gained > 0 and gained % 3 == 0 and ctl.score.score - total_before == gained
 	var made: Array[String] = ctl.field.split_capsule(id, ["k1", "k2"] as Array[String])
 	var children: bool = made.size() == 2 and ctl.field.capsule_kind("k1") == "fire" and ctl.field.capsule_kind("k2") == "fire"
 	ctl.field.remove_capsule("k1")
