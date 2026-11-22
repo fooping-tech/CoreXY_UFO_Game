@@ -161,11 +161,11 @@
     "_note": "The settings screen (#93, the gear on the title screen): what it may change (#96: this section was config/settings_schema.json). It saves only these keys, only changed from game_config.json, to config/local_settings.json (not in Git); the game and the backend read that file over game_config.json and ignore any key or value not allowed here (a hand-edited file cannot change the calibration or the safety settings). Types: bool, enum (options: [value, label]), number (min, max, step), text (max_length). apply = when a saved change is used: now (the game applies it on 保存), restart (the next start of the game), backend (the next start of the backend: ./start.sh again).",
     "file": "local_settings.json",
     "sections": [
-      {"title": "勉強モード", "items": [
+      {"title": "学習モード", "items": [
         {"key": "study_mode.grade", "apply": "now", "label": "最初に出す学年", "type": "enum", "options": [["nursery_1", "保育園 年少"], ["nursery_2", "保育園 年中"], ["nursery_3", "保育園 年長"], ["elem_1", "小学1年"], ["elem_2", "小学2年"], ["elem_3", "小学3年"], ["elem_4", "小学4年"], ["elem_5", "小学5年"], ["elem_6", "小学6年"], ["jhs_1", "中学1年"], ["jhs_2", "中学2年"], ["jhs_3", "中学3年"]]},
         {"key": "study_mode.demo.source", "apply": "now", "label": "プリントと解説", "type": "enum", "options": [["simulated", "模擬（カメラも AI も使わない。外部に何も送らない）"], ["camera", "カメラと AI（画像を Jev と Claude / Codex に送る）"]], "note": "アームは start.sh でつないだロボットで動く。模擬のときは実機を動かさない"},
         {"key": "study_mode.demo.auto_answer", "apply": "now", "label": "1・2 問めを自動で記入（模擬）", "type": "bool"},
-        {"key": "study_mode.autostart", "apply": "restart", "label": "起動したらすぐ勉強モードで始める", "type": "bool", "note": "オンにするとタイトル画面を出さない"},
+        {"key": "study_mode.autostart", "apply": "restart", "label": "起動したらすぐ学習モードで始める", "type": "bool", "note": "オンにするとタイトル画面を出さない"},
         {"key": "homework.speech.enabled", "apply": "backend", "label": "UFOくんの声", "type": "bool"},
         {"key": "homework.speech.docker.enabled", "apply": "backend", "label": "VOICEVOX を Docker で起動（./start.sh）", "type": "bool",
          "note": "start.sh が VOICEVOX ENGINE のコンテナを起動し、終わるときに止める（Docker が止まっていれば colima も）。初回はイメージの取得に数分。使えないときの声は say"}
@@ -198,10 +198,10 @@
       {"title": "Study タブ（カメラ学習アシスタント）", "items": [
         {"key": "study.enabled", "apply": "backend", "label": "Study タブを使う", "type": "bool", "note": "画像を AI に送る。./start.sh --study も要る"},
         {"key": "study.provider", "apply": "backend", "label": "アシスタント", "type": "enum", "options": [["claude", "Claude Code"], ["codex", "Codex"]]},
-        {"key": "study.ai", "apply": "backend", "label": "勉強モードの AI", "type": "enum",
+        {"key": "study.ai", "apply": "backend", "label": "学習モードの AI", "type": "enum",
          "options": [["local", "ローカル LLM だけ（学習支援 AI）"], ["cloud", "クラウド（Jev・Claude / Codex）"]],
-         "note": "ローカル: 進み具合・問題の場所はプリント読み取り（/v1/sheet）、解説は学習支援 AI。勉強モードからクラウドへは何も送らない"},
-        {"key": "study.explain_provider", "apply": "backend", "label": "勉強モードの解説（クラウドのとき）", "type": "enum",
+         "note": "ローカル: 進み具合・問題の場所はプリント読み取り（/v1/sheet）、解説は学習支援 AI。学習モードからクラウドへは何も送らない"},
+        {"key": "study.explain_provider", "apply": "backend", "label": "学習モードの解説（クラウドのとき）", "type": "enum",
          "options": [["", "アシスタントと同じ"], ["claude", "Claude Code"], ["codex", "Codex"], ["tutor", "学習支援 AI（UFOくん API）"]],
          "note": "学習支援 AI はプリントの写真（10cm の 1 枚）を別の PC に送る。つながらないときはプリントのヒント"},
         {"key": "study.tutor_url", "apply": "backend", "label": "学習支援 AI の URL", "type": "text", "max_length": 200,
@@ -614,7 +614,7 @@
     "weekday": "monday",
     "weekday_label": "月曜日",
     "grade": "elem_3",
-    "_note": "UFOくん 勉強モード (#86). The title screen, F5, ./start.sh --study-mode or the game's --study-mode start it. enabled = the study mode is there, and the backend starts the homework service it needs (voice, per-problem watch, explanation) even when homework.enabled is false (homework.enabled is only the F1 panel's homework watch). Nothing is sent outside while demo.source is simulated. weekday_label = the day shown and said (fixed to Monday for the demo). grade = the first grade shown (nursery_1..3, elem_1..6, jhs_1..3; , / . change it on the intro screen). Worksheets: config/worksheets.json (python3 tools/build_worksheets.py; printable sheets in docs/worksheets/).",
+    "_note": "UFOくん 学習モード (#86). The title screen, F5, ./start.sh --study-mode or the game's --study-mode start it. enabled = the study mode is there, and the backend starts the homework service it needs (voice, per-problem watch, explanation) even when homework.enabled is false (homework.enabled is only the F1 panel's homework watch). Nothing is sent outside while demo.source is simulated. weekday_label = the day shown and said (fixed to Monday for the demo). grade = the first grade shown (nursery_1..3, elem_1..6, jhs_1..3; , / . change it on the intro screen). Worksheets: config/worksheets.json (python3 tools/build_worksheets.py; printable sheets in docs/worksheets/).",
     "demo": {
       "source": "camera",
       "_note": "What the study mode uses (#92). simulated = no camera, Jev or AI, nothing leaves the machine: the worksheet, the answers (keys 1/2/3), the problem's place (worksheet data + mock_desk) and the explanation (the worksheet's own hints) are simulated; the arm moves on a mock robot only (never the real crane). camera = the overview camera, Jev (Cloudflare) and Claude / Codex: frames are sent to them. Which robot is not set here: it is the one start.sh connected (./start.sh = the real crane, --mock = the backend's mock, --game-only = the game's own mock). With the real crane the backend still refuses what is not calibrated and confirmed below (the tidy-up separately). The earlier mode key is still read (mock = simulated, camera / real = camera).",

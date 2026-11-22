@@ -27,9 +27,6 @@ var ctl: StudyModeController
 var root: Control
 var _title: Label
 var _mode: Label
-var _grade: Label
-var _grade_prev: Button
-var _grade_next: Button
 var _energy: Label
 var _powers: PanelContainer
 var _power_buttons: Array[Control] = []  # the roulette's cards (a pixel-art item and its name)
@@ -141,25 +138,14 @@ func _build_header() -> void:
 	var box := VBoxContainer.new()
 	box.position = Vector2(20, 14)
 	root.add_child(box)
-	_title = label("UFOくん 勉強モード", 30, Color("ffe03c"), 8)
+	_title = label("UFOくん 学習モード", 30, Color("ffe03c"), 8)
 	box.add_child(_title)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	box.add_child(row)
 	_mode = label("", 18, Color("a8f2ff"), 6)
 	row.add_child(_mode)
-	_grade_prev = Button.new()
-	_grade_prev.text = "◀"
-	_grade_prev.focus_mode = Control.FOCUS_NONE
-	_grade_prev.pressed.connect(func(): ctl.change_grade(-1))
-	row.add_child(_grade_prev)
-	_grade = label("", 22, Color.WHITE, 6)
-	row.add_child(_grade)
-	_grade_next = Button.new()
-	_grade_next.text = "▶"
-	_grade_next.focus_mode = Control.FOCUS_NONE
-	_grade_next.pressed.connect(func(): ctl.change_grade(1))
-	row.add_child(_grade_next)
+	# #283: no grade picker here any more (the grade comes from the settings screen)
 	sheet = StudyWorksheetView.new()
 	sheet.position = Vector2(60, HEADER_H + 2.0)  # #237: big in the middle (no list at the right)
 	sheet.size = Vector2(600, 386)
@@ -605,10 +591,6 @@ func refresh() -> void:
 		return
 	var vs := root.get_viewport_rect().size
 	_mode.text = "【%s】" % ctl.services.mode_label()
-	_grade.text = ctl.grade_label()
-	var choosing := st in ["INTRO", "WAITING_FOR_WORKSHEET"]
-	_grade_prev.visible = choosing
-	_grade_next.visible = choosing
 	var t := ctl.tracker
 	# the top right: how far the homework is, then the answer check's right ones
 	var checking := ctl.completion_fired
@@ -792,8 +774,6 @@ static func study_time_text(secs: float) -> String:
 ## `dialog` (#281): "on" (the dialogue mode is on, or not needed), "off" (a thumbs-up enters it)
 static func key_help(state: String, mode: String, dialog := "on") -> String:
 	var parts := ["Enter 次へ/確認", "指 1・2・3 → いいね 解説（Y も）", "Space 止める"]
-	if state in ["INTRO", "WAITING_FOR_WORKSHEET"]:
-		parts.append(", . 学年")
 	if state == "POWERUP_SELECT":
 		parts.append("パワールーレット！")  # #237
 	elif state == "REVIEW_SUMMARY":

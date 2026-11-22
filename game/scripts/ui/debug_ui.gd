@@ -606,7 +606,7 @@ func _build_vfx() -> void:
 	grid.columns = 4
 	_vbox.add_child(grid)
 	var names := {"start": "開始", "idle": "待機", "lowering": "下降", "grab": "掴む", "success": "成功", "failure": "失敗", "end": "終了",
-		"study_filled": "勉強:1問", "study_help": "勉強:HELP", "study_capture": "勉強:撮影", "study_celebrate": "勉強:報酬", "study_answer_correct": "勉強:せいかい", "study_powerup_selected": "勉強:パワー", "study_error": "勉強:停止"}
+		"study_filled": "学習:1問", "study_help": "学習:HELP", "study_capture": "学習:撮影", "study_celebrate": "学習:報酬", "study_answer_correct": "学習:せいかい", "study_powerup_selected": "学習:パワー", "study_error": "学習:停止"}
 	for m in VfxDirector.MOMENTS:
 		_button(grid, names[m], func(): main.vfx.play(m, 3.0, true)).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 

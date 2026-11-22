@@ -78,11 +78,11 @@ func blocker() -> String:
 	if not enabled:
 		return "声の対話は オフ（study_mode.voice.enabled）"
 	if ctl == null or not ctl.active():
-		return "勉強モードではない"
+		return "学習モードではない"
 	if ctl.dialog_needs_thumb and not ctl.dialog_mode:  # #281
 		return "いいね 👍 を %d びょう みせると おはなしモード" % roundi(ctl.dialog_thumb_s)
 	if ctl.services.mode == "simulated":
-		return "模擬の勉強モード（カメラのときだけ話せる）"
+		return "模擬の学習モード（カメラのときだけ話せる）"
 	var hw := _homework()
 	if hw == null or not hw.hello_seen:
 		return "バックエンドにつながっていない"

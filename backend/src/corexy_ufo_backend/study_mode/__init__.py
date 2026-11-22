@@ -1,4 +1,4 @@
-"""UFOくん 勉強モード (#86): worksheets, height calibration and the AI explanation.
+"""UFOくん 学習モード (#86): worksheets, height calibration and the AI explanation.
 
 The experience itself (intro -> watch -> HELP -> explanation -> celebration -> cleanup ->
 game unlocked) runs in the game; this package holds the backend's part: the sample

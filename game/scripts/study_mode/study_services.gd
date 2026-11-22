@@ -364,7 +364,7 @@ func watch_stop() -> void:
 	_sheet_pending = {}
 	if mode != "simulated" and homework != null and was:
 		if homework.running():
-			homework.stop("勉強モードの見守りを終えました")
+			homework.stop("学習モードの見守りを終えました")
 		homework.worksheet_id = ""
 		homework.helper_offer = _helper_offer_was
 

@@ -6,7 +6,7 @@
 #   ./start.sh --no-gesture       ジェスチャーなし（--mock とも組み合わせられる）
 #   ./start.sh --game-only        ゲームだけ（ゲーム内の MockRobot。バックエンドなし）
 #   ./start.sh --backend-only     バックエンドだけ（--mock と組み合わせられる）
-#   ./start.sh --mock --no-gesture --study-mode   UFOくん 勉強モードで開始（F5 で終了/再開）
+#   ./start.sh --mock --no-gesture --study-mode   UFOくん 学習モードで開始（F5 で終了/再開）
 #   ./start.sh ... -- <引数>      -- の後ろはバックエンドへ（--game-only ではゲームへ）そのまま渡す
 #
 # 今までの書き方（game / mock / real [PORT] / gesture / study / backend）もそのまま使える。
@@ -390,7 +390,7 @@ usage() {
   --gesture-camera CAM   ジェスチャーに使うカメラ（番号か名前の一部。省くと config の gesture.camera）
   --port PORT       実機のシリアルポート（省くと config か自動検出）
   --study           Study タブ（カメラ学習アシスタント。config の study.enabled も必要）
-  --study-mode      UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了）
+  --study-mode      UFOくん 学習モードで開始する（ゲーム中はいつでも F5 で開始・終了）
   -h, --help        この説明
 
 例
@@ -398,7 +398,7 @@ usage() {
   ./start.sh --port /dev/cu.usbserial-XXXX
   ./start.sh --mock                       実機なしで（仮想クレーン + ジェスチャー）
   ./start.sh --mock --no-gesture          実機もカメラもなしで
-  ./start.sh --mock --no-gesture --study-mode   勉強モードのデモ（実機なし）
+  ./start.sh --mock --no-gesture --study-mode   学習モードのデモ（実機なし）
   ./start.sh --game-only -- --scenario sudden_stop
   ./start.sh --backend-only -- --list-ports
 

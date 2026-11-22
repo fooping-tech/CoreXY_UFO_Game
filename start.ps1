@@ -379,14 +379,14 @@ function Show-Usage {
   --gesture-camera CAM   ジェスチャーに使うカメラ（番号。省くと config の gesture.camera）
   --port PORT       実機のシリアルポート（COM3 など。省くと config か自動検出）
   --study           Study タブ（カメラ学習アシスタント。config の study.enabled も必要）
-  --study-mode      UFOくん 勉強モードで開始する（ゲーム中はいつでも F5 で開始・終了）
+  --study-mode      UFOくん 学習モードで開始する（ゲーム中はいつでも F5 で開始・終了）
   -h, --help        この説明
 
 例
   .\start.ps1 --port COM3                     実機 + ジェスチャー + ゲーム
   .\start.ps1 --mock                          実機なしで（仮想クレーン + ジェスチャー）
   .\start.ps1 --mock --no-gesture             実機もカメラもなしで
-  .\start.ps1 --mock --no-gesture --study-mode   勉強モードのデモ（実機なし）
+  .\start.ps1 --mock --no-gesture --study-mode   学習モードのデモ（実機なし）
   .\start.ps1 --game-only '--' --scenario sudden_stop
   .\start.ps1 --backend-only '--' --list-ports
 

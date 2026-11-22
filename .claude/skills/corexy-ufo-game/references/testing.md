@@ -27,7 +27,7 @@ cd backend && unset VIRTUAL_ENV && uv sync && uv run pytest
 | `test_base.gd` | 共通の補助関数と件数の集計（全ファイルの土台） |
 | `test_rope_robot.gd` | ロープの物理、ロボットの再生とマッピング、アセット、UFO |
 | `test_gesture.gd` | 手の操作（ジョイスティック、ジェスチャー、ポーズ） |
-| `test_study.gd` | 勉強モード、宿題の手伝い |
+| `test_study.gd` | 学習モード、宿題の手伝い |
 | `test_ui.gd` | タイトル、設定、校正、機器テスト、デバッグパネル、VFX、フォント |
 | `test_game_mode.gd` | スコアゲームのルールと機器（得点、パワーアップ、Dial、異常、時計、物理） |
 | `test_game_mode_show.gd` | スコアゲームの見せ方（演出、リザルト、ランキング、縦画面、音） |

@@ -338,8 +338,13 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	var intro_ok := ctl.state == "INTRO" and hud.visible and ctl.speech.current == "そろそろ勉強の時間だよ！" \
 		and not hud.has_method("_build_checklist")  # #237: no list at the right any more
 	_study_pump(game, 15.0, func(): return ctl.state == "WAITING_FOR_WORKSHEET")
-	ctl.change_grade(-1)  # 小学2年
-	var grade_ok := ctl.grade_label() == "小学2年"
+	# #283: no grade picker on the screen: , and . do nothing, the help does not offer it
+	var before_keys := ctl.grade_label()
+	ctl.handle_key(KEY_COMMA)
+	ctl.handle_key(KEY_PERIOD)
+	var no_picker := ctl.grade_label() == before_keys and not StudyHud.key_help("WAITING_FOR_WORKSHEET", "simulated").contains("学年")
+	ctl.change_grade(-1)  # 小学2年 (the settings screen's grade, as before)
+	var grade_ok := no_picker and ctl.grade_label() == "小学2年"
 	_study_pump(game, 8.0, func(): return ctl.state == "STUDYING")  # the mock sheet is seen after worksheet_wait_s
 	var studying_ok := ctl.state == "STUDYING" and ctl.study_started_ms >= 0
 	ctl.handle_key(KEY_1)
@@ -879,7 +884,7 @@ func _test_study_hand_help(rs: Node) -> void:
 	var scope_ok := ctl.wants_scope() and photo != null and photo.get_width() == 32
 	ctl.state = "STUDYING"
 	var no_photo := ctl.explain_photo() == null
-	var gate_ok: bool = game.gesture_gate().begins_with("勉強モード")
+	var gate_ok: bool = game.gesture_gate().begins_with("学習モード")
 	_ok(three and expired and y_ok and scope_ok and no_photo and gate_ok,
 		"study hand help: 3 fingers = problem 3, an unanswered offer ends, Y keeps its problem, the arm camera's photo while explaining, no hand jog",
 		str([three, expired, y_ok, scope_ok, no_photo, gate_ok]))

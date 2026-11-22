@@ -219,7 +219,7 @@ async def check_all(raw: dict[str, Any], *, ask: bool = False, env_path: Path | 
         names.append("voicevox")
     out = list(await asyncio.gather(*jobs))
     if "tutor" not in names:
-        out.append(result("tutor", "skip", "使っていない（設定の「勉強モードの解説」と「学習支援 AI の URL」）"))
+        out.append(result("tutor", "skip", "使っていない（設定の「学習モードの解説」と「学習支援 AI の URL」）"))
     if ask:
         out.append(await ask_once(cfg, explain))
         if cfg.tutor_url:  # after the question: the server works one request at a time

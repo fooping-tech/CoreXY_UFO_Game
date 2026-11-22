@@ -588,7 +588,7 @@ func _test_calibration_summary() -> void:
 	waiting[5].state = "wait"
 	waiting[5].text = "2 の Z の上と下を記録すると使える"
 	_ok(CalibrationPanel.next_text(all_ok).begins_with("すべて済み")
-		and CalibrationPanel.next_text(waiting).contains("6. 勉強モードの撮影の高さ: 2 の Z の上と下を記録すると使える"),
+		and CalibrationPanel.next_text(waiting).contains("6. 学習モードの撮影の高さ: 2 の Z の上と下を記録すると使える"),
 		"calibration summary: the next thing to do is the first section not done")
 	_ok(CalibrationPanel.short_detail("2.1.325 (Claude Code)（/Users/x/.vscode/claude）") == "2.1.325 (Claude Code)"
 		and CalibrationPanel.short_detail("VOICEVOX 0.26.0（http://127.0.0.1:50021）") == "VOICEVOX 0.26.0"
@@ -714,7 +714,7 @@ func _test_calibration_tab(rs: Node) -> void:
 	cp.refresh()
 	_ok(not hp.has("camera_offset_cm") and is_equal_approx(float(hp.drum_radius_mm), 15.0)
 		and hp.desk == "bottom" and unconfirmed_text.contains("1cm = Z 5.40") and unconfirmed_text.contains("10cm: Z 37.8")
-		and unconfirmed_text.contains("このままでは使えない") and cp._height.text.contains("勉強モードで使う")
+		and unconfirmed_text.contains("このままでは使えない") and cp._height.text.contains("学習モードで使う")
 		and not cp._height.text.contains("確かめた")
 		and is_equal_approx(cp.stage_z("5cm"), 10.81) and is_nan(cp.stage_z("bogus")),
 		"calibration: the study heights are shown and used from the Z bottom with no check (#110, #165)",
@@ -815,9 +815,26 @@ func _test_title_screen(rs: Node) -> void:
 		"title (#183): two modes (study, the game mode = the score game); one finger / two fingers held pick a card; the shape already up when the title opened does not",
 		"%s %s %s %s %s" % [not_yet, holding, restarted, stale_none, picked])
 	var logo := TitleScreen.logo_label("SUMMON", 104)
-	_ok(logo.get_theme_font("font") is FontVariation and t.sky != null and TitleScreen.NightSky.ridge(0, 0.3) > TitleScreen.NightSky.ridge(2, 0.3) - 0.2,
-		"title (#183): the logo is in its display font over the drawn night sky")
+	_ok(logo.get_theme_font("font") is FontVariation and TitleScreen.NightSky.ridge(0, 0.3) > TitleScreen.NightSky.ridge(2, 0.3) - 0.2,
+		"title (#183): the drawn logo (without the picture) is in its display font; the night sky's ridges")
 	logo.free()
+	# #283: the pixel-art title: the logo picture over the meadow; animals stroll by and leave
+	var m: TitleScreen.Meadow = t.meadow
+	var art_ok: bool = m != null and t.sky == null and t.logo_rect != null and t.logo_rect.texture != null \
+		and m.bg != null and m.sheets.size() == TitleScreen.Meadow.KINDS.size() and m.front != null
+	m.walkers.clear()
+	var cow_in: bool = m.spawn("cow", 1) and m.walkers.size() == 1 and float(m.walkers[0]["x"]) < 0.0
+	var bird_in: bool = m.spawn("bird", -1) and float(m.walkers[1]["y"]) < m.bg.get_height() * 0.3
+	var full: bool = not m.spawn("pig", 1) and not m.spawn("nothing", 1)  # two at once at most
+	var x0: float = m.walkers[0]["x"]
+	m._next = 999.0  # no new one while this test walks them
+	m.tick(1.0)
+	var moved: bool = float(m.walkers[0]["x"]) > x0 and float(m.walkers[1]["x"]) < float(m.bg.get_width()) + 20.0
+	for i in 200:
+		m.tick(0.5)
+	_ok(art_ok and cow_in and bird_in and full and moved and m.walkers.is_empty(),
+		"title (#283): the logo picture over the pixel-art meadow; a cow walks in from the left, a bird flies high, two at most, they cross and leave",
+		"%s %s %s %s %s %d" % [art_ok, cow_in, bird_in, full, moved, m.walkers.size()])
 	game.show_title()
 	game._unhandled_input(_key(KEY_F5))
 	_ok(not game.title_active() and ctl.active(), "title: F5 picks the study mode too")
