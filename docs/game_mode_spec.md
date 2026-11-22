@@ -569,6 +569,7 @@ MANUAL_XY ─グー→ AUTO_GRAB: OPEN_CLAW → LOWER_TO_CATCH → CLOSE_CLAW �
             安全高さの確認 → MOVE_TO_DIAL → LOWER_TO_RELEASE → RELEASE → RAISE_EMPTY → MANUAL_XY
 WAIT_DESTINATION ─運べないまま 15 秒→ EXPIRED（バックエンド）= FAULT（ゲーム）
 どの状態でも: stop / soft_stop / モーター OFF / 通信断 / アラーム / 原点喪失 / タイムアウト → FAULT
+（#269: 爪・巻き上げのサーボの命令が失敗の結果で返っただけのときは ABORT でなく STOP で止める: アラームにならず原点を保つ）
 ```
 
 - **だれが何をするか**: 手の形の意味はゲームの `EasyModeControl`（`game/scripts/game_mode/easy_mode_control.gd`、main シーンが持つ）が決め、バックエンドへ `easy_grab` / `easy_deliver {destination, grab_id}` を**1 つの合図につき 1 回だけ**送る。動かすのはバックエンドの `EasySequencer`（`backend/.../sequence/easy.py`）で、キャッチから投入の終わりまで（行き先待ちの間も）**モーションロックを持ち続ける**。手動の JOG・移動・ほかのシーケンス・2 回目のキャッチは busy で断られる。`GameModeController` は今までどおりクレーンに何も送らない。

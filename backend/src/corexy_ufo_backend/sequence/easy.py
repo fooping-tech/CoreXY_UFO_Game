@@ -480,7 +480,7 @@ class EasySequencer(AutoCatchSequencer):
             self.state = "EXPIRED"
             self._set_phase(EasyPhase.EXPIRED, self.error)  # type: ignore[arg-type]
         except SequenceFault as f:
-            await self._fault(str(f))
+            await self._fault(str(f), servo_ended=f.servo_ended)
         except asyncio.CancelledError:
             await self._fault("sequence cancelled")
             raise
@@ -517,6 +517,6 @@ class EasySequencer(AutoCatchSequencer):
         if not math.isfinite(s.z) or height(s.z, self.limits) < height(safe, self.limits) - tol:
             raise SequenceFault(f"not at the safe height before the carry (Z {s.z:.1f}, safe_z {safe:g})")
 
-    async def _fault(self, reason: str) -> None:
+    async def _fault(self, reason: str, *, servo_ended: bool = False) -> None:
         self.state = "FAULT"
-        await super()._fault(reason)
+        await super()._fault(reason, servo_ended=servo_ended)
