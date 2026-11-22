@@ -853,6 +853,65 @@ func _test_title_screen(rs: Node) -> void:
 	rs.clear_samples()
 
 ## #179: the arm in an alarm (or without homing) can be recovered from the score game's screen.
+## #260: the staff's operations: F6..F10 mean one thing on every screen, all through
+## StaffControl.run() (an outside device later); the exhibit's day can be run with them alone.
+func _test_staff_control(rs: Node) -> void:
+	_ok(StaffControl.action_for_key(KEY_F6) == "next" and StaffControl.action_for_key(KEY_F7) == "skip"
+		and StaffControl.action_for_key(KEY_F8) == "menu" and StaffControl.action_for_key(KEY_F9) == "recover"
+		and StaffControl.action_for_key(KEY_F10) == "switch" and StaffControl.action_for_key(KEY_F6, true) == ""
+		and StaffControl.action_for_key(KEY_ENTER) == "",
+		"staff #260: F6 next, F7 skip, F8 menu, F9 recover, F10 study <-> game (Shift: the developers' own)")
+	var game := _study_game()
+	var st: StaffControl = game.staff
+	var gm: GameModeController = game.game_mode
+	gm.devices_wanted = "mock"
+	gm.sounds.enabled = false
+	gm.trace_to_file = false
+	gm.ranking.path = ""
+	gm.ranking_enabled = false
+	# the day starts on 校正 (over the menu): next = on to the menu
+	game.show_title()
+	game.open_settings()
+	game.settings.show_tab(SettingsScreen.CALIBRATION_TAB)
+	var on_cal: bool = st.screen() == "settings" and st.describe("next") == "メニューへ" and st.describe("recover") == ""
+	game._unhandled_input(_key(KEY_F6))
+	var to_menu: bool = st.screen() == "title" and not game.settings_active() and st.describe("menu") == ""
+	# the menu: F10 = the study mode
+	game._unhandled_input(_key(KEY_F10))
+	var in_study: bool = st.screen() == "study" and game.study_mode.state == "INTRO"
+	# the study mode: next skips the wait on (the intro, the sheet), skip = on to the score game
+	game._unhandled_input(_key(KEY_F6))
+	var skipped: bool = game.study_mode.state == "WAITING_FOR_WORKSHEET"
+	_ok(on_cal and to_menu and in_study and skipped and st.describe("next") == "とばして つづける",
+		"staff #260: 校正 -> (F6) the menu -> (F10) the study mode -> (F6) its waits skipped",
+		"%s %s %s %s %s" % [on_cal, to_menu, in_study, game.study_mode.state, st.last])
+	game._unhandled_input(_key(KEY_F7))
+	var to_game: bool = st.screen() == "score" and not game.study_mode.active() and gm.phase == "IDLE"
+	# the score game: next = its start, the practice first; skip there = the practice left out
+	gm.tutorial_auto = true
+	gm.tutorial_seen = false
+	game._unhandled_input(_key(KEY_F6))
+	var practice: bool = gm.phase == "TUTORIAL" and st.describe("skip") == "れんしゅうを ぜんぶ とばす"
+	game._unhandled_input(_key(KEY_F7))
+	for i in 60 * 3:
+		gm.tick(1.0 / 60.0)
+	var played: bool = gm.phase in ["COUNTDOWN", "PLAYING"]
+	_ok(to_game and practice and played,
+		"staff #260: (F7) the study mode over, the score game's title -> (F6) the practice -> (F7) the practice left out, the round starts",
+		"%s %s %s %s" % [to_game, practice, gm.phase, st.last])
+	# Space-equal stop, then the menu
+	st.run("stop", "remote")
+	var stopped: bool = gm.phase == "STOPPED" and st.last[0] == "stop"
+	var again: bool = st.describe("skip") == "れんしゅう なしで はじめる"
+	game._unhandled_input(_key(KEY_F8))
+	_ok(stopped and again and st.screen() == "title" and not gm.active(),
+		"staff #260: stop from outside (as Space), then (F8) back to the menu; the score game is closed", "%s %s" % [gm.phase, st.screen()])
+	# nothing to recover on the mock: the key does nothing and says so
+	_ok(st.run("recover") == "" and st.last == ["recover", "title", ""] and st.run("dance") == "",
+		"staff #260: recover with nothing to recover (and an unknown action) does nothing")
+	remove_child(game)
+	game.free()
+
 func _test_arm_recovery(rs: Node) -> void:
 	var game := _gm_game()
 	var ctl: GameModeController = game.game_mode
@@ -888,13 +947,13 @@ func _test_arm_recovery(rs: Node) -> void:
 				return str(r)
 		return ""
 	# the stop key between the two steps: the preparation is never asked for
-	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F9))
 	var first_only = types.call() == ["clear_alarm"]
 	game.stop_key()
 	answer.call("clear_alarm", true)
 	var stop_between = first_only and types.call().is_empty()
 	# the stop key right after the preparation was asked for: if it starts after all, it is stopped again
-	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F9))
 	answer.call("clear_alarm", true)
 	var asked_prepare = types.call() == ["calibration_prepare"]
 	game.stop_key()
@@ -902,12 +961,12 @@ func _test_arm_recovery(rs: Node) -> void:
 	var stopped_again = asked_prepare and types.call() == ["soft_stop"]
 	# a refused clearing: no preparation either
 	game.ws._pending.clear()
-	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F9))
 	answer.call("clear_alarm", false)
 	var refused_stops = types.call().is_empty()
 	# the normal way: the alarm cleared, then the preparation; pressed twice = once
-	game._unhandled_input(_key(KEY_F10))
-	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F9))
+	game._unhandled_input(_key(KEY_F9))
 	var once = types.call() == ["clear_alarm"]
 	answer.call("clear_alarm", true)
 	var sent: Array = types.call()
@@ -916,7 +975,7 @@ func _test_arm_recovery(rs: Node) -> void:
 	# while the recovery runs: its steps are shown, the button is away, a second press sends nothing
 	RobotState.calibration_prepare = {"active": true, "steps": [{"key": "home", "label": "原点復帰", "state": "run", "note": ""}]}
 	ctl.hud._process(0.016)
-	game._unhandled_input(_key(KEY_F10))
+	game._unhandled_input(_key(KEY_F9))
 	ctl.hud._recover_button.pressed.emit()
 	var running = types.call().is_empty() and ctl.hud._recover.visible and not ctl.hud._recover_button.visible \
 		and ctl.hud.recover_text().contains("原点復帰")
@@ -934,7 +993,7 @@ func _test_arm_recovery(rs: Node) -> void:
 	ctl.hud._process(0.016)
 	var recovered = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible and not ctl.hud._recover_button.visible
 	_ok(mock_nothing and fine and shown and by_key and running and stopped and by_button and recovered,
-		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F10 or the button sends clear_alarm and, when that is answered, the preparation, once (never after the stop key; a preparation that started behind the stop is stopped again); its steps and a stop's reason are shown; gone when the arm is ready",
+		"arm recovery: an alarm (or lost homing) is said on the score game's screen with a button; F9 (#260: the staff's recover) or the button sends clear_alarm and, when that is answered, the preparation, once (never after the stop key; a preparation that started behind the stop is stopped again); its steps and a stop's reason are shown; gone when the arm is ready",
 		"%s %s %s %s %s %s %s %s %s | %s %s %s %s %s %s" % [mock_nothing, fine, shown, by_key, running, stopped, by_button, recovered, sent,
 			first_only, stop_between, asked_prepare, stopped_again, refused_stops, once])
 	game.ws._pending.clear()

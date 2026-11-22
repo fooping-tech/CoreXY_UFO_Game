@@ -50,6 +50,7 @@ description: >
 | スコアゲーム（#138、タイトルの 3） | `game_mode/game_mode_controller.gd`（時計・Dial の状態機械・例外。#200: ポータルは左の Dial 1 だけで、`SIDES` は `["left"]`。Dial 2 には何も送らない）, `game_mode/score_manager.gd`, `game_mode/pinball_field.gd`（盤面。カプセルだけ Godot の RigidBody2D）, `game_mode/pinball_field_art.gd`・`game_mode_backdrop.gd`（絵。640×360 のキャンバス `pixel_view` に描き 2 倍で映す = UFO と同じドット。物理の状態を読むだけ）, `game_mode/game_mode_vfx.gd`, `game_mode/mock_dial_hub.gd` / `backend_dial_hub.gd`（機器の窓口）, backend `devicehub/service.py::mock_ball` | `docs/game_mode_spec.md`（仕様の正本）。体験の状態は RobotState と別で、クレーンに何も送らない（画面の UFO は絵で、アームの位置を読まない）。機器へは `GameModeDevices` 経由だけ。`RELEASE_BALL` はカプセル 1 個に 1 回で、失敗・通信断のあとに自動で送り直さない（FAULT）。`RELEASE_DONE` は排出の証明ではない。光（イルミ・Dial の LED）は失敗しても進む。Dial の LED は UFO-DeviceHub の `docs/game-mode-interface.md` の名前付きアニメーション（`LED_ANIMATIONS`）。数値は調整値。実機未検証 |
 | 学習支援 AI（#104） | backend `study/tutor_adapter.py`（provider `tutor`）, `study_mode/navigation.py`（ずれ → mm、範囲の確認、XY → u, v）, `study_mode/explain.py::navigate_of`, `websocket/server.py::_homework_navigate`, `study_services.gd::navigate_help`, `study_mode_controller.gd`（`MAX_NAV`）, `tools/check_tutor_api.py`, `tools/calibrate_focus.py` | `docs/study_mode.md` §8。解説だけ（`study.explain_provider`）。`homework_navigate` は動かさず u, v を返すだけで、動かすのは既存の段階撮影。60 mm・2 回・アームが戻ってから・Space で取り消し。トークン・証明書は `config/secrets/`（Git に入れない）、先端カメラの校正は `calibration.json` の `focus_camera`。実機未検証 |
 | USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
+| スタッフ操作（#260、F6〜F10） | `game/scripts/game/staff_control.gd`（`StaffControl`: next / skip / menu / recover / switch / stop。画面ごとの意味は `describe`、実行は `run`）, `main.gd::_unhandled_input`（画面のキーより先に通す。Shift は開発者用） | `docs/staff_operations.md`。新しいスタッフ向けの操作は画面ごとのキーを足さず、この 6 つの意味に入れる。外部デバイスも `run()` を呼ぶだけにする。アームが動くのは recover だけ（既存の clear_alarm → calibration_prepare） |
 | テスト | `game/tests/run_tests.gd`（実行順）と `game/tests/test_*.gd`（分野ごと）, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
 
 パスの省略: ゲーム側は `game/scripts/`、バックエンド側（`serial_service/` など）は `backend/src/corexy_ufo_backend/` からの相対。
@@ -147,7 +148,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 574 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 579 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
