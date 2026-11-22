@@ -125,6 +125,8 @@ func _test_easy_mode_logic() -> void:
 			"nack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "easy catch refused: not homed"})
 				results.append(e4.state == "MANUAL_XY" and e4.note.contains("げんてんふっき"))
+				# #270: the backend refuses a catch that would go down onto the portal
+				results.append(EasyModeControl.refusal_text("easy catch refused: near the portal (Dial 1, 30 mm < 60 mm)").contains("ポータルの ちかく"))
 			"timeout_ack":
 				e4.on_ack(be4.last_rid(), false, {"reason": "timeout"})
 				results.append(e4.state == "FAULT")

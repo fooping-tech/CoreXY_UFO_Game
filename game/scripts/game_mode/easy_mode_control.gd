@@ -511,6 +511,8 @@ func _follow(status: Dictionary) -> void:
 ## A refusal of the backend, as what to do next (shown to the player and the staff).
 static func refusal_text(reason: String) -> String:
 	var r := reason.to_lower()
+	if r.contains("near the portal"):  # #270: it would go down onto the portal
+		return "ポータルの ちかくでは キャッチできないよ（すこし はなれてね）"
 	if r.contains("not recorded") or r.contains("not confirmed") or r.contains("is not set"):
 		return "じどうの うごきは まだ つかえない（校正が まだ: かかりの ひとへ）"
 	if r.contains("alarm"):
