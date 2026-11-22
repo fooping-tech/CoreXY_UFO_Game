@@ -31,7 +31,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 import cv2
@@ -209,29 +209,40 @@ def crop_photo(data: bytes, region: tuple[float, float, float, float]) -> tuple[
     return buf.tobytes(), (x1, y1, x2, y2), w, h
 
 
+def _boxes_back(res: SheetResult, to_frame: Callable[[float, float], tuple[float, float]], frame: SheetImage) -> list[dict[str, Any]]:
+    """The problems of `res` with their boxes put on `frame`: each corner of a box (0..1000 of
+    the image read) through `to_frame` (-> pixels of the photo), the box around them on the
+    0..1000 scale of the photo, and its pixels in the image the photo is sent as."""
+    sw, sh = frame.source_width, frame.source_height
+
+    def back(b: Any) -> Any:
+        if not (isinstance(b, (list, tuple)) and len(b) == 4 and all(isinstance(v, (int, float)) for v in b)):
+            return b
+        pts = [to_frame(x, y) for x in (b[0], b[2]) for y in (b[1], b[3])]
+        xs, ys = [min(max(p[0], 0.0), sw) for p in pts], [min(max(p[1], 0.0), sh) for p in pts]
+        return [round(min(xs) * 1000 / sw, 1), round(min(ys) * 1000 / sh, 1),
+                round(max(xs) * 1000 / sw, 1), round(max(ys) * 1000 / sh, 1)]
+
+    problems = []
+    for p in res.problems:
+        q = dict(p)
+        for k in ("box", "answer_box"):
+            q[k] = back(q.get(k))
+            px = box_to_pixels(q[k], frame.width, frame.height)
+            if f"{k}_px" in q and px is not None:
+                q[f"{k}_px"] = list(px)
+        problems.append(q)
+    return problems
+
+
 def map_zoomed(first: SheetResult, zoomed: SheetResult, rect: tuple[int, int, int, int],
                photo_w: int, photo_h: int) -> SheetResult:
     """The second look's answer put back on the first photo: its boxes on the 0..1000 scale
     (and in pixels) of the image first read, so whoever draws them needs to know nothing."""
     x0, y0, x1, y1 = rect
     cw, ch = x1 - x0, y1 - y0
-
-    def back(b: Any) -> Any:
-        if not (isinstance(b, (list, tuple)) and len(b) == 4 and all(isinstance(v, (int, float)) for v in b)):
-            return b
-        return [round((x0 + b[0] * cw / 1000) * 1000 / photo_w, 1), round((y0 + b[1] * ch / 1000) * 1000 / photo_h, 1),
-                round((x0 + b[2] * cw / 1000) * 1000 / photo_w, 1), round((y0 + b[3] * ch / 1000) * 1000 / photo_h, 1)]
-
-    img = first.image
-    problems = []
-    for p in zoomed.problems:
-        q = dict(p)
-        for k in ("box", "answer_box"):
-            q[k] = back(q.get(k))
-            px = box_to_pixels(q[k], img.width, img.height)
-            if f"{k}_px" in q and px is not None:
-                q[f"{k}_px"] = list(px)
-        problems.append(q)
+    img = replace(first.image, source_width=photo_w, source_height=photo_h)
+    problems = _boxes_back(zoomed, lambda x, y: (x0 + x * cw / 1000, y0 + y * ch / 1000), img)
     raw = dict(zoomed.raw)
     raw["problems"] = problems
     raw["image"] = first.raw.get("image") or {"width": img.width, "height": img.height}
@@ -239,7 +250,111 @@ def map_zoomed(first: SheetResult, zoomed: SheetResult, rect: tuple[int, int, in
     raw["zoom"] = {"region": [round(x0 * 1000 / photo_w, 1), round(y0 * 1000 / photo_h, 1),
                               round(x1 * 1000 / photo_w, 1), round(y1 * 1000 / photo_h, 1)],
                    "first_counts": first.counts}
-    return SheetResult(raw, img, problems)
+    return SheetResult(raw, first.image, problems)
+
+
+# ------------------------------------------------------------------ the paper itself (#252)
+# The overview camera sees the sheet small, on a desk that is dark in places and light in others
+# (the server's own cut-out wants a dark desk: paper_px null). The sheet is the brightest, least
+# coloured thing on the desk: found here, turned straight (a perspective warp) to the reader's long
+# side and its contrast evened out (CLAHE), it is read like a scan. Measured on the real camera
+# (2026-11-22): the whole frame 1 of 5 right, this 4 or 5 of 5.
+PAPER_MIN_AREA = 0.03   # of the frame
+PAPER_MAX_AREA = 0.95
+PAPER_MIN_FILL = 0.88   # the outline's area / the rectangle around it: a sheet, not a blob
+PAPER_ASPECT = (0.5, 0.95)  # short side / long side (A4 = 0.71)
+
+
+def find_paper(arr: np.ndarray) -> np.ndarray | None:
+    """The sheet's four corners (tl, tr, br, bl; pixels of `arr`), or None when nothing on the
+    picture looks like one."""
+    h, w = arr.shape[:2]
+    hsv = cv2.cvtColor(arr, cv2.COLOR_BGR2HSV)
+    score = hsv[..., 2].astype(np.float32) - 1.5 * hsv[..., 1].astype(np.float32)
+    mask = (score >= np.percentile(score, 99.5) - 45.0).astype(np.uint8) * 255
+    # only the outer outline counts (the print inside the sheet does not matter); opening cuts a
+    # hand or a light floor touching it off
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((7, 7), np.uint8))
+    cs, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cs:
+        return None
+    c = max(cs, key=cv2.contourArea)
+    area = cv2.contourArea(c)
+    if not PAPER_MIN_AREA <= area / float(w * h) <= PAPER_MAX_AREA:
+        return None
+    (_, _), (rw, rh), _ = cv2.minAreaRect(c)
+    if rw <= 0 or rh <= 0 or area / (rw * rh) < PAPER_MIN_FILL:
+        return None
+    if not PAPER_ASPECT[0] <= min(rw, rh) / max(rw, rh) <= PAPER_ASPECT[1]:
+        return None
+    hull = cv2.convexHull(c)
+    quad = None
+    for eps in (0.02, 0.03, 0.04, 0.05):
+        q = cv2.approxPolyDP(hull, eps * cv2.arcLength(hull, True), True)
+        if len(q) == 4:
+            quad = q.reshape(4, 2).astype(np.float32)
+            break
+    if quad is None:
+        quad = cv2.boxPoints(cv2.minAreaRect(c)).astype(np.float32)
+    ssum, sdiff = quad.sum(1), np.diff(quad, axis=1).ravel()
+    return np.array([quad[np.argmin(ssum)], quad[np.argmin(sdiff)], quad[np.argmax(ssum)], quad[np.argmax(sdiff)]],
+                    np.float32)
+
+
+def paper_view(data: bytes, long_side: int = LONG_SIDE) -> tuple[bytes, np.ndarray, np.ndarray, int, int] | None:
+    """The sheet straightened -> (JPEG, its corners in the photo, the warp's inverse (the sent
+    image's pixels -> the photo's), photo width, photo height); None without a sheet."""
+    arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None:
+        return None
+    corners = find_paper(arr)
+    if corners is None:
+        return None
+    tl, tr, br, bl = corners
+    wide = (np.linalg.norm(tr - tl) + np.linalg.norm(br - bl)) / 2.0
+    tall = (np.linalg.norm(bl - tl) + np.linalg.norm(br - tr)) / 2.0
+    k = long_side / max(wide, tall)
+    W, H = max(round(wide * k), 1), max(round(tall * k), 1)
+    dst = np.float32([[0, 0], [W, 0], [W, H], [0, H]])
+    m = cv2.getPerspectiveTransform(corners, dst)
+    out = cv2.warpPerspective(arr, m, (W, H), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+    lab[..., 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(lab[..., 0])
+    out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    ok, buf = cv2.imencode(".jpg", out, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not ok:
+        return None
+    h, w = arr.shape[:2]
+    return buf.tobytes(), corners, cv2.getPerspectiveTransform(dst, corners), w, h
+
+
+def frame_image(data: bytes, long_side: int = LONG_SIDE) -> SheetImage:
+    """The photo's sizes as prepare_image would send it (no JPEG: nothing is sent of it)."""
+    arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if arr is None:
+        raise SheetError("image", "画像として読めません")
+    sh, sw = arr.shape[:2]
+    scale = min(1.0, max(min(int(long_side), MAX_SIDE), 64) / max(sw, sh))
+    return SheetImage(b"", max(round(sw * scale), 1), max(round(sh * scale), 1), sw, sh)
+
+
+def map_paper(res: SheetResult, frame: SheetImage, corners: np.ndarray, inverse: np.ndarray) -> SheetResult:
+    """The straightened sheet's answer put on the photo (boxes, and the sheet's corners as the
+    server's paper_px would be: pixels of the image the photo is sent as)."""
+    pw, ph = res.image.width, res.image.height
+
+    def to_frame(x: float, y: float) -> tuple[float, float]:
+        p = cv2.perspectiveTransform(np.float32([[[x * pw / 1000, y * ph / 1000]]]), inverse)[0][0]
+        return float(p[0]), float(p[1])
+
+    problems = _boxes_back(res, to_frame, frame)
+    k = frame.width / frame.source_width
+    raw = dict(res.raw)
+    raw["problems"] = problems
+    raw["image"] = {"width": frame.width, "height": frame.height}
+    raw["paper_px"] = [[round(float(x) * k, 1), round(float(y) * k, 1)] for x, y in corners]
+    raw["straightened"] = {"width": pw, "height": ph}
+    return SheetResult(raw, frame, problems)
 
 
 def parse_result(raw: Any, image: SheetImage) -> SheetResult:
@@ -354,6 +469,24 @@ class SheetClient:
             return parse_result(raw, image)
         finally:
             self.lock.release()
+
+    def read_sheet(self, photo: bytes, *, calc: bool = True, crop: bool = True,
+                   label: str = "read") -> SheetResult:
+        """The answer check's read of a camera frame (#252): the sheet found on it, straightened
+        and read alone; without one (or reading nothing) read_zoomed. Boxes on the frame."""
+        view = paper_view(photo) if crop else None
+        if view is not None:
+            jpeg, corners, inverse, _, _ = view
+            try:
+                res = self.read(jpeg, calc=calc, crop=False, label=label + " (the sheet straightened)")
+            except SheetError as e:
+                if e.kind not in ("response",):
+                    raise
+                res = None
+            if res is not None and res.read_anything:
+                return map_paper(res, frame_image(photo), corners, inverse)
+            log.info("sheet: the straightened sheet read nothing: the whole frame is read")
+        return self.read_zoomed(photo, calc=calc, crop=crop, label=label)
 
     def read_zoomed(self, photo: bytes, *, calc: bool = True, crop: bool = True,
                     label: str = "read") -> SheetResult:

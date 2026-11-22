@@ -16,7 +16,7 @@ import pytest
 from corexy_ufo_backend import services_check as sc
 from corexy_ufo_backend.study import StudyConfig, make_sheet_client
 from corexy_ufo_backend.study.sheet_client import (MAX_BYTES, SheetClient, SheetError, box_to_pixels, parse_result,
-                                                   prepare_image, zoom_region)
+                                                   find_paper, paper_view, prepare_image, zoom_region)
 
 TOKEN = "sheet-secret-token-456"
 URL = "https://192.0.2.10:8444"
@@ -352,7 +352,7 @@ async def test_the_server_reads_a_frame_with_sheet_read(monkeypatch):
                 raise SheetError("auth", "トークンが違う", 401)
             return parse_result(ANSWER, prepare_image(data))
 
-        def read_zoomed(self, data, calc=True, crop=True):
+        def read_sheet(self, data, calc=True, crop=True):
             seen.append("zoomed")
             return self.read(data, calc, crop)
     monkeypatch.setattr(study, "make_sheet_client", lambda cfg: Fake())
@@ -600,3 +600,69 @@ def test_no_second_look_when_the_server_cut_the_paper_out_or_it_reads_nothing():
     assert len(server.calls) == 2 and res.problems[0]["student_answer"] == "159"  # the first answer kept
     server = FakeServer(SMALL, 400)
     assert client(server).read_zoomed(jpeg(1280, 960)).problems[0]["student_answer"] == "159"
+
+
+# ------------------------------------------------------------------ the sheet found and straightened (#252)
+
+def desk_with_sheet(hand: bool = False, light_floor: bool = True) -> bytes:
+    """A 1280x960 overview frame: a dark desk, a light floor over its top, an A4 sheet (slightly
+    turned) with a few dark lines on it, optionally a hand-coloured blob touching it."""
+    img = np.full((960, 1280, 3), (40, 30, 25), np.uint8)
+    if light_floor:
+        img[:340] = (190, 190, 185)
+    sheet = np.array([[420, 255], [806, 250], [812, 768], [440, 774]], np.int32)
+    cv2.fillPoly(img, [sheet], (238, 240, 240))
+    for y in range(320, 740, 60):
+        cv2.line(img, (480, y), (760, y), (60, 60, 60), 3)
+    if hand:
+        cv2.ellipse(img, (870, 650), (70, 40), 0, 0, 360, (150, 170, 215), -1)
+    return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
+
+
+def decode(b: bytes):
+    return cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)
+
+
+def test_the_sheet_is_found_on_a_two_tone_desk_and_not_merged_with_a_hand():
+    for hand in (False, True):
+        c = find_paper(decode(desk_with_sheet(hand=hand)))
+        assert c is not None
+        assert np.abs(c - np.float32([[420, 255], [806, 250], [812, 768], [440, 774]])).max() < 8, (hand, c)
+    blank = cv2.imencode(".jpg", np.full((960, 1280, 3), 40, np.uint8))[1].tobytes()
+    assert find_paper(decode(blank)) is None and paper_view(blank) is None
+
+
+def test_the_straightened_sheet_is_portrait_and_its_boxes_go_back_onto_the_frame():
+    import base64
+    frame = desk_with_sheet()
+    jpeg_, corners, inverse, w, h = paper_view(frame)
+    out = decode(jpeg_)
+    assert (w, h) == (1280, 960) and out.shape[0] == 1800 and 0.6 < out.shape[1] / out.shape[0] < 0.85
+    # the reader's box over the whole straightened sheet = the sheet on the frame
+    whole = {**ANSWER, "image": {"width": out.shape[1], "height": out.shape[0]}, "paper_px": None, "problems": [
+        {"number": 1, "box": [0, 0, 1000, 1000], "answer_box": [0, 0, 500, 500], "visible": "full",
+         "answer_status": "correct", "student_answer": "29", "correct_answer": "29", "notes": [],
+         "box_px": [0, 0, 1, 1], "answer_box_px": [0, 0, 1, 1]}]}
+    server = FakeServer(whole)
+    res = client(server).read_sheet(frame)
+    assert len(server.calls) == 1 and server.calls[0]["body"]["crop"] is False
+    sent = decode(base64.b64decode(server.calls[0]["body"]["image"].split(",", 1)[1]))
+    assert sent.shape[0] == 1800
+    box = res.problems[0]["box"]
+    assert box == pytest.approx([420 / 1.28, 250 / 0.96, 812 / 1.28, 774 / 0.96], abs=3.0)
+    assert res.image.width == 1280 and res.raw["image"] == {"width": 1280, "height": 960}
+    assert res.problems[0]["answer_box_px"] == list(box_to_pixels(res.problems[0]["answer_box"], 1280, 960))
+    assert res.cropped and res.raw["paper_px"][0] == pytest.approx([420, 255], abs=8)
+
+
+def test_without_a_sheet_or_reading_nothing_on_it_the_whole_frame_is_read():
+    blank = cv2.imencode(".jpg", np.full((960, 1280, 3), 40, np.uint8))[1].tobytes()
+    server = FakeServer(SMALL, CLOSE)  # no sheet: read_zoomed (its first look, then closer)
+    assert client(server).read_sheet(blank).counts["correct"] == 2 and len(server.calls) == 2
+    server = FakeServer({**SMALL, "problems": []}, {**ANSWER, "paper_px": None})  # the sheet read nothing
+    res = client(server).read_sheet(desk_with_sheet())
+    assert len(server.calls) == 2 and server.calls[1]["body"]["crop"] is True and len(res.problems) == 3
+    server = FakeServer(401)
+    with pytest.raises(SheetError):
+        client(server).read_sheet(desk_with_sheet())
+    assert len(server.calls) == 1  # a refused token is not sent again for the whole frame
