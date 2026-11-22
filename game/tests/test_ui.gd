@@ -931,6 +931,15 @@ func _test_arm_recovery(rs: Node) -> void:
 	game.backend_link = func() -> bool: return true
 	ctl.hud._process(0.016)
 	var fine = game.arm_recovery_reason() == "" and not ctl.hud._recover.visible
+	# the motors off (homed, no alarm: as after a start-up): the arm cannot move, so ふっき /
+	# F9 / the staff remote's RECOVER prepares it (the preparation switches the motors on)
+	RobotState.motors_enabled = false
+	ctl.hud._process(0.016)
+	var motors_off = game.arm_recovery_reason().contains("モーター") and ctl.hud._recover.visible \
+		and game.staff.describe("recover").contains("まとめて準備")
+	_ok(fine and motors_off, "recovery: the motors off need it too (homed, no alarm), so F9 / the remote's ふっき prepares the arm",
+		"%s %s %s" % [fine, game.arm_recovery_reason(), game.staff.describe("recover")])
+	RobotState.motors_enabled = true
 	RobotState.machine_state = "ALARM"
 	RobotState.homed = false
 	ctl.hud._process(0.016)
