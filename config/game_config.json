@@ -430,7 +430,7 @@
       "one_way_s": 6.0
     },
     "timing": {
-      "absorb_s": 0.85,
+      "absorb_s": 1.95,
       "drop_s": 0.25,
       "return_s": 0.9,
       "release_sync_s": 0.6,
@@ -501,7 +501,7 @@
         ]
       }
     },
-    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), the only portal since #200 (a right entry is not read: nothing is sent to Dial 2, 0x21), color = its RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the default is UFO-DeviceHub's own: cyan). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 1.1 s from the Dial's switch to the drop) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). visual_quality: high / low (low = a still, plain background for a slow machine; the game is the same). effects: false = no bounce, no light trails, no breathing glow (for debugging; the game is the same). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
+    "_note": "SUMMON THE UFO, the 150 s score game (#138; the rules are docs/game_mode_spec.md). The title's third card (enabled). devices: auto (the backend's hub when the game uses the backend, else the Dials simulated inside the game) / mock / backend; with the backend, devicehub.enabled must be on (port mock = the backend's simulated hub). dials: left = Dial 1 (0x20 = 32), the only portal since #200 (a right entry is not read: nothing is sent to Dial 2, 0x21), color = its RGB on the screen and, sent as SET_DIAL_COLOR, the Dial's unit colour for its LEDs (the default is UFO-DeviceHub's own: cyan). dial_leds: the Dials' transfer LEDs follow the game (SET_DIAL_EFFECT, UFO-DeviceHub docs/game-mode-interface.md; firmware 0.3, older firmware answers UNSUPPORTED and the game goes on without). Every number here is a tuning value, not final: the score table and the timings (absorb_s + drop_s = the 2.2 s from the Dial's switch to the drop: #258's collection show, up from the port, big in the middle with カプセル回収！, up into UFOくん and its light, then the drop; the UFO waits meanwhile) are to be set by play tests and by measuring the real Dials. lights: the Illumination follows the game (best effort like dial_leds: a refusal never holds the game). visual_quality: high / low (low = a still, plain background for a slow machine; the game is the same). effects: false = no bounce, no light trails, no breathing glow (for debugging; the game is the same). trace: one JSON line per event in user://game_mode/trace_<time>.jsonl. Not yet run with the real Dials."
   },
   "devicehub": {
     "enabled": false,

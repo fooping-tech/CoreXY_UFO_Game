@@ -1139,7 +1139,7 @@ func capture_stage() -> String:
 	return ""
 
 # ------------------------------------------------------------------ debug
-## F6: skip ahead as if the current step succeeded.
+## Staff "next" (F6, #260 StaffControl): skip ahead as if the current step succeeded.
 func debug_skip() -> void:
 	match state:
 		"INTRO":

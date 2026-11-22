@@ -4,18 +4,24 @@ extends Control
 ## crane is doing by itself. It only reads (the main scene's EasyModeControl and the round's
 ## phase): it decides nothing and sends nothing.
 ##
-##   playing by hand   a slim strip over the field: つまむ = うごかす, グー = キャッチ,
+## #258: all of it is the lower part of the rounded hand window bottom right (GameModeLayout.
+## GUIDE_RECT; GestureHud draws the camera above it), never over the top of the field, and
+## the window turns faint while a capsule comes in and plays (GameModeController.guide_alpha).
+##
+##   playing by hand   the flow, one sign a row: つまむ = うごかす, グー = キャッチ,
 ##                     ゆび 1 = ポータルへ (lit only while it counts; #200: the left portal only),
 ##                     the fist's hold as a bar, and why a sign was not taken
-##   the crane moves   a big panel: じどうで キャッチちゅう… / ゆび 1ぽんで ポータルへ！ (the hand,
-##                     the time left) / ひだりの ポータルへ はこぶよ, "いまは そうさ できないよ" and
+##   the crane moves   じどうで キャッチちゅう… / ゆび 1ぽんで ポータルへ！ (the hand, the time
+##                     left) / ひだりの ポータルへ はこぶよ, "いまは そうさ できないよ" and
 ##                     "Space で とまる" all the time
 ##   stopped (FAULT)   かかりの ひとを よんでね, the reason, and the staff's key
 
 const SCREEN := GameModeLayout.SCREEN
-const STRIP := Rect2(40, GameModeLayout.FIELD_TOP + 4.0, 640, 48)
-const STRIP_NOTE := Rect2(40, GameModeLayout.FIELD_TOP + 4.0, 640, 80)
-const PANEL := Rect2(40, GameModeLayout.FIELD_TOP + 4.0, 640, 196)
+## the window's lower part (the camera is above it)
+const PANEL := Rect2(GameModeLayout.GUIDE_RECT.position.x, GameModeLayout.GUIDE_RECT.position.y + GameModeLayout.GUIDE_SPLIT,
+	GameModeLayout.GUIDE_RECT.size.x, GameModeLayout.GUIDE_RECT.size.y - GameModeLayout.GUIDE_SPLIT)
+## one sign of the flow a row
+const ROW_H := 34.0
 const YELLOW := Color("ffe03c")
 const CYAN := Color("3ff0ff")
 const MAGENTA := Color("ff4fd8")
@@ -23,9 +29,7 @@ const RED := Color("ff6b6b")
 const DARK := Color("050818")
 const GLASS := Color(0.02, 0.03, 0.13, 0.9)
 const DIM := Color(0.55, 0.6, 0.75)
-## the width of one sign of the strip
-const SLOT_W := 213.0
-## the strip's three signs: [hand picture, words, the sign it is in EasyModeControl]
+## the flow's three signs: [hand picture, words, the sign it is in EasyModeControl]
 const LEGEND := [["pinch", "つまんで いどう", ""], ["fist", "グーで キャッチ", "grab"], ["point", "1ぽんで ポータルへ", "1"]]
 
 var ctl: GameModeController
@@ -44,14 +48,14 @@ func setup(c: GameModeController) -> void:
 	z_index = 21  # over the round's own HUD, under the result and the practice
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	for i in LEGEND.size():
-		var l := _label(15, Color.WHITE, Rect2(STRIP.position.x + SLOT_W * i + 34.0, STRIP.position.y + 4.0, SLOT_W - 40.0, 40), HORIZONTAL_ALIGNMENT_LEFT)
+		var l := _label(18, Color.WHITE, Rect2(PANEL.position.x + 46.0, row_y(i), PANEL.size.x - 56.0, ROW_H), HORIZONTAL_ALIGNMENT_LEFT)
 		l.text = str(LEGEND[i][1])
 		_legend.append(l)
-	_title = _label(34, YELLOW, Rect2(PANEL.position.x, PANEL.position.y + 10.0, PANEL.size.x, 44), HORIZONTAL_ALIGNMENT_CENTER)
-	_sub = _label(20, Color("e8f0ff"), Rect2(PANEL.position.x + 110.0, PANEL.position.y + 60.0, PANEL.size.x - 220.0, 84), HORIZONTAL_ALIGNMENT_CENTER)
-	_note = _label(16, Color("ffd24a"), Rect2(STRIP.position.x + 8.0, STRIP.end.y, STRIP.size.x - 16.0, 30), HORIZONTAL_ALIGNMENT_CENTER)
-	_stop = _label(16, Color("b8c6ff"), Rect2(PANEL.position.x, PANEL.end.y - 30.0, PANEL.size.x, 24), HORIZONTAL_ALIGNMENT_CENTER)
-	_left = _label(18, CYAN, Rect2(PANEL.position.x + 4.0, PANEL.position.y + 128.0, 110, 30), HORIZONTAL_ALIGNMENT_CENTER)
+	_title = _label(20, YELLOW, Rect2(PANEL.position.x + 36.0, PANEL.position.y + 6.0, PANEL.size.x - 44.0, 32), HORIZONTAL_ALIGNMENT_CENTER)
+	_sub = _label(15, Color("e8f0ff"), Rect2(PANEL.position.x + 8.0, PANEL.position.y + 38.0, PANEL.size.x - 16.0, 64), HORIZONTAL_ALIGNMENT_CENTER)
+	_note = _label(15, Color("ffd24a"), Rect2(PANEL.position.x + 8.0, row_y(LEGEND.size()), PANEL.size.x - 16.0, PANEL.end.y - row_y(LEGEND.size()) - 4.0), HORIZONTAL_ALIGNMENT_CENTER)
+	_stop = _label(14, Color("b8c6ff"), Rect2(PANEL.position.x, PANEL.end.y - 26.0, PANEL.size.x, 22), HORIZONTAL_ALIGNMENT_CENTER)
+	_left = _label(14, CYAN, Rect2(PANEL.position.x + 4.0, PANEL.position.y + 38.0, 30, 20), HORIZONTAL_ALIGNMENT_CENTER)
 	visible = false
 
 func _label(font_size: int, color: Color, r: Rect2, align: int) -> Label:
@@ -65,6 +69,10 @@ func _label(font_size: int, color: Color, r: Rect2, align: int) -> Label:
 	add_child(l)
 	return l
 
+## The top of row `i` of the flow.
+func row_y(i: int) -> float:
+	return PANEL.position.y + 6.0 + ROW_H * i
+
 func easy() -> EasyModeControl:
 	return ctl.main.easy if ctl != null and ctl.main != null and ctl.main.get("easy") != null else null
 
@@ -73,7 +81,7 @@ func easy() -> EasyModeControl:
 func showing() -> bool:
 	if ctl == null or not ctl.active() or not ctl.easy_on() or easy() == null or not easy().enabled():
 		return false
-	if ctl.ranking_view != "":
+	if ctl.ranking_view != "" or ctl.guide_hidden():
 		return false
 	return ctl.phase in ["COUNTDOWN", "PLAYING", "SETTLING"] or (ctl.phase == "TUTORIAL" and ctl.practice != "")
 
@@ -107,6 +115,10 @@ func _process(dt: float) -> void:
 	visible = on
 	if not on:
 		return
+	modulate.a = ctl.guide_alpha()
+	# steps aside with the camera part (GestureHud): the same corner, the same size
+	pivot_offset = GameModeLayout.GUIDE_RECT.end
+	scale = Vector2.ONE * ctl.guide_scale()
 	_t += dt
 	var e := easy()
 	var panel := view() == "panel"
@@ -120,20 +132,18 @@ func _process(dt: float) -> void:
 	_title.visible = panel
 	_sub.visible = panel
 	_stop.visible = panel
-	_left.visible = panel and e.state == "WAIT_DESTINATION"
+	_left.visible = false  # the hand on the title's left says it (#258: no room for the big hand)
 	if panel:
 		_title.text = e.title_text()
 		_title.add_theme_color_override("font_color", RED if e.faulted() else YELLOW)
 		_sub.text = sub_text()
 		_stop.text = "Space で とまる" if not e.faulted() else "Space: 止める   Esc: タイトル"
-		_left.text = "1 ポータル"
-		_left.add_theme_color_override("font_color", ctl.lanes["left"].color)
 	queue_redraw()
 
+## The window's lower part: round at the bottom, open at the top where the camera part is.
 func _frame(r: Rect2, col: Color) -> void:
-	draw_rect(r.grow(3.0), DARK)
-	draw_rect(r, GLASS)
-	draw_rect(r, col, false, 2.0)
+	GestureHud.paint_window(self, r, false, true, col)
+	draw_line(r.position + Vector2(10, 1), Vector2(r.end.x - 10.0, r.position.y + 1.0), Color(col, 0.35), 2.0)
 
 func _bar(r: Rect2, k: float, col: Color) -> void:
 	draw_rect(r.grow(2.0), DARK)
@@ -145,32 +155,30 @@ func _draw() -> void:
 		return
 	var e := easy()
 	if view() == "strip":
-		_frame(STRIP_NOTE if e.note != "" else STRIP, CYAN)
+		_frame(PANEL, CYAN)
 		for i in LEGEND.size():
-			var at := Vector2(STRIP.position.x + SLOT_W * i + 8.0, STRIP.position.y + 6.0)
+			var at := Vector2(PANEL.position.x + 14.0, row_y(i) + 1.0)
 			GestureTutorialHud.paint_hand(self, at, 1.0, str(LEGEND[i][0]))
 			if e.holding == str(LEGEND[i][2]) and e.holding != "":
-				_bar(Rect2(at.x + 26.0, STRIP.end.y - 10.0, 120, 6), e.progress, YELLOW)
+				_bar(Rect2(PANEL.position.x + 46.0, row_y(i) + ROW_H - 6.0, 150, 5), e.progress, YELLOW)
 		return
 	var col := RED if e.faulted() else (YELLOW if e.state == "WAIT_DESTINATION" else CYAN)
-	PinballField.glow_rect(self, PANEL, col, 0.5 + 0.3 * sin(_t * 5.0))
-	_frame(PANEL, col)
+	_frame(PANEL, Color(col, 0.75 + 0.25 * sin(_t * 5.0)))
+	var bars_y := PANEL.position.y + 104.0
 	if e.state == "WAIT_DESTINATION":
 		# the one answer, on the portal's side (the left), in the Dial's colour
 		var lc: Color = ctl.lanes["left"].color
-		GestureTutorialHud.paint_hand(self, Vector2(PANEL.position.x + 30.0, PANEL.position.y + 28.0), 3.0, "point")
+		GestureTutorialHud.paint_hand(self, Vector2(PANEL.position.x + 10.0, PANEL.position.y + 4.0), 1.0, "point")
 		if e.holding == "1":
-			_bar(Rect2(PANEL.position.x + 10.0, PANEL.position.y + 160.0, 100, 8), e.progress, lc)
+			_bar(Rect2(PANEL.position.x + 20.0, bars_y + 10.0, PANEL.size.x - 40.0, 6), e.progress, lc)
 		elif e.holding == "cancel":  # the open hand kept up: the catch is given up when it is full
-			_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 164.0, PANEL.size.x - 260.0, 8), e.progress, Color.WHITE)
+			_bar(Rect2(PANEL.position.x + 20.0, bars_y + 10.0, PANEL.size.x - 40.0, 6), e.progress, Color.WHITE)
 		# the time left to choose
-		_bar(Rect2(PANEL.position.x + 130.0, PANEL.position.y + 150.0, PANEL.size.x - 260.0, 8),
+		_bar(Rect2(PANEL.position.x + 20.0, bars_y, PANEL.size.x - 40.0, 6),
 			e.wait_left_s / maxf(e.wait_s, 0.1), YELLOW if e.wait_left_s > 5.0 else RED)
 	elif e.state.begins_with("DELIVER_DIAL_"):
-		# an arrow to the portal's side (the left)
-		var side := -1.0
+		# an arrow to the portal's side (the left), running along the window
 		var c: Color = ctl.lanes["left"].color
-		var y := PANEL.position.y + 150.0
 		for i in 8:
-			var x := SCREEN.x * 0.5 + side * (40.0 + i * 22.0 + fmod(_t * 60.0, 22.0))
-			draw_rect(Rect2(Vector2(x, y).snapped(Vector2(2, 2)), Vector2(10, 10)), Color(c.r, c.g, c.b, 1.0 - i * 0.1))
+			var x := PANEL.end.x - 30.0 - (i * 30.0 + fmod(_t * 60.0, 30.0))
+			draw_rect(Rect2(Vector2(x, bars_y).snapped(Vector2(2, 2)), Vector2(10, 10)), Color(c.r, c.g, c.b, 1.0 - i * 0.1))
