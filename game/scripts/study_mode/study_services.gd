@@ -368,6 +368,13 @@ func watch_stop() -> void:
 		homework.worksheet_id = ""
 		homework.helper_offer = _helper_offer_was
 
+## #285: why the watch cannot read the sheet now ("" = nothing wrong, or not the camera's watch):
+## shown on the "ここへおいてね！" screen, else the child waits there for nothing.
+func watch_problem() -> String:
+	if not watching or mode != "camera" or homework == null:
+		return ""
+	return homework.last_error
+
 ## Enter while waiting: the sheet is on the desk (when the camera has not seen it yet).
 func mark_seen() -> void:
 	if not seen:

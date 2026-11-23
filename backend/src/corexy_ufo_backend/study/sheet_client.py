@@ -11,7 +11,9 @@ Nothing here touches the robot, and nothing in the game uses it yet: this is the
 How it calls the server (the server's hand-off document):
   - the image goes as a data URL: decoded with EXIF orientation applied (cv2.imdecode does), shrunk
     to a long side of 1800 px (more does not help: the server shrinks to ~0.65 MP), JPEG <= 4 MB
-  - the server's cert.pem is trusted (never verify=False); the hostname check stays on
+  - the server's cert.pem is trusted (never verify=False); with it, no host name / IP check (#285: as
+    the explanation's tutor_adapter and tools/check_tutor_api.py: the server is reached by its IP, and
+    a changed IP must not stop the reading while the explanation still works)
   - at most 2 requests at a time per server (docs/ufo_api_spec.md §9: it reads 2 sheets at once, 503 past 4)
   - `on_problem` (docs/ufo_api_spec.md §6.3, stream): the problems come one by one (the first after ~2.5 s);
     returning True from it closes the connection (the server then stops) and keeps what came
@@ -424,8 +426,11 @@ class SheetClient:
         self.busy_waits_s, self.sleep, self.opener = tuple(busy_waits_s), sleep, opener
         self.ctx: ssl.SSLContext | None = None
         if base.startswith("https://"):
-            # the server's self-signed cert.pem only; it names the server's IP and host name
+            # the server's self-signed cert.pem only (trusted alone, the check itself stays on); reached by
+            # its IP, so the name in it is not compared (#285: as tutor_adapter.py / check_tutor_api.py)
             self.ctx = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+            if cafile:
+                self.ctx.check_hostname = False
         with SheetClient._guard:
             self.lock = SheetClient._locks.setdefault(
                 self.base, threading.BoundedSemaphore(max(int(concurrency or SheetClient.CONCURRENCY), 1)))
@@ -441,6 +446,27 @@ class SheetClient:
         if self.token:
             h["Authorization"] = "Bearer " + self.token
         return h
+
+    def health(self, timeout_s: float = 5.0) -> None:
+        """#285: can the worksheet reader be reached the way a reading goes (this client's TLS and
+        token)? GET /api/health (no token) and GET /v1/models (the token); nothing is read. Raises
+        SheetError (as a reading would) when not."""
+        self._may_send()  # a token refused before is not sent again (10 wrong ones block the IP)
+        for path, auth in (("/api/health", False), ("/v1/models", True)):
+            req = urllib.request.Request(self.base + path, headers=self._headers() if auth else {})
+            try:
+                with self._open(req, timeout=timeout_s) as r:
+                    r.read()
+            except urllib.error.HTTPError as e:
+                raise self._http_error(e) from None
+            except (OSError, ValueError) as e:
+                raise self._link_error(e) from None
+
+    def _link_error(self, e: BaseException) -> SheetError:
+        """Cannot connect / certificate, in words (the token never in them)."""
+        if isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError):
+            return SheetError("network", f"証明書を確かめられません（config/secrets/tutor_cert.pem がサーバの今の cert.pem か）: {e}")
+        return SheetError("network", f"学習支援 AI に接続できません: {e}")
 
     def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE,
              on_problem: Callable[[dict], bool] | None = None, deadline_s: float | None = None,
@@ -570,11 +596,9 @@ class SheetClient:
             except (OSError, ValueError) as e:  # cannot connect / timeout / certificate / not JSON
                 if end is not None and time.monotonic() >= end - 0.05 and not isinstance(e, ssl.SSLError):
                     raise SheetError("timeout", "AI が混んでいるみたい（返事が間に合わない）") from None
-                if isinstance(e, ssl.SSLError) or isinstance(getattr(e, "reason", None), ssl.SSLError):
-                    raise SheetError("network", f"証明書を確かめられません（config/secrets/tutor_cert.pem と、URL の IP）: {e}") from None
                 if isinstance(e, ValueError):
                     raise SheetError("response", "プリント読み取りの返事が JSON ではありません") from None
-                raise SheetError("network", f"学習支援 AI に接続できません: {e}") from None
+                raise self._link_error(e) from None
 
     @staticmethod
     def _events(r: Any, on_problem: Callable[[dict], bool], end: float | None = None) -> dict:
