@@ -94,6 +94,14 @@ func apply_cmdline() -> void:
 			"--game-mode-demo":
 				if main.game_mode != null:
 					main.game_mode.demo = true
+			"--capsule-probe":
+				# #291: the capsule colour probe (カプセル色判定テスト) open at start
+				main.open_capsule_probe()
+			"--capsule-probe-image":
+				# #291: ... judging a saved picture (its 画像を保存 PNG), paused: compare values on it
+				if i + 1 < args.size():
+					main.open_capsule_probe()
+					main.capsule_probe.load_image(args[i + 1])
 			"--fullscreen":
 				main.fullscreen_override = "on"
 				main.apply_window_mode()

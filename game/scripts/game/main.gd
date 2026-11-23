@@ -36,6 +36,8 @@ var game_mode: GameModeController
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
+## #291: the capsule colour probe (カプセル色判定テスト); hidden and idle until opened
+var capsule_probe: CapsuleColourProbe
 ## the keys besides the polled jog (arrows, W / S) that work on the 校正 tab (#98)
 const CALIBRATION_KEYS := [KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_Q, KEY_A]
 var scope: ScopeView
@@ -300,6 +302,10 @@ func _ready() -> void:
 	settings.setup_tests(self)
 	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.closed.connect(_on_settings_closed)
+	capsule_probe = CapsuleColourProbe.new()  # #291: opened from the debug panel's カメラ tab
+	capsule_probe.name = "CapsuleColourProbe"
+	add_child(capsule_probe)
+	capsule_probe.setup(self)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -408,6 +414,14 @@ func show_title() -> void:
 	title.open()
 
 ## The gear on the title (#93). Only over the title: the arm is held meanwhile.
+## #291: the capsule colour probe. It never sends anything; the round (if any) goes on.
+func open_capsule_probe() -> void:
+	if capsule_probe != null:
+		capsule_probe.open()
+
+func capsule_probe_active() -> bool:
+	return capsule_probe != null and capsule_probe.active()
+
 func open_settings() -> void:
 	if not title_active() or settings.active():
 		return
@@ -1819,7 +1833,7 @@ func stop_key() -> void:
 ## _input runs before the GUI; the space is typed too (stopping again is harmless).
 func _input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo and ev.keycode == KEY_SPACE \
-			and settings_active() and text_entry_focused():
+			and (settings_active() or capsule_probe_active()) and text_entry_focused():
 		stop_key()
 
 func _unhandled_input(ev: InputEvent) -> void:
