@@ -681,7 +681,7 @@ func refresh() -> void:
 	var has_focus: bool = ctl.main != null and ctl.main.cameras != null and ctl.main.cameras.has_feed("focus")
 	scope.visible = ctl.wants_scope() and (not has_focus or ctl.services.mode == "simulated")
 	scope.stage = stage if stage != "" else "10cm"
-	scope.problem = WorksheetCatalog.problem(ctl.worksheet, ctl.help_problem)
+	scope.problem = ctl.services.sheet_problem(ctl.help_problem)  # #287: never the sample's text on a real print
 	scope.position = Vector2(210.0, EXPLAIN_Y + 10.0)  # under the sheet and the checklist, in the middle
 	scope.queue_redraw()
 	# banners

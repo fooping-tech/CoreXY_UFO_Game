@@ -1371,6 +1371,57 @@ func _test_study_scenery(rs: Node) -> void:
 	rs.clear_samples()
 
 
+## #287: a real print read by the local server is not the sample sheet: UFOくん never says the sample's
+## hints ("2ばんは、7のだんで 56 に なるのは？" on a print where 2 is another problem), and the
+## fallback, the close-up's text and a hand's offer do not come from it either.
+func _test_study_real_print_not_the_sample(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hw: HomeworkClient = ctl.services.homework
+	if hw == null:
+		_ok(false, "study real print: the study mode has a HomeworkClient")
+		remove_child(game)
+		game.free()
+		return
+	ctl.worksheet = ctl.catalog.for_grade("elem_3")
+	ctl.services.worksheet = ctl.worksheet
+	var sample_two := WorksheetCatalog.problem(ctl.worksheet, 2)
+	var sample_hint := str((sample_two.get("hints", [""]) as Array)[0])
+	# the mock demo (the sample sheet on the desk): its own hints, as before
+	ctl.services.set_mode("simulated")
+	var mock_ok := ctl.review_hint(2) == sample_hint and not ctl.services.sheet_problem(2).is_empty()
+	# the camera read by the local server: a real print
+	ctl.services.set_mode("camera")
+	hw.study_local = true
+	hw.worksheet_id = str(ctl.worksheet.get("worksheet_id", ""))
+	var real := ctl.services.reads_whole_sheet()
+	var hint := ctl.review_hint(2)
+	var fb := StudyServices.fallback_explanation(ctl.services.sheet_problem(2), 2)
+	var fb_text := str(fb.get("explanation", "")) + str(fb.get("recognized_problem", "")) + " ".join(fb.get("speech_lines", []))
+	var none_of_it := not hint.contains("56") and hint != sample_hint and ctl.services.sheet_problem(2).is_empty() \
+		and not fb_text.contains("56") and str(fb.recognized_problem) == "" and not (fb.speech_lines as Array).is_empty()
+	# a hand's offer: only the problems read on the print (the sample has 1..3, this print 5 only)
+	ctl.tracker.reset_numbers([5], true)
+	ctl.offer_problem = 0
+	ctl.offer_help(2, 0.0)
+	var offers_sample_only := ctl.offer_problem == 2
+	ctl.offer_help(5, 0.0)
+	var offers_print := ctl.offer_problem == 5
+	# the close-up's text
+	ctl.help_problem = 2
+	game.study_hud.refresh()
+	var scope_text := str(game.study_hud.scope.problem.get("prompt", ""))
+	hw.study_local = false
+	hw.worksheet_id = ""
+	ctl.stop()
+	_ok(mock_ok and real and none_of_it and not offers_sample_only and offers_print and scope_text == "",
+		"study real print: no sample sheet's hint, fallback, close-up text or offer on a print read by the local server",
+		str([mock_ok, real, hint, none_of_it, offers_sample_only, offers_print, scope_text]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
 ## #237: the reward told line by line, its items got one after another, then the score game by itself.
 func _test_study_reward_show(rs: Node) -> void:
 	var r := {"question_count": 4, "confirmed_correct": 1, "needs_review": [2, 3], "unclear": [4], "time_bonus_s": 10,

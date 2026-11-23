@@ -484,9 +484,10 @@ func _show_verdict(n: int) -> void:
 func energy() -> int:
 	return grading.count(StudyGrading.CORRECT)
 
-## A hint for a problem to look at again: the worksheet's first hint (never the answer).
+## A hint for a problem to look at again: the worksheet's first hint (never the answer); on a
+## real print (#287) one that fits any problem, never the sample sheet's.
 func review_hint(n: int) -> String:
-	var hints: Array = WorksheetCatalog.problem(worksheet, n).get("hints", [])
+	var hints: Array = services.sheet_problem(n).get("hints", [])
 	return str(hints[0]) if not hints.is_empty() else "もういちど 問題を ゆっくり 読んでみよう"
 
 func _summary() -> void:
@@ -699,7 +700,7 @@ func stuck_problem() -> int:
 	return 0
 
 func offer_help(problem: int, now_ms: float) -> void:
-	if WorksheetCatalog.problem(worksheet, problem).is_empty() and not tracker.has(problem):
+	if services.sheet_problem(problem).is_empty() and not tracker.has(problem):
 		return
 	offer_problem = problem
 	_offer_until_ms = now_ms + hand_offer_s * 1000.0
@@ -771,13 +772,13 @@ func _on_locate_failed(reason: String) -> void:
 	# #244: the AI is busy (no answer in time): say so, not "cannot look"
 	var first := "ごめんね、AI が いま こんでいるみたい。" if reason.contains("混んでいる") else "ごめんね、いまは近くで見られないみたい。"
 	_say([{"text": first, "face": "worried"},
-		{"text": "プリントのヒントを出すね！", "face": "normal"}], func(): _show_fallback_explanation(reason))
+		{"text": "ヒントを出すね！", "face": "normal"}], func(): _show_fallback_explanation(reason))
 
 ## Without the arm: the worksheet's own hints, so the child still gets help.
 func _show_fallback_explanation(reason: String) -> void:
 	if state != "RESUME_STUDY":
 		return
-	explanation = StudyServices.fallback_explanation(WorksheetCatalog.problem(worksheet, help_problem), help_problem)
+	explanation = StudyServices.fallback_explanation(services.sheet_problem(help_problem), help_problem)
 	explain_note = "（アームは動かしていません: %s）" % reason
 	_say(_explain_lines(explanation, false), _resume_study)
 
@@ -829,7 +830,7 @@ func _on_explained(result: Dictionary) -> void:
 				_maybe_navigate())
 			return
 		# looked MAX_NAV more times without finding it: the worksheet's own hints
-		explanation = StudyServices.fallback_explanation(WorksheetCatalog.problem(worksheet, help_problem), help_problem)
+		explanation = StudyServices.fallback_explanation(services.sheet_problem(help_problem), help_problem)
 		explain_note = "（さがしても見つからなかったので、プリントのヒントだよ）"
 		_speak_explanation()
 		return
