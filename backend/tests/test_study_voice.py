@@ -453,6 +453,10 @@ async def test_on_a_real_print_the_tutor_is_told_its_own_answers_never_the_sampl
     assert ft.calls[-1]["answers"] == ["2", "5"] and not set(sample) & set(ft.calls[-1]["answers"])
     svc.note_sheet([])  # a reading that saw nothing keeps what was read
     assert svc.read_answers == ["2", "5"]
+    # review on #288: a partial reading (a locate stopped at problem 1) keeps the others, merged by number
+    svc.note_sheet([{"number": 1, "correct_answer": "2"}])
+    svc.note_sheet([{"number": 3, "correct_answer": "85"}])
+    assert svc.read_answers == ["2", "5", "85"]
     # a new study session: not the last print's
     await svc.stop("s1")
     await svc.start("s2", "mon-elem_3-01")

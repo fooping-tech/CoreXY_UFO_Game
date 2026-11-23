@@ -217,9 +217,9 @@ class HomeworkService:
         # #232: the worksheet reader (study/sheet_client.SheetClient) for the study mode's sessions
         self._sheet_factory = sheet_factory
         self.worksheets = worksheets
-        # #287: the right answers on the real print last read (the reader's correct_answer): what the
-        # tutor must not say in the dialogue. Kept here, never sent to the game.
-        self.read_answers: list[str] = []
+        # #287: the right answers read on the real print, by problem number (the reader's correct_answer):
+        # what the tutor must not say in the dialogue. Kept here, never sent to the game.
+        self._read_answers: dict[int, str] = {}
         self._explain_task: asyncio.Task | None = None
         self.locate_params = locate or LocateParams()
         self.speech = speech
@@ -240,11 +240,20 @@ class HomeworkService:
         return self._sheet_factory is not None
 
     def note_sheet(self, problems: list[dict]) -> None:
-        """#287: a reading of the real print (the watch, a locate, the answer check): its right answers."""
-        got = [str(p.get("correct_answer")).strip() for p in problems or []
-               if isinstance(p, dict) and str(p.get("correct_answer") or "").strip()]
-        if got:
-            self.read_answers = got
+        """#287: a reading of the real print (the watch, a locate, the answer check): its right answers,
+        merged by problem number. A partial reading (a locate stops at its problem, a hand over the
+        sheet) keeps the others' (review on #288: else "85 だよ" would no longer be held back)."""
+        for p in problems or []:
+            if not isinstance(p, dict) or not isinstance(p.get("number"), int):
+                continue
+            answer = str(p.get("correct_answer") or "").strip()
+            if answer:
+                self._read_answers[p["number"]] = answer
+
+    @property
+    def read_answers(self) -> list[str]:
+        """The right answers read on this study session's print, in problem order."""
+        return [self._read_answers[n] for n in sorted(self._read_answers)]
 
     def _local(self, s: "_Session | None") -> bool:
         return self.study_local and s is not None and s.worksheet is not None
@@ -402,7 +411,7 @@ class HomeworkService:
         s = self.sessions[session_id]
         if ws is not None:
             if s.worksheet is None:
-                self.read_answers = []  # #287: a new study session: the last print's answers are not this one's
+                self._read_answers = {}  # #287: a new study session: the last print's answers are not this one's
             s.worksheet = ws
             self._start_warming()
             if s.client is None and not self.study_local:  # pragma: no cover - a service is one or the other
