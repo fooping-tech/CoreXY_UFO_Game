@@ -117,6 +117,8 @@ def test_the_tutor_check_with_and_without_a_token(tmp_path, monkeypatch):
     from corexy_ufo_backend.study import StudyConfig
     from corexy_ufo_backend.study.tutor_adapter import TutorStudyAdapter
     cfg = replace(StudyConfig.from_raw({"study": {"tutor_url": "http://127.0.0.1:9"}}), root=str(tmp_path))
+    from corexy_ufo_backend.study.sheet_client import SheetClient
+    monkeypatch.setattr(SheetClient, "health", lambda self: None)  # the worksheet reader's way too (#285)
     ok = {"ok": True, "health": {"ok": True, "status": 200}, "auth": {"ok": True, "status": 200}}
     monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: ok)
     r = sc.check_tutor(cfg)
@@ -130,6 +132,31 @@ def test_the_tutor_check_with_and_without_a_token(tmp_path, monkeypatch):
     monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: ok)
     r = sc.check_tutor(cfg)
     assert r["status"] == "ok" and "トークン有効" in r["detail"] and "tok" not in r["detail"].replace("トークン", "")
+
+
+def test_the_tutor_check_also_tries_the_worksheet_readers_way(tmp_path, monkeypatch):
+    """#285: the study mode reads the sheet with its own client (its own TLS): when that one cannot
+    reach the server, the check says so although the explanation's way works."""
+    from dataclasses import replace
+    from corexy_ufo_backend.study import StudyConfig
+    from corexy_ufo_backend.study.sheet_client import SheetClient, SheetError
+    from corexy_ufo_backend.study.tutor_adapter import TutorStudyAdapter
+    ok = {"ok": True, "health": {"ok": True, "status": 200}, "auth": {"ok": True, "status": 200}}
+    monkeypatch.setattr(TutorStudyAdapter, "health", lambda self: ok)
+    asked = []
+
+    def bad(self):
+        asked.append(self.base)
+        raise SheetError("network", "証明書を確かめられません（テスト）")
+    monkeypatch.setattr(SheetClient, "health", bad)
+    cfg = replace(StudyConfig.from_raw({"study": {"tutor_url": "https://192.0.2.10:8444"}}), root=str(tmp_path))
+    r = sc.check_tutor(cfg)
+    assert r["status"] == "ng" and "プリントの読み取り" in r["detail"] and "証明書" in r["detail"]
+    assert asked == ["https://192.0.2.10:8444"]
+    # study.ai cloud: the study mode does not read with it, so it is not asked
+    cloud = replace(StudyConfig.from_raw({"study": {"tutor_url": "https://192.0.2.10:8444", "ai": "cloud"}}),
+                    root=str(tmp_path))
+    assert sc.check_tutor(cloud)["status"] == "ok" and len(asked) == 1
 
 
 async def test_check_all_picks_the_checks_in_use(tmp_path, monkeypatch):
