@@ -652,6 +652,7 @@ func refresh() -> void:
 		sheet.crop_texture = _crop_frozen
 	# #237: until the sheet is found: where to put it, over the camera's whole picture
 	sheet.guide = st == "WAITING_FOR_WORKSHEET"
+	sheet.guide_error = ctl.services.watch_problem() if sheet.guide else ""
 	if sheet.guide:
 		var cam_ok := ctl.services.mode == "camera" and cams != null and cams.has_feed("overview")
 		sheet.guide_texture = cams.texture("overview") if cam_ok else null

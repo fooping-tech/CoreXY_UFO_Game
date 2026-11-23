@@ -683,3 +683,89 @@ def test_corners_stay_four_distinct_ones_however_the_sheet_is_turned():
     # the warp of the turned sheet is a real one
     m = cv2.getPerspectiveTransform(np.float32([tl, tr, br, bl]), np.float32([[0, 0], [400, 0], [400, 400], [0, 400]]))
     assert abs(np.linalg.det(m)) > 1e-6
+
+
+# ------------------------------------------------------------------ #285: the certificate and the link check
+# a public test certificate (its key was thrown away): self-signed, it names only 192.0.2.10
+TEST_CERT = """-----BEGIN CERTIFICATE-----
+MIIBcjCCARegAwIBAgIUFWAE5NkrUaZcXbBTApXvUqz93KcwCgYIKoZIzj0EAwIw
+FTETMBEGA1UEAwwKdGVzdC10dXRvcjAgFw0yNjExMjMxMDU5NDdaGA8yMTI2MTAz
+MDEwNTk0N1owFTETMBEGA1UEAwwKdGVzdC10dXRvcjBZMBMGByqGSM49AgEGCCqG
+SM49AwEHA0IABFQEn0iD13U1qKEiCBtV/r6BtVz9CV0AoxrdL+VM82Fp+S4NnC4v
+K7WD/4zsn4ILTEF73/FhMOuuyeLo8GDM/myjQzBBMB0GA1UdDgQWBBQGIvcR+E0R
++aCytU6gu8OhLrjPtTAPBgNVHRMBAf8EBTADAQH/MA8GA1UdEQQIMAaHBMAAAgow
+CgYIKoZIzj0EAwIDSQAwRgIhAN8FEfNifLkesTeXmAX3fJnNFDHYPB/V6KeOHDAG
+ZJgkAiEAtKRHZT9yd8DpU6FcUx8z3rLbJgBcJqgIX7VvWzOnuQM=
+-----END CERTIFICATE-----
+"""
+
+
+def test_with_the_servers_cert_the_ip_is_not_compared_but_the_cert_is_checked(tmp_path):
+    """#285: as the explanation (tutor_adapter) and check_tutor_api.py: a changed IP of the server
+    does not stop the reading; only the cert.pem given is trusted."""
+    import ssl
+    from corexy_ufo_backend.study.tutor_adapter import TutorStudyAdapter
+    pem = tmp_path / "cert.pem"
+    pem.write_text(TEST_CERT)
+    c = SheetClient("https://192.168.11.2:8444", TOKEN, cafile=str(pem))
+    assert c.ctx is not None and c.ctx.check_hostname is False and c.ctx.verify_mode == ssl.CERT_REQUIRED
+    assert len(c.ctx.get_ca_certs()) == 1  # that cert alone, not the system's
+    t = TutorStudyAdapter("https://192.168.11.2:8444", TOKEN, cafile=str(pem))
+    assert (t.ctx.check_hostname, t.ctx.verify_mode) == (c.ctx.check_hostname, c.ctx.verify_mode)
+    # no cert.pem: the usual check, names included
+    plain = SheetClient("https://example.org", TOKEN)
+    assert plain.ctx.check_hostname is True and plain.ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+class LinkServer:
+    """GET answers for health(): path -> 200 / an HTTP status / an exception."""
+
+    def __init__(self, **answers):
+        self.answers, self.calls = answers, []
+
+    def __call__(self, req, timeout):
+        path = req.full_url.split("8444", 1)[1]
+        self.calls.append({"path": path, "auth": req.get_header("Authorization"), "method": req.get_method()})
+        a = self.answers.get(path.strip("/").replace("/", "_"), 200)
+        if isinstance(a, Exception):
+            raise a
+        if a != 200:
+            raise urllib.error.HTTPError(req.full_url, a, "x", {}, io.BytesIO(b"{}"))
+        return FakeResp(b"{}")
+
+
+def test_health_asks_the_server_and_the_token_without_reading():
+    server = LinkServer()
+    client(server).health()
+    assert [c["path"] for c in server.calls] == ["/api/health", "/v1/models"]
+    assert server.calls[0]["auth"] is None and server.calls[1]["auth"] == "Bearer " + TOKEN
+    assert all(c["method"] == "GET" for c in server.calls)
+
+
+def test_health_says_why_in_the_readings_words():
+    import ssl
+    bad_cert = urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+    with pytest.raises(SheetError) as e:
+        client(LinkServer(api_health=bad_cert)).health()
+    assert e.value.kind == "network" and "証明書を確かめられません" in str(e.value) and TOKEN not in str(e.value)
+    with pytest.raises(SheetError) as e:
+        client(LinkServer(api_health=urllib.error.URLError("timed out"))).health()
+    assert e.value.kind == "network" and "接続できません" in str(e.value)
+    SheetClient.forget()
+    with pytest.raises(SheetError) as e:
+        client(LinkServer(v1_models=401)).health()
+    assert e.value.kind == "auth"
+    # that token is not sent again
+    server = LinkServer()
+    with pytest.raises(SheetError):
+        client(server).health()
+    assert server.calls == []
+    SheetClient.forget()
+
+
+def test_a_reading_with_a_bad_cert_says_so():
+    import ssl
+    bad = urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+    with pytest.raises(SheetError) as e:
+        client(FakeServer(bad)).read(jpeg(100, 100))
+    assert e.value.kind == "network" and "証明書を確かめられません" in str(e.value)

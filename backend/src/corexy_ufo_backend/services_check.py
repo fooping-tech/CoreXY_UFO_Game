@@ -122,6 +122,12 @@ def check_tutor(cfg: StudyConfig) -> dict:
     except Exception as e:  # noqa: BLE001 - the reason is the answer (no URL / token / cert)
         return result("tutor", "ng", str(e), t0)
     if h.get("ok"):
+        if cfg.ai == "local":  # #285: the study mode reads the sheet with its own client: that way too
+            from .study.sheet_client import SheetError
+            try:
+                make_sheet_client(cfg).health()
+            except SheetError as e:
+                return result("tutor", "ng", f"{cfg.tutor_url}: 解説はつながるが、プリントの読み取りがつながらない: {e}", t0)
         return result("tutor", "ok", f"{cfg.tutor_url} につながる・" + ("トークン有効" if adapter.token else "トークンなし"), t0)
     parts = []
     for k, what in (("health", "サーバ"), ("auth", "トークン")):
