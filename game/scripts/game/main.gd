@@ -1057,6 +1057,8 @@ func _handle_input(dt: float) -> void:
 	var xy_speed := powerup_xy_speed(real)
 	_sync_jog_boost(real)
 	var keys := _latched_jog_input()
+	if capsule_probe_active():
+		keys = Vector3.ZERO  # #291: the probe covers the screen; the keys never move the arm behind it
 	var kb := Vector3.ZERO
 	if keys != Vector3.ZERO:
 		var xy := jog_velocity(Vector2(keys.x, keys.y), xy_speed)
@@ -1859,6 +1861,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 			staff.run(staff_action, "key")
 			return
 		if ev.shift_pressed and _developer_key(ev.keycode):
+			return
+		# #291: the capsule probe takes every key but the stop and the debug panel; Esc closes it
+		if capsule_probe_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			if ev.keycode == KEY_ESCAPE and not text_entry_focused():
+				capsule_probe.close()
 			return
 		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)

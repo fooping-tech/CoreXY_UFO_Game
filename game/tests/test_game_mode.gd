@@ -1313,12 +1313,19 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 	# with a round: the game's own reading shows (read only) and the probe agrees with it
 	var gframe := _colour_frame(Color("20c040"), 0.2)
 	ctl.colour_source = func() -> Image: return gframe
+	probe.close()  # the round is started with the keys (the probe takes them while open)
 	_gm_playing(game)
 	_gm_step(ctl, 1.0)
+	probe.open()
 	var st := ctl.colour_status()
 	var status_ok: bool = st.active and st.reading and int(st.votes.counts.green) >= 4 and str(st.last.kind) == "green" \
 		and str(st.votes.kind) == ctl.decide_kind() and probe.game_text().contains("読取中")
 	var agree: bool = CapsuleKinds.classify(gframe, probe.cfg).kind == str(st.last.kind)
+	# the probe covers the screen: the game's keys do not reach behind it; Esc closes it
+	game._unhandled_input(_key(KEY_Z))
+	var swallowed: bool = ctl.colour_status().events.is_empty() and probe.active()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	var esc_closes: bool = not probe.active() and swallowed
 	game._unhandled_input(_key(KEY_Z))
 	var st2 := ctl.colour_status()
 	var decided: bool = not st2.events.is_empty() and st2.events[-1][1] == "decided" and st2.events[-1][2] == "green" \
@@ -1326,8 +1333,8 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 	var nothing_sent: bool = game.ws._seq == sent_before
 	probe.close()
 	var closed: bool = not probe.active() and not probe.is_processing()
-	_ok(status_ok and agree and decided and nothing_sent and closed,
-		"capsule probe #291: with a round the probe shows the game's reading (reading or not, votes, last frame, reset and decision); its verdict agrees; it never sends a command",
-		"%s %s %s %s %s" % [status_ok, agree, decided, nothing_sent, closed])
+	_ok(status_ok and agree and decided and nothing_sent and closed and esc_closes,
+		"capsule probe #291: with a round the probe shows the game's reading (reading or not, votes, last frame, reset and decision); its verdict agrees; it never sends a command; the game's keys do not reach behind it and Esc closes it",
+		"%s %s %s %s %s %s" % [status_ok, agree, decided, nothing_sent, closed, esc_closes])
 	ctl.colour_source = Callable()
 	_gm_free(game, rs)

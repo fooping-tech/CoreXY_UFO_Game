@@ -915,6 +915,8 @@ func start(after_practice := false) -> void:
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
+	last_colour = {}  # #291: the probe shows this round's reading, not the last one's
+	colour_events.clear()
 	_light_override_left = 0.0
 	ranking_flow.flush()
 	score.reset()

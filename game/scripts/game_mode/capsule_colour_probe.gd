@@ -63,6 +63,10 @@ var lines_written := 0
 ## label -> {"n": frames, "cur": {kind: n}, "base": {kind: n}}
 var tally := {}
 var dir := DIR
+## frames that were the same as the one before (not voted here; the game does vote them)
+var stale_frames := 0
+var _file_out: FileAccess = null
+var _frame_tex: ImageTexture = null
 var _sample_left := 0.0
 var _last_hash := -1
 var _root: Control
@@ -94,12 +98,19 @@ func active() -> bool:
 	return visible
 
 func open() -> void:
+	# the game's values may have changed since (a new round, a reloaded config): compare with
+	# them now; the tried values stay as they were
+	var g := game_settings()
+	base_cfg = g.read
+	base_memory = g.memory_s
+	base_reader.memory_s = base_memory
 	visible = true
 	set_process(true)
 	_sample_left = 0.0
 	refresh()
 
 func close() -> void:
+	set_recording(false)
 	visible = false
 	set_process(false)
 	closed.emit()
@@ -223,6 +234,7 @@ func load_image(path: String) -> bool:
 	frame_info = {"status": "file", "camera": path.get_file(), "stabilized": false, "w": img.get_width(),
 		"h": img.get_height(), "at": Time.get_unix_time_from_system()}
 	frame = img
+	_show_frame()
 	judge(true)
 	return true
 
@@ -238,14 +250,30 @@ func sample() -> void:
 	var img: Image = g.get("img")
 	g.erase("img")
 	if g.status != "live":
-		if g.status != "stale":
+		if g.status == "stale":
+			stale_frames += 1
+		else:
 			frame = null
 			result = CapsuleKinds.classify(null)
 			base_result = result
 		refresh()
 		return
 	frame = img
+	_show_frame()
 	judge(true)
+
+## The frame on screen: one texture, updated in place when the size stays.
+func _show_frame() -> void:
+	if _view == null:
+		return
+	if frame == null:
+		_view.texture = null
+		return
+	if _frame_tex == null or Vector2i(_frame_tex.get_size()) != frame.get_size():
+		_frame_tex = ImageTexture.create_from_image(frame)
+	else:
+		_frame_tex.update(frame)
+	_view.texture = _frame_tex
 
 ## Judges the frame shown again with the values now (no vote: the same picture once more).
 func rejudge() -> void:
@@ -302,6 +330,9 @@ func set_recording(on: bool) -> void:
 	recording = on
 	if on and export_path == "":
 		export_path = _file("probe_%s.jsonl" % _stamp())
+	if not on and _file_out != null:
+		_file_out.close()
+		_file_out = null
 	refresh()
 
 func set_label(l: String) -> void:
@@ -339,15 +370,17 @@ static func plain(r: Dictionary) -> Dictionary:
 		out.roi = [roi.position.x, roi.position.y, roi.size.x, roi.size.y]
 	return out
 
+## One line more; the file stays open while recording (closed when it stops).
 func _write(line: Dictionary) -> void:
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
-	var f := FileAccess.open(export_path, FileAccess.READ_WRITE if FileAccess.file_exists(export_path) else FileAccess.WRITE)
-	if f == null:
-		_say("書けなかった: " + export_path)
-		return
-	f.seek_end()
-	f.store_line(JSON.stringify(line))
-	f.close()
+	if _file_out == null:
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+		_file_out = FileAccess.open(export_path, FileAccess.READ_WRITE if FileAccess.file_exists(export_path) else FileAccess.WRITE)
+		if _file_out == null:
+			_say("書けなかった: " + export_path)
+			return
+		_file_out.seek_end()
+	_file_out.store_line(JSON.stringify(line))
+	_file_out.flush()
 	lines_written += 1
 
 func _count() -> void:
@@ -439,6 +472,8 @@ func numbers_text() -> String:
 		s += "・%d×%d" % [int(fi.w), int(fi.h)]
 	if str(fi.get("camera", "")) != "":
 		s += "・" + str(fi.camera) + ("・揺れ補正" if bool(fi.get("stabilized", false)) else "")
+	if stale_frames > 0:
+		s += "・未更新で票に入れなかったフレーム %d（ゲームはこれも票に入れる）" % stale_frames
 	if paused:
 		s += "・一時停止中（値を変えると同じ画像で判定し直す。票は増えない）"
 	if result.is_empty() or str(result.get("reason", "no_frame")) == "no_frame":
@@ -503,7 +538,8 @@ func refresh() -> void:
 	_status.text = "フレーム: " + FRAME_STATUS.get(str(frame_info.get("status", "none")), "?")
 	_status.add_theme_color_override("font_color", PanelKit.GOOD if frame_info.get("status") in ["live", "file"] else PanelKit.BAD)
 	_pause_b.text = "再開" if paused else "一時停止"
-	_view.texture = ImageTexture.create_from_image(frame) if frame != null else null
+	if frame == null:
+		_view.texture = null
 	_numbers.text = numbers_text()
 	_votes.text = votes_text()
 	_tally_label.text = tally_text()
@@ -560,6 +596,10 @@ func _build() -> void:
 	_view_holder = Control.new()
 	_view_holder.custom_minimum_size = Vector2(WIDTH, VIEW_H)
 	_view_holder.clip_contents = true
+	_view_holder.resized.connect(func():
+		if _mask != null and _overlay != null:
+			_layout_mask()
+			_overlay.queue_redraw())
 	frame_box.add_child(_view_holder)
 	_view = TextureRect.new()
 	_view.set_anchors_preset(Control.PRESET_FULL_RECT)
