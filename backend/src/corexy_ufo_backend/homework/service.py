@@ -217,6 +217,9 @@ class HomeworkService:
         # #232: the worksheet reader (study/sheet_client.SheetClient) for the study mode's sessions
         self._sheet_factory = sheet_factory
         self.worksheets = worksheets
+        # #287: the right answers read on the real print, by problem number (the reader's correct_answer):
+        # what the tutor must not say in the dialogue. Kept here, never sent to the game.
+        self._read_answers: dict[int, str] = {}
         self._explain_task: asyncio.Task | None = None
         self.locate_params = locate or LocateParams()
         self.speech = speech
@@ -235,6 +238,22 @@ class HomeworkService:
     def study_local(self) -> bool:
         """The study mode reads with the local LLM server only (#232)."""
         return self._sheet_factory is not None
+
+    def note_sheet(self, problems: list[dict]) -> None:
+        """#287: a reading of the real print (the watch, a locate, the answer check): its right answers,
+        merged by problem number. A partial reading (a locate stops at its problem, a hand over the
+        sheet) keeps the others' (review on #288: else "85 だよ" would no longer be held back)."""
+        for p in problems or []:
+            if not isinstance(p, dict) or not isinstance(p.get("number"), int):
+                continue
+            answer = str(p.get("correct_answer") or "").strip()
+            if answer:
+                self._read_answers[p["number"]] = answer
+
+    @property
+    def read_answers(self) -> list[str]:
+        """The right answers read on this study session's print, in problem order."""
+        return [self._read_answers[n] for n in sorted(self._read_answers)]
 
     def _local(self, s: "_Session | None") -> bool:
         return self.study_local and s is not None and s.worksheet is not None
@@ -303,8 +322,11 @@ class HomeworkService:
         if worksheet_id:
             from ..study.tutor_adapter import grade_in_prompt
             ws = self.worksheet(worksheet_id)
-            grade = grade_in_prompt(f"{ws.get('grade_label', '')}の宿題プリント", 3)
-            answers = [str(p.get("answer", "")) for p in ws.get("problems", []) if p.get("answer") not in (None, "")]
+            grade = grade_in_prompt(f"{ws.get('grade_label', '')}の宿題プリント", 3)  # the grade set, not its problems
+            if not self.study_local:
+                answers = [str(p.get("answer", "")) for p in ws.get("problems", []) if p.get("answer") not in (None, "")]
+        if self.study_local:  # #287: a real print: its own answers as read, never the sample sheet's
+            answers = list(self.read_answers)
         said = number_in_utterance(text)  # "3ばん" picks the problem; else the one talked about
         target = said or (target if isinstance(target, int) and target > 0 else None)
         self._talk_task = asyncio.create_task(
@@ -388,6 +410,8 @@ class HomeworkService:
             log.info("homework session %s started%s", session_id, " (local: the worksheet reader)" if local else "")
         s = self.sessions[session_id]
         if ws is not None:
+            if s.worksheet is None:
+                self._read_answers = {}  # #287: a new study session: the last print's answers are not this one's
             s.worksheet = ws
             self._start_warming()
             if s.client is None and not self.study_local:  # pragma: no cover - a service is one or the other
@@ -479,6 +503,7 @@ class HomeworkService:
             return
         s.fatal_in_row = 0
         s.count += 1
+        self.note_sheet(res.problems)
         ws = s.worksheet or {}
         # #237: a real print has its own problems: every one the reader saw (not the sample sheet's)
         reading = reading_from_sheet(res.problems, None)
@@ -623,6 +648,7 @@ class HomeworkService:
         except Exception as e:
             await fail("reader_error", f"プリントの読み取り: {e}")
             return
+        self.note_sheet(res.problems)
         found = locate_in_sheet(res.problems, number)
         if found is None:
             seen = [p["number"] for p in res.problems]
@@ -641,14 +667,14 @@ class HomeworkService:
         await emit({"type": "homework_locate_result", "request_id": request_id, "data": data})
 
     def _problem(self, ws: dict, number: int, known_only: bool = False) -> dict | None:
-        """The sample sheet's problem; with the local reader (#237) a real print's problem need not
-        be on it: then a bare one ({number}) to locate, or None (nothing known to compare with)."""
-        try:
-            return WorksheetCatalog.problem(ws, number)
-        except WorksheetError:
-            if not self.study_local or number < 1:
-                raise
+        """The sample sheet's problem. With the local reader (#237) the sheet is a real print, not the
+        sample: never the sample's problem (#287: its text and hints are another problem's), but a
+        bare one ({number}) to locate, or None (nothing known to compare with)."""
+        if self.study_local:
+            if number < 1:
+                raise ValueError(f"no problem {number}")
             return None if known_only else {"number": number, "prompt": "", "description_en": f"problem {number}"}
+        return WorksheetCatalog.problem(ws, number)
 
     @staticmethod
     def _target_text(target: dict | None) -> str:

@@ -442,6 +442,12 @@ func _on_progress(data: Dictionary) -> void:
 func reads_whole_sheet() -> bool:
 	return mode == "camera" and homework != null and homework.reads_locally()
 
+## #287: the sample sheet's problem n (its text, hints, answer box) when the sample sheet is what
+## lies on the desk (the mock demo, the cloud's printed sample); {} on a real print read by the
+## local server: its problems are not the sample's ("56 ÷ 7" said about a print where 2 is "11").
+func sheet_problem(n: int) -> Dictionary:
+	return {} if reads_whole_sheet() else WorksheetCatalog.problem(worksheet, n)
+
 # ------------------------------------------------------------------ the answer check (#237)
 ## Read the whole sheet once for the answer check -> graded(problems) / grade_failed(reason).
 ## `rescan`: after the child rewrote what was to be looked at again.
@@ -764,7 +770,7 @@ static func dry_run_stages() -> Array:
 func explain(problem: int) -> void:
 	_help_problem = problem
 	var tok := _token
-	var p := WorksheetCatalog.problem(worksheet, problem)
+	var p := sheet_problem(problem)
 	var fb := fallback_explanation(p, problem)
 	if inject_fail == "ai":
 		inject_fail = ""
@@ -796,7 +802,8 @@ func explain(problem: int) -> void:
 	_explain_rid = _rid("exp")
 	var err := homework.link.send_aux({"type": "homework_explain", "request_id": _explain_rid, "data": {
 		"images": images, "problem": problem, "grade_label": grade_label,
-		"worksheet_id": str(worksheet.get("worksheet_id", ""))}})
+		# #287: a real print is not the sample sheet: nothing of it to compare with or hint from
+		"worksheet_id": "" if reads_whole_sheet() else str(worksheet.get("worksheet_id", ""))}})
 	if err != OK:
 		_explain_rid = ""
 		explain_failed.emit("画像を送れませんでした（WebSocket error %d）" % err, fb)
@@ -808,9 +815,16 @@ func explain(problem: int) -> void:
 			_explain_rid = ""
 			explain_failed.emit("AI の解説が時間内に届きませんでした", fb))
 
+## #287: hints for any problem (a real print's: its own are not known). Never the answer.
+const ANY_PROBLEM_HINTS := ["問題の 文を ゆっくり 声に 出して 読んでみよう", "わかっている ことと、きかれている ことを 分けてみよう",
+	"図や 絵に かいて 考えてみよう"]
+
 ## The worksheet's own hints as an explanation (no AI, or it failed). Never the answer.
+## No problem known (`p` empty: a real print, #287): hints that fit any problem.
 static func fallback_explanation(p: Dictionary, problem: int) -> Dictionary:
 	var hints: Array = p.get("hints", []) if p.get("hints") is Array else []
+	if hints.is_empty():
+		hints = ANY_PROBLEM_HINTS.duplicate()
 	var steps := ""
 	for i in hints.size():
 		steps += "%d. %s\n" % [i + 1, hints[i]]
@@ -984,7 +998,7 @@ func _on_aux(msg: Dictionary) -> void:
 			explained.emit(data)
 		else:
 			var fb: Dictionary = data.get("fallback", {}) if data.get("fallback") is Dictionary else \
-				fallback_explanation(WorksheetCatalog.problem(worksheet, _help_problem), _help_problem)
+				fallback_explanation(sheet_problem(_help_problem), _help_problem)
 			explain_failed.emit(str(data.get("message", "解説を作れませんでした")), fb)
 
 func _on_robot_ack(rid: String, ok: bool, payload: Dictionary) -> void:

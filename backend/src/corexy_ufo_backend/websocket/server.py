@@ -986,6 +986,8 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                                           crop=params.get("crop") is not False)
         except SheetError as e:
             return self._nack(name, str(e))
+        if self.homework is not None:  # #287: the answer check's reading: the print's answers for the dialogue
+            self.homework.note_sheet(res.problems)
         return self._ack(name, sheet_payload(res))
 
     async def _devicehub(self, name: str, params: dict) -> dict:

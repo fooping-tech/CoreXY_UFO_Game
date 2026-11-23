@@ -429,3 +429,42 @@ _real_sleep = asyncio.sleep
 
 async def _fast_sleep(secs, *a, **k):
     await _real_sleep(0.001)
+
+
+async def test_on_a_real_print_the_tutor_is_told_its_own_answers_never_the_sample_sheets():
+    """#287: with the local reader the sheet is a real print: the answers the tutor must not say are
+    the ones read on it (correct_answer), not the sample sheet's (843, 8, 171cm for 小学3年)."""
+    ft = FakeTutor()
+    v, _ = voice()
+    svc = HomeworkService(HomeworkConfig(enabled=True), worksheets=CAT, voice=v, talk_factory=lambda: ft,
+                          client_factory=lambda: object(), sheet_factory=lambda: object())
+    sample = [str(p["answer"]) for p in CAT.get("mon-elem_3-01")["problems"]]
+
+    async def emit(m):
+        pass
+    await svc.start("s1", "mon-elem_3-01")
+    await svc.talk("t1", "わからない", B64, emit, worksheet_id="mon-elem_3-01")
+    await svc._talk_task
+    assert ft.calls[-1]["answers"] == [] and ft.calls[-1]["grade"] == 3  # nothing read yet; the grade set stays
+    svc.note_sheet([{"number": 1, "correct_answer": "2"}, {"number": 2, "correct_answer": "5"},
+                    {"number": 3, "correct_answer": None}, {"number": 4, "correct_answer": " "}])
+    await svc.talk("t2", "2ばんの ヒント", B64, emit, worksheet_id="mon-elem_3-01")
+    await svc._talk_task
+    assert ft.calls[-1]["answers"] == ["2", "5"] and not set(sample) & set(ft.calls[-1]["answers"])
+    svc.note_sheet([])  # a reading that saw nothing keeps what was read
+    assert svc.read_answers == ["2", "5"]
+    # review on #288: a partial reading (a locate stopped at problem 1) keeps the others, merged by number
+    svc.note_sheet([{"number": 1, "correct_answer": "2"}])
+    svc.note_sheet([{"number": 3, "correct_answer": "85"}])
+    assert svc.read_answers == ["2", "5", "85"]
+    # a new study session: not the last print's
+    await svc.stop("s1")
+    await svc.start("s2", "mon-elem_3-01")
+    assert svc.read_answers == []
+    # the cloud (the sample sheet printed and used): its answers as before
+    cloud = HomeworkService(HomeworkConfig(enabled=True), worksheets=CAT, voice=v, talk_factory=lambda: ft)
+    await cloud.talk("t3", "わからない", B64, emit, worksheet_id="mon-elem_3-01")
+    await cloud._talk_task
+    assert ft.calls[-1]["answers"] == sample
+    await svc.close()
+    await cloud.close()
