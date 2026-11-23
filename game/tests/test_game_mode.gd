@@ -1248,8 +1248,25 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 	var one_more: bool = n[0] == frames_before + 1 and probe.reader.votes.size() == votes_before + 1
 	probe.reset_settings()
 	var reset: bool = probe.cfg == read_before and probe.result.kind == "fire"
+	# the votes' window moves on while paused: the screen says so (review on #293)
+	var shown_before: String = probe._votes.text
+	probe.set_paused(true)
+	for i in int((probe.memory_s + 1.0) * 60.0):
+		probe.tick(1.0 / 60.0)
+	var expired: bool = probe.reader.count() == 0 and probe._votes.text.contains("色を見たフレームがない") \
+		and shown_before != probe._votes.text
+	# the game's values vote at the game's rate, whatever rate is tried (review on #293)
+	probe.set_paused(false)
+	probe.clear_votes()
+	probe.set_value("sample_hz", 1.0)
+	for i in 120:
+		probe.tick(1.0 / 60.0)
+	var rates_own: bool = probe.reader.votes.size() <= 3 and probe.base_reader.votes.size() >= 10 \
+		and float(probe.base_cfg.sample_hz) == float(ctl.kinds.read.sample_hz)
+	probe.reset_settings()
+	reset = reset and expired and rates_own
 	_ok(held and rejudged and game_untouched and odd_keys and one_more and reset,
-		"capsule probe #291: paused, no frame is taken; a changed value judges the same frame again at once (no vote) and never reaches the game; 1 フレーム takes one; 戻す brings the game's values back",
+		"capsule probe #291: paused, no frame is taken; a changed value judges the same frame again at once (no vote) and never reaches the game; 1 フレーム takes one; 戻す brings the game's values back; the votes' window moves on while paused; the game's values vote at the game's rate",
 		"%s %s %s %s %s %s" % [held, rejudged, game_untouched, odd_keys, one_more, reset])
 	# a still picture (the same frame again), no picture, no camera: never voted, shown as such
 	var still := _colour_frame(Color("2860f0"), 0.2)

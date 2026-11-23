@@ -68,6 +68,8 @@ var stale_frames := 0
 var _file_out: FileAccess = null
 var _frame_tex: ImageTexture = null
 var _sample_left := 0.0
+## the game's values vote at the game's own sample_hz (review on #293), not the tried one
+var _base_left := 0.0
 var _last_hash := -1
 var _root: Control
 var _status: Label
@@ -107,6 +109,7 @@ func open() -> void:
 	visible = true
 	set_process(true)
 	_sample_left = 0.0
+	_base_left = 0.0
 	refresh()
 
 func close() -> void:
@@ -123,10 +126,20 @@ func tick(dt: float) -> void:
 	reader.advance(dt)
 	base_reader.advance(dt)
 	if not paused:
+		# one frame serves both when both are due; each set of votes keeps its own rate
 		_sample_left -= dt
-		if _sample_left <= 0.0:
+		_base_left -= dt
+		var cur := _sample_left <= 0.0
+		var base := _base_left <= 0.0
+		if cur:
 			_sample_left = 1.0 / maxf(float(cfg.sample_hz), 0.5)
-			sample()
+		if base:
+			_base_left = 1.0 / maxf(float(base_cfg.sample_hz), 0.5)
+		if cur or base:
+			sample(cur, base)
+	# the votes' window moves on, paused too (review on #293): what is shown keeps up
+	if _votes != null:
+		_votes.text = votes_text()
 	_refresh_game()
 
 # ------------------------------------------------------------------ the values
@@ -243,8 +256,9 @@ func clear_votes() -> void:
 	base_reader.clear()
 	refresh()
 
-## A frame of the arm camera, judged and voted when it is a new one.
-func sample() -> void:
+## A frame of the arm camera, judged and voted when it is a new one: by the tried values'
+## votes (`cur`) and the game's (`base`), each when its sample is due.
+func sample(cur := true, base := true) -> void:
 	var g := _grab()
 	frame_info = g
 	var img: Image = g.get("img")
@@ -260,7 +274,7 @@ func sample() -> void:
 		return
 	frame = img
 	_show_frame()
-	judge(true)
+	judge(true, cur, base)
 
 ## The frame on screen: one texture, updated in place when the size stays.
 func _show_frame() -> void:
@@ -282,12 +296,14 @@ func rejudge() -> void:
 	else:
 		refresh()
 
-func judge(vote: bool) -> void:
+func judge(vote: bool, cur := true, base := true) -> void:
 	result = CapsuleKinds.classify(frame, cfg, true)
 	base_result = CapsuleKinds.classify(frame, base_cfg)
 	if vote:
-		reader.add(str(result.kind))
-		base_reader.add(str(base_result.kind))
+		if cur:
+			reader.add(str(result.kind))
+		if base:
+			base_reader.add(str(base_result.kind))
 		_count()
 		if recording:
 			_write(record())
