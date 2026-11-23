@@ -1249,6 +1249,8 @@ func _test_robot_fault_watch() -> void:
 	var r := _fine_state()
 	robot_gone.arm(r)
 	r.connected = false
+	r.homed = false  # (what the backend resets with it is not another fault)
+	r.motors_enabled = false
 	var core2: Array = codes.call(robot_gone.update(r))
 	_ok(idle and quiet and alarm == ["corexy/alarm"] and again and old_one and claw == ["claw/alarm"] and zpc == ["z/z_servo_power_cycle"]
 		and easy_fault == ["z/easy_fault"] and stopped_quiet and lost == ["corexy/homing_lost", "corexy/motors_off"]
@@ -1377,7 +1379,9 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	RobotState.machine_state = "ALARM"
 	RobotState.robot_error = "limit x"
 	tick.call(2)
-	var again: bool = int(ctl.robot_fault.count) == 2 and str(ctl.robot_fault.error) == "limit x" and ctl.phase == "STOPPED"
+	var again: bool = int(ctl.robot_fault.count) == 2 and str(ctl.robot_fault.latest.error) == "limit x" \
+		and str(ctl.robot_fault.error) == "position lost" and str(ctl.robot_fault.phase) == "PLAYING" and ctl.phase == "STOPPED" \
+		and StaffRecoveryPanel.cause_text(ctl.robot_fault, guard.stop_state).contains("limit x")
 	answer.call("calibration_prepare", false, {"reason": "alarm"})
 	# アラーム解除 alone moves nothing
 	game.ws._pending.clear()
@@ -1387,6 +1391,12 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	var no_follow: bool = types.call().is_empty()  # (not the recovery chain: nothing moves after it)
 	RobotState.machine_state = "IDLE"
 	tick.call(2)
+	# what the staff's own steps change (the motors, homing) is not a new fault
+	RobotState.motors_enabled = false
+	tick.call(2)
+	RobotState.motors_enabled = true
+	tick.call(2)
+	no_follow = no_follow and int(ctl.robot_fault.count) == 2
 	# 6. not yet: the backend's answer still shows homing missing -> stays stopped
 	guard.finish()
 	var st_bad := _fine_state()
@@ -1399,11 +1409,13 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	RobotState.motors_enabled = true
 	RobotState.robot_error = ""
 	tick.call(2)
-	guard.finish()
+	game._unhandled_input(_key(KEY_F9))  # the crane ready: F9 (the remote's RECOVER) is the check
+	var asked_state: bool = types.call() == ["get_state"]
 	var st_ok := _fine_state()
 	st_ok.erase("link")
 	var late: String = answer.call("get_state", true, st_ok)
-	var released: bool = not ctl.robot_fault_latched() and ctl.phase == "IDLE" and guard.action_note.contains("ふっきした")
+	var released: bool = asked_state and not ctl.robot_fault_latched() and ctl.phase == "IDLE" and guard.action_note.contains("ふっきした") \
+		and not panel.is_open()
 	var late_ignored: bool = not guard.on_ack(late, true, {})  # a late answer again: nothing
 	game._unhandled_input(_key(KEY_ENTER))
 	var new_game: bool = ctl.running() and ctl.score.score == 0
@@ -1442,8 +1454,15 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	var link_halt: bool = ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "link_lost" and guard.stop_state == "unconfirmed" \
 		and types.call().is_empty() and StaffRecoveryPanel.cause_text(ctl.robot_fault, guard.stop_state).contains("停止未確認")
 	var no_move: bool = not guard.prepare() and guard.move_blocked().contains("バックエンド") and not guard.finish()
-	# 3'. homing lost while playing (no alarm), stop never seen: unconfirmed after its time
+	# the link back: the stop goes out once (a backend sequence may still run), not again
 	game.backend_link = func() -> bool: return true
+	tick.call(3)
+	var resent: bool = types.call().count("soft_stop") == 1
+	answer.call("soft_stop", true)
+	tick.call(3)
+	resent = resent and types.call().is_empty()
+	link_halt = link_halt and resent
+	# 3'. homing lost while playing (no alarm), stop never seen: unconfirmed after its time
 	tick.call(1)
 	guard.finish()
 	answer.call("get_state", true, _fine_state())

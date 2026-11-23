@@ -31,6 +31,9 @@ extends Node
 ## Everything goes to the debug log (and Godot's log file); the fault itself also to the
 ## round's trace.
 
+## the latch ended (the staff's screen closes)
+signal recovered
+
 ## the second press of prepare() must come within this many seconds of the first
 const CONFIRM_S := 6.0
 ## a stop not seen within this many seconds: "unconfirmed"
@@ -60,6 +63,8 @@ var _samples_at_stop := 0
 var _clear_rid := ""
 var _state_rid := ""
 var _state_for := ""  # "refresh" / "finish"
+## the stop was sent again once the link came back (a fault with the link gone)
+var _stop_retried := false
 
 func setup(m: Node) -> void:
 	main = m
@@ -102,6 +107,13 @@ func tick(dt: float) -> void:
 		if not found.is_empty():
 			on_fault(found)
 	confirm_left = maxf(confirm_left - dt, 0.0)
+	# the stop could not be sent (the link or the robot was gone): once it is back, the stop
+	# goes out once (a sequence of the backend may still run); nothing on top of an alarm
+	if latched() and stop_state == "unconfirmed" and not _stop_retried and link_ok() and RobotState.connected \
+			and _stop_rid == "":
+		_stop_retried = true
+		_log("the link is back: the stop once more")
+		_stop()
 	if stop_state == "requested":
 		_stop_left -= dt
 		if _samples > _samples_at_stop and RobotFaultWatch.still(state_now()):
@@ -109,10 +121,14 @@ func tick(dt: float) -> void:
 		elif _stop_left <= 0.0 or not link_ok():
 			_set_stop("unconfirmed")
 
-## New faults (the most telling first): the game stops once; while latched the cause is
-## brought up to date.
+## New faults (the most telling first): the game stops once; while latched the newest is
+## recorded beside the first (what the staff's own steps change is not a fault then).
 func on_fault(found: Array) -> void:
 	var gm = _game()
+	if latched():
+		found = found.filter(func(x): return not str(x.code) in RobotFaultWatch.RECOVERY_SIDE_EFFECTS)
+		if found.is_empty():
+			return
 	var f: Dictionary = (found[0] as Dictionary).duplicate(true)
 	f.at = Time.get_datetime_string_from_system(false, true)
 	f.unix = Time.get_unix_time_from_system()
@@ -131,8 +147,8 @@ func on_fault(found: Array) -> void:
 		history.clear()  # a new fault: its own story
 		stop_state = ""
 		action_note = ""
-	if first and gm != null and gm.robot_fault_latched():
-		gm.robot_fault.capsule_risk = gm.robot_fault.capsule_risk or bool(f.capsule_risk)
+		_stop_retried = false
+		_stop_rid = ""  # an earlier fault's stop still unanswered is not this one's
 	_log("%s %s/%s: %s%s" % ["fault" if first else "fault again", f.category, f.code, f.message,
 		(" (also " + ", ".join(others) + ")") if not others.is_empty() else ""])
 	if not first:
@@ -203,6 +219,14 @@ func clear_alarm() -> bool:
 
 ## まとめて準備: the arm moves. The first call only asks for the confirmation; the second
 ## (within CONFIRM_S) sends.
+## The staff's one button (F9 / the remote's RECOVER on the open screen): the next step. The
+## crane ready (nothing left in the state now): the check and the end of the latch; else
+## まとめて準備 (asked twice).
+func next_step() -> bool:
+	if latched() and link_ok() and problems().is_empty() and not pending():
+		return finish()
+	return prepare()
+
 func prepare() -> bool:
 	var why := move_blocked()
 	if why != "":
@@ -292,6 +316,7 @@ func _finish_with(answer: Dictionary) -> void:
 	watch.disarm()
 	stop_state = ""
 	_note(true, "ふっきした。カプセルが残っていないか確かめてから、あたらしいゲームを はじめる")
+	recovered.emit()
 
 func _note(ok: bool, text: String) -> bool:
 	action_ok = ok

@@ -17,6 +17,9 @@ extends RefCounted
 const CATEGORIES := {"corexy": "CoreXY（XY 駆動）", "z": "Z（巻き上げサーボ）", "claw": "爪サーボ",
 	"sequence": "かんたんモードのシーケンス", "link": "接続", "unknown": "不明"}
 const ALARMED := ["ALARM", "ESTOP"]
+## what a fault leaves the crane in while it is recovered: these follow the staff's own steps
+## (clearing the alarm unhomes, the preparation switches the motors), not a new fault
+const RECOVERY_SIDE_EFFECTS := ["homing_lost", "motors_off"]
 const MOVING := ["HOMING", "MOVING_XY", "Z_LOWERING", "Z_RAISING", "GRABBING", "RELEASING"]
 
 var armed := false
@@ -54,7 +57,12 @@ func update(s: Dictionary) -> Array:
 		_prev.link = false
 		return out
 	if bool(p.get("connected", true)) and not bool(s.get("connected", true)):
-		out.append(fault("link", "robot_disconnected", "ロボット（Core2）との接続が切れた（実機が止まったかは分からない）", err))
+		# the rest of the state is not the robot's any more (reset by the backend): only this
+		_prev = s.duplicate(true)
+		return [fault("link", "robot_disconnected", "ロボット（Core2）との接続が切れた（実機が止まったかは分からない）", err)]
+	if not bool(s.get("connected", true)):
+		_prev = s.duplicate(true)
+		return []
 	var st := str(s.get("state", ""))
 	var was := str(p.get("state", ""))
 	var alarm_new: bool = st in ALARMED and not was in ALARMED
@@ -79,6 +87,10 @@ func update(s: Dictionary) -> Array:
 		out.append(fault("corexy", "motors_off", "モーターがオフになった", err))
 	_prev = s.duplicate(true)
 	return out
+
+## The line every screen shows while the game is stopped by a fault of `category`.
+static func stop_line(category: String) -> String:
+	return "ゲーム停止：%s／スタッフを呼んでください" % CATEGORIES.get(category, "不明")
 
 static func fault(category: String, code: String, message: String, error := "") -> Dictionary:
 	return {"category": category, "code": code, "message": message, "error": error}

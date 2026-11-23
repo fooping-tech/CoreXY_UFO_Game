@@ -1117,7 +1117,9 @@ func _handle_input(dt: float) -> void:
 			gesture.stop("title")
 	# #292: the score game stopped on a fault of the crane: nothing moves it by hand until the
 	# staff recovered it (the recovery screen's buttons, the backend's gates)
-	if game_mode != null and game_mode.robot_fault_latched():
+	# (the 校正 tab keeps its keys, as on the title; outside the score game the backend's
+	# own gates are left: the latch is the score game's)
+	if game_mode != null and game_mode.active() and game_mode.robot_fault_latched() and not calibrating():
 		halt = true
 		if kb != Vector3.ZERO:
 			jog_hint = "ロボットの異常で止まっています（スタッフ: F9 で ふっき）"

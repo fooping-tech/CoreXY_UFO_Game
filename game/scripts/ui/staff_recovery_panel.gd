@@ -32,6 +32,7 @@ var _shown := false
 func setup(m: Node, g: RobotFaultGuard) -> void:
 	main = m
 	guard = g
+	guard.recovered.connect(close)
 	layer = 23  # over the title (20), the settings (21) and the debug panel (22)
 	_build()
 	refresh()
@@ -47,19 +48,25 @@ func close() -> void:
 func is_open() -> bool:
 	return _shown and _panel.visible
 
-func _process(_dt: float) -> void:
-	refresh()
+var _refresh_left := 0.0
+
+## ~10 times a second (the state comes ~20-30 Hz; the staff's actions refresh at once)
+func _process(dt: float) -> void:
+	_refresh_left -= dt
+	if _refresh_left <= 0.0:
+		_refresh_left = 0.1
+		refresh()
 
 func refresh() -> void:
 	if guard == null:
 		return
 	var latched := guard.latched()
-	if not latched and not guard.action_note.begins_with("ふっきした"):
+	if not latched:
 		_shown = false
 	_banner.visible = latched and not _shown
 	_panel.visible = _shown
 	if latched:
-		_banner_label.text = "%s\nスタッフ: F9 で ふっきの画面" % banner_text(guard.fault())
+		_banner_label.text = "%s\nスタッフ: F9 で ふっきの画面" % RobotFaultWatch.stop_line(str(guard.fault().get("category", "")))
 	if not _shown:
 		return
 	_cause.text = cause_text(guard.fault(), guard.stop_state) if latched else "ゲームは止まっていない"
@@ -85,9 +92,6 @@ func refresh() -> void:
 	_finish_b.disabled = not latched or guard.pending() or not guard.link_ok()
 	_refresh_b.disabled = guard.pending() or not guard.link_ok()
 
-static func banner_text(f: Dictionary) -> String:
-	return "ゲーム停止：%s／スタッフを呼んでください" % RobotFaultWatch.CATEGORIES.get(str(f.get("category", "")), "不明")
-
 static func cause_text(f: Dictionary, stop_state: String) -> String:
 	var s := "原因: %s（%s）\n%s" % [RobotFaultWatch.CATEGORIES.get(str(f.get("category", "")), "不明"), str(f.get("code", "")),
 		str(f.get("message", ""))]
@@ -96,8 +100,11 @@ static func cause_text(f: Dictionary, stop_state: String) -> String:
 	s += "\n発生: %s・ゲーム %s（セッション %s）" % [str(f.get("at", "")), str(f.get("phase", "")), str(f.get("session", ""))]
 	if str(f.get("easy_state", "")) != "":
 		s += "・かんたんモード %s %s" % [str(f.easy_state), str(f.get("easy_step", ""))]
-	if int(f.get("count", 1)) > 1:
-		s += "\n止まってからも異常が %d 回（最新を表示）" % (int(f.count) - 1)
+	var latest: Dictionary = f.get("latest", {}) if f.get("latest") is Dictionary else {}
+	if not latest.is_empty():
+		s += "\n止まってからの異常 %d 回。最新: %s（%s）%s %s" % [int(f.get("count", 1)) - 1,
+			RobotFaultWatch.CATEGORIES.get(str(latest.get("category", "")), "不明"), str(latest.get("code", "")),
+			str(latest.get("message", "")), str(latest.get("at", ""))]
 	var also: Array = f.get("also", [])
 	if not also.is_empty():
 		s += "\n同時に: " + ", ".join(also)
@@ -133,10 +140,8 @@ func _build() -> void:
 	_banner.offset_top = 8
 	_banner.offset_left = 8
 	_banner.offset_right = -8
-	_banner.mouse_filter = Control.MOUSE_FILTER_STOP
-	_banner.gui_input.connect(func(ev: InputEvent):
-		if ev is InputEventMouseButton and ev.pressed:
-			open())
+	# clicks go through to what is under it (the debug panel, the settings): F9 opens the screen
+	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_banner)
 	_banner_label = StudyHud.label("", 24, Color.WHITE, 4)
 	_banner_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

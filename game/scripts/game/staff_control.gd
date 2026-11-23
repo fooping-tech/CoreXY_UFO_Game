@@ -65,6 +65,8 @@ func describe(action: String) -> String:
 			if main.get("robot_guard") != null and main.robot_guard.latched():
 				if not main.recovery_panel.is_open():
 					return "ふっきの画面を ひらく"
+				if main.robot_guard.link_ok() and main.robot_guard.problems().is_empty():
+					return "かくにんして あたらしい ゲームへ"
 				return "まとめて準備（もう一度で アームが動く）" if main.robot_guard.confirm_left <= 0.0 else "まとめて準備を はじめる（アームが動く）"
 			if main.arm_recovering():
 				return ""
@@ -125,6 +127,8 @@ func run(action: String, source := "key") -> String:
 	return what
 
 func _menu(s: String) -> bool:
+	if main.get("recovery_panel") != null and main.recovery_panel.is_open():
+		main.recovery_panel.close()  # #292: the staff's screen closes too (the latch stays)
 	match s:
 		"title":
 			return false
@@ -141,7 +145,7 @@ func _recover() -> bool:
 		if not main.recovery_panel.is_open():
 			main.recovery_panel.open()
 			return true
-		return main.robot_guard.prepare()
+		return main.robot_guard.next_step()
 	if main.recover_arm():
 		return true
 	if main.easy != null and main.easy.faulted():
