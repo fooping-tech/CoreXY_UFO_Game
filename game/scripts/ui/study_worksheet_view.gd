@@ -23,6 +23,10 @@ var crop_texture: Texture2D
 var guide := false
 var guide_texture: Texture2D
 var guide_region := Rect2()
+## #285: why the sheet cannot be read now (the watch's last error), shown under the guide for the
+## adult: "" = nothing wrong
+var guide_error := ""
+const GUIDE_ERROR_MAX := 180
 var answer_marks := {}
 ## #237: the reader is checking the answers now: a scanning beam and "答案を確認中！"
 var scanning := false
@@ -245,6 +249,29 @@ func _draw_guide(font: Font, top: float) -> void:
 	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30), ac + Vector2(26, -30), ac + Vector2(0, 6)]), Color("ff4fa3"))
 	draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62), ac + Vector2(12, -62), ac + Vector2(12, -30), ac + Vector2(-12, -30)]), Color("ff4fa3"))
+	if guide_error != "":
+		_draw_guide_error(shown)
+
+## The text of the guide's error box: a line for the child, then the reason for the adult (cut short).
+static func guide_error_text(reason: String) -> String:
+	var why := reason.strip_edges()
+	if why.length() > GUIDE_ERROR_MAX:
+		why = why.substr(0, GUIDE_ERROR_MAX - 1) + "…"
+	return "プリントを よみとれないよ（大人の人へ）\n" + why
+
+## #285: the reading fails (no AI, a wrong certificate, ...): a red box at the bottom of the picture.
+func _draw_guide_error(shown: Rect2) -> void:
+	var font := UiFonts.body()
+	var fs := 20
+	var pad := 12.0
+	var w := shown.size.x - 2 * pad - 24.0
+	var text := guide_error_text(guide_error)
+	var h := font.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, w, fs).y
+	var box := Rect2(shown.position.x + 12.0, shown.end.y - h - 2 * pad - 12.0, shown.size.x - 24.0, h + 2 * pad)
+	draw_rect(box, Color(0.35, 0.03, 0.06, 0.88))
+	draw_rect(box, Color("ff5a5a"), false, 3.0)
+	draw_multiline_string(font, box.position + Vector2(pad, pad + fs), text, HORIZONTAL_ALIGNMENT_LEFT, w, fs, -1,
+		Color("fff3f0"))
 
 ## The problem UFOくん goes to look at: a pulsing box on the picture and "Nばん ここ！".
 func _draw_focus(shown: Rect2) -> void:

@@ -57,6 +57,8 @@ var last_update_ms := 0
 var count := 0
 var skipped := 0
 var errors := 0
+## #285: why the last frame could not be read ("" = the last one was read, or none sent yet)
+var last_error := ""
 var cost_usd := 0.0
 ## Every reading of this session: {elapsed_s, progress_pct, smoothed_pct, held}
 var history: Array[Dictionary] = []
@@ -180,6 +182,7 @@ func start() -> void:
 	count = 0
 	skipped = 0
 	errors = 0
+	last_error = ""
 	cost_usd = 0.0
 	history.clear()
 	questions = []
@@ -292,6 +295,7 @@ func _on_message(msg: Dictionary) -> void:
 			status_text = "見守り中（%d 秒ごとに撮影）" % int(interval_s)
 	elif t == "homework_progress":
 		_waiting = false
+		last_error = ""
 		_apply_summary(data)
 		last_pct = _num(data.get("progress_pct"))
 		var smoothed := _num(data.get("smoothed_pct"))
@@ -314,6 +318,7 @@ func _on_message(msg: Dictionary) -> void:
 		_apply_summary(data)
 		var code := str(data.get("code", ""))
 		var message := str(data.get("message", "不明なエラー"))
+		last_error = message
 		if code in ["config", "disabled"]:
 			state = "error"
 			status_text = "開始できません: " + message

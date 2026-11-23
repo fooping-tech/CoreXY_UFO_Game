@@ -1371,6 +1371,48 @@ func _test_study_scenery(rs: Node) -> void:
 	rs.clear_samples()
 
 
+## #285: the sheet cannot be read (a wrong certificate, no AI, ...): the reason on the "ここへおいてね！"
+## screen, not a guide waiting for nothing; gone once a frame is read.
+func _test_study_reading_error_shown(rs: Node) -> void:
+	var long := StudyWorksheetView.guide_error_text("x".repeat(400))
+	_ok(long.begins_with("プリントを よみとれないよ") and long.length() < 240 and long.ends_with("…"),
+		"study reading error: a line for the child, then the reason for the adult, cut short", str(long.length()))
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	var hw: HomeworkClient = ctl.services.homework
+	if hw == null:
+		_ok(false, "study reading error: the study mode has a HomeworkClient")
+		remove_child(game)
+		game.free()
+		return
+	ctl.services.set_mode("camera")
+	ctl.services.watching = true
+	ctl.state = "WAITING_FOR_WORKSHEET"
+	hud.refresh()
+	var clean: bool = hud.sheet.guide and hud.sheet.guide_error == ""
+	var why := "プリントの読み取り: 証明書を確かめられません（テスト）"
+	hw._on_message({"type": "homework_error", "request_id": "homework-1", "data": {"code": "network", "message": why}})
+	hud.refresh()
+	var shown: bool = hud.sheet.guide_error == why and ctl.services.watch_problem() == why
+	ctl.services.set_mode("simulated")  # the mock demo has no camera watch: nothing to show
+	hud.refresh()
+	var not_simulated: bool = hud.sheet.guide_error == ""
+	ctl.services.set_mode("camera")
+	hw._on_message({"type": "homework_progress", "request_id": "homework-1",
+		"data": {"progress_pct": 0.0, "smoothed_pct": 0.0, "held": true, "held_reason": "not_visible", "visible_prob": 0.0}})
+	hud.refresh()
+	var cleared: bool = hud.sheet.guide_error == "" and hw.last_error == ""
+	ctl.services.watching = false
+	ctl.stop()
+	_ok(clean and shown and not_simulated and cleared,
+		"study reading error: the watch's error under 'ここへおいてね！' (camera mode), gone after a frame is read",
+		str([clean, shown, not_simulated, cleared, hud.sheet.guide_error]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
 ## #237: the reward told line by line, its items got one after another, then the score game by itself.
 func _test_study_reward_show(rs: Node) -> void:
 	var r := {"question_count": 4, "confirmed_correct": 1, "needs_review": [2, 3], "unclear": [4], "time_bonus_s": 10,
