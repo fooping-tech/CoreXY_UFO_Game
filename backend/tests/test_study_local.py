@@ -280,3 +280,58 @@ async def test_a_real_print_has_its_own_problems():
     assert questions_from_sheet([prob(7, "correct"), prob(2, "blank")], None) == [
         {"number": 2, "filled_prob": 0.05}, {"number": 7, "filled_prob": 0.95}]
     await svc.close()
+
+
+class PromptSpy:
+    """An explanation adapter that keeps the question and then fails (so a fallback would show)."""
+
+    def __init__(self):
+        self.prompt = ""
+
+    async def start_session(self, workdir, instructions):
+        return "t"
+
+    async def ask(self, thread_id, text, image_path, on_delta, more_images=()):
+        self.prompt = text
+        raise RuntimeError("つながらない")
+
+    async def close_session(self, thread_id):
+        pass
+
+    async def close(self):
+        pass
+
+
+async def test_a_real_print_never_gets_the_sample_sheets_problems():
+    """#287: with the local reader the sheet on the desk is a real print: the sample sheet's text,
+    hints and answer (小学3年 2: "56 ÷ 7") go nowhere: not to the explanation, its fallback or a locate."""
+    sample = CAT.get("mon-elem_3-01")
+    two = WorksheetCatalog.problem(sample, 2)
+    spy = PromptSpy()
+    reader = FakeReader([prob(2, "incorrect", answer_box=(300, 600, 500, 700))])
+    svc = HomeworkService(HomeworkConfig(enabled=True), client_factory=nothing_else, advice_factory=nothing_else,
+                          explain_factory=lambda: spy, worksheets=CAT, sheet_factory=lambda: reader)
+    sent = []
+
+    async def emit(m):
+        sent.append(m)
+    await svc.start("s", "mon-elem_3-01")
+    assert svc._problem(sample, 2) == {"number": 2, "prompt": "", "description_en": "problem 2"}
+    assert svc._problem(sample, 2, known_only=True) is None
+    await svc.explain("e", [{"role": "10cm", "image_jpeg_base64": B64}], 2, "", "mon-elem_3-01", emit)
+    await svc._explain_task
+    assert spy.prompt and two["prompt"] not in spy.prompt and "56" not in spy.prompt
+    assert "小学3年" in spy.prompt  # the grade set still goes
+    err = sent[-1]
+    assert err["type"] == "homework_explain_error" and "fallback" not in err["data"]  # the game's own (any problem)
+    await svc.locate("s", "l", "problem", B64, emit, problem=2, worksheet_id="mon-elem_3-01")
+    await svc._locate_task
+    d = sent[-1]["data"]
+    assert sent[-1]["type"] == "homework_locate_result" and d["description_en"] == "problem 2"
+    assert svc.read_answers == ["7"]  # the print's own answer, read by the locate (prob() says 7)
+    # the cloud (the sample sheet printed): its problem as before
+    cloud = HomeworkService(HomeworkConfig(enabled=True), client_factory=nothing_else, advice_factory=nothing_else,
+                            worksheets=CAT)
+    assert cloud._problem(sample, 2)["prompt"] == two["prompt"]
+    await svc.close()
+    await cloud.close()
