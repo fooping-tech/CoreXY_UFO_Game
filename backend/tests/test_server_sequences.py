@@ -109,3 +109,19 @@ def test_the_interface_says_which_robot_is_real_and_its_limits():
     real = NamedReal()
     assert real.is_real and GameServer(real, "127.0.0.1", 0).study_profile == "real"
     assert GameServer(mock, "127.0.0.1", 0).study_profile == "dry_run"
+
+
+async def test_get_state_has_what_the_games_fault_recovery_checks():
+    """#292: the game ends a fault's latch only on a get_state answer that shows the crane
+    ready (RobotFaultWatch.problems): these keys must be in it, also while it is not ready
+    (the mock robot starts with the motors off and not homed)."""
+    srv = GameServer(MockRobot(), "127.0.0.1", 0)
+    msg = await srv.execute("get_state", {})
+    assert msg["type"] == "ack"
+    data = msg["data"]
+    for key in ("connected", "state", "homed", "motors_enabled", "error", "z_servo_reset", "z_servo_power_cycle",
+                "arm_servo_power_cycle", "easy_mode", "calibration_prepare", "auto_catch"):
+        assert key in data, key
+    assert isinstance(data["easy_mode"].get("blockers"), list) and isinstance(data["easy_mode"].get("state"), str)
+    assert data["state"] in {"UNKNOWN", "IDLE", "HOMING", "MOVING_XY", "Z_LOWERING", "Z_RAISING", "GRABBING",
+                             "RELEASING", "ALARM", "ESTOP"}
