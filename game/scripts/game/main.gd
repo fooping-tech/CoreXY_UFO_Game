@@ -1915,6 +1915,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 		if game_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
 				and game_mode.handle_key(ev.keycode):
 			return
+		# #292 (review on #294): the score game stopped on a fault of the crane: no key of the
+		# crane either (the claw, the auto catch, the homework's keys): Space, the debug panel,
+		# the scope and the hand switch only. The staff's recovery screen is the way back.
+		if game_mode != null and game_mode.active() and game_mode.robot_fault_latched() and not calibrating() \
+				and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB, KEY_V, KEY_H]:
+			jog_hint = "ロボットの異常で止まっています（スタッフ: F9 で ふっき）"
+			debug_log.emit("key refused (robot fault latched): " + OS.get_keycode_string(ev.keycode))
+			return
 		match ev.keycode:
 			KEY_SPACE:
 				stop_key()

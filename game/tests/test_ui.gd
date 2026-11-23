@@ -1352,6 +1352,11 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	ctl.start()
 	ctl.start_tutorial()
 	var held: bool = ctl.phase == "STOPPED" and ctl.robot_fault_latched() and ctl.start_blocked().contains("スタッフ")
+	# no key of the crane either (review on #294): the claw (Q / A / [ ]) and the auto catch (C)
+	game.ws._pending.clear()
+	for k in [KEY_Q, KEY_A, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_C]:
+		game._unhandled_input(_key(k))
+	held = held and types.call().is_empty() and game.jog_hint.contains("異常")
 	# the staff: F9 opens the screen (nothing sent)
 	game.ws._pending.clear()
 	game._unhandled_input(_key(KEY_F9))
