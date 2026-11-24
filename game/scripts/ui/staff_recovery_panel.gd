@@ -33,12 +33,14 @@ func setup(m: Node, g: RobotFaultGuard) -> void:
 	main = m
 	guard = g
 	guard.recovered.connect(close)
-	layer = 23  # over the title (20), the settings (21) and the debug panel (22)
+	layer = 31  # over the title (20), the settings (21), the debug panel (22) and the capsule probe (30, #291)
 	_build()
 	refresh()
 
 func open() -> void:
 	_shown = true
+	if main != null and main.has_method("capsule_probe_active") and main.capsule_probe_active():
+		main.capsule_probe.close()  # #291's probe is a tool: the recovery comes first
 	refresh()
 
 func close() -> void:

@@ -1105,3 +1105,253 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 		"capsule kinds #266: frames with no clear colour make a normal capsule; blue makes water; switched off always normal; with no camera and mock Dials the config's mock_kind (random by default)",
 		"%s %s %s %s %s %s" % [plain, water, off, mock_green, random_one, mock_plain])
 	_gm_free(game, rs)
+
+## #291: a frame `w` x `h` of `bg`, with blocks [Rect2i, Color] painted on it.
+static func _probe_frame(blocks: Array, bg := Color(0.18, 0.18, 0.2), w := 80, h := 60) -> Image:
+	var img := Image.create(w, h, false, Image.FORMAT_RGB8)
+	img.fill(bg)
+	for b in blocks:
+		img.fill_rect(b[0], b[1])
+	return img
+
+## #291: classify() says why; the thresholds' edges; background LEDs; the votes' window and reset.
+func _test_capsule_colour_explain() -> void:
+	var red := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.2), {}, true)
+	var grey := CapsuleKinds.classify(_colour_frame(Color(0.6, 0.6, 0.62), 0.3))
+	var dark := CapsuleKinds.classify(_colour_frame(Color(0.15, 0.02, 0.02), 0.3))
+	var violet := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.8, 0.9, 0.9), 0.3))  # in no colour's range
+	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.01))
+	var mixed := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.12, Color("2860f0"), 0.1))
+	var none := CapsuleKinds.classify(null)
+	var reasons: bool = red.reason == "ok" and grey.reason == "dull" and dark.reason == "dull" and violet.reason == "hue" \
+		and speck.reason == "small" and mixed.reason == "dominance" and none.reason == "no_frame" and violet.kind == "" \
+		and {mixed.best: 1, mixed.second: 1}.keys().size() == 2 and int(mixed.best_n) >= int(mixed.second_n) and int(mixed.second_n) > 0 and not mixed.dominance_ok and mixed.share_ok
+	# every looked-at pixel is counted once, the left-out ones are in the share's denominator
+	var looked := int(red.looked)
+	var parts: int = int(red.low_sat) + int(red.low_val) + int(red.hue_miss) + int(red.counts.fire) + int(red.counts.water) + int(red.counts.green)
+	var hist_n := 0
+	for c in red.hue_hist:
+		hist_n += c
+	var sums: bool = parts == looked and is_equal_approx(float(red.shares.fire), float(red.counts.fire) / looked) \
+		and is_equal_approx(float(red.share), float(red.shares.fire)) and red.samples.size() == looked \
+		and int(red.cols) * int(red.rows) == looked and hist_n == looked - int(red.low_sat) - int(red.low_val) \
+		and int(red.roi_pixels) == red.roi.size.x * red.roi.size.y
+	var same_kind: bool = CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.2)).kind == red.kind  # detail changes nothing
+	_ok(reasons and sums and same_kind,
+		"capsule probe #291: classify() says why a frame is no colour (too grey / dark, no colour's hue, too small, not dominant, no frame); every looked-at pixel is counted once and the share's denominator has the left-out ones",
+		"%s %s %s / %s %s %s %s %s %s" % [reasons, sums, same_kind, grey.reason, dark.reason, violet.reason, speck.reason, mixed.reason, parts])
+	# the edges: a threshold met exactly passes, a hair more does not
+	var img := _colour_frame(Color("e83020"), 0.2)
+	var at_share: bool = CapsuleKinds.classify(img, {"min_share": float(red.share)}).kind == "fire"
+	var over_share := CapsuleKinds.classify(img, {"min_share": float(red.share) + 0.001})
+	var d := float(mixed.best_n) / float(mixed.second_n)
+	var mix_img := _colour_frame(Color("e83020"), 0.12, Color("2860f0"), 0.1)
+	var at_dom: bool = CapsuleKinds.classify(mix_img, {"dominance": d - 1e-9}).kind == str(mixed.best)  # (d * second_n may round past best_n)
+	var over_dom := CapsuleKinds.classify(mix_img, {"dominance": d + 0.01})
+	var flat := _probe_frame([], Color.from_hsv(0.6, 0.5, 0.6))
+	var p := flat.get_pixel(40, 30)
+	var at_sat: bool = CapsuleKinds.classify(flat, {"min_sat": p.s, "min_val": p.v}).kind == "water"
+	var over_sat := CapsuleKinds.classify(flat, {"min_sat": p.s + 0.001})
+	var over_val := CapsuleKinds.classify(flat, {"min_val": p.v + 0.001})
+	# red wraps round 1.0: just under and just over are both red; cyan is not
+	var wrap: bool = CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.97, 0.9, 0.9))).kind == "fire" \
+		and CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.02, 0.9, 0.9))).kind == "fire" \
+		and CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.48, 0.9, 0.9))).reason == "hue"
+	var edges: bool = at_share and over_share.kind == "" and over_share.reason == "small" and at_dom and over_dom.reason == "dominance" \
+		and at_sat and over_sat.reason == "dull" and int(over_sat.low_sat) == int(over_sat.looked) \
+		and over_val.reason == "dull" and int(over_val.low_val) == int(over_val.looked) and wrap
+	_ok(edges, "capsule probe #291: min_share, dominance, min_sat and min_val met exactly pass, a hair more do not; red's hue range wraps round 1.0",
+		"%s %s %s %s %s %s %s %s" % [at_share, over_share.reason, at_dom, over_dom.reason, at_sat, over_sat.reason, over_val.reason, wrap])
+	# background LEDs: a big bright strip outside the ROI is never looked at; small LED dots
+	# inside it stay under min_share; the capsule wins over a few of them
+	var strip := _probe_frame([[Rect2i(0, 0, 80, 8), Color("20ff40")]])  # the ROI starts at 15% (y 9)
+	var dots := []
+	for i in 6:
+		dots.append([Rect2i(20 + i * 7, 12 + (i % 3) * 14, 1, 1), Color("20ff40")])
+	var leds := _probe_frame(dots)
+	var with_capsule := _probe_frame(dots + [[Rect2i(30, 22, 18, 18), Color("2860f0")]])
+	var led_ok: bool = CapsuleKinds.classify(strip).kind == "" and int(CapsuleKinds.classify(strip).counts.green) == 0 \
+		and CapsuleKinds.classify(leds).kind == "" and CapsuleKinds.classify(with_capsule).kind == "water"
+	_ok(led_ok, "capsule probe #291: shelf LEDs outside the ROI are not looked at, a few small LED dots inside it are too little, a capsule among them still wins",
+		"%s %s %s" % [CapsuleKinds.classify(strip).counts, CapsuleKinds.classify(leds).reason, CapsuleKinds.classify(with_capsule).kind])
+	# the votes: why, the window's edge, the reset
+	var r := CapsuleKinds.Reader.new()
+	var empty: bool = r.explain(3, 0.6).reason == "no_votes" and r.cleared_at < 0.0
+	r.add("fire")
+	r.add("")
+	r.add("fire")
+	var few := r.explain(3, 0.6)
+	r.add("water")
+	r.add("water")
+	r.add("fire")
+	var split := r.explain(3, 0.6)  # 3 of 5 coloured = 0.6: just enough
+	var split_more := r.explain(3, 0.61)
+	r.advance(r.memory_s)
+	var at_edge: bool = r.count() == 5 and r.count("") == 1  # exactly memory_s old still counts
+	r.advance(0.01)
+	var gone: bool = r.count() == 0 and r.explain(3, 0.6).reason == "no_votes"
+	r.add("green")
+	r.clear()
+	var reset: bool = r.count() == 0 and r.votes.is_empty() and is_equal_approx(r.cleared_at, r.clock)
+	var votes_ok: bool = empty and few.reason == "few_votes" and int(few.none) == 1 and int(few.counts.fire) == 2 \
+		and split.kind == "fire" and split.reason == "ok" and split_more.reason == "ratio" and split_more.kind == "normal" \
+		and r.decide(3, 0.6) == "normal" and at_edge and gone and reset
+	_ok(votes_ok, "capsule probe #291: the votes say why the capsule is normal (no votes, too few, too split); a vote exactly memory_s old counts, older ones not; a reset forgets all and says when",
+		"%s %s %s %s %s %s %s" % [empty, few, split.reason, split_more.reason, at_edge, gone, reset])
+
+## #291: the probe screen: the game's values and verdicts, pause and judge again, stale frames,
+## the export, the round's reading, and nothing sent.
+func _test_capsule_colour_probe(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var probe: CapsuleColourProbe = game.capsule_probe
+	probe.dir = "user://capsule_probe_test/"
+	var n := [0]
+	var col := [Color("e83020")]
+	# a new picture each time (one pixel changes, as a real camera's noise)
+	probe.frame_source = func() -> Image:
+		n[0] += 1
+		var img := _colour_frame(col[0], 0.2)
+		img.set_pixel(0, 0, Color(float(n[0] % 7) / 10.0, 0.1, 0.1))
+		return img
+	var sent_before: int = game.ws._seq
+	var read_before: Dictionary = ctl.kinds.read.duplicate(true)
+	var closed_idle: bool = not probe.active() and not probe.is_processing()
+	probe.open()
+	var starts_as_game: bool = probe.cfg == ctl.kinds.read and probe.memory_s == ctl.colour_reader.memory_s
+	for i in 60:
+		probe.tick(1.0 / 60.0)
+	var voted: int = probe.reader.count("fire")
+	var same: bool = probe.result.kind == "fire" and probe.result.kind == CapsuleKinds.classify(probe.frame, ctl.kinds.read).kind \
+		and probe.base_result.kind == "fire" and voted >= 4 and voted <= 8 \
+		and probe.reader.explain(int(probe.cfg.min_votes), float(probe.cfg.min_ratio)).kind == "fire"
+	var text_ok: bool = probe.numbers_text().contains("色ごと") and probe.numbers_text().contains("min_share") \
+		and probe.votes_text().contains("最終判定: fire")
+	_ok(closed_idle and starts_as_game and same and text_ok,
+		"capsule probe #291: closed it does nothing; opened it starts with the game's values and judges the arm camera's frames with the game's classify() and votes (same verdict)",
+		"%s %s %s %s %d" % [closed_idle, starts_as_game, same, text_ok, voted])
+	# pause: no new frames; a changed value judges the same picture again, without a vote
+	probe.set_paused(true)
+	var frames_before: int = n[0]
+	for i in 60:
+		probe.tick(1.0 / 60.0)
+	var held: bool = n[0] == frames_before and probe.reader.count("fire") == voted
+	probe.set_value("min_share", 0.9)
+	var rejudged: bool = probe.result.kind == "" and probe.result.reason == "small" and probe.base_result.kind == "fire" \
+		and probe.reader.count("fire") == voted and n[0] == frames_before
+	var game_untouched: bool = ctl.kinds.read == read_before and probe.base_cfg == read_before
+	probe.set_value("hue:fire:0", 0.9)
+	probe.set_value("roi:2", 0.3)
+	var odd_keys: bool = float(probe.cfg.hues.fire[0]) == 0.9 and float(probe.cfg.roi[2]) == 0.3 and ctl.kinds.read == read_before
+	var votes_before: int = probe.reader.votes.size()
+	probe.step_frame()
+	var one_more: bool = n[0] == frames_before + 1 and probe.reader.votes.size() == votes_before + 1
+	probe.reset_settings()
+	var reset: bool = probe.cfg == read_before and probe.result.kind == "fire"
+	# the votes' window moves on while paused: the screen says so (review on #293)
+	var shown_before: String = probe._votes.text
+	probe.set_paused(true)
+	for i in int((probe.memory_s + 1.0) * 60.0):
+		probe.tick(1.0 / 60.0)
+	var expired: bool = probe.reader.count() == 0 and probe._votes.text.contains("色を見たフレームがない") \
+		and shown_before != probe._votes.text
+	# the game's values vote at the game's rate, whatever rate is tried (review on #293)
+	probe.set_paused(false)
+	probe.clear_votes()
+	probe.set_value("sample_hz", 1.0)
+	for i in 120:
+		probe.tick(1.0 / 60.0)
+	var rates_own: bool = probe.reader.votes.size() <= 3 and probe.base_reader.votes.size() >= 10 \
+		and float(probe.base_cfg.sample_hz) == float(ctl.kinds.read.sample_hz)
+	probe.reset_settings()
+	reset = reset and expired and rates_own
+	_ok(held and rejudged and game_untouched and odd_keys and one_more and reset,
+		"capsule probe #291: paused, no frame is taken; a changed value judges the same frame again at once (no vote) and never reaches the game; 1 フレーム takes one; 戻す brings the game's values back; the votes' window moves on while paused; the game's values vote at the game's rate",
+		"%s %s %s %s %s %s" % [held, rejudged, game_untouched, odd_keys, one_more, reset])
+	# a still picture (the same frame again), no picture, no camera: never voted, shown as such
+	var still := _colour_frame(Color("2860f0"), 0.2)
+	probe.frame_source = func() -> Image: return still
+	probe.step_frame()
+	var votes_n: int = probe.reader.votes.size()
+	probe.step_frame()
+	var stale: bool = probe.frame_info.status == "stale" and probe.reader.votes.size() == votes_n \
+		and probe.numbers_text().contains("未更新")
+	probe.frame_source = func() -> Image: return null
+	probe.step_frame()
+	var failed: bool = probe.frame_info.status == "failed" and probe.frame == null and probe.result.reason == "no_frame" \
+		and probe.reader.votes.size() == votes_n
+	probe.frame_source = Callable()
+	probe.step_frame()
+	var no_cam: bool = probe.frame_info.status in ["no_camera", "headless"] and probe.frame == null \
+		and probe.reader.votes.size() == votes_n
+	_ok(stale and failed and no_cam,
+		"capsule probe #291: a frame that did not change, a failed read and no camera are shown as such and never voted",
+		"%s %s %s %s" % [stale, failed, no_cam, probe.frame_info])
+	# the export: one JSON line per judged frame, with the label; the tally per label
+	probe.frame_source = func() -> Image:
+		n[0] += 1
+		var img := _colour_frame(col[0], 0.2)
+		img.set_pixel(0, 0, Color(float(n[0] % 7) / 10.0, 0.1, 0.1))
+		return img
+	probe.tally.clear()
+	probe.set_label("fire")
+	probe.set_recording(true)
+	for i in 3:
+		probe.step_frame()
+	col[0] = Color(0.5, 0.5, 0.5)
+	probe.step_frame()
+	probe.set_recording(false)
+	var lines: Array = []
+	var f := FileAccess.open(probe.export_path, FileAccess.READ)
+	while f != null and not f.eof_reached():
+		var t := f.get_line()
+		if t != "":
+			lines.append(JSON.parse_string(t))
+	var l0: Dictionary = lines[0] if lines.size() > 0 and lines[0] is Dictionary else {}
+	var exported: bool = lines.size() == 4 and str(l0.get("label")) == "fire" and str(l0.result.kind) == "fire" \
+		and l0.has("time") and int(l0.image.w) == 80 and l0.camera.status == "live" and l0.settings.read.has("min_share") \
+		and l0.result.has("low_sat") and l0.result.roi is Array and l0.votes.has("counts") and l0.has("final") \
+		and l0.base.kind == "fire" and not l0.result.has("samples") and l0.has("game") and str(lines[3].result.reason) == "dull"
+	var rate := probe.rates("fire")
+	var tallied: bool = rate.n == 4 and rate.right == 3 and rate.undecided == 1 and rate.wrong == 0 and probe.tally_text().contains("赤のカプセル 4")
+	var saved := probe.save_settings()
+	var saved_ok: bool = saved != "" and JSON.parse_string(FileAccess.get_file_as_string(saved)) is Dictionary
+	var png := probe.save_image()
+	var png_ok: bool = png != "" and FileAccess.file_exists(png)
+	# the saved picture again (paused, judged once): the same verdict
+	png_ok = png_ok and probe.load_image(png) and probe.paused and probe.frame_info.status == "file" \
+		and probe.result.kind == "" and not probe.load_image(probe.dir.path_join("nothing.png")) and probe.frame == null
+	probe.set_paused(false)
+	_ok(exported and tallied and saved_ok and png_ok,
+		"capsule probe #291: recording writes one JSON line per judged frame (time, size, camera, values, counts, verdicts, votes, final, label); the tally counts right / undecided / wrong per label; the tried values and an image are saved only by their buttons, and a saved image can be judged again",
+		"%s %s %s %s %d %s" % [exported, tallied, saved_ok, png_ok, lines.size(), rate])
+	for file in DirAccess.get_files_at(probe.dir):
+		DirAccess.remove_absolute(probe.dir.path_join(file))
+	# with a round: the game's own reading shows (read only) and the probe agrees with it
+	var gframe := _colour_frame(Color("20c040"), 0.2)
+	ctl.colour_source = func() -> Image: return gframe
+	probe.close()  # the round is started with the keys (the probe takes them while open)
+	_gm_playing(game)
+	_gm_step(ctl, 1.0)
+	probe.open()
+	var st := ctl.colour_status()
+	var status_ok: bool = st.active and st.reading and int(st.votes.counts.green) >= 4 and str(st.last.kind) == "green" \
+		and str(st.votes.kind) == ctl.decide_kind() and probe.game_text().contains("読取中")
+	var agree: bool = CapsuleKinds.classify(gframe, probe.cfg).kind == str(st.last.kind)
+	# the probe covers the screen: the game's keys do not reach behind it; Esc closes it
+	game._unhandled_input(_key(KEY_Z))
+	var swallowed: bool = ctl.colour_status().events.is_empty() and probe.active()
+	game._unhandled_input(_key(KEY_ESCAPE))
+	var esc_closes: bool = not probe.active() and swallowed
+	game._unhandled_input(_key(KEY_Z))
+	var st2 := ctl.colour_status()
+	var decided: bool = not st2.events.is_empty() and st2.events[-1][1] == "decided" and st2.events[-1][2] == "green" \
+		and int(st2.votes.any) == 0 and float(st2.cleared_at) >= 0.0 and probe.game_text().contains("確定")
+	var nothing_sent: bool = game.ws._seq == sent_before
+	probe.close()
+	var closed: bool = not probe.active() and not probe.is_processing()
+	_ok(status_ok and agree and decided and nothing_sent and closed and esc_closes,
+		"capsule probe #291: with a round the probe shows the game's reading (reading or not, votes, last frame, reset and decision); its verdict agrees; it never sends a command; the game's keys do not reach behind it and Esc closes it",
+		"%s %s %s %s %s %s" % [status_ok, agree, decided, nothing_sent, closed, esc_closes])
+	ctl.colour_source = Callable()
+	_gm_free(game, rs)

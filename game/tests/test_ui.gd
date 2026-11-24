@@ -1357,12 +1357,13 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	for k in [KEY_Q, KEY_A, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_C]:
 		game._unhandled_input(_key(k))
 	held = held and types.call().is_empty() and game.jog_hint.contains("異常")
-	# the staff: F9 opens the screen (nothing sent)
+	# the staff: F9 opens the screen (nothing sent); #291's capsule probe, if open, gives way to it
 	game.ws._pending.clear()
+	game.open_capsule_probe()
 	game._unhandled_input(_key(KEY_F9))
 	panel.refresh()
 	var opened: bool = panel.is_open() and types.call().is_empty() and panel._cause.text.contains("position lost") \
-		and panel._todo.text.contains("アラーム")
+		and panel._todo.text.contains("アラーム") and not game.capsule_probe_active() and panel.layer > game.capsule_probe.layer
 	# まとめて準備 asks twice; Space in between takes the first press back
 	var first := guard.prepare()
 	var armed: bool = first and guard.confirm_left > 0.0 and types.call().is_empty()

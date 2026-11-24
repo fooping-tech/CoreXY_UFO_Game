@@ -127,6 +127,11 @@ var mock_kind := "random"
 var colour_source := Callable()
 ## the kind of the capsule taken in last (tests, the trace)
 var last_kind := ""
+## #291: what the colour reading did last, for the probe (read only there): the last frame's
+## classify() (with "at", the reader's clock), and the votes' starts over and decisions
+## ([clock, "reset" / "decided", why or the kind], the newest last, a few)
+var last_colour := {}
+var colour_events: Array = []
 var _sample_left := 0.0
 var _kind_trail_t := 0.0
 var _easy_was := ""
@@ -961,6 +966,8 @@ func start(after_practice := false) -> void:
 	_trace("game_start", null, {})
 
 func _reset_round() -> void:
+	last_colour = {}  # #291: the probe shows this round's reading, not the last one's
+	colour_events.clear()
 	_light_override_left = 0.0
 	ranking_flow.flush()
 	score.reset()
@@ -1494,6 +1501,7 @@ func _read_colours(dt: float) -> void:
 	var es: String = str(e.state) if e != null else ""
 	if es == "AUTO_GRAB" and _easy_was != "AUTO_GRAB":
 		colour_reader.clear()  # a new catch: what was seen before is not this capsule
+		_colour_event("reset", "new_catch")
 	_easy_was = es
 	if not _reading_colours():
 		_sample_left = 0.0
@@ -1504,7 +1512,25 @@ func _read_colours(dt: float) -> void:
 	_sample_left = 1.0 / maxf(float(kinds.read.sample_hz), 0.5)
 	var img := _colour_frame()
 	if img != null:
-		colour_reader.add(str(CapsuleKinds.classify(img, kinds.read).kind))
+		var r := CapsuleKinds.classify(img, kinds.read)
+		r.at = colour_reader.clock
+		last_colour = r
+		colour_reader.add(str(r.kind))
+
+func _colour_event(what: String, detail: String) -> void:
+	colour_events.append([colour_reader.clock, what, detail])
+	while colour_events.size() > 12:
+		colour_events.remove_at(0)
+
+## #291: the colour reading now, for the probe: reading or not, the easy mode's state and
+## step, the votes (Reader.explain with this round's values), the last frame, the events.
+func colour_status() -> Dictionary:
+	var e = main.get("easy") if main != null else null
+	return {"active": _active, "phase": phase, "reading": _reading_colours(), "enabled": kinds_enabled,
+		"easy": easy_on(), "easy_state": str(e.state) if e != null else "", "easy_step": str(e.step) if e != null else "",
+		"clock": colour_reader.clock, "cleared_at": colour_reader.cleared_at, "memory_s": colour_reader.memory_s,
+		"votes": colour_reader.explain(int(kinds.read.min_votes), float(kinds.read.min_ratio)),
+		"last": last_colour, "events": colour_events.duplicate(), "last_kind": last_kind}
 
 ## One frame of the arm camera (null: none, or a headless run where nothing is drawn).
 func _colour_frame() -> Image:
@@ -1575,6 +1601,7 @@ func _take(l: Lane, cycle: int, late: bool) -> void:
 	# #266: what the arm camera saw of it: its kind (normal when nothing sure)
 	c.kind = decide_kind()
 	last_kind = c.kind
+	_colour_event("decided", c.kind)
 	colour_reader.clear()
 	_trace("capsule_kind", l, {"effect_id": c.kind})
 	l.t = absorb_s
