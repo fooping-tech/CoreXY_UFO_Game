@@ -36,6 +36,9 @@ var game_mode: GameModeController
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
+## #292: the score game stops by itself on a fault of the crane; the staff's recovery screen
+var robot_guard: RobotFaultGuard
+var recovery_panel: StaffRecoveryPanel
 ## #291: the capsule colour probe (カプセル色判定テスト); hidden and idle until opened
 var capsule_probe: CapsuleColourProbe
 ## the keys besides the polled jog (arrows, W / S) that work on the 校正 tab (#98)
@@ -302,6 +305,14 @@ func _ready() -> void:
 	settings.setup_tests(self)
 	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.closed.connect(_on_settings_closed)
+	robot_guard = RobotFaultGuard.new()
+	robot_guard.name = "RobotFaultGuard"
+	add_child(robot_guard)
+	robot_guard.setup(self)
+	recovery_panel = StaffRecoveryPanel.new()
+	recovery_panel.name = "StaffRecoveryPanel"
+	add_child(recovery_panel)
+	recovery_panel.setup(self, robot_guard)
 	capsule_probe = CapsuleColourProbe.new()  # #291: opened from the debug panel's カメラ tab
 	capsule_probe.name = "CapsuleColourProbe"
 	add_child(capsule_probe)
@@ -852,6 +863,8 @@ func _on_game_state_changed(_prev: String, cur: String) -> void:
 		shake.add_trauma(0.6)
 
 func _on_ws_ack(rid: String, ok: bool, data: Dictionary) -> void:
+	if robot_guard != null and robot_guard.on_ack(rid, ok, data):
+		return
 	if _on_recover_ack(rid, ok):
 		return
 	if rid != "" and rid == _auto_catch_rid:
@@ -1118,6 +1131,16 @@ func _handle_input(dt: float) -> void:
 			jog_hint = "タイトル画面ではアームを動かせない（モードを選んでから）"
 		if gesture.is_active():
 			gesture.stop("title")
+	# #292: the score game stopped on a fault of the crane: nothing moves it by hand until the
+	# staff recovered it (the recovery screen's buttons, the backend's gates)
+	# (the 校正 tab keeps its keys, as on the title; outside the score game the backend's
+	# own gates are left: the latch is the score game's)
+	if game_mode != null and game_mode.active() and game_mode.robot_fault_latched() and not calibrating():
+		halt = true
+		if kb != Vector3.ZERO:
+			jog_hint = "ロボットの異常で止まっています（スタッフ: F9 で ふっき）"
+		if gesture.is_active():
+			gesture.stop("robot_fault")
 	# the study mode's HELP / tidy-up owns the arm: no manual jog meanwhile (Space still stops it)
 	if study_mode != null and study_mode.blocks_manual_control():
 		halt = true
@@ -1295,6 +1318,21 @@ func recover_arm() -> bool:
 	# asked for when the alarm's clearing was answered, and not at all when the stop key came
 	# in between (review on #180)
 	_recover_clear_rid = ws.send_command("clear_alarm")
+	if easy.faulted():
+		easy.reset()
+	return true
+
+## A recovery command still without its answer (#292: the recovery screen waits for it).
+func recover_pending() -> bool:
+	return _recover_clear_rid != "" or _recover_prepare_rid != ""
+
+## #292: the preparation alone (calibration_prepare: the arm moves), when there is no alarm
+## to clear first. Same tracking as recover_arm (Space holds back a late start).
+func prepare_arm() -> bool:
+	if not bool(backend_link.call()) or arm_recovering() or recover_pending():
+		return false
+	debug_log.emit("recover: calibration_prepare")
+	_recover_prepare_rid = ws.send_command("calibration_prepare")
 	if easy.faulted():
 		easy.reset()
 	return true
@@ -1810,6 +1848,8 @@ func stop_key() -> void:
 	park_want = ""
 	_park_rid = ""
 	_tutorial_goto = {}  # nothing of the practice's carry is sent after a stop
+	if robot_guard != null:
+		robot_guard.on_stop_key()  # #292: a confirmation armed on the recovery screen is gone
 	if study_mode != null:
 		study_mode.on_stop_key()
 	if game_mode != null:
@@ -1829,6 +1869,18 @@ func stop_key() -> void:
 		ws.send_command("soft_stop")
 		if settings != null and settings.testing():
 			ws.send_command("devicehub_stop_all")  # the テスト tab: the peripherals too (#108)
+
+## #292: a fault of the crane stopped the score game: nothing more is asked of the crane by
+## this side (what Space ends too, without its soft_stop: RobotFaultGuard sends that itself,
+## once, and never on top of an alarm).
+func halt_motion_requests(why: String) -> void:
+	park_want = ""
+	_park_rid = ""
+	_tutorial_goto = {}
+	easy.on_stop()
+	_stop_recovery()
+	_jog_latched = _jog_input() != Vector3.ZERO  # keys held now must be let go first
+	gesture.stop(why)
 
 ## Review on #95: a settings field (camera name, serial port) would take Space as text, and
 ## the title does not end a running sequence (the auto catch), so Space must still stop.
@@ -1883,6 +1935,14 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# the score game's keys (Enter, the mock's Z / M); Space stays the stop
 		if game_mode != null and ev.keycode != KEY_SPACE and not text_entry_focused() \
 				and game_mode.handle_key(ev.keycode):
+			return
+		# #292 (review on #294): the score game stopped on a fault of the crane: no key of the
+		# crane either (the claw, the auto catch, the homework's keys): Space, the debug panel,
+		# the scope and the hand switch only. The staff's recovery screen is the way back.
+		if game_mode != null and game_mode.active() and game_mode.robot_fault_latched() and not calibrating() \
+				and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB, KEY_V, KEY_H]:
+			jog_hint = "ロボットの異常で止まっています（スタッフ: F9 で ふっき）"
+			debug_log.emit("key refused (robot fault latched): " + OS.get_keycode_string(ev.keycode))
 			return
 		match ev.keycode:
 			KEY_SPACE:

@@ -630,10 +630,61 @@ func today_best() -> int:
 ## choice to show), or why it is not and what is played instead.
 ## #275: why no game may start now: the easy mode is played and the backend would refuse its
 ## catch (not homed, an alarm, the motors off, the values not recorded, ...). "" = it may.
+## #292: a game stopped by a fault of the crane stays stopped (latched) until the staff
+## recovered the crane and said so: nothing starts meanwhile (Enter, T, a hand, F6 / F7).
 func start_blocked() -> String:
+	if robot_fault_latched():
+		return RobotFaultWatch.stop_line(str(robot_fault.category))
 	if demo or not easy_on() or main == null or not main.has_method("easy_blocker"):
 		return ""
 	return str(main.easy_blocker())
+
+# ------------------------------------------------------------------ the crane's faults (#292)
+## The fault that stopped the game ({} = none): category, code, message, error, at (the
+## time, text), unix, session, phase, capsule_risk; count (faults seen while latched, this one
+## included) and latest (the newest of them after the first: {} = none). The first fault's
+## own values stay: it is what stopped the round.
+## Kept across the score game's title and a reopen: only clear_robot_fault() ends it.
+var robot_fault := {}
+
+func robot_fault_latched() -> bool:
+	return not robot_fault.is_empty()
+
+## A fault of the crane while the game runs: the game stops once (as Space does: the clock,
+## the score, the Dials' STOP_ALL, nothing released or armed afterwards) and stays stopped.
+## Already latched: the cause is brought up to date, nothing stops twice. Returns true when
+## this stopped the game.
+func robot_halt(f: Dictionary) -> bool:
+	if robot_fault_latched():
+		robot_fault.count = int(robot_fault.get("count", 1)) + 1
+		robot_fault.latest = f.duplicate(true)
+		robot_fault.capsule_risk = bool(robot_fault.get("capsule_risk", false)) or bool(f.get("capsule_risk", false))
+		return false
+	if not running():
+		return false
+	robot_fault = f.duplicate(true)
+	robot_fault.count = 1
+	robot_fault.latest = {}
+	robot_fault.session = session
+	robot_fault.phase = phase
+	_trace("robot_fault", null, {"result": "%s %s: %s" % [f.get("category", ""), f.get("code", ""), f.get("message", "")]})
+	_halt("ロボットの異常: " + str(f.get("code", "")))
+	message = _fault_message()
+	return true
+
+func _fault_message() -> String:
+	return RobotFaultWatch.stop_line(str(robot_fault.get("category", ""))) + "（F9 で ふっき の画面）"
+
+## The staff recovered the crane and checked it (RobotFaultGuard verified the backend's state):
+## the latch ends and the score game's title waits for a new game. The stopped round is not
+## taken up again.
+func clear_robot_fault() -> void:
+	if not robot_fault_latched():
+		return
+	robot_fault = {}
+	if _active and phase == "STOPPED":
+		_set_phase("IDLE")
+	message = "ふっきしました。あたらしい ゲームを はじめられます"
 
 ## A start asked for while start_blocked(): nothing starts; the title says why (once a sound).
 func _refuse_start() -> bool:

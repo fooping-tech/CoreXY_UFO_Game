@@ -1183,3 +1183,315 @@ func _test_focus_calibrator() -> void:
 	RobotState.homed = keep[2]
 	RobotState.motors_enabled = keep[3]
 	RobotState.machine_state = keep[4]
+
+## #292: a backend state in robot_state's shape, all well
+static func _fine_state() -> Dictionary:
+	return {"link": true, "connected": true, "state": "IDLE", "homed": true, "motors_enabled": true, "error": "",
+		"z_servo_reset": false, "z_servo_power_cycle": false, "arm_servo_power_cycle": false, "easy_mode": {"state": "MANUAL_XY"},
+		"calibration_prepare": {}, "auto_catch": {}}
+
+## #292: what is a new fault of the crane (only changes), and what keeps it from a new game.
+func _test_robot_fault_watch() -> void:
+	var w := RobotFaultWatch.new()
+	var codes := func(found: Array) -> Array: return found.map(func(f): return "%s/%s" % [f.category, f.code])
+	var s := _fine_state()
+	var idle: bool = w.update(s).is_empty()  # not armed: nothing
+	w.arm(s)
+	var quiet: bool = w.update(s).is_empty()
+	s.state = "ALARM"
+	s.homed = false
+	s.error = "position lost"
+	var alarm: Array = codes.call(w.update(s))
+	var again: bool = w.update(s).is_empty()  # the same alarm reported again: not new
+	# a fault already there when armed is not new (the start's blockers keep that game from starting)
+	var w2 := RobotFaultWatch.new()
+	w2.arm(s)
+	var old_one: bool = w2.update(s).is_empty()
+	# servos: the firmware names the servo
+	var w3 := RobotFaultWatch.new()
+	var t := _fine_state()
+	w3.arm(t)
+	t.state = "ALARM"
+	t.error = "SERVO id=2 move timeout"
+	var claw: Array = codes.call(w3.update(t))
+	var w4 := RobotFaultWatch.new()
+	var u := _fine_state()
+	w4.arm(u)
+	u.z_servo_power_cycle = true
+	var zpc: Array = codes.call(w4.update(u))
+	# the easy mode's sequence fails without any alarm of the firmware (#269); a stop is not a fault
+	var w5 := RobotFaultWatch.new()
+	var e := _fine_state()
+	w5.arm(e)
+	e.easy_mode = {"state": "FAULT", "error": "servo id=1 no reply", "last_result": "fault"}
+	var easy_fault: Array = codes.call(w5.update(e))
+	var w6 := RobotFaultWatch.new()
+	var e2 := _fine_state()
+	w6.arm(e2)
+	e2.easy_mode = {"state": "FAULT", "error": "stopped", "last_result": "stopped"}
+	var stopped_quiet: bool = w6.update(e2).is_empty()
+	# homing and the motors lost, without an alarm
+	var w7 := RobotFaultWatch.new()
+	var h := _fine_state()
+	w7.arm(h)
+	h.homed = false
+	h.motors_enabled = false
+	var lost: Array = codes.call(w7.update(h))
+	# the link gone: only that (the rest of the state is old), once
+	var w8 := RobotFaultWatch.new()
+	var l := _fine_state()
+	w8.arm(l)
+	l.link = false
+	l.state = "ALARM"
+	var link: Array = codes.call(w8.update(l))
+	var link_once: bool = w8.update(l).is_empty()
+	var robot_gone := RobotFaultWatch.new()
+	var r := _fine_state()
+	robot_gone.arm(r)
+	r.connected = false
+	r.homed = false  # (what the backend resets with it is not another fault)
+	r.motors_enabled = false
+	var core2: Array = codes.call(robot_gone.update(r))
+	_ok(idle and quiet and alarm == ["corexy/alarm"] and again and old_one and claw == ["claw/alarm"] and zpc == ["z/z_servo_power_cycle"]
+		and easy_fault == ["z/easy_fault"] and stopped_quiet and lost == ["corexy/homing_lost", "corexy/motors_off"]
+		and link == ["link/link_lost"] and link_once and core2 == ["link/robot_disconnected"],
+		"robot fault #292: only new faults count (an alarm, a servo by its id, the easy sequence failing without an alarm, homing / motors lost, the link or the robot gone); the same one again, one there before, a stop or a busy are not",
+		"%s %s %s %s %s %s %s %s %s %s %s %s" % [idle, quiet, alarm, again, old_one, claw, zpc, easy_fault, stopped_quiet, lost, link, core2])
+	# what still keeps the crane from a new game, in order
+	var fine: bool = RobotFaultWatch.problems(_fine_state()).is_empty() and RobotFaultWatch.still(_fine_state())
+	var p := _fine_state()
+	p.state = "ALARM"
+	p.homed = false
+	p.motors_enabled = false
+	var al: Array = RobotFaultWatch.problems(p).map(func(x): return x.code)
+	p.state = "ESTOP"
+	var es: Array = RobotFaultWatch.problems(p).map(func(x): return x.code)
+	p.state = "IDLE"
+	p.arm_servo_power_cycle = true
+	var after_clear: Array = RobotFaultWatch.problems(p).map(func(x): return x.code)
+	var q := _fine_state()
+	q.easy_mode = {"state": "MANUAL_XY", "blockers": ["not homed"]}
+	var easy_bl: Array = RobotFaultWatch.problems(q, true).map(func(x): return x.code)
+	var easy_ignored: bool = RobotFaultWatch.problems(q, false).is_empty()
+	q.state = "MOVING_XY"
+	var moving: bool = not RobotFaultWatch.still(q) and RobotFaultWatch.problems(q)[0].code == "moving"
+	var gone := _fine_state()
+	gone.link = false
+	var no_link: bool = RobotFaultWatch.problems(gone).map(func(x): return x.code) == ["link"] and not RobotFaultWatch.still(gone)
+	_ok(fine and al == ["alarm"] and es == ["estop"] and after_clear == ["arm_power", "home", "motors"] and easy_bl == ["easy_blocker"]
+		and easy_ignored and moving and no_link,
+		"robot fault #292: what is left before a new game: the alarm / emergency stop first (homing waits for it), a servo's power, homing, the motors, a moving arm, the easy mode's blockers, the link",
+		"%s %s %s %s %s %s %s %s" % [fine, al, es, after_clear, easy_bl, easy_ignored, moving, no_link])
+
+## #292: a fault of the crane in the round: the game stops once and stays stopped; the staff's
+## screen; clearing, preparing (asked twice), Space between; a new game only after the
+## backend's state is checked; the mock is never stopped.
+func _test_robot_fault_stop(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var guard: RobotFaultGuard = game.robot_guard
+	var panel: StaffRecoveryPanel = game.recovery_panel
+	var tick := func(n := 2) -> void:
+		for i in n:
+			guard.tick(1.0 / 60.0)
+			ctl.tick(1.0 / 60.0)
+	var types := func() -> Array: return game.ws._pending.values().map(func(x): return str(x.type))
+	var answer := func(type: String, ok: bool, data := {}) -> String:
+		for rid in game.ws._pending.keys():
+			if str(game.ws._pending[rid].type) == type:
+				game.ws._pending.erase(rid)
+				var d: Dictionary = data.duplicate()
+				d.command = type
+				game.ws.ack.emit(str(rid), ok, d)
+				return str(rid)
+		return ""
+	# the mock: a round goes on whatever (the watch is not for the game's own crane)
+	_gm_playing(game)
+	RobotState.machine_state = "ALARM"
+	tick.call(5)
+	var mock_untouched: bool = ctl.phase == "PLAYING" and not ctl.robot_fault_latched() and not panel._banner.visible
+	RobotState.machine_state = "IDLE"
+	game.stop_key()
+	# the backend's robot (a stand-in link)
+	game.mock.enabled = false
+	RobotState.source = "websocket"
+	RobotState.connected = true
+	RobotState.motors_enabled = true
+	RobotState.homed = true
+	RobotState.machine_state = "IDLE"
+	RobotState.robot_error = ""
+	RobotState.easy_mode = {}
+	RobotState.calibration_prepare = {}
+	game.backend_link = func() -> bool: return true
+	game.ws._pending.clear()
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	tick.call(5)
+	game.ws.ack.emit("unknown-rid", false, {"command": "jog", "reason": "busy: another motion command is running"})
+	tick.call(5)
+	var normal: bool = ctl.phase == "PLAYING" and not ctl.robot_fault_latched() and types.call().is_empty()
+	# 1. an alarm in the round: stopped once, latched, nothing sent on top of the alarm
+	ctl.score.score = 1234
+	RobotState.machine_state = "ALARM"
+	RobotState.homed = false
+	RobotState.robot_error = "position lost"
+	tick.call(2)
+	var f: Dictionary = ctl.robot_fault
+	var halted: bool = ctl.phase == "STOPPED" and str(f.get("code")) == "alarm" and str(f.get("category")) == "corexy" \
+		and int(f.count) == 1 and str(f.phase) == "PLAYING" and guard.stop_state == "alarm" and not types.call().has("soft_stop") \
+		and ctl.message.contains("ゲーム停止") and ctl.message.contains("CoreXY")
+	panel.refresh()
+	var banner: bool = panel._banner.visible and panel._banner_label.text.contains("スタッフを呼んでください") and not panel.is_open()
+	tick.call(5)  # the same alarm again: nothing more
+	var once: bool = int(ctl.robot_fault.count) == 1
+	# 5. nothing starts it again: Enter, T, F6 / F7, the start itself, the practice
+	game._unhandled_input(_key(KEY_ENTER))
+	game._unhandled_input(_key(KEY_T))
+	game._unhandled_input(_key(KEY_F6))
+	game._unhandled_input(_key(KEY_F7))
+	ctl.start()
+	ctl.start_tutorial()
+	var held: bool = ctl.phase == "STOPPED" and ctl.robot_fault_latched() and ctl.start_blocked().contains("スタッフ")
+	# no key of the crane either (review on #294): the claw (Q / A / [ ]) and the auto catch (C)
+	game.ws._pending.clear()
+	for k in [KEY_Q, KEY_A, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_C]:
+		game._unhandled_input(_key(k))
+	held = held and types.call().is_empty() and game.jog_hint.contains("異常")
+	# the staff: F9 opens the screen (nothing sent); #291's capsule probe, if open, gives way to it
+	game.ws._pending.clear()
+	game.open_capsule_probe()
+	game._unhandled_input(_key(KEY_F9))
+	panel.refresh()
+	var opened: bool = panel.is_open() and types.call().is_empty() and panel._cause.text.contains("position lost") \
+		and panel._todo.text.contains("アラーム") and not game.capsule_probe_active() and panel.layer > game.capsule_probe.layer
+	# まとめて準備 asks twice; Space in between takes the first press back
+	var first := guard.prepare()
+	var armed: bool = first and guard.confirm_left > 0.0 and types.call().is_empty()
+	game.stop_key()
+	game.ws._pending.clear()
+	var space_off: bool = guard.confirm_left == 0.0
+	game._unhandled_input(_key(KEY_F9))  # F9 on the open screen = まとめて準備: armed again
+	var still_none: bool = types.call().is_empty() and guard.confirm_left > 0.0
+	game._unhandled_input(_key(KEY_F9))  # the second: clear_alarm, then (when answered) the preparation
+	var cleared_first: bool = types.call() == ["clear_alarm"]
+	var dup := guard.prepare()  # a third press while waiting: nothing
+	dup = guard.prepare() or dup
+	var no_dup: bool = types.call() == ["clear_alarm"]
+	answer.call("clear_alarm", true)
+	var prep_sent: bool = types.call() == ["calibration_prepare"]
+	RobotState.machine_state = "IDLE"
+	tick.call(2)
+	# 7. the alarm again while preparing: the cause is brought up to date, still stopped
+	RobotState.machine_state = "ALARM"
+	RobotState.robot_error = "limit x"
+	tick.call(2)
+	var again: bool = int(ctl.robot_fault.count) == 2 and str(ctl.robot_fault.latest.error) == "limit x" \
+		and str(ctl.robot_fault.error) == "position lost" and str(ctl.robot_fault.phase) == "PLAYING" and ctl.phase == "STOPPED" \
+		and StaffRecoveryPanel.cause_text(ctl.robot_fault, guard.stop_state).contains("limit x")
+	answer.call("calibration_prepare", false, {"reason": "alarm"})
+	# アラーム解除 alone moves nothing
+	game.ws._pending.clear()
+	var clear_ok := guard.clear_alarm()
+	var clear_only: bool = clear_ok and types.call() == ["clear_alarm"]
+	answer.call("clear_alarm", true)
+	var no_follow: bool = types.call().is_empty()  # (not the recovery chain: nothing moves after it)
+	RobotState.machine_state = "IDLE"
+	tick.call(2)
+	# what the staff's own steps change (the motors, homing) is not a new fault
+	RobotState.motors_enabled = false
+	tick.call(2)
+	RobotState.motors_enabled = true
+	tick.call(2)
+	no_follow = no_follow and int(ctl.robot_fault.count) == 2
+	# 6. not yet: the backend's answer still shows homing missing -> stays stopped
+	guard.finish()
+	var st_bad := _fine_state()
+	st_bad.erase("link")
+	st_bad.homed = false
+	answer.call("get_state", true, st_bad)
+	var refused: bool = ctl.robot_fault_latched() and not guard.action_ok and guard.action_note.contains("原点")
+	# prepared: homed, motors on; the backend's answer says so -> the latch ends, a new game only
+	RobotState.homed = true
+	RobotState.motors_enabled = true
+	RobotState.robot_error = ""
+	tick.call(2)
+	game._unhandled_input(_key(KEY_F9))  # the crane ready: F9 (the remote's RECOVER) is the check
+	var asked_state: bool = types.call() == ["get_state"]
+	var st_ok := _fine_state()
+	st_ok.erase("link")
+	var late: String = answer.call("get_state", true, st_ok)
+	var released: bool = asked_state and not ctl.robot_fault_latched() and ctl.phase == "IDLE" and guard.action_note.contains("ふっきした") \
+		and not panel.is_open()
+	var late_ignored: bool = not guard.on_ack(late, true, {})  # a late answer again: nothing
+	game._unhandled_input(_key(KEY_ENTER))
+	var new_game: bool = ctl.running() and ctl.score.score == 0
+	_ok(mock_untouched and normal and halted and banner and once and held and opened and armed and space_off and still_none
+		and cleared_first and not dup and no_dup and prep_sent and again and clear_only and no_follow and refused and released
+		and late_ignored and new_game,
+		"robot fault #292: an alarm in the round stops the game once (nothing sent on top of the alarm) and latches it: the banner, no start by Enter / T / F6 / F7; F9 opens the staff's screen, まとめて準備 is asked twice (Space takes it back), clear_alarm then the preparation, no double send; a new alarm updates the cause; the latch ends only when the backend's state shows the crane ready, and then a new game (score 0); the mock is never stopped",
+		"%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s | %s %s" % [mock_untouched, normal, halted, banner, once, held, opened, armed,
+			space_off, still_none, cleared_first, dup, no_dup, prep_sent, again, clear_only, no_follow, refused, released, new_game,
+			ctl.robot_fault, guard.action_note])
+	# 2. the easy sequence failing without an alarm: soft_stop once, confirmed by a sample after it
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	tick.call(3)
+	game.ws._pending.clear()
+	RobotState.easy_mode = {"state": "FAULT", "error": "servo id=2 did not reach", "last_result": "fault", "active": false}
+	tick.call(2)
+	var easy_halt: bool = ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "easy_fault" and str(ctl.robot_fault.category) == "claw" \
+		and types.call().count("soft_stop") == 1 and guard.stop_state == "requested"
+	tick.call(2)
+	var not_yet: bool = guard.stop_state == "requested"  # no sample since: not confirmed
+	RobotState.pose_updated.emit(0.0, 0.0, 0.0, "IDLE")
+	tick.call(1)
+	var confirmed: bool = guard.stop_state == "confirmed" and types.call().count("soft_stop") == 1
+	# recovered (a stand-in for the staff's steps) -> a new round; 3. the link lost: unconfirmed, nothing sent
+	RobotState.easy_mode = {}
+	tick.call(1)
+	guard.finish()
+	answer.call("get_state", true, _fine_state())
+	var back: bool = not ctl.robot_fault_latched()
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	tick.call(3)
+	game.ws._pending.clear()
+	game.backend_link = func() -> bool: return false
+	tick.call(2)
+	var link_halt: bool = ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "link_lost" and guard.stop_state == "unconfirmed" \
+		and types.call().is_empty() and StaffRecoveryPanel.cause_text(ctl.robot_fault, guard.stop_state).contains("停止未確認")
+	var no_move: bool = not guard.prepare() and guard.move_blocked().contains("バックエンド") and not guard.finish()
+	# the link back: the stop goes out once (a backend sequence may still run), not again
+	game.backend_link = func() -> bool: return true
+	tick.call(3)
+	var resent: bool = types.call().count("soft_stop") == 1
+	answer.call("soft_stop", true)
+	tick.call(3)
+	resent = resent and types.call().is_empty()
+	link_halt = link_halt and resent
+	# 3'. homing lost while playing (no alarm), stop never seen: unconfirmed after its time
+	tick.call(1)
+	guard.finish()
+	answer.call("get_state", true, _fine_state())
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	tick.call(3)
+	game.ws._pending.clear()
+	RobotState.homed = false
+	tick.call(2)
+	var homing_halt: bool = ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "homing_lost" and guard.stop_state == "requested"
+	tick.call(int(RobotFaultGuard.STOP_CONFIRM_S * 60.0) + 5)
+	var unconfirmed: bool = guard.stop_state == "unconfirmed"
+	_ok(easy_halt and not_yet and confirmed and back and link_halt and no_move and homing_halt and unconfirmed,
+		"robot fault #292: the easy sequence failing without an alarm stops the game with one soft_stop, confirmed only by a state after it; the link lost stops it with nothing sent (stop unconfirmed, the arm may not be moved); homing lost too, unconfirmed when no state shows the stop",
+		"%s %s %s %s %s %s %s %s %s" % [easy_halt, not_yet, confirmed, back, link_halt, no_move, homing_halt, unconfirmed, ctl.robot_fault])
+	ctl.robot_fault = {}
+	game.ws._pending.clear()
+	RobotState.easy_mode = {}
+	RobotState.calibration_prepare = {}
+	RobotState.robot_error = ""
+	RobotState.machine_state = "IDLE"
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.motors_enabled = false
+	RobotState.homed = false
+	_gm_free(game, rs)

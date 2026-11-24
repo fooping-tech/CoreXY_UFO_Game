@@ -52,6 +52,7 @@ description: >
 | 学習支援 AI（#104） | backend `study/tutor_adapter.py`（provider `tutor`）, `study_mode/navigation.py`（ずれ → mm、範囲の確認、XY → u, v）, `study_mode/explain.py::navigate_of`, `websocket/server.py::_homework_navigate`, `study_services.gd::navigate_help`, `study_mode_controller.gd`（`MAX_NAV`）, `tools/check_tutor_api.py`, `tools/calibrate_focus.py` | `docs/study_mode.md` §8。解説だけ（`study.explain_provider`）。`homework_navigate` は動かさず u, v を返すだけで、動かすのは既存の段階撮影。60 mm・2 回・アームが戻ってから・Space で取り消し。トークン・証明書は `config/secrets/`（Git に入れない）、先端カメラの校正は `calibration.json` の `focus_camera`。実機未検証 |
 | USB カメラ・スコープ | `camera/camera_hub.gd`, `camera/scope_trigger.gd`, `ui/scope_view.gd`, `shaders/camera_feed.gdshader`, `main.gd::_update_scope` | README「USB カメラとスコープ」。mac の feed は YCbCr 2 面で、テクスチャの実体が途中で差し替わる（変換マテリアルに毎フレーム設定し直す）。映像は表示専用 |
 | スタッフ操作（#260、F6〜F10） | `game/scripts/game/staff_control.gd`（`StaffControl`: next / skip / menu / recover / switch / stop。画面ごとの意味は `describe`、実行は `run`）, `main.gd::_unhandled_input`（画面のキーより先に通す。Shift は開発者用） | `docs/staff_operations.md`。新しいスタッフ向けの操作は画面ごとのキーを足さず、この 6 つの意味に入れる。外部デバイスも `run()` を呼ぶだけにする。アームが動くのは recover だけ（既存の clear_alarm → calibration_prepare）。スタッフ用リモコン M5StopWatch（UFO-DeviceHub 0x30）は `input/staff_remote.gd`（`StaffRemote`）: `devicehub_event` の STAFF_ACTION → `run()`、REMOTE_INPUT → `hand_control` として `GestureControl` へ（カメラの手と同じゲート・ラッチ。来ている間はカメラの手を使わない）。`main.gd::_on_remote_message / feed_remote_hand` |
+| スコアゲームのクレーン異常での自動停止（#292） | `game_mode/robot_fault_watch.gd`（`RobotFaultWatch`: 変化だけを異常とみなす・`problems`）, `game/robot_fault_guard.gd`（`RobotFaultGuard`: 停止・確認・スタッフの操作）, `ui/staff_recovery_panel.gd`, `game_mode_controller.gd::robot_halt / robot_fault / clear_robot_fault`, `main.gd::halt_motion_requests / prepare_arm`, `staff_control.gd::_recover` | `docs/game_mode_spec.md` §9。ラッチはバックエンドの `get_state` の返事で確かめてからだけ外す（ACK だけで復旧扱いにしない）。アラームの上に命令を足さない。`soft_stop` は 1 回だけ。まとめて準備は 2 回押し。模擬とデモでは見ない。実機未検証 |
 | テスト | `game/tests/run_tests.gd`（実行順）と `game/tests/test_*.gd`（分野ごと）, `backend/tests/conftest.py` | [references/testing.md](references/testing.md), `docs/test_report.md` |
 
 パスの省略: ゲーム側は `game/scripts/`、バックエンド側（`serial_service/` など）は `backend/src/corexy_ufo_backend/` からの相対。
@@ -149,13 +150,13 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 626 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 630 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
 #   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 608 件）
+# Python バックエンド（基準 609 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 

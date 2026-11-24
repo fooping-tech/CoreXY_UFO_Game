@@ -11,7 +11,8 @@ extends RefCounted
 ##   skip     F7   all of it: the practice left out, the score game started without it, the
 ##                study mode ended and on to the score game
 ##   menu     F8   back to the menu (the title)
-##   recover  F9   the arm out of an alarm / without homing: the alarm cleared, then the
+##   recover  F9   (#292: after a fault stopped the score game: its recovery screen, then
+##                its まとめて準備, pressed twice) the arm out of an alarm / without homing: the alarm cleared, then the
 ##                preparation (the 校正 tab's 「準備をまとめて実行」; the arm moves), and the easy
 ##                mode out of its stop
 ##   switch   F10  the study mode <-> the score game (from the menu, 校正 or the crane: the study)
@@ -60,6 +61,13 @@ func describe(action: String) -> String:
 		"menu":
 			return "" if s == "title" else "メニューへ もどる"
 		"recover":
+			# #292: the score game stopped on a fault: the recovery screen, then its preparation
+			if main.get("robot_guard") != null and main.robot_guard.latched():
+				if not main.recovery_panel.is_open():
+					return "ふっきの画面を ひらく"
+				if main.robot_guard.link_ok() and main.robot_guard.problems().is_empty():
+					return "かくにんして あたらしい ゲームへ"
+				return "まとめて準備（もう一度で アームが動く）" if main.robot_guard.confirm_left <= 0.0 else "まとめて準備を はじめる（アームが動く）"
 			if main.arm_recovering():
 				return ""
 			if main.arm_recovery_reason() != "":
@@ -119,6 +127,8 @@ func run(action: String, source := "key") -> String:
 	return what
 
 func _menu(s: String) -> bool:
+	if main.get("recovery_panel") != null and main.recovery_panel.is_open():
+		main.recovery_panel.close()  # #292: the staff's screen closes too (the latch stays)
 	match s:
 		"title":
 			return false
@@ -129,6 +139,13 @@ func _menu(s: String) -> bool:
 	return true
 
 func _recover() -> bool:
+	# #292: latched after a fault of the crane: the first press opens the recovery screen, the
+	# next ones are its まとめて準備 (asked twice: the arm moves)
+	if main.get("robot_guard") != null and main.robot_guard.latched():
+		if not main.recovery_panel.is_open():
+			main.recovery_panel.open()
+			return true
+		return main.robot_guard.next_step()
 	if main.recover_arm():
 		return true
 	if main.easy != null and main.easy.faulted():
