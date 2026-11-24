@@ -844,6 +844,8 @@ func _build_cameras() -> void:
 	_button(hb, "Scope open/close (V)", func(): main.scope_trigger.toggle())
 	_button(hb, "Scope: ON/OFF", func(): main.scope_enabled = not main.scope_enabled)
 	_slider("scope_zoom", "Scope zoom", 1.0, 4.0, main.scope.zoom, 0.1, func(v): main.scope.zoom = v)
+	# #291: why the arm camera's frame is (not) a capsule colour; sends nothing
+	_button(_vbox, "カプセル色判定テスト", func(): main.open_capsule_probe())
 	hub.feeds_changed.connect(_refresh_camera_options)
 	_refresh_camera_options()
 

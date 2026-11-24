@@ -36,6 +36,8 @@ var game_mode: GameModeController
 ## The title screen (#90): study mode or game mode at start; Esc comes back to it
 var title: TitleScreen
 var settings: SettingsScreen
+## #291: the capsule colour probe (カプセル色判定テスト); hidden and idle until opened
+var capsule_probe: CapsuleColourProbe
 ## the keys besides the polled jog (arrows, W / S) that work on the 校正 tab (#98)
 const CALIBRATION_KEYS := [KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_Q, KEY_A]
 var scope: ScopeView
@@ -300,6 +302,10 @@ func _ready() -> void:
 	settings.setup_tests(self)
 	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.closed.connect(_on_settings_closed)
+	capsule_probe = CapsuleColourProbe.new()  # #291: opened from the debug panel's カメラ tab
+	capsule_probe.name = "CapsuleColourProbe"
+	add_child(capsule_probe)
+	capsule_probe.setup(self)
 	GameState.state_changed.connect(_on_game_state_changed)
 	ws.ack.connect(_on_ws_ack)
 	get_viewport().size_changed.connect(_layout)
@@ -408,6 +414,14 @@ func show_title() -> void:
 	title.open()
 
 ## The gear on the title (#93). Only over the title: the arm is held meanwhile.
+## #291: the capsule colour probe. It never sends anything; the round (if any) goes on.
+func open_capsule_probe() -> void:
+	if capsule_probe != null:
+		capsule_probe.open()
+
+func capsule_probe_active() -> bool:
+	return capsule_probe != null and capsule_probe.active()
+
 func open_settings() -> void:
 	if not title_active() or settings.active():
 		return
@@ -1043,6 +1057,8 @@ func _handle_input(dt: float) -> void:
 	var xy_speed := powerup_xy_speed(real)
 	_sync_jog_boost(real)
 	var keys := _latched_jog_input()
+	if capsule_probe_active():
+		keys = Vector3.ZERO  # #291: the probe covers the screen; the keys never move the arm behind it
 	var kb := Vector3.ZERO
 	if keys != Vector3.ZERO:
 		var xy := jog_velocity(Vector2(keys.x, keys.y), xy_speed)
@@ -1819,7 +1835,7 @@ func stop_key() -> void:
 ## _input runs before the GUI; the space is typed too (stopping again is harmless).
 func _input(ev: InputEvent) -> void:
 	if ev is InputEventKey and ev.pressed and not ev.echo and ev.keycode == KEY_SPACE \
-			and settings_active() and text_entry_focused():
+			and (settings_active() or capsule_probe_active()) and text_entry_focused():
 		stop_key()
 
 func _unhandled_input(ev: InputEvent) -> void:
@@ -1845,6 +1861,11 @@ func _unhandled_input(ev: InputEvent) -> void:
 			staff.run(staff_action, "key")
 			return
 		if ev.shift_pressed and _developer_key(ev.keycode):
+			return
+		# #291: the capsule probe takes every key but the stop and the debug panel; Esc closes it
+		if capsule_probe_active() and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
+			if ev.keycode == KEY_ESCAPE and not text_entry_focused():
+				capsule_probe.close()
 			return
 		if settings_active() and not claw_key and not ev.keycode in [KEY_SPACE, KEY_F1, KEY_TAB]:
 			settings.handle_key(ev.keycode)

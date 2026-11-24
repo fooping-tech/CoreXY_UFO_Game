@@ -100,12 +100,43 @@ static func color_of(kind: String, fallback: Color) -> Color:
 	return COLORS.get(kind, fallback)
 
 # ------------------------------------------------------------------ the colour of one frame
+## Why a frame is (or is not) a colour (#291: the probe shows these; the game only uses "kind").
+##   ok         one colour, sure enough
+##   no_frame   no picture to read (no camera, a failed read)
+##   dull       nothing in the ROI is saturated and bright enough
+##   hue        saturated, bright pixels, but none in a colour's hue range
+##   small      the leading colour covers less than min_share of the ROI
+##   dominance  the leading colour is not dominance times the next one
+const REASONS := {"ok": "判定できた", "no_frame": "カメラ未取得", "dull": "彩度・明度不足", "hue": "色相不一致",
+	"small": "面積不足", "dominance": "優勢度不足"}
+## what each looked-at pixel was, in classify()'s `samples` (#291: the probe's mask)
+const SAMPLE_LOW_SAT := 0
+const SAMPLE_LOW_VAL := 1
+const SAMPLE_HUE_MISS := 2
+const SAMPLE_KIND := {"fire": 3, "water": 4, "green": 5}
+const HUE_BINS := 36
+
 ## Which colour fills the ROI of `img`: {"kind": "fire" / "water" / "green" / "", "share": the
 ## winner's share of the looked-at pixels, "counts": {kind: pixels}}. "" = no colour sure
 ## enough (too little of it, or two colours close together). Every step-th pixel is looked
 ## at (about 80 across), so a whole camera frame costs little.
-static func classify(img: Image, cfg := {}) -> Dictionary:
-	var out := {"kind": "", "share": 0.0, "counts": {"fire": 0, "water": 0, "green": 0}}
+##
+## #291: it also says why (the probe shows it; the game reads only "kind"):
+##   reason     a key of REASONS
+##   roi        the ROI in pixels (Rect2i), roi_pixels its area, step, looked (the pixels looked at)
+##   low_sat / low_val   looked-at pixels left out as too grey / too dark (sat is checked first)
+##   hue_miss   saturated, bright pixels in no colour's hue range
+##   shares     {kind: its pixels / looked} (the left-out pixels are in the denominator)
+##   best / second, best_n / second_n   the two leading colours
+##   share_ok / dominance_ok   min_share and dominance met
+## and with `detail` (the probe only, it costs a little more):
+##   samples    PackedByteArray, cols x rows, one SAMPLE_* value per looked-at pixel (row major)
+##   hue_hist   HUE_BINS counts of the hues of the saturated, bright pixels
+static func classify(img: Image, cfg := {}, detail := false) -> Dictionary:
+	var out := {"kind": "", "share": 0.0, "counts": {"fire": 0, "water": 0, "green": 0}, "reason": "no_frame",
+		"roi": Rect2i(), "roi_pixels": 0, "step": 1, "looked": 0, "low_sat": 0, "low_val": 0, "hue_miss": 0,
+		"shares": {"fire": 0.0, "water": 0.0, "green": 0.0}, "best": "", "second": "", "best_n": 0, "second_n": 0,
+		"share_ok": false, "dominance_ok": false}
 	if img == null or img.is_empty():
 		return out
 	var c: Dictionary = READ.duplicate(true)
@@ -118,15 +149,36 @@ static func classify(img: Image, cfg := {}) -> Dictionary:
 	var x1 := clampi(int(w * (float(roi[0]) + float(roi[2]))), x0 + 1, w)
 	var y1 := clampi(int(h * (float(roi[1]) + float(roi[3]))), y0 + 1, h)
 	var step := maxi(1, (x1 - x0) / 80)
+	out.roi = Rect2i(x0, y0, x1 - x0, y1 - y0)
+	out.roi_pixels = (x1 - x0) * (y1 - y0)
+	out.step = step
 	var looked := 0
+	var low_sat := 0
+	var low_val := 0
+	var hue_miss := 0
 	var counts: Dictionary = out.counts
 	var hues: Dictionary = c.hues
+	var min_sat := float(c.min_sat)
+	var min_val := float(c.min_val)
+	var samples := PackedByteArray()
+	var hist := PackedInt32Array()
+	if detail:
+		hist.resize(HUE_BINS)
 	for y in range(y0, y1, step):
 		for x in range(x0, x1, step):
 			looked += 1
 			var p := img.get_pixel(x, y)
-			if p.s < float(c.min_sat) or p.v < float(c.min_val):
+			if p.s < min_sat or p.v < min_val:
+				if p.s < min_sat:
+					low_sat += 1
+				else:
+					low_val += 1
+				if detail:
+					samples.append(SAMPLE_LOW_SAT if p.s < min_sat else SAMPLE_LOW_VAL)
 				continue
+			if detail:
+				hist[mini(int(p.h * HUE_BINS), HUE_BINS - 1)] += 1
+			var got := ""
 			for kind in hues.keys():
 				var r: Array = hues[kind]
 				var lo := float(r[0])
@@ -134,24 +186,55 @@ static func classify(img: Image, cfg := {}) -> Dictionary:
 				var hit := (p.h >= lo or p.h <= hi) if lo > hi else (p.h >= lo and p.h <= hi)
 				if hit:
 					counts[kind] = int(counts.get(kind, 0)) + 1
+					got = kind
 					break
+			if got == "":
+				hue_miss += 1
+			if detail:
+				samples.append(SAMPLE_KIND.get(got, SAMPLE_HUE_MISS))
+	out.looked = looked
+	out.low_sat = low_sat
+	out.low_val = low_val
+	out.hue_miss = hue_miss
+	if detail:
+		out.samples = samples
+		out.cols = (x1 - x0 + step - 1) / step
+		out.rows = (y1 - y0 + step - 1) / step
+		out.hue_hist = hist
 	if looked == 0:
 		return out
 	var best := ""
 	var best_n := 0
+	var second := ""
 	var second_n := 0
 	for kind in counts.keys():
 		var n := int(counts[kind])
+		out.shares[kind] = float(n) / looked
 		if n > best_n:
+			second = best
 			second_n = best_n
 			best_n = n
 			best = kind
 		elif n > second_n:
+			second = kind
 			second_n = n
 	var share := float(best_n) / looked
 	out.share = share
-	if best != "" and share >= float(c.min_share) and best_n >= float(c.dominance) * second_n:
+	out.best = best
+	out.second = second
+	out.best_n = best_n
+	out.second_n = second_n
+	out.share_ok = best != "" and share >= float(c.min_share)
+	out.dominance_ok = best != "" and best_n >= float(c.dominance) * second_n
+	if out.share_ok and out.dominance_ok:
 		out.kind = best
+		out.reason = "ok"
+	elif best == "":
+		out.reason = "dull" if low_sat + low_val == looked else "hue"
+	elif not out.share_ok:
+		out.reason = "small"
+	else:
+		out.reason = "dominance"
 	return out
 
 ## The frames' votes while one capsule hangs in front of the camera.
@@ -162,6 +245,8 @@ class Reader:
 	var clock := 0.0
 	## only the votes of this many seconds back count
 	var memory_s := 20.0
+	## #291: when the votes were last started over (the clock; -1 = never)
+	var cleared_at := -1.0
 
 	func advance(dt: float) -> void:
 		clock += dt
@@ -173,29 +258,61 @@ class Reader:
 
 	func clear() -> void:
 		votes.clear()
+		cleared_at = clock
 
-	## How many frames saw `kind` (any colour: "*") in the memory.
+	## How many frames saw `kind` (any colour: "*"; no colour: "") in the memory.
 	func count(kind := "*") -> int:
 		var n := 0
 		for v in votes:
-			if clock - float(v[1]) <= memory_s and str(v[0]) != "" and (kind == "*" or str(v[0]) == kind):
+			if clock - float(v[1]) > memory_s:
+				continue
+			var k := str(v[0])
+			if (kind == "" and k == "") or (k != "" and (kind == "*" or k == kind)):
 				n += 1
 		return n
 
 	## The kind of the capsule: the colour most frames saw, when at least min_votes saw it and
 	## it is min_ratio of the frames that saw any colour; else "normal".
 	func decide(min_votes: int, min_ratio: float) -> String:
+		return str(explain(min_votes, min_ratio).kind)
+
+	## decide() and why (#291): {"kind", "reason" ("ok" / "no_votes" / "few_votes" / "ratio"),
+	## "counts" {kind: frames}, "none" (frames with no colour), "any", "best", "best_n",
+	## "ratio" (best_n / any), "votes_ok", "ratio_ok", "first_at" (the oldest vote counted; -1)}
+	func explain(min_votes: int, min_ratio: float) -> Dictionary:
 		var any := count()
 		var best := "normal"
 		var best_n := 0
+		var counts := {}
 		for kind in ["fire", "water", "green"]:
 			var n := count(kind)
+			counts[kind] = n
 			if n > best_n:
 				best_n = n
 				best = kind
-		if best_n < maxi(min_votes, 1) or any <= 0 or float(best_n) / any < min_ratio:
-			return "normal"
-		return best
+		var first := -1.0
+		for v in votes:
+			if clock - float(v[1]) <= memory_s:
+				first = float(v[1])
+				break
+		var ratio := float(best_n) / any if any > 0 else 0.0
+		var out := {"kind": "normal", "counts": counts, "none": count(""), "any": any, "best": best if best_n > 0 else "",
+			"best_n": best_n, "ratio": ratio, "votes_ok": best_n >= maxi(min_votes, 1), "ratio_ok": any > 0 and ratio >= min_ratio,
+			"first_at": first}
+		if any <= 0:
+			out.reason = "no_votes"
+		elif not out.votes_ok:
+			out.reason = "few_votes"
+		elif not out.ratio_ok:
+			out.reason = "ratio"
+		else:
+			out.reason = "ok"
+			out.kind = best
+		return out
+
+## Why the votes made the capsule normal (#291).
+const VOTE_REASONS := {"ok": "確定", "no_votes": "色を見たフレームがない", "few_votes": "票数不足（min_votes）",
+	"ratio": "割合不足（min_ratio）"}
 
 # ------------------------------------------------------------------ the pictures
 ## The kind's sprite sheet (null for normal, or when it cannot be loaded: the plain capsule
