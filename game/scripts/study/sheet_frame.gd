@@ -75,11 +75,15 @@ static func region_around(place: Rect2, margin := PLACE_MARGIN) -> Rect2:
 	return place.abs().grow_individual(place.size.x * margin, place.size.y * margin,
 		place.size.x * margin, place.size.y * margin).intersection(Rect2(0, 0, 1, 1))
 
-## Whether `part` is used for an image of `size` (a region too small sends the whole frame).
+## Whether `part` is used for an image of `size` (a region too small sends the whole frame: under
+## MIN_REGION_PX, or (#298, review on #300) narrower or shorter than the server's roi minimum, so
+## the request, what is shown and `to_frame` all fall back to the whole frame together).
 static func region_px(size: Vector2i, part: Rect2) -> Rect2i:
 	var sz := Vector2(size)
 	var r := Rect2i(Rect2(part.position * sz, part.size * sz).abs()).intersection(Rect2i(Vector2i.ZERO, size))
-	if part.has_area() and r.size.x >= MIN_REGION_PX and r.size.y >= MIN_REGION_PX:
+	var min_w := maxi(MIN_REGION_PX, ceili(size.x * (ROI_MIN + 1) / 1000.0))
+	var min_h := maxi(MIN_REGION_PX, ceili(size.y * (ROI_MIN + 1) / 1000.0))
+	if part.has_area() and r.size.x >= min_w and r.size.y >= min_h:
 		return r
 	return Rect2i(Vector2i.ZERO, size)
 

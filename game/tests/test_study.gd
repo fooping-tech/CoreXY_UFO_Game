@@ -993,7 +993,15 @@ func _test_sheet_roi(rs: Node) -> void:
 	var none := SheetFrame.request(img, 90, Rect2())
 	var tiny := SheetFrame.roi_of(Vector2i(400, 300), 0, Rect2(0, 0, 0.04, 0.5))  # 16 px: the whole frame
 	var thin := SheetFrame.roi_of(Vector2i(4000, 3000), 0, Rect2(0, 0, 0.04, 0.5))  # 40 of 1000: under the server's 50
-	_ok(bad.is_empty() and (none.roi as Array).is_empty() and none.shown == none.image and tiny.is_empty() and thin.is_empty()
+	# (review on #300) a region under the server's minimum falls back to the whole frame everywhere:
+	# what is sent, what is shown and the way back to the frame (HELP's arm target)
+	var narrow := Rect2(0.3, 0.2, 0.04, 0.5)  # 51 px of 1280: past MIN_REGION_PX, under 50/1000
+	var big_frame := Image.create(1280, 960, false, Image.FORMAT_RGB8)
+	var nreq := SheetFrame.request(big_frame, 0, narrow)
+	var same_way: bool = (nreq.roi as Array).is_empty() and (nreq.shown as Image).get_size() == Vector2i(1280, 960) \
+		and SheetFrame.prepare(big_frame, 0, narrow).get_size() == Vector2i(1280, 960) \
+		and SheetFrame.to_frame(Vector2(0.5, 0.5), 0, narrow, Vector2i(1280, 960)).is_equal_approx(Vector2(0.5, 0.5))
+	_ok(same_way and bad.is_empty() and (none.roi as Array).is_empty() and none.shown == none.image and tiny.is_empty() and thin.is_empty()
 		and SheetFrame.roi_of(Vector2i(400, 300), 0, part) == [250, 100, 750, 900]
 		and SheetFrame.roi_of(Vector2i(400, 300), 90, part) == [100, 250, 900, 750],
 		"sheet roi: the whole frame goes upright with the region as roi (0..1000 of it, turned with it), the very part the game shows; none / too small = no roi",
@@ -1134,6 +1142,15 @@ func _test_sheet_roi(rs: Node) -> void:
 	hw.cameras = real_cams
 	hw.link = real_link
 	hw.state = "stopped"
+	# (review on #300) a new session sends its first picture even when it is the one sent last
+	hw.sheet_gate.sample(img, 300.0)
+	hw.sheet_gate.mark_sent()
+	var was_same := hw.sheet_gate.same_as_sent()
+	hw.start()
+	var fresh := not hw.sheet_gate.same_as_sent()
+	hw.stop()
+	_ok(was_same and fresh, "sheet roi: a new watch session forgets the picture sent in the last one",
+		str([was_same, fresh]))
 	spy.free()
 	cams.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

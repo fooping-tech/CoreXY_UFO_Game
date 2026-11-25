@@ -181,6 +181,7 @@ func start() -> void:
 	session_id = "homework-%d-%d" % [Time.get_ticks_msec(), randi()]
 	_started_ms = Time.get_ticks_msec()
 	_stopped_elapsed = 0.0
+	sheet_gate.forget_sent()  # #298 (review on #300): a new session sends its first picture, same or not
 	progress_pct = NAN
 	last_pct = NAN
 	held_reason = ""
