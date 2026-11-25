@@ -65,6 +65,7 @@ var shown: Array[String] = []
 var _title: Label
 var _sub: Label
 var _cards: Array[Control] = []
+var _dots: Array[CapsuleDot] = []
 var _index := -1
 var _hop_t := 0.0
 
@@ -72,6 +73,7 @@ func _ready() -> void:
 	position = RECT.position
 	size = RECT.size
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # the capsules' pixel art
 	_title = StudyHud.label("", 40, YELLOW, 6)
 	_sub = StudyHud.label("", 24, INK, 4)
 	for l in [_title, _sub]:
@@ -125,6 +127,10 @@ func tick(dt: float) -> void:
 	scene_t += dt
 	_animate(dt)
 	queue_redraw()
+	if scene == "colours":
+		for dot in _dots:
+			dot.t = scene_t
+			dot.queue_redraw()
 	var done_min: bool = scene_t >= float(min_s.get(scene, 3.0)) and not bool(speech_busy.call())
 	if (done_min and _scene_settled()) or scene_t >= float(max_s.get(scene, 15.0)):
 		_next()
@@ -213,7 +219,7 @@ func _draw() -> void:
 			var c := Vector2(size.x * 0.5, 360.0)
 			var pulse := 0.5 + 0.5 * sin(scene_t * 4.0)
 			draw_circle(c, 120.0 + pulse * 10.0, Color(col, 0.18))
-			_capsule(c, 70.0, col)
+			_capsule(c, 70.0, kind, scene_t)
 			for i in 8:  # sparkles round it
 				var a := scene_t * 0.9 + TAU * i / 8.0
 				var q := c + Vector2(cos(a), sin(a)) * 170.0
@@ -238,16 +244,22 @@ func _draw() -> void:
 				draw_rect(Rect2(g - Vector2(70, 0), Vector2(140, 40)), gc, false, 3.0)
 				var pts := (str(JACKPOT_POINTS) if chance else "1000") if centre else "100"
 				_text(pts, g + Vector2(0, 58), 26, gc)
-			_capsule(ball + o, 18.0, col)
+			_capsule(ball + o, 18.0, kind, scene_t)
 			if jackpot_shown:
 				var t := clampf(scene_t, 0.0, 3.0)
 				_text("JACKPOT +%d" % JACKPOT_POINTS, Vector2(size.x * 0.5, GOAL_Y - 130.0 + o.y - t * 8.0), 54, YELLOW)
 
-## A capsule: a ball of its colour, a shine and a dark rim.
-func _capsule(c: Vector2, r: float, col: Color) -> void:
-	draw_circle(c, r + 3.0, Color(0.02, 0.02, 0.08))
-	draw_circle(c, r, col)
-	draw_circle(c + Vector2(-r * 0.35, -r * 0.35), r * 0.3, Color(1, 1, 1, 0.7))
+## A capsule of radius `r`: the kind's own animated sprite, the same one the field draws
+## (CapsuleKinds.draw, #266), or a plain ball for normal / a missing sprite.
+func _capsule(c: Vector2, r: float, k: String, t: float) -> void:
+	draw_capsule(self, c, r, k, t)
+
+static func draw_capsule(ci: CanvasItem, c: Vector2, r: float, k: String, t: float) -> void:
+	if CapsuleKinds.draw(ci, k, c, r / (PinballField.CAPSULE_R + 1.0), t, 0.0, false):
+		return
+	ci.draw_circle(c, r + 3.0, Color(0.02, 0.02, 0.08))
+	ci.draw_circle(c, r, color_of(k))
+	ci.draw_circle(c + Vector2(-r * 0.35, -r * 0.35), r * 0.3, Color(1, 1, 1, 0.7))
 
 func _text(t: String, centre: Vector2, fsize: int, col: Color) -> void:
 	var font := get_theme_default_font()
@@ -288,7 +300,8 @@ func _card(k: String) -> Control:
 		ball = q
 	else:
 		var dot := CapsuleDot.new()
-		dot.color = color_of(k)
+		dot.kind = k
+		_dots.append(dot)
 		dot.custom_minimum_size = Vector2(64, 64)
 		ball = dot
 	row.add_child(ball)
@@ -306,12 +319,9 @@ func _card(k: String) -> Control:
 	card.visible = false
 	return card
 
-## The capsule drawn on a card (a ball with a shine).
+## The capsule drawn on a card: its kind's sprite, animated by `t`.
 class CapsuleDot extends Control:
-	var color := Color.WHITE
+	var kind := "normal"
+	var t := 0.0
 	func _draw() -> void:
-		var c := size * 0.5
-		var r := minf(size.x, size.y) * 0.42
-		draw_circle(c, r + 3.0, Color(0.02, 0.02, 0.08))
-		draw_circle(c, r, color)
-		draw_circle(c + Vector2(-r * 0.35, -r * 0.35), r * 0.3, Color(1, 1, 1, 0.7))
+		PracticeShow.draw_capsule(self, size * 0.5, minf(size.x, size.y) * 0.38, kind, t)
