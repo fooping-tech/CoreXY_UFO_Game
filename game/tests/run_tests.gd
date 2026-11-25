@@ -79,6 +79,7 @@ func _ready() -> void:
 	_s.study._test_study_check_on_found_and_dialog(rs)
 	_s.study._test_study_answer_check(rs)
 	_s.study._test_study_real_print_problems(rs)
+	_s.study._test_study_check_reuses_found_reading(rs)
 	_s.study._test_study_power_items(rs)
 	_s.study._test_study_scenery(rs)
 	_s.study._test_study_real_print_not_the_sample(rs)
