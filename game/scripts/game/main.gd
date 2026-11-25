@@ -304,6 +304,7 @@ func _ready() -> void:
 	settings.setup_calibration(self)
 	settings.setup_tests(self)
 	settings.setup_sheet(self)  # #230: the プリント tab
+	settings.missing_check = crane_missing  # #308: asked about when the screen closes after 校正
 	settings.closed.connect(_on_settings_closed)
 	robot_guard = RobotFaultGuard.new()
 	robot_guard.name = "RobotFaultGuard"
@@ -953,6 +954,8 @@ func _jog_input() -> Vector3:
 			_unfocused_logged = true
 		return d  # keys of an unfocused window must not keep the robot moving
 	_unfocused_logged = false
+	if settings != null and settings.confirm_showing():
+		return Vector3.ZERO  # #308: the close question shows: no key moves the arm (Space still stops)
 	var zsign := 1.0 if GameConfig.robot().z_up_is_positive else -1.0
 	if text_entry_focused():
 		# typing (the Study question): arrows move the caret, W / S are letters
@@ -1247,6 +1250,37 @@ static func crane_blocker_for(connected: bool, z_reference: bool, z_calibrated: 
 	if not missing.is_empty():
 		return "%sが まだ（校正タブ 2 で きろく: かかりの ひとへ）" % "・".join(missing)
 	return ""
+
+## #308: what the score game still needs of the real crane, item by item (crane_blocker's
+## conditions, all of them at once): [] = nothing, not the real crane, or not known yet.
+func crane_missing() -> Array[String]:
+	if RobotState.source != "websocket" or str(ws.server_robot) != "real":
+		return []
+	return crane_missing_for(RobotState.connected, RobotState.z_reference_set, RobotState.z_calibrated,
+		RobotState.easy_mode)
+
+static func crane_missing_for(connected: bool, z_reference: bool, z_calibrated: bool, easy_status: Dictionary) -> Array[String]:
+	var out: Array[String] = []
+	if not connected:
+		out.append("ロボットとの接続")
+		return out
+	if not z_reference:
+		out.append("Z の基準（前回の上下を呼び出す か 上を記録）")
+	if not z_calibrated:
+		out.append("Z の上と下")
+	var bl = easy_status.get("blockers")
+	for b in bl if bl is Array else []:
+		var r := str(b).to_lower()
+		var item := ""
+		if r.contains("dial 1 drop point is not recorded"):
+			item = "ポータルの XY"
+		elif r.contains("release height is not recorded") or r.contains("measured again"):
+			item = "投入の高さ"
+		elif r.contains("z bottom") and z_calibrated:
+			item = "Z の下"
+		if item != "" and not out.has(item):
+			out.append(item)
+	return out
 
 ## The easy mode is on: the score game is open with difficulty easy and it is usable.
 func easy_wanted() -> bool:
@@ -1943,7 +1977,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		# the settings and the title screens take every key but the stop (Space) and the
 		# debug panel (F1 / Tab); typing in a settings field never gets here
 		# the 校正 tab lets the claw keys through to the match below (#98)
-		var claw_key: bool = calibrating() and ev.keycode in CALIBRATION_KEYS
+		var claw_key: bool = calibrating() and not settings.confirm_showing() and ev.keycode in CALIBRATION_KEYS
 		if ev.keycode == KEY_F11:  # full screen / a window, in any screen
 			fullscreen_override = "off" if fullscreen_wanted() else "on"
 			apply_window_mode()

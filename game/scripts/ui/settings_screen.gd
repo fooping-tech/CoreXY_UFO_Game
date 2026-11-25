@@ -34,6 +34,15 @@ var _save_b: Button
 const CALIBRATION_TAB := 1
 const TEST_TAB := 2
 const SHEET_TAB := 3
+## #308: closing after the 校正 tab was shown asks first when the score game still lacks some of
+## the crane's calibration: missing_check() -> the items missing ([] = nothing; set by main.gd)
+var missing_check: Callable
+var _calibration_seen := false
+var _confirm: Control
+var _confirm_text: Label
+var _confirm_saved := false
+## the question shown last (tests)
+var confirm_message := ""
 var _list: VBoxContainer
 ## #126: each schema section is a card (as on the 校正 tab); rows go in the current one
 var _box: VBoxContainer
@@ -130,7 +139,75 @@ func setup() -> void:
 	_save_b = _button("保存", func(): save())
 	_save_b.custom_minimum_size = Vector2(160, 0)
 	buttons.add_child(_save_b)
+	_build_confirm()
 	visible = false
+
+## #308: "まだ … の設定ができていません。閉じてよいですか？" over the screen (hidden).
+func _build_confirm() -> void:
+	_confirm = Control.new()
+	_confirm.name = "CloseConfirm"
+	_confirm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_confirm.mouse_filter = Control.MOUSE_FILTER_STOP
+	_confirm.visible = false
+	root.add_child(_confirm)
+	var shade := ColorRect.new()
+	shade.color = Color(0.0, 0.0, 0.0, 0.55)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_confirm.add_child(shade)
+	var centre := CenterContainer.new()
+	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_confirm.add_child(centre)
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", CalibrationPanel.card_style())
+	centre.add_child(card)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	card.add_child(box)
+	box.add_child(StudyHud.label("校正がまだ終わっていません", 26, PanelKit.BAD, 4))
+	_confirm_text = PanelKit.wrapped(box, "", 20, Color.WHITE, 3, INNER_W - 60.0)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 14)
+	box.add_child(row)
+	row.add_child(_button("校正をつづける（Esc）", keep_calibrating))
+	var close_b := _button("閉じる（Enter）", confirm_close)
+	close_b.custom_minimum_size = Vector2(180, 0)
+	row.add_child(close_b)
+
+func confirm_showing() -> bool:
+	return _confirm != null and _confirm.visible
+
+## The question, when closing now should be asked about (true = shown, the screen stays open).
+func _ask_before_close(saved: bool) -> bool:
+	if not _calibration_seen or not missing_check.is_valid():
+		return false
+	var missing: Array = missing_check.call()
+	if missing.is_empty():
+		return false
+	var lines := ""
+	for m in missing:
+		lines += "\n・" + str(m)
+	confirm_message = "まだ次の設定ができていません:%s\n\nこのままでは、スコアゲームを始められません。閉じてよいですか？" % lines
+	_confirm_text.text = confirm_message
+	_confirm_saved = saved
+	_confirm.visible = true
+	get_viewport().gui_release_focus()
+	return true
+
+## 閉じる on the question: closed as asked (saved: the settings were written already).
+func confirm_close() -> void:
+	if not confirm_showing():
+		return
+	_confirm.visible = false
+	_close(_confirm_saved)
+
+## 校正をつづける: back to the 校正 tab, the screen stays.
+func keep_calibrating() -> void:
+	if _confirm != null:
+		_confirm.visible = false
+	show_tab(CALIBRATION_TAB)
 
 ## The 校正 tab (#98): needs main (the robot link, the cameras, the arm's keys).
 func setup_calibration(main: Node) -> void:
@@ -192,6 +269,7 @@ func _on_tab_changed(i: int) -> void:
 	_status.text = ""
 	_status.add_theme_color_override("font_color", YELLOW)
 	if cal and calibration != null:
+		_calibration_seen = true
 		calibration.opened()
 	if i == TEST_TAB and tests != null:
 		tests.opened()
@@ -306,16 +384,25 @@ func open() -> void:
 	_status.text = ""
 	if not GameConfig.local_warnings.is_empty():
 		_status.text = "使わなかった設定があります: " + GameConfig.local_warnings[0]
+	if _confirm != null:
+		_confirm.visible = false
 	show_tab(0)  # the settings first; the arm moves only once 校正 is picked
 	_on_tab_changed(0)
+	_calibration_seen = tabs.current_tab == CALIBRATION_TAB
 	visible = true
 
 func cancel() -> void:
-	if not visible:
+	if not visible or confirm_showing():
 		return
+	if _ask_before_close(false):
+		return
+	_close(false)
+
+func _close(saved: bool) -> void:
 	get_viewport().gui_release_focus()
+	_calibration_seen = false
 	visible = false
-	closed.emit(false)
+	closed.emit(saved)
 
 ## The form back to game_config.json's values (saved only with 保存).
 func reset_defaults() -> void:
@@ -329,9 +416,8 @@ func save() -> String:
 	if err != "":
 		_status.text = "保存できません: " + err
 		return err
-	get_viewport().gui_release_focus()
-	visible = false
-	closed.emit(true)
+	if not _ask_before_close(true):  # saved: the question only asks about closing
+		_close(true)
 	return ""
 
 func form_values() -> Dictionary:
@@ -385,6 +471,12 @@ func _mark(key: String) -> void:
 
 ## Keys while it shows (main.gd keeps Space and F1 / Tab): Esc closes without saving.
 func handle_key(keycode: int) -> bool:
+	if confirm_showing():  # #308: the question takes the keys while it shows
+		if keycode == KEY_ESCAPE:
+			keep_calibrating()
+		elif keycode in [KEY_ENTER, KEY_KP_ENTER]:
+			confirm_close()
+		return true
 	if keycode == KEY_ESCAPE:
 		cancel()
 	return true
