@@ -1553,12 +1553,23 @@ func _test_study_check_reuses_found_reading(rs: Node) -> void:
 	sv.graded_image = null
 	sv.grade(true, true)
 	_study_pump(game, 3.0, func(): return not got.is_empty())
-	var rescan_reads: bool = sv.graded_image != pic
+	# no reader here: the rescan falls back to the watch's reading, and its marks go with its own picture
+	var rescan_reads: bool = sv.graded_image == pic and not got.is_empty()
+	# review on #307: the reader refused after a newer frame was taken: the watch's reading again
+	# with its own picture (never its boxes on the newer one); with no picture, no boxes
+	sv.graded_image = Image.create(40, 30, false, Image.FORMAT_RGB8)
+	got.clear()
+	sv._on_graded_by_reader(false, {"reason": "test"})
+	var fallback_pic: bool = sv.graded_image == pic and got.size() == 2 and got[0].has("answer_box")
+	sv.last_answers_image = null
+	got.clear()
+	sv._on_graded_by_reader(false, {"reason": "test"})
+	var no_pic_no_boxes: bool = sv.graded_image == null and got.size() == 2 and not got[0].has("answer_box")
 	sv.graded.disconnect(on_graded)
 	ctl.stop()
-	_ok(ok_now == "" and reused and changed == "changed" and newer == "newer_frame" and no_boxes == "no_boxes" and rescan_reads,
-		"study #306: the check right after the print is found takes the reading that found it (once, its picture and boxes); a changed picture, a newer frame, no boxes or a rescan read again",
-		str([ok_now, reused, changed, newer, no_boxes, rescan_reads]))
+	_ok(ok_now == "" and reused and changed == "changed" and newer == "newer_frame" and no_boxes == "no_boxes" and rescan_reads and fallback_pic and no_pic_no_boxes,
+		"study #306: the check right after the print is found takes the reading that found it (once, its picture and boxes); a changed picture, a newer frame, no boxes or a rescan read again; the watch's reading as a fallback keeps its own picture",
+		str([ok_now, reused, changed, newer, no_boxes, rescan_reads, fallback_pic, no_pic_no_boxes]))
 	remove_child(game)
 	game.free()
 	rs.clear_samples()

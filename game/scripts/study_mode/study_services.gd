@@ -487,8 +487,7 @@ func grade(rescan := false, reuse := false) -> void:
 		_after(1.5, func(): if tok == _grade_token: graded.emit(out))
 		return
 	if reuse and not rescan and reusable_reading() == "":
-		graded_image = last_answers_image
-		var got := last_answers.duplicate(true)
+		var got := watch_answers()
 		trace("answer check: the reading that found the print (no second reading)")
 		_after(0.3, func(): if tok == _grade_token: graded.emit(got))
 		return
@@ -540,9 +539,21 @@ func _grade_send(tok: int) -> void:
 			_grade_rid = ""
 	_grade_from_watch(tok)
 
+## The watch's last reading for the check (#306, review): its boxes go with the picture it was
+## read from (graded_image), never on another picture; with no picture, no boxes.
+func watch_answers() -> Array:
+	graded_image = last_answers_image
+	var out := last_answers.duplicate(true)
+	if graded_image == null:
+		for a in out:
+			if a is Dictionary:
+				a.erase("box")
+				a.erase("answer_box")
+	return out
+
 ## Otherwise: what the watch read last.
 func _grade_from_watch(tok: int) -> void:
-	var got := last_answers.duplicate(true)
+	var got := watch_answers()
 	_after(0.5, func():
 		if tok != _grade_token:
 			return
@@ -560,7 +571,7 @@ func _on_graded_by_reader(ok: bool, payload: Dictionary) -> void:
 		var why := str(payload.get("reason", "?"))
 		trace("answer check: the reader refused: " + why)
 		if not last_answers.is_empty():  # what the watch read last is better than nothing
-			graded.emit(last_answers.duplicate(true))
+			graded.emit(watch_answers())
 		else:
 			grade_failed.emit("プリントを読めませんでした（%s）" % why)
 		return
