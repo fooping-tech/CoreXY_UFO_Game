@@ -63,13 +63,15 @@ def test_repo_dry_run_values_are_usable_and_the_real_ones_are_refused():
     real = EasyParams.from_raw(cfg.raw, "real", None)
     errs = real.problems(ac.real, cfg.limits)
     assert any("Dial 1" in e for e in errs) and not any("Dial 2" in e for e in errs) and any("release height" in e for e in errs)
-    # measured but not confirmed is still refused; confirmed is taken
-    saved = {"dial_1": {"x": 10, "y": 50}, "release_z": 60, "catch_z": 30}
-    assert any("not confirmed" in e for e in EasyParams.from_raw(cfg.raw, "real", saved).problems(ac.dry_run, cfg.limits))
-    assert EasyParams.from_raw(cfg.raw, "real", {**saved, "confirmed": True}).problems(ac.dry_run, cfg.limits) == []
+    # #299: what is recorded is used (no confirmation); the catch height is not read from the file
+    # (it is the Z bottom: the server sets it), an older file's "confirmed": false changes nothing
+    saved = {"dial_1": {"x": 10, "y": 50}, "release_z": 60, "catch_z": 30, "confirmed": False}
+    read = EasyParams.from_raw(cfg.raw, "real", saved)
+    assert read.catch_z is None and read.confirmed and any("Z bottom" in e for e in read.problems(ac.dry_run, cfg.limits))
+    assert dataclasses.replace(read, catch_z=0.0).problems(ac.dry_run, cfg.limits) == []
     # #200: a Dial 2 saved by an older version is not read and changes nothing
-    old = EasyParams.from_raw(cfg.raw, "real", {**saved, "dial_2": {"x": 9999, "y": 50}, "confirmed": True})
-    assert old.problems(ac.dry_run, cfg.limits) == [] and list(old.dials) == [1]
+    old = EasyParams.from_raw(cfg.raw, "real", {**saved, "dial_2": {"x": 9999, "y": 50}})
+    assert dataclasses.replace(old, catch_z=0.0).problems(ac.dry_run, cfg.limits) == [] and list(old.dials) == [1]
 
 
 @pytest.mark.parametrize("over, reason", [
@@ -588,16 +590,18 @@ def _at(robot, x=None, y=None, z=None) -> None:
             robot.pos[i] = robot.target[i] = v
 
 
-async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
+async def test_real_robot_is_refused_until_measured(tmp_path):
     srv, robot, cfg = await _real_server(tmp_path)
     r = await srv.execute("easy_grab", {})
     assert r["type"] == "nack" and "Dial 1 drop point is not recorded" in r["data"]["reason"]
-    assert "the catch height is not recorded" in r["data"]["reason"]
-    # recording: where the arm is now, saved unconfirmed; confirming needs all four
+    assert "release height is not recorded" in r["data"]["reason"]
+    # #299: the catch height is the Z bottom (Z has both records here: 0 = 下), never recorded apart
+    assert srv.easy.easy.catch_z == 0.0
+    # recording: where the arm is now (#299: used as recorded, no confirmation step)
     assert (await srv.execute("easy_dial_set", {"which": "nowhere"}))["type"] == "nack"
     _at(robot, 15.0, 90.0)
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
-    assert r["type"] == "ack" and r["data"]["dials"]["dial_1"] == [15.0, 90.0] and not r["data"]["dials"]["confirmed"]
+    assert r["type"] == "ack" and r["data"]["dials"]["dial_1"] == [15.0, 90.0]
     r = await srv.execute("easy_dial_set", {"which": "dial_2"})  # #200: there is no Dial 2 to record
     assert r["type"] == "nack" and "dial_2" not in json.loads(cfg.easy_dials_path.read_text())
     robot.z_reference_set = False
@@ -606,28 +610,25 @@ async def test_real_robot_is_refused_until_measured_and_confirmed(tmp_path):
     robot.z_reference_set = True
     _at(robot, z=60.0)
     r = await srv.execute("easy_dial_set", {"which": "release_z"})
-    assert r["type"] == "ack" and r["data"]["dials"]["release_z"] == 60.0
-    r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "nack" and "catch height" in r["data"]["reason"]
-    _at(robot, z=25.0)
-    assert (await srv.execute("easy_dial_set", {"which": "catch_z"}))["type"] == "ack"
+    assert r["type"] == "ack" and r["data"]["dials"]["release_z"] == 60.0 and r["data"]["problems"] == []
+    # a catch height of its own is not recorded any more; the confirmation is gone
+    r = await srv.execute("easy_dial_set", {"which": "catch_z"})
+    assert r["type"] == "nack" and "Z の下" in r["data"]["reason"]
+    assert (await srv.execute("easy_dial_confirm", {}))["type"] == "nack"
     saved = json.loads(cfg.easy_dials_path.read_text())
-    assert saved["dial_1"] == {"x": 15.0, "y": 90.0} and "dial_2" not in saved and saved["confirmed"] is False and saved["catch_z"] == 25.0
-    assert saved["z_counts_per_unit"] == 90.0 and saved["saved_at"]
-    r = await srv.execute("easy_grab", {})
-    assert r["type"] == "nack" and "not confirmed" in r["data"]["reason"]  # recorded is not yet watched
-    r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "ack" and r["data"]["dials"]["confirmed"] and r["data"]["problems"] == []
-    # the catch's profile is built from the measurements: the top as the travel height, the
-    # recorded heights, the descent bounded by exactly what was recorded
+    assert saved["dial_1"] == {"x": 15.0, "y": 90.0} and "dial_2" not in saved and "confirmed" not in saved
+    assert "catch_z" not in saved and saved["z_counts_per_unit"] == 90.0 and saved["saved_at"]
+    # the catch's profile is built from the measurements: the top as the travel height, the bottom
+    # as the catch height, the recorded release height, the descent bounded by exactly the Z range
     p = srv.easy.params
-    assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 25.0 and p.release_z == 60.0 and p.z_floor == 25.0
-    assert p.max_drop_units == 76.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == 9000.0  # #194
-    # a change after the confirmation takes it back; an older version's Dial 2 leaves the file with it
-    cfg.easy_dials_path.write_text(json.dumps({**json.loads(cfg.easy_dials_path.read_text()), "dial_2": {"x": 375.0, "y": 90.0}}))
+    assert p.profile == "real" and p.safe_z == 100.0 and p.catch_z == 0.0 and p.release_z == 60.0 and p.z_floor == 0.0
+    assert p.max_drop_units == 101.0 and all(p.confirmed.values()) and p.xy_feed_mm_min == 9000.0  # #194
+    # an older version's Dial 2, catch height and confirmation leave the file with the next record
+    cfg.easy_dials_path.write_text(json.dumps({**json.loads(cfg.easy_dials_path.read_text()), "dial_2": {"x": 375.0, "y": 90.0},
+                                               "catch_z": 25.0, "confirmed": False}))
     r = await srv.execute("easy_dial_set", {"which": "dial_1"})
-    assert r["type"] == "ack" and not r["data"]["dials"]["confirmed"]
-    assert "dial_2" not in json.loads(cfg.easy_dials_path.read_text())
+    assert r["type"] == "ack" and r["data"]["problems"] == []
+    assert not {"dial_2", "catch_z", "confirmed"} & set(json.loads(cfg.easy_dials_path.read_text()))
     assert (await srv.execute("easy_dial_set", {"which": "clear"}))["data"]["dials"]["dial_1"] is None
 
 
@@ -640,7 +641,7 @@ async def test_the_last_sessions_values_are_used_without_recording_again(tmp_pat
     st = (await srv.execute("easy_status", {}))["data"]
     assert st["problems"] == [] and st["dials"]["confirmed"] and st["dials"]["saved_at"] == "2026-11-17T10:00:00"
     note = srv._easy_prepare_note()
-    assert note.startswith("前回の値を使う") and "X 15" in note and "Dial 2" not in note and "キャッチ Z 25.0" in note
+    assert note.startswith("前回の値を使う") and "X 15" in note and "Dial 2" not in note and "キャッチ Z 0.0（下）" in note
     # and the real profile really runs with them (the mock stands in for the crane)
     robot.arm_marks = {"closed": 0.0, "open": -120.0}
     _at(robot, 120.0, 100.0, 100.0)
@@ -678,14 +679,10 @@ async def test_heights_recorded_before_z_was_measured_again_are_stale(tmp_path):
     older = {k: v for k, v in SAVED.items() if k != "z_counts_per_unit"}
     srv2, _, _ = await _real_server(tmp_path, older)
     assert (await srv2.execute("easy_status", {}))["data"]["dials"]["stale_z"]
-    # recording one height again drops the other old one; both again, then confirmed: usable
-    _at(robot, z=30.0)
-    r = await srv.execute("easy_dial_set", {"which": "catch_z"})
-    assert r["type"] == "ack" and r["data"]["dials"]["release_z"] is None and not r["data"]["dials"]["stale_z"]
+    # #299: only the release height is recorded again (the catch height is the bottom): usable
     _at(robot, z=65.0)
-    assert (await srv.execute("easy_dial_set", {"which": "release_z"}))["type"] == "ack"
-    r = await srv.execute("easy_dial_confirm", {})
-    assert r["type"] == "ack" and r["data"]["problems"] == []
+    r = await srv.execute("easy_dial_set", {"which": "release_z"})
+    assert r["type"] == "ack" and not r["data"]["dials"]["stale_z"] and r["data"]["problems"] == []
 
 
 async def test_the_preparation_says_whether_the_easy_values_are_in_use(tmp_path):

@@ -1,6 +1,8 @@
-"""GameServer's commands for the easy mode's Dial drop point and heights (#169): recorded on the
-machine, saved in calibration.json#easy_dials and used only once confirmed. Only easy_goto
-(the practice's demonstration) moves the robot, as an ordinary move_xy."""
+"""GameServer's commands for the easy mode's Dial drop point and release height (#169): recorded
+on the machine and saved in calibration.json#easy_dials. #299: recorded in the 校正 tab's "Z の上下と
+原点復帰" with the Z top and bottom, used as recorded (no confirmation step), and the catch height
+is the Z bottom itself. Only easy_goto (the practice's demonstration) moves the robot, as an
+ordinary move_xy."""
 
 from __future__ import annotations
 
@@ -37,10 +39,14 @@ class EasyCalibrationMixin:
         raw = self.backend_cfg.raw if self.backend_cfg is not None else {}
         saved = self._easy_saved() if profile == "real" else None
         easy = EasyParams.from_raw(raw, profile, saved)
-        if profile == "real" and saved is not None and (easy.catch_z is not None or easy.release_z is not None):
-            # the recorded heights are in the Z units of the calibration they were recorded with
+        if profile == "real":
             import dataclasses
-            easy = dataclasses.replace(easy, stale_z=self._height_z_changed(saved))
+            # #299: the catch goes down to the Z bottom record (0 = 下): known once Z has both records
+            lim = self._easy_limits
+            bottom = (lim.z_min if lim.z_up_is_positive else lim.z_max) if self._z_counts_per_unit() is not None else None
+            # the recorded release height is in the Z units of the calibration it was recorded with
+            stale = saved is not None and easy.release_z is not None and self._height_z_changed(saved)
+            easy = dataclasses.replace(easy, catch_z=bottom, stale_z=stale)
         return easy
 
     def _easy_catch(self, easy: EasyParams):
@@ -92,13 +98,13 @@ class EasyCalibrationMixin:
         if not self.robot.is_real:
             return "skip: 仮想クレーン（模擬の値を使う）"
         if self._easy_saved() is None:
-            return "skip: まだ記録していない（かんたんモードを使うときだけ、校正タブの 8 で）"
+            return "skip: まだ記録していない（かんたんモードを使うときだけ、校正タブの 2 で）"
         self._easy_refresh()
         problems = self.easy.problems()
         if problems:
             return "skip: まだ使えない: " + problems[0]
         e = self.easy.easy
-        return "前回の値を使う（Dial 1 X %.0f / Y %.0f、キャッチ Z %.1f、投入 Z %.1f）" % (
+        return "前回の値を使う（ポータル X %.0f / Y %.0f、キャッチ Z %.1f（下）、投入 Z %.1f）" % (
             *e.dials[1], e.catch_z, e.release_z)
 
     def _easy_write(self, name: str, saved: dict) -> dict:
@@ -110,8 +116,8 @@ class EasyCalibrationMixin:
         return self._ack(name, self._easy_status())
 
     def _easy_dial_set(self, params: dict) -> dict:
-        """The 校正 tab: where the arm is now = a Dial's drop point (XY) or the release height (Z).
-        Saved unconfirmed: every change is watched on the machine again before it is used."""
+        """The 校正 tab: where the arm is now = the portal's (Dial 1's) drop point (XY) or the release
+        height (Z). #299: used as recorded; the catch height is the Z bottom (not recorded here)."""
         name = "easy_dial_set"
         if not self.robot.is_real or self._easy_path is None or self._easy_fixed is not None:
             return self._nack(name, "仮想クレーンでは模擬の値（game_mode.easy.dry_run）を使う。実機でだけ記録する")
@@ -120,6 +126,8 @@ class EasyCalibrationMixin:
         which = str(params.get("which", ""))
         saved = dict(self._easy_saved() or {})
         saved.pop("dial_2", None)  # #200: an older version's Dial 2 is not kept in the file
+        saved.pop("catch_z", None)  # #299: the catch height is the Z bottom
+        saved.pop("confirmed", None)  # #299: no confirmation step
         s = self.robot.snapshot()
         if which == "clear":
             saved = {}
@@ -133,7 +141,9 @@ class EasyCalibrationMixin:
             if not (math.isfinite(s.x) and math.isfinite(s.y) and self.easy.limits.xy_inside(s.x, s.y)):
                 return self._nack(name, f"XY ({s.x:.1f},{s.y:.1f}) outside the soft limits")
             saved[which] = {"x": round(float(s.x), 2), "y": round(float(s.y), 2)}
-        elif which in ("release_z", "catch_z"):
+        elif which == "catch_z":
+            return self._nack(name, "キャッチの高さは Z の下と同じ（「ここを下に記録」で決まる）")
+        elif which == "release_z":
             if not s.connected:
                 return self._nack(name, "robot not connected")
             if not s.z_reference_set:
@@ -142,37 +152,11 @@ class EasyCalibrationMixin:
                 return self._nack(name, f"the arm is moving ({s.state}): wait until it stops")
             if self._z_counts_per_unit() is None:
                 return self._nack(name, "Z の上と下を両方記録してから（Z の 1 単位が何 cm か分からない）")
-            if saved and self._height_z_changed(saved) and (saved.get("release_z") is not None
-                                                             or saved.get("catch_z") is not None):
-                # the other height was recorded in the old Z units: it is recorded again too
-                saved.pop("release_z", None)
-                saved.pop("catch_z", None)
             saved[which] = round(float(s.z), 2)
             saved["z_counts_per_unit"] = self._z_counts_per_unit()  # what these Z values mean
         else:
-            return self._nack(name, "which must be dial_1, release_z, catch_z or clear")
+            return self._nack(name, "which must be dial_1, release_z or clear")
         if which != "clear":
             saved["saved_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-        saved["confirmed"] = False
-        log.info("easy mode's drop points saved (not confirmed yet): %s", saved)
+        log.info("easy mode's drop points saved: %s", saved)
         return self._easy_write(name, saved)
-
-    def _easy_dial_confirm(self, params: dict) -> dict:
-        """A person watched the arm over the Dial at the release height: the values may be used."""
-        name = "easy_dial_confirm"
-        if not self.robot.is_real or self._easy_path is None or self._easy_fixed is not None:
-            return self._nack(name, "仮想クレーンでは模擬の値（game_mode.easy.dry_run）を使う。実機でだけ確かめる")
-        if self.easy.active:
-            return self._nack(name, "busy: the easy mode is catching / carrying")
-        saved = self._easy_saved()
-        if saved is None:
-            return self._nack(name, "まだ記録していない（Dial 1 の位置と投入の高さ）")
-        on = params.get("confirmed") is not False
-        if on:
-            self._easy_refresh()
-            # everything but the confirmation itself
-            errs = self.easy.easy.problems(self.easy.params, self.easy.limits, need_confirmed=False)
-            if errs:
-                return self._nack(name, "このままでは使えない: " + "; ".join(errs))
-        log.info("easy mode's drop points %s", "confirmed" if on else "unconfirmed")
-        return self._easy_write(name, {**saved, "confirmed": on})

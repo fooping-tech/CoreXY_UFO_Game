@@ -1335,6 +1335,7 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	# the backend's robot (a stand-in link)
 	game.mock.enabled = false
 	RobotState.source = "websocket"
+	game.ws.server_robot = "mock"  # #299: a backend that said which crane it runs (the real one has its own start check)
 	RobotState.connected = true
 	RobotState.motors_enabled = true
 	RobotState.homed = true
@@ -1511,6 +1512,7 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	RobotState.robot_error = ""
 	RobotState.machine_state = "IDLE"
 	RobotState.source = "mock"
+	game.ws.server_robot = ""
 	RobotState.connected = false
 	RobotState.motors_enabled = false
 	RobotState.homed = false

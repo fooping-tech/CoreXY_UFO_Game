@@ -1208,6 +1208,46 @@ func easy_blocker() -> String:
 		return ""
 	return EasyModeControl.refusal_text(str(bl[0]))
 
+## #299: what the real crane needs before any score game (easy or not): the Z top and bottom
+## (the Z reference this power-on and the measured scale), the portal's XY and the release height
+## (the catch height is the bottom). "" = it has them (or this is not the real crane). While the
+## backend's easy status has not come yet, nothing starts either (never "" by default).
+func crane_blocker() -> String:
+	if RobotState.source != "websocket":
+		return ""
+	# review on #301: which crane the backend runs is told by its hello (and forgotten on a
+	# disconnect): until then nothing starts; only a backend that said it is not the real one is free
+	var robot := str(ws.server_robot)
+	if robot == "":
+		return "ロボットの じょうたいを かくにんちゅう…（バックエンドに つながるのを まっています）"
+	if robot != "real":
+		return ""
+	return crane_blocker_for(RobotState.connected, RobotState.z_reference_set, RobotState.z_calibrated,
+		RobotState.easy_mode)
+
+static func crane_blocker_for(connected: bool, z_reference: bool, z_calibrated: bool, easy_status: Dictionary) -> String:
+	if not connected:
+		return "ロボットに つながっていない（かかりの ひとへ）"
+	if not z_reference:
+		return "アームの たかさが まだ きまっていない（校正タブ 2: 前回の上下を呼び出す か うえを きろく）"
+	if not z_calibrated:
+		return "Z の うえと したが まだ（校正タブ 2: うえと したを きろく）"
+	var bl = easy_status.get("blockers")
+	if not bl is Array:
+		return "ロボットの じょうたいを かくにんちゅう…"
+	var missing: Array[String] = []
+	for b in bl:
+		var r := str(b).to_lower()
+		if r.contains("dial 1 drop point is not recorded"):
+			missing.append("ポータルの XY")
+		elif r.contains("release height is not recorded") or r.contains("measured again"):
+			missing.append("とうにゅうの たかさ")
+		elif r.contains("z bottom"):
+			missing.append("Z の した")
+	if not missing.is_empty():
+		return "%sが まだ（校正タブ 2 で きろく: かかりの ひとへ）" % "・".join(missing)
+	return ""
+
 ## The easy mode is on: the score game is open with difficulty easy and it is usable.
 func easy_wanted() -> bool:
 	if game_mode == null:

@@ -92,9 +92,9 @@ easy_cancel {grab_id} (only while that catch waits for its destination, once): t
 where it is and the run ends (last_result "cancelled"); nothing is carried. Nothing chosen within
 game_mode.easy.wait_destination_s: the run ends EXPIRED with the claw still closed (nothing
 moved, nothing released, no ABORT). The Dial's drop point of the real crane: easy_dial_set
-{which: dial_1 (the arm's XY now) | release_z | catch_z (its Z now) | clear} saves
-them unconfirmed in calibration.json#easy_dials, easy_dial_confirm {confirmed} after a person
-watched a test; unrecorded or unconfirmed = easy_grab refused on the real robot. The saved
+{which: dial_1 (the arm's XY now: the portal) | release_z (its Z now) | clear} saves them in
+calibration.json#easy_dials (#299: no confirmation step; the catch height is the Z bottom
+record); unrecorded = easy_grab refused on the real robot. The saved
 values are the next session's too (no recording again), unless Z was measured again since.
 The preparation (calibration_prepare) ends with a step that says whether they are in use.
 
@@ -687,8 +687,6 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                 return await self._easy_goto(params)
             if name == "easy_dial_set":
                 return self._easy_dial_set(params)
-            if name == "easy_dial_confirm":
-                return self._easy_dial_confirm(params)
             if name == "study_cleanup_status":
                 return self._ack(name, self.cleanup.status())
             if name == "study_cleanup_start":
