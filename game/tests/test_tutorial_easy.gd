@@ -498,16 +498,18 @@ func _test_easy_mode_game(rs: Node) -> void:
 	# the practice shows the difficulty that is played
 	var easy_steps := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", PinchJoystickScheme.new().claw_poses()).map(func(s): return s.id)
 	_ok(easy_steps.has("easy_grab") and not easy_steps.has("easy_one") and not easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": false}}).text.contains("確かめた")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "stale_z": true}}).text.contains("測り直した")
-		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true}, "problems": []}).state == "ok"
-		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0, "confirmed": true,
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("投入の高さ")
+		and not CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "stale_z": true}}).text.contains("測り直した")
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 0.0}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 0.0, "confirmed": false}, "problems": []}).state == "ok"
+		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 0.0,
 			"saved_at": "2026-11-17T10:00:00"}, "problems": []}).contains("2026-11-17 10:00:00 に記録した値")
-		and not CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 20.0}}).contains("Dial 2")
-		and CalibrationPanel.EASY_VALUES.map(func(v): return v[0]) == ["dial_1", "catch_z", "release_z"]
-		and CalibrationPanel.easy_state({"dials": {"profile": "real"}}).state == "na",
-		"easy mode: the practice has the one carry (no Dial 2, #200); the 校正 tab asks for Dial 1 only and says what of the drop points is missing, unconfirmed or done", str(easy_steps))
+		and CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "catch_z": 0.0}}).contains("キャッチの高さ: 下（Z 0.0）")
+		and not CalibrationPanel.easy_text({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0}}).contains("Dial 2")
+		and CalibrationPanel.EASY_VALUES.map(func(v): return v[0]) == ["dial_1", "release_z"]
+		and CalibrationPanel.easy_state({"dials": {"profile": "real"}}).state == "todo",
+		"easy mode: the practice has the one carry (no Dial 2, #200); the 校正 tab asks for the portal and the release height (#299: the catch is the Z bottom, no confirmation)", str(easy_steps))
 	RobotState.easy_mode = {}
 	RobotState.source = "mock"
 	RobotState.connected = false
@@ -516,6 +518,63 @@ func _test_easy_mode_game(rs: Node) -> void:
 	_gm_free(game, rs)
 
 ## #149: the practice's steps as data, and each step ended only by what the hand really did.
+## #299: the real crane's score game never starts without the Z top and bottom, the portal's XY
+## and the release height (whatever the difficulty; before #299 only the easy mode asked, and a
+## missing status or Z top slipped through).
+func _test_crane_start_check(rs: Node) -> void:
+	var ready := {"blockers": []}
+	var cases := [
+		[false, true, true, ready, "つながっていない"],
+		[true, false, true, ready, "たかさが まだ"],
+		[true, true, false, ready, "うえと したが まだ"],
+		[true, true, true, {}, "かくにんちゅう"],
+		[true, true, true, {"blockers": ["Dial 1 drop point is not recorded", "the Dial's release height is not recorded"]},
+			"ポータルの XY・とうにゅうの たかさが まだ"],
+		[true, true, true, {"blockers": ["Z was measured again since the release height was recorded: record the release height again"]},
+			"とうにゅうの たかさが まだ"],
+		[true, true, true, {"blockers": ["not homed"]}, ""],  # the easy mode's own (easy_blocker) says that one
+		[true, true, true, ready, ""],
+	]
+	var bad: Array = []
+	for c in cases:
+		var got: String = load("res://scripts/game/main.gd").crane_blocker_for(c[0], c[1], c[2], c[3])
+		if (c[4] == "" and got != "") or (c[4] != "" and not got.contains(c[4])):
+			bad.append([c, got])
+	_ok(bad.is_empty(), "crane start check: the Z top and bottom, the portal's XY and the release height are asked for (a status not come yet holds too)",
+		str(bad))
+	# the game itself, hard mode, on the real crane: the title says why and nothing starts
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	var opened: bool = ctl.active() and ctl.phase == "IDLE"
+	RobotState.source = "websocket"
+	game.ws.server_robot = "real"
+	RobotState.connected = true
+	RobotState.z_reference_set = false  # the power was cut: the top is not known
+	RobotState.z_calibrated = true
+	RobotState.easy_mode = {"blockers": []}
+	ctl.start()
+	var refused: bool = ctl.phase == "IDLE" and ctl.message.contains("たかさが まだ") and ctl.difficulty == "hard" \
+		and ctl.difficulty_text().contains("はじめられないよ")
+	ctl.start_tutorial()
+	var no_practice: bool = ctl.phase == "IDLE"
+	game.ws.server_robot = "mock"  # the mock backend: as before
+	var mock_free: bool = ctl.start_blocked() == ""
+	game.ws.server_robot = ""
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.z_reference_set = false
+	RobotState.z_calibrated = false
+	RobotState.easy_mode = {}
+	_ok(opened and refused and no_practice and mock_free,
+		"crane start check: on the real crane without the Z top the score game (hard too) and its practice do not start; the title says why",
+		str([opened, refused, no_practice, mock_free, ctl.message]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
 func _test_gesture_tutorial_logic() -> void:
 	var pinch_claw := PinchJoystickScheme.new().claw_poses()
 	var pose_claw := PoseDirectionScheme.new().claw_poses()

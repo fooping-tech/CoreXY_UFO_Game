@@ -120,9 +120,13 @@ class EasyParams:
     dials: dict[int, tuple[float, float] | None] = field(default_factory=lambda: {n: None for n in DESTINATIONS})
     release_z: float | None = None
     wait_destination_s: float = 15.0
-    confirmed: bool = False  # real only: a person watched a test run over the Dial
-    catch_z: float | None = None  # real only: where the claw closes (the dry run: auto_catch.dry_run)
-    stale_z: bool = False  # real only: Z was measured again since the heights were recorded
+    # #299: no longer asked for (the 校正 tab's 確かめた step was removed): what is recorded is used.
+    # Kept so a file of an older version still reads.
+    confirmed: bool = True
+    # real only: where the claw closes = the Z bottom record (#299: the 校正 tab's 下に記録; the
+    # server sets it from the Z calibration, None while Z has no bottom). The dry run: auto_catch.dry_run
+    catch_z: float | None = None
+    stale_z: bool = False  # real only: Z was measured again since the release height was recorded
     saved_at: str = ""  # when the values were last recorded (shown: "the last session's values")
     # #270: no catch that goes down within this many mm (XY) of a portal (0 = no keep-out)
     portal_keepout_mm: float = 60.0
@@ -130,7 +134,8 @@ class EasyParams:
     @classmethod
     def from_raw(cls, raw: dict[str, Any] | None, profile: str, saved: dict[str, Any] | None = None) -> "EasyParams":
         """dry_run: game_config.json game_mode.easy.dry_run. real: only `saved`
-        (calibration.json#easy_dials); nothing of the config stands in for a measurement."""
+        (calibration.json#easy_dials); nothing of the config stands in for a measurement. The real
+        catch height is not read from the file (#299: it is the Z bottom; see the server)."""
         gm = (raw or {}).get("game_mode")
         e = gm.get("easy") if isinstance(gm, dict) and isinstance(gm.get("easy"), dict) else {}
         wait = _num(e.get("wait_destination_s"))
@@ -140,8 +145,8 @@ class EasyParams:
             d = {}
         return cls(profile=profile, dials={n: _xy(d.get(f"dial_{n}")) for n in DESTINATIONS},
                    release_z=_num(d.get("release_z")), wait_destination_s=wait if wait is not None else 15.0,
-                   confirmed=d.get("confirmed") is True if profile == "real" else True,
-                   catch_z=_num(d.get("catch_z")) if profile == "real" else None,
+                   confirmed=True,
+                   catch_z=None,
                    saved_at=str(d.get("saved_at", "")) if profile == "real" else "",
                    portal_keepout_mm=max(keep, 0.0) if keep is not None else 60.0)
 
@@ -168,9 +173,9 @@ class EasyParams:
             elif not limits.xy_inside(*xy):
                 errs.append(f"Dial {n} drop point ({xy[0]:g},{xy[1]:g}) outside the XY soft limits")
         if self.profile == "real" and self.catch_z is None:
-            errs.append("the catch height is not recorded")
+            errs.append("the catch height (the Z bottom) is not recorded")
         if self.profile == "real" and self.stale_z:
-            errs.append("Z was measured again since the heights were recorded: record the catch and release heights again")
+            errs.append("Z was measured again since the release height was recorded: record the release height again")
         if self.release_z is None:
             errs.append("the Dial's release height is not recorded")
         elif not limits.z_min <= self.release_z <= limits.z_max:
@@ -238,6 +243,7 @@ def real_catch_params(raw: dict[str, Any] | None, easy: EasyParams, limits: Robo
         p.box_x_mm, p.box_y_mm = easy.dials[1]  # (the auto catch's box: not used here, must be valid)
     # every confirm item is covered by a measurement of the 校正 tab, watched by a person there
     from .params import CONFIRM_KEYS
+    # (#299: recorded is used, no separate confirmation; a release height of an older Z is not)
     p.confirmed = {k: easy.confirmed and not easy.stale_z for k in CONFIRM_KEYS}
     return p
 

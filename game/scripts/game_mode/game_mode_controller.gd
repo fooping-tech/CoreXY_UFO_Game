@@ -635,7 +635,14 @@ func today_best() -> int:
 func start_blocked() -> String:
 	if robot_fault_latched():
 		return RobotFaultWatch.stop_line(str(robot_fault.category))
-	if demo or not easy_on() or main == null or not main.has_method("easy_blocker"):
+	if demo or main == null:
+		return ""
+	# #299: the real crane's Z, portal and release height, whatever the difficulty
+	if main.has_method("crane_blocker"):
+		var c := str(main.crane_blocker())
+		if c != "":
+			return c
+	if not easy_on() or not main.has_method("easy_blocker"):
 		return ""
 	return str(main.easy_blocker())
 
