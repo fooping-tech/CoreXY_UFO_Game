@@ -335,3 +335,31 @@ async def test_a_real_print_never_gets_the_sample_sheets_problems():
     assert cloud._problem(sample, 2)["prompt"] == two["prompt"]
     await svc.close()
     await cloud.close()
+
+
+async def test_the_watch_and_the_locate_pass_the_roi_to_the_reader():
+    """#298: the game sends the whole frame with where the sheet lies; the reader gets it."""
+    reader = FakeReader([prob(1, "correct"), prob(3, "blank")])
+    got = []
+    orig = reader.read
+
+    def spy(*a, **k):
+        got.append(k.get("roi"))
+        return orig(*a, **{x: v for x, v in k.items() if x != "roi"})
+    reader.read = spy
+    svc = local_service(reader)
+    sent = []
+
+    async def emit(m):
+        sent.append(m)
+    await svc.start("s", "mon-elem_1-01")
+    await svc.frame("s", "r1", B64, emit, roi=[100, 0, 900, 1000])
+    await svc.sessions["s"].task
+    await svc.locate("s", "l1", "problem", B64, emit, problem=3, worksheet_id="mon-elem_1-01", roi=[100, 0, 900, 1000])
+    await svc._locate_task
+    await svc.frame("s", "r2", B64, emit)  # none: the reader is called as before
+    await svc.sessions["s"].task
+    assert got == [[100, 0, 900, 1000], [100, 0, 900, 1000], None]
+    with pytest.raises(ValueError):
+        await svc.frame("s", "r3", B64, emit, roi=[0, 0, 10, 10])
+    await svc.close()

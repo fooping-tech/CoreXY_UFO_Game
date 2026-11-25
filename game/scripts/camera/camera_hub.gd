@@ -39,6 +39,14 @@ var _last_sig := {}   # role -> "mode/size" of the last update
 ## The stabilized focus camera from the backend (#118), or null.
 var stream: FocusStream = null
 var _stream_live := false
+## #298: role -> msec when its frames started (the size became known); gone while it has none
+var _live_since := {}
+## #298: role -> the frame size wanted (the study mode asks the overview camera for 1280x960: the
+## worksheet reader reads small handwriting better); role -> the format index the feed had before
+var _want := {}
+var _before_format := {}
+## what the last format request did, in words (the プリント tab shows it)
+var format_note := {}
 
 func _init() -> void:
 	# built here, not in _ready, so views can take the textures right away
@@ -156,6 +164,80 @@ func feed_size(role: String) -> Vector2:
 	var t: Dictionary = _tex[role]
 	return t.y.get_size() if mode == 2 else t.rgb.get_size()
 
+## #298: seconds since `role`'s frames started (0 without frames): the first ones after a camera
+## opens are dark or not yet exposed right.
+func live_s(role: String) -> float:
+	if not _live_since.has(role):
+		return 0.0
+	return (Time.get_ticks_msec() - int(_live_since[role])) / 1000.0
+
+## #298: ask `role`'s camera for frames of `size` (Vector2i.ZERO: back to the format it had). The
+## feed is switched off, its format set, and switched on again (the first frames after are skipped
+## by live_s). A camera that does not offer the size keeps its own (format_note says so).
+## Only while something needs it: the gesture reads the same overview camera at 640x480 in the
+## backend, and a bigger picture costs it more.
+func want_size(role: String, size: Vector2i) -> void:
+	if Vector2i(_want.get(role, Vector2i.ZERO)) == size:
+		return
+	_want[role] = size
+	var f := _feed(feed_id(role))
+	if f == null or external_live(role):
+		return
+	_apply_format(role, f)
+
+func _apply_format(role: String, f: CameraFeed) -> void:
+	var size := Vector2i(_want.get(role, Vector2i.ZERO))
+	var formats: Array = f.get_formats()
+	var index := -1
+	if size != Vector2i.ZERO:
+		if not _before_format.has(role):
+			_before_format[role] = format_index(formats, Vector2i(feed_size(role)))
+		index = pick_format(formats, size)
+		format_note[role] = ("%d×%d にした" % [size.x, size.y]) if index >= 0 else \
+			("%d×%d がない（カメラのまま）" % [size.x, size.y])
+	elif _before_format.has(role):
+		index = int(_before_format[role])
+		_before_format.erase(role)
+		format_note[role] = "元の大きさに戻した"
+	if index < 0:
+		return
+	var was := f.feed_is_active
+	f.feed_is_active = false
+	var ok := f.set_format(index, {})
+	f.feed_is_active = was
+	_live_since.erase(role)
+	_last_sig.erase(role)
+	if not ok:
+		format_note[role] = "大きさを変えられなかった"
+	print("[camera] %s: format %d (%s) %s" % [role, index, str(formats[index]) if index < formats.size() else "?", format_note.get(role, "")])
+
+## #298: the format of `formats` (CameraFeed.get_formats()) for frames of `size`: that size exactly,
+## else the largest 4:3 not wider than it; -1 = none fits (the camera keeps its own).
+static func pick_format(formats: Array, size: Vector2i) -> int:
+	var exact := format_index(formats, size)
+	if exact >= 0:
+		return exact
+	var best := -1
+	var best_w := 0
+	for i in formats.size():
+		var f = formats[i]
+		if not f is Dictionary:
+			continue
+		var w := int(f.get("width", 0))
+		var h := int(f.get("height", 0))
+		if w > 0 and h > 0 and w * 3 == h * 4 and w <= size.x and w > best_w:
+			best = i
+			best_w = w
+	return best
+
+## The first format of exactly `size` (-1 = none).
+static func format_index(formats: Array, size: Vector2i) -> int:
+	for i in formats.size():
+		var f = formats[i]
+		if f is Dictionary and int(f.get("width", 0)) == size.x and int(f.get("height", 0)) == size.y:
+			return i
+	return -1
+
 ## Aspect (w/h) of `role`'s frames, 4:3 until known.
 func feed_aspect(role: String) -> float:
 	var s := feed_size(role)
@@ -217,6 +299,8 @@ func _apply_feeds() -> void:
 		if f != null and not external_live(role):  # the stream reads that camera now
 			used[id] = true
 			if not f.feed_is_active:
+				if Vector2i(_want.get(role, Vector2i.ZERO)) != Vector2i.ZERO:
+					_apply_format(role, f)  # #298: a camera plugged in while the study mode wants a size
 				f.feed_is_active = true
 				_activated[id] = true
 		_last_sig.erase(role)
@@ -254,6 +338,10 @@ func _update_role(role: String) -> void:
 	if _last_sig.get(role, "") == sig:
 		return
 	_last_sig[role] = sig
+	if size == Vector2.ZERO:
+		_live_since.erase(role)
+	elif not _live_since.has(role):
+		_live_since[role] = Time.get_ticks_msec()
 	_convert[role].set_shader_parameter("mode", mode if size != Vector2.ZERO else 0)
 	_viewport[role].size = Vector2i(size) if size != Vector2.ZERO else DEFAULT_SIZE
 
