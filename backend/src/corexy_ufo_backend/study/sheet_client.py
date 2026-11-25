@@ -20,6 +20,10 @@ How it calls the server (the server's hand-off document):
   - 401: never again with that token in this process (10 wrong ones block the IP for 10 minutes);
     429: wait 10 minutes; 400 / 403 / 413: no retry; 500: once more; 503: again after 5, 10, 20 s
   - neither the token nor the image goes into a log or an error message
+  - #298 (a fixed camera, the hand-off's §3.1): the whole camera frame goes as it is (upright, not
+    shrunk, not re-encoded when it is already a fitting JPEG) with `roi` (0..1000 of it: where the
+    sheet lies); the server cuts that out itself, in one request. The boxes that come back are put
+    into the roi's own 0..1000 (`to_roi`), so a caller sees them as if it had sent the cut-out part
 """
 
 from __future__ import annotations
@@ -79,13 +83,22 @@ class SheetImage:
         return "data:image/jpeg;base64," + base64.b64encode(self.jpeg).decode("ascii")
 
 
+def _plain_jpeg(data: bytes) -> bool:
+    """A JPEG without an EXIF block (so nothing to turn): sent as it is when it needs no shrinking."""
+    return data[:2] == b"\xff\xd8" and b"Exif\x00\x00" not in data[:65536]
+
+
 def prepare_image(data: bytes, long_side: int = LONG_SIDE, quality: int = 90) -> SheetImage:
-    """Any image OpenCV reads -> an upright JPEG with its long side at most `long_side`, <= 4 MB."""
+    """Any image OpenCV reads -> an upright JPEG with its long side at most `long_side`, <= 4 MB.
+    #298: a plain JPEG that already fits goes as it is (a second JPEG pass would blur the thin
+    handwriting: the game encodes the camera frame at quality >= 90 itself)."""
     arr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)  # applies EXIF orientation
     if arr is None:
         raise SheetError("image", "画像として読めません")
     sh, sw = arr.shape[:2]
     long_side = max(min(int(long_side), MAX_SIDE), 64)
+    if _plain_jpeg(data) and max(sw, sh) <= long_side and len(data) <= MAX_BYTES:
+        return SheetImage(bytes(data), sw, sh, sw, sh)
     scale = min(1.0, long_side / max(sw, sh))
     if scale < 1.0:
         arr = cv2.resize(arr, (max(round(sw * scale), 1), max(round(sh * scale), 1)), interpolation=cv2.INTER_AREA)
@@ -104,6 +117,24 @@ def box_to_pixels(box: Any, width: int, height: int) -> tuple[int, int, int, int
         return None
     x1, y1, x2, y2 = box
     return (round(x1 * width / 1000), round(y1 * height / 1000), round(x2 * width / 1000), round(y2 * height / 1000))
+
+
+ROI_MIN = 50  # the server: 0..1000, x1 < x2, y1 < y2, at least 50 wide and tall (else 400)
+
+
+def parse_roi(v: Any) -> list[int] | None:
+    """`roi` as the server takes it ([x1, y1, x2, y2], whole numbers 0..1000 of the image sent),
+    None when there is none; SheetError("bad_request") when it is there but not one the server
+    takes (#298: it is checked here, not left for a 400)."""
+    if v is None or v == []:
+        return None
+    if not (isinstance(v, (list, tuple)) and len(v) == 4
+            and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)):
+        raise SheetError("bad_request", "roi は [x1, y1, x2, y2] の 4 つの数")
+    x1, y1, x2, y2 = (int(round(float(x))) for x in v)
+    if not (0 <= x1 < x2 <= 1000 and 0 <= y1 < y2 <= 1000) or x2 - x1 < ROI_MIN or y2 - y1 < ROI_MIN:
+        raise SheetError("bad_request", f"roi は 0〜1000 の範囲で x1 < x2・y1 < y2、幅と高さ {ROI_MIN} 以上")
+    return [x1, y1, x2, y2]
 
 
 @dataclass
@@ -386,6 +417,33 @@ def parse_result(raw: Any, image: SheetImage) -> SheetResult:
     return SheetResult(raw, image, problems)
 
 
+def to_roi(res: SheetResult, roi: list[int]) -> SheetResult:
+    """#298: the boxes of a reading sent with `roi` (0..1000 of the whole image) -> 0..1000 of the
+    roi itself, and the image's size -> the roi's in pixels: the caller sees the answer as if it
+    had sent the cut-out part (what the game shows and where it puts the arm). The server's raw
+    answer is kept as it came."""
+    x1, y1, x2, y2 = roi
+    w = max(round(res.image.width * (x2 - x1) / 1000), 1)
+    h = max(round(res.image.height * (y2 - y1) / 1000), 1)
+
+    def inside(b: Any) -> Any:
+        if not (isinstance(b, (list, tuple)) and len(b) == 4 and all(isinstance(v, (int, float)) for v in b)):
+            return b
+        xs = [min(max((float(b[i]) - x1) * 1000.0 / (x2 - x1), 0.0), 1000.0) for i in (0, 2)]
+        ys = [min(max((float(b[i]) - y1) * 1000.0 / (y2 - y1), 0.0), 1000.0) for i in (1, 3)]
+        return [round(xs[0], 1), round(ys[0], 1), round(xs[1], 1), round(ys[1], 1)]
+
+    problems = []
+    for p in res.problems:
+        q = dict(p)
+        for key in ("box", "answer_box"):
+            q[key] = inside(p.get(key))
+            q[key + "_px"] = box_to_pixels(q[key], w, h) if q[key] is not None else None
+        problems.append(q)
+    image = SheetImage(res.image.jpeg, w, h, w, h)
+    return SheetResult(res.raw, image, problems)
+
+
 def _token_key(url: str, token: str) -> str:
     return url + "#" + hashlib.sha256(token.encode()).hexdigest()[:16]
 
@@ -470,15 +528,20 @@ class SheetClient:
 
     def read(self, photo: bytes, *, calc: bool = True, crop: bool = True, long_side: int = LONG_SIDE,
              on_problem: Callable[[dict], bool] | None = None, deadline_s: float | None = None,
-             label: str = "read") -> SheetResult:
+             label: str = "read", roi: Any = None) -> SheetResult:
         """One photo -> the sheet's problems. Blocking (~10 s; call it in a thread from async code).
         With `on_problem` the answer streams: it gets each problem as read; True from it ends the
         reading there (the result then has the problems so far and `raw["stopped_early"]`).
         `deadline_s` (#244): give up after that long in all, the wait for a free slot (another
-        reading may hold it) included -> SheetError "timeout"; without it the socket's timeout_s."""
+        reading may hold it) included -> SheetError "timeout"; without it the socket's timeout_s.
+        `roi` (#298): the part of `photo` the sheet lies in (0..1000; parse_roi); the server reads
+        only that, and the boxes come back in the roi's own 0..1000 (to_roi)."""
+        area = parse_roi(roi)
         image = prepare_image(photo, long_side)
         self._may_send()  # fail fast before waiting for the lock...
-        body = {"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}
+        body: dict[str, Any] = {"image": image.data_url, "calc": bool(calc), "crop": bool(crop)}
+        if area is not None:
+            body["roi"] = area
         if on_problem is not None:
             body["stream"] = True
         data = json.dumps(body).encode()
@@ -500,8 +563,10 @@ class SheetClient:
                 if e.kind == "timeout":
                     raise SheetError("timeout", self.timeout_text(deadline_s)) from None
                 raise
-            log.info("sheet: %s answered in %.1f s (%.1f s waiting for a slot)", label, time.monotonic() - t0, waited)
-            return parse_result(raw, image)
+            log.info("sheet: %s answered in %.1f s (%.1f s waiting for a slot)%s", label, time.monotonic() - t0, waited,
+                     f" (roi {area})" if area is not None else "")
+            res = parse_result(raw, image)
+            return to_roi(res, area) if area is not None else res
         finally:
             self.lock.release()
 

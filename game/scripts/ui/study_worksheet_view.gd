@@ -205,6 +205,39 @@ func _draw_pixel_frame(shown: Rect2) -> void:
 		draw_rect(Rect2(c - Vector2(2 * d, 2 * d), Vector2(4 * d, 4 * d)), Color("ffd21f"))  # gold corners
 		draw_rect(Rect2(c - Vector2(d, d), Vector2(2 * d, 2 * d)), Color("fff3a0"))
 
+## Where the guide goes when no place is set (0..1 of the picture).
+const GUIDE_DEFAULT := Rect2(0.18, 0.12, 0.64, 0.76)
+
+## "ここへおいてね！" over `target` on any canvas item (the study mode's guide, and the settings
+## screen's プリント tab shows exactly this over its live view, #298). `k` scales the lines and text.
+static func draw_place(ci: CanvasItem, font: Font, target: Rect2, top: float, t: float, k := 1.0) -> void:
+	var pulse := 0.5 + 0.5 * sin(t * 5.0)
+	ci.draw_rect(target, Color(1.0, 0.95, 0.55, 0.18 + 0.12 * pulse))
+	var col := Color("ff4fa3").lerp(Color("ffd21f"), pulse)
+	var w := 6.0 * k
+	var corners := [target.position, target.position + Vector2(target.size.x, 0), target.end, target.position + Vector2(0, target.size.y)]
+	for i in 4:
+		ci.draw_dashed_line(corners[i], corners[(i + 1) % 4], col, w, 14.0 * k)
+	var arm := minf(target.size.x, target.size.y) * 0.18
+	for i in 4:  # brackets at the corners
+		var c: Vector2 = corners[i]
+		var sx := 1.0 if i in [0, 3] else -1.0
+		var sy := 1.0 if i in [0, 1] else -1.0
+		ci.draw_line(c, c + Vector2(arm * sx, 0), Color.WHITE, w + 4.0 * k)
+		ci.draw_line(c, c + Vector2(0, arm * sy), Color.WHITE, w + 4.0 * k)
+	var bob := 8.0 * k * sin(t * 4.0)
+	var text := "ここへおいてね！"
+	var fs := maxi(roundi(40 * k), 10)
+	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var at := Vector2(target.get_center().x - tw * 0.5, target.position.y - 18.0 * k + bob)
+	at.y = maxf(at.y, top + fs)
+	ci.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, maxi(roundi(12 * k), 2), Color("5a1a3a"))
+	ci.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("fff3a0"))
+	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
+	var a := k
+	ci.draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30) * a, ac + Vector2(26, -30) * a, ac + Vector2(0, 6) * a]), Color("ff4fa3"))
+	ci.draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62) * a, ac + Vector2(12, -62) * a, ac + Vector2(12, -30) * a, ac + Vector2(-12, -30) * a]), Color("ff4fa3"))
+
 ## Until the sheet is found: the camera's picture in the frame and, over it, where to put the sheet.
 func _draw_guide(font: Font, top: float) -> void:
 	var tex := Vector2(guide_texture.get_size()) if guide_texture != null else Vector2(4, 3)
@@ -217,38 +250,15 @@ func _draw_guide(font: Font, top: float) -> void:
 		draw_rect(shown, Color("e0a061"))
 		for y in range(0, int(shown.size.y), 18):
 			draw_rect(Rect2(shown.position + Vector2(0, y), Vector2(shown.size.x, 2)), Color("c98549"))
-	var r := guide_region if guide_region.has_area() else Rect2(0.18, 0.12, 0.64, 0.76)
+	var r := guide_region if guide_region.has_area() else GUIDE_DEFAULT
 	var target := Rect2(shown.position + r.position * shown.size, r.size * shown.size)
 	var t := Time.get_ticks_msec() / 1000.0
 	var pulse := 0.5 + 0.5 * sin(t * 5.0)
-	draw_rect(target, Color(1.0, 0.95, 0.55, 0.18 + 0.12 * pulse))
-	var col := Color("ff4fa3").lerp(Color("ffd21f"), pulse)
-	var w := 6.0
-	var corners := [target.position, target.position + Vector2(target.size.x, 0), target.end, target.position + Vector2(0, target.size.y)]
-	for i in 4:
-		draw_dashed_line(corners[i], corners[(i + 1) % 4], col, w, 14.0)
-	var arm := minf(target.size.x, target.size.y) * 0.18
-	for i in 4:  # brackets at the corners
-		var c: Vector2 = corners[i]
-		var sx := 1.0 if i in [0, 3] else -1.0
-		var sy := 1.0 if i in [0, 1] else -1.0
-		draw_line(c, c + Vector2(arm * sx, 0), Color.WHITE, w + 4.0)
-		draw_line(c, c + Vector2(0, arm * sy), Color.WHITE, w + 4.0)
-	var bob := 8.0 * sin(t * 4.0)
-	var text := "ここへおいてね！"
-	var fs := 40
-	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	var at := Vector2(target.get_center().x - tw * 0.5, target.position.y - 18.0 + bob)
-	at.y = maxf(at.y, top + fs)
-	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 12, Color("5a1a3a"))
-	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("fff3a0"))
+	draw_place(self, font, target, top, t)
 	# a magnifying glass wanders over the picture, looking for the sheet
 	var wander := shown.get_center() + Vector2(sin(t * 0.9) * 0.36 * shown.size.x, sin(t * 1.37 + 1.0) * 0.32 * shown.size.y)
 	draw_circle(wander + Vector2(-12, -12), 34.0, Color(1, 1, 1, 0.12 + 0.08 * pulse))
 	PowerItemArt.draw(self, "magnifier", wander, 6.0)
-	var ac := target.get_center() + Vector2(0, bob)  # an arrow into the place
-	draw_colored_polygon(PackedVector2Array([ac + Vector2(-26, -30), ac + Vector2(26, -30), ac + Vector2(0, 6)]), Color("ff4fa3"))
-	draw_colored_polygon(PackedVector2Array([ac + Vector2(-12, -62), ac + Vector2(12, -62), ac + Vector2(12, -30), ac + Vector2(-12, -30)]), Color("ff4fa3"))
 	if guide_error != "":
 		_draw_guide_error(shown)
 

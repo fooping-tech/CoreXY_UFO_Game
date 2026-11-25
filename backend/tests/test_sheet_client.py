@@ -769,3 +769,85 @@ def test_a_reading_with_a_bad_cert_says_so():
     with pytest.raises(SheetError) as e:
         client(FakeServer(bad)).read(jpeg(100, 100))
     assert e.value.kind == "network" and "証明書を確かめられません" in str(e.value)
+
+
+# ------------------------------------------------------------------ #298: a fixed camera, roi
+
+
+def test_roi_is_checked_as_the_server_takes_it():
+    from corexy_ufo_backend.study.sheet_client import parse_roi
+    assert parse_roi(None) is None and parse_roi([]) is None
+    assert parse_roi([350, 0, 950, 1000]) == [350, 0, 950, 1000]
+    assert parse_roi([350.4, 0.0, 949.6, 1000]) == [350, 0, 950, 1000]  # whole numbers go
+    for bad in ([0, 0, 1000], [-1, 0, 500, 500], [0, 0, 1001, 500], [500, 0, 400, 500], [0, 0, 49, 500],
+                [0, 0, 500, 49], ["0", 0, 500, 500], [True, 0, 500, 500], "0,0,500,500"):
+        with pytest.raises(SheetError) as e:
+            parse_roi(bad)
+        assert e.value.kind == "bad_request"
+
+
+def test_a_frame_with_roi_goes_whole_in_one_request_and_the_boxes_come_back_in_the_roi():
+    frame = jpeg(1280, 960)
+    answer = {**ANSWER, "image": {"width": 1280, "height": 960}, "paper_px": None,
+              "roi_px": [[448, 0], [1216, 0], [1216, 960], [448, 960]],
+              "problems": [{"number": 1, "box": [350, 100, 950, 300], "answer_box": [650, 150, 950, 250],
+                            "visible": "full", "answer_status": "correct", "student_answer": "7",
+                            "box_px": [448, 96, 1216, 288], "answer_box_px": [832, 144, 1216, 240]}]}
+    server = FakeServer(answer)
+    res = client(server).read(frame, roi=[350, 0, 950, 1000])
+    body = server.calls[0]["body"]
+    assert len(server.calls) == 1 and body["roi"] == [350, 0, 950, 1000]
+    # a plain JPEG that fits goes as it is: no second JPEG pass blurring the handwriting
+    import base64
+    assert base64.b64decode(body["image"].split(",", 1)[1]) == frame
+    p = res.problems[0]
+    assert p["box"] == [0.0, 100.0, 1000.0, 300.0] and p["answer_box"] == [500.0, 150.0, 1000.0, 250.0]
+    assert (res.image.width, res.image.height) == (768, 960)  # the roi's own pixels
+    assert p["answer_box_px"] == (384, 144, 768, 240) and res.raw["roi_px"][0] == [448, 0]  # raw kept
+    # a roi the server would refuse is never sent
+    with pytest.raises(SheetError):
+        client(FakeServer()).read(frame, roi=[0, 0, 10, 10])
+
+
+def test_a_photo_with_exif_or_too_big_is_still_turned_and_shrunk():
+    small = jpeg(640, 480)
+    assert prepare_image(small).jpeg == small
+    turned = prepare_image(with_orientation(jpeg(640, 480), 6))
+    assert (turned.width, turned.height) == (480, 640) and turned.jpeg[:2] == b"\xff\xd8"
+    big = prepare_image(jpeg(3000, 2000))
+    assert max(big.width, big.height) == 1800
+
+
+async def test_sheet_read_with_roi_reads_once_without_the_straightening(monkeypatch):
+    import base64
+    import websockets
+    import corexy_ufo_backend.study as study
+    from corexy_ufo_backend.robot.mock_robot import MockRobot
+    from corexy_ufo_backend.websocket import GameServer
+    from ws_helpers import cmd
+
+    seen = []
+
+    class Fake:
+        def read(self, data, calc=True, crop=True, roi=None):
+            seen.append(("read", roi))
+            return parse_result(ANSWER, prepare_image(data))
+
+        def read_sheet(self, data, calc=True, crop=True):
+            seen.append(("read_sheet", None))
+            return self.read(data, calc, crop)
+    monkeypatch.setattr(study, "make_sheet_client", lambda cfg: Fake())
+    robot = MockRobot()
+    await robot.connect()
+    srv = GameServer(robot, "127.0.0.1", 0, state_hz=30)
+    await srv.start()
+    port = next(iter(srv._server.sockets)).getsockname()[1]
+    b64 = base64.b64encode(jpeg(640, 480)).decode()
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": b64, "roi": [100, 50, 900, 950]}, rid="a")
+            assert m["type"] == "ack" and seen == [("read", [100, 50, 900, 950])]
+            m = await cmd(ws, "sheet_read", {"image_jpeg_base64": b64, "roi": [0, 0, 20, 20]}, rid="b")
+            assert m["type"] == "nack" and "roi" in m["data"]["reason"] and len(seen) == 1
+    finally:
+        await srv.stop()

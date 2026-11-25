@@ -481,7 +481,7 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                 await self._study_send(ws, {"type": "homework_status", "data": result})
             elif msg["type"] == "homework_frame":
                 started = await self.homework.frame(session_id, rid, str(data.get("image_jpeg_base64", "")),
-                                                    lambda reply: self._study_send(ws, reply))
+                                                    lambda reply: self._study_send(ws, reply), roi=data.get("roi"))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "session_id": session_id, "state": "estimating" if started else "skipped"}})
             elif msg["type"] == "homework_advice":
@@ -495,7 +495,7 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                                            str(data.get("image_jpeg_base64", "")),
                                            lambda reply: self._study_send(ws, reply),
                                            problem=int(data.get("problem", 0) or 0),
-                                           worksheet_id=str(data.get("worksheet_id", "")))
+                                           worksheet_id=str(data.get("worksheet_id", "")), roi=data.get("roi"))
                 await self._study_send(ws, {"type": "homework_status", "request_id": rid, "data": {
                     "session_id": session_id, "state": "locating", "kind": str(data.get("kind", ""))}})
             elif msg["type"] == "homework_explain":
@@ -963,7 +963,7 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         from dataclasses import replace
         from ..config import REPO_ROOT
         from ..study import StudyConfig, make_sheet_client
-        from ..study.sheet_client import SheetError, sheet_payload
+        from ..study.sheet_client import SheetError, parse_roi, sheet_payload
         name = "sheet_read"
         b64 = params.get("image_jpeg_base64")
         if not isinstance(b64, str) or not b64:
@@ -977,11 +977,16 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         cfg = self.backend_cfg
         study = replace(StudyConfig.from_raw(cfg.raw if cfg is not None else {}), root=str(REPO_ROOT))
         try:
+            roi = parse_roi(params.get("roi"))
             client = make_sheet_client(study)
-            # #252: the sheet found in the frame and straightened (else the problems cut out and read again)
-            read = client.read if params.get("zoom") is False else client.read_sheet
-            res = await asyncio.to_thread(read, data, calc=params.get("calc") is not False,
-                                          crop=params.get("crop") is not False)
+            calc, crop = params.get("calc") is not False, params.get("crop") is not False
+            if roi is not None:
+                # #298: a fixed camera's frame with where the sheet lies: the server cuts it out, one request
+                res = await asyncio.to_thread(client.read, data, calc=calc, crop=crop, roi=roi)
+            else:
+                # #252: the sheet found in the frame and straightened (else the problems cut out and read again)
+                read = client.read if params.get("zoom") is False else client.read_sheet
+                res = await asyncio.to_thread(read, data, calc=calc, crop=crop)
         except SheetError as e:
             return self._nack(name, str(e))
         if self.homework is not None:  # #287: the answer check's reading: the print's answers for the dialogue

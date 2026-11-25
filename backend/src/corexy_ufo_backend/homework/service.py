@@ -80,6 +80,15 @@ def advice_prompt(context: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+
+def _roi(v: Any) -> list[int] | None:
+    """#298: the game's `roi` for the worksheet reader, checked (ValueError: the frame's sender is told)."""
+    from ..study.sheet_client import SheetError, parse_roi
+    try:
+        return parse_roi(v)
+    except SheetError as e:
+        raise ValueError(str(e)) from None
+
 class JevRunner(Protocol):
     def run(self, jev_input: dict, timeout: float = 30.0) -> JevResult: ...
 
@@ -420,8 +429,9 @@ class HomeworkService:
                 "camera_role": self.config.camera_role, "elapsed_s": round(s.elapsed(), 1),
                 "worksheet_id": s.worksheet["worksheet_id"] if s.worksheet else ""}
 
-    async def frame(self, session_id: str, request_id: str, image_b64: str, emit: Emit) -> bool:
-        """Start a Jev call for this frame; False when one is still running (skipped)."""
+    async def frame(self, session_id: str, request_id: str, image_b64: str, emit: Emit, roi: Any = None) -> bool:
+        """Start a Jev call for this frame; False when one is still running (skipped).
+        `roi` (#298, a local session): the part of the frame the sheet lies in, for the reader."""
         s = self.sessions.get(session_id)
         if s is None:
             raise ValueError("unknown homework session")
@@ -430,7 +440,8 @@ class HomeworkService:
             return False
         image = decode_jpeg(image_b64, self.config.max_image_bytes)
         if self._local(s):
-            s.task = asyncio.create_task(self._run_sheet(session_id, s, request_id, emit, image))
+            area = _roi(roi)
+            s.task = asyncio.create_task(self._run_sheet(session_id, s, request_id, emit, image, area))
             return True
         if s.client is None:
             raise ValueError("this session reads with the worksheet reader only")
@@ -479,13 +490,14 @@ class HomeworkService:
             data["questions"] = parse_questions(res.output, s.worksheet)
         await emit({"type": "homework_progress", "request_id": request_id, "data": data})
 
-    async def _run_sheet(self, session_id: str, s: _Session, request_id: str, emit: Emit, image: bytes) -> None:
+    async def _run_sheet(self, session_id: str, s: _Session, request_id: str, emit: Emit, image: bytes,
+                         roi: list[int] | None = None) -> None:
         """#232: one frame read by the worksheet reader -> homework_progress (as from Jev)."""
         from ..study.sheet_client import SheetError
         t0 = time.monotonic()
         try:
             client = self._sheet_factory()  # type: ignore[misc]
-            res = await asyncio.to_thread(client.read, image)
+            res = await asyncio.to_thread(client.read, image, **({"roi": roi} if roi is not None else {}))
         except asyncio.CancelledError:
             raise
         except Exception as e:  # SheetError, or anything the reader did not expect
@@ -582,7 +594,7 @@ class HomeworkService:
 
     # ------------------------------------------------------------------ locate (#79)
     async def locate(self, session_id: str, request_id: str, kind: str, image_b64: str, emit: Emit,
-                     problem: int = 0, worksheet_id: str = "") -> None:
+                     problem: int = 0, worksheet_id: str = "", roi: Any = None) -> None:
         """Which problem ("stuck" / "next", or "problem" = number `problem` of a known worksheet)
         and where its answer box is in this overview image. Answers with homework_locate_result
         {kind, problem, u, v, box, jev_box, verified, usable, page_check} or homework_locate_error.
@@ -610,14 +622,14 @@ class HomeworkService:
         locate_prompt(kind, 1, 1, False, self._target_text(target))  # an unknown kind fails here
         image = decode_jpeg(image_b64, self.config.max_image_bytes)
         if local and target is not None:
-            self._locate_task = asyncio.create_task(self._locate_sheet(s, request_id, image, emit, target))
+            self._locate_task = asyncio.create_task(self._locate_sheet(s, request_id, image, emit, target, _roi(roi)))
             return
         width, height = jpeg_size(image)
         self._locate_task = asyncio.create_task(self._locate(s, request_id, kind, image, width, height, emit,
                                                              target))
 
     async def _locate_sheet(self, s: _Session | None, request_id: str, image: bytes, emit: Emit,
-                            target: dict) -> None:
+                            target: dict, roi: list[int] | None = None) -> None:
         """#232: the problem's answer box from the worksheet reader -> homework_locate_result
         (the Claude + Jev answer's shape; verified: one reader, nothing to compare)."""
         from ..study.sheet_client import SheetError
@@ -636,7 +648,7 @@ class HomeworkService:
             # that does not (a test's, or a socket that never times out)
             res = await asyncio.wait_for(asyncio.to_thread(
                 client.read, image, on_problem=lambda p: p.get("number") == number, deadline_s=limit,
-                label=f"locate {number}"), limit + 5.0)
+                label=f"locate {number}", **({"roi": roi} if roi is not None else {})), limit + 5.0)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:

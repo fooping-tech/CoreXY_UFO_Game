@@ -292,6 +292,10 @@ func _test_game_mode_audio(rs: Node) -> void:
 		str(sides))
 	snd.silence()
 	snd.log.clear()
+	# the sounds play out in real time and the pin is 23 ms long: a runner that stalls that
+	# long would end it before the count (7 sounding, not 8). The audio is slowed while this
+	# part counts the players, so nothing ends under the test; it is set back after.
+	AudioServer.playback_speed_scale = 0.001
 	snd.play("pin")
 	snd.play("pin")  # inside the gap: not again
 	var gap_ok: bool = snd.log.count("pin") == 1 and snd.min_gap_ms("pin") > 0
@@ -309,6 +313,7 @@ func _test_game_mode_audio(rs: Node) -> void:
 	_ok(gap_ok and full == GameModeSounds.PLAYERS and was_dropped and stole and cut and snd.priority_of("pin") == 0 and snd.priority_of("jackpot") == 2,
 		"audio: one pin sound per gap; with every player busy a pin-level sound is dropped and a jackpot takes the least important one's player; stop cuts the rest",
 		"%s %d %s %s %s" % [gap_ok, full, was_dropped, stole, cut])
+	AudioServer.playback_speed_scale = 1.0
 	# volumes and mutes; the music's two takes fade and are not the same take pitched up
 	AudioBuses.apply({"enabled": true, "bgm_enabled": false, "sfx_volume_db": -6.0})
 	var muted: bool = AudioBuses.muted(AudioBuses.BGM) and not AudioBuses.muted(AudioBuses.SFX) and AudioBuses.volume_db(AudioBuses.SFX) == -6.0

@@ -84,6 +84,12 @@ var _grade_rid := ""
 ## #237: the picture the answer check read (cut out, upright): the ○ go on it (null = the drawn sheet)
 var graded_image: Image
 const GRADE_WAIT_S := 120.0  # the reader: ~10 s, more when busy
+## #298: how long the answer check / HELP wait at most for a settled picture before sending anyway
+const GRADE_SETTLE_MAX_S := 6.0
+const LOCATE_SETTLE_MAX_S := 3.0
+## the main link's room for sheet_read (its send buffer and the backend's 1 MiB message)
+const GRADE_IMAGE_BYTES := 600000
+const SETTLE_STEP_S := 0.25
 var _explain_rid := ""
 var _help_rid := ""
 var _nav_rid := ""
@@ -469,25 +475,38 @@ func grade(rescan := false) -> void:
 			out.append({"number": int(probs[i].number), "answer_status": st, "visible": "full"})
 		_after(1.5, func(): if tok == _grade_token: graded.emit(out))
 		return
-	# camera, read locally: the overview frame now, cut out and turned upright (as the watch's,
-	# SheetFrame) -> the worksheet reader once (the backend's sheet_read)
+	# camera, read locally: the overview frame once settled (#298) -> the worksheet reader once
 	if reads_whole_sheet() and backend_robot():
-		var img := _overview_image()
-		if img != null and not img.is_empty():
-			img.convert(Image.FORMAT_RGB8)
-			graded_image = homework.watch_image(img)  # the ○ are drawn on this very picture
-			var jpeg := StudyClient.encode_jpeg(graded_image, 1600, 600000)
-			if not jpeg.is_empty():
-				_grade_rid = main.ws.send_command("sheet_read", {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)})
-				if main.ws.last_send_error == OK:
-					_after(GRADE_WAIT_S, func():
-						if tok == _grade_token and _grade_rid != "":
-							_grade_rid = ""
-							grade_failed.emit("プリントの読み取りの返事が来ませんでした"))
-					return
-				main.ws.forget(_grade_rid)
-				_grade_rid = ""
-	# otherwise: what the watch read last
+		when_settled(GRADE_SETTLE_MAX_S, func(): return tok == _grade_token, func(): _grade_send(tok))
+		return
+	_grade_from_watch(tok)
+
+## The answer check's frame -> sheet_read: the whole frame upright with the region as roi (#298;
+## the boxes come back in the region: the ○ are drawn on graded_image, that region cut out).
+func _grade_send(tok: int) -> void:
+	var img := _overview_image()
+	if img != null and not img.is_empty() and backend_robot():
+		img.convert(Image.FORMAT_RGB8)
+		var req := homework.sheet_request(img)
+		graded_image = req.shown  # the ○ are drawn on this very picture
+		var jpeg := SheetFrame.encode(req.image, GRADE_IMAGE_BYTES)
+		if not jpeg.is_empty():
+			var params := {"image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}
+			if not (req.roi as Array).is_empty():
+				params["roi"] = req.roi
+			_grade_rid = main.ws.send_command("sheet_read", params)
+			if main.ws.last_send_error == OK:
+				_after(GRADE_WAIT_S, func():
+					if tok == _grade_token and _grade_rid != "":
+						_grade_rid = ""
+						grade_failed.emit("プリントの読み取りの返事が来ませんでした"))
+				return
+			main.ws.forget(_grade_rid)
+			_grade_rid = ""
+	_grade_from_watch(tok)
+
+## Otherwise: what the watch read last.
+func _grade_from_watch(tok: int) -> void:
 	var got := last_answers.duplicate(true)
 	_after(0.5, func():
 		if tok != _grade_token:
@@ -589,26 +608,52 @@ func locate_help(problem: int) -> void:
 	if why != "":
 		locate_failed.emit(why)
 		return
+	# #298: a settled picture (no hand moving over the sheet), waited for a moment at most
+	when_settled(LOCATE_SETTLE_MAX_S, func(): return tok == _token and _help_problem == problem,
+		func(): _locate_send(problem))
+
+func _locate_send(problem: int) -> void:
 	var img := _overview_image()
 	if img == null:
 		locate_failed.emit("俯瞰カメラの映像がありません")
 		return
 	captures["overview"] = img
-	# #232: read locally, the frame goes cut out and turned upright; the answer is put back on it
+	# #232: read locally, the answer is put back on the frame (#298: the whole frame goes upright with
+	# the region as roi; the backend gives the boxes back in the region, as when it was cut out here)
 	_locate_prep = homework.sheet_settings()
 	_locate_prep["size"] = img.get_size()
-	var jpeg := StudyClient.encode_jpeg(SheetFrame.prepare(img, int(_locate_prep.rotation), _locate_prep.region),
-		homework.max_image_edge, homework.max_image_bytes)
+	var data := {"session_id": homework.session_id, "kind": "problem", "problem": problem,
+		"worksheet_id": str(worksheet.get("worksheet_id", ""))}
+	var jpeg := PackedByteArray()
+	if homework.reads_locally():
+		var req := homework.sheet_request(img)
+		jpeg = SheetFrame.encode(req.image, homework.max_image_bytes)
+		if not (req.roi as Array).is_empty():
+			data["roi"] = req.roi
+	else:
+		jpeg = StudyClient.encode_jpeg(img, homework.max_image_edge, homework.max_image_bytes)
 	if jpeg.is_empty():
 		locate_failed.emit("俯瞰カメラの画像を上限サイズ内に圧縮できませんでした")
 		return
 	_locate_rid = _rid("loc")
-	var err := homework.link.send_aux({"type": "homework_locate", "request_id": _locate_rid, "data": {
-		"session_id": homework.session_id, "kind": "problem", "problem": problem,
-		"worksheet_id": str(worksheet.get("worksheet_id", "")), "image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
+	data["image_jpeg_base64"] = Marshalls.raw_to_base64(jpeg)
+	var err := homework.link.send_aux({"type": "homework_locate", "request_id": _locate_rid, "data": data})
 	if err != OK:
 		_locate_rid = ""
 		locate_failed.emit("画像を送れませんでした（WebSocket error %d）" % err)
+
+## #298: `then` once the overview picture has settled (SheetSettle: the camera warmed up, not dark,
+## nothing moving), or after `max_s` anyway (a child who keeps moving still gets an answer);
+## dropped when `still_wanted` turns false (a new reading, the mode left).
+func when_settled(max_s: float, still_wanted: Callable, then: Callable) -> void:
+	if homework == null or not homework.reads_locally() or homework.sheet_wait() == "" or max_s <= 0.0:
+		if max_s <= 0.0 and homework != null:
+			trace("sheet: sent without settling (%s)" % homework.sheet_wait())
+		then.call()
+		return
+	_after(SETTLE_STEP_S, func():
+		if still_wanted.call():
+			when_settled(max_s - SETTLE_STEP_S, still_wanted, then))
 
 ## The located point (0..1 of the image sent) on the whole overview frame (#232).
 func located_point(p: Vector2) -> Vector2:

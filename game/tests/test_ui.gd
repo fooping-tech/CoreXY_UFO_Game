@@ -424,6 +424,26 @@ func _test_sheet_check_tab(rs: Node) -> void:
 	_ok(not p.waiting() and p.view_mode == "sent" and p.sent.get_size() == Vector2i(200, 240)
 		and p._view_label.text.contains("まだ送っていない") and p._view_label.text.contains("上下反転"),
 		"sheet check: what would be sent is shown before sending", p._view_label.text)
+	var want_roi := [100, 200, 600, 1000]  # the region turned 180° (a pixel's rounding either way)
+	var roi_ok: bool = p.sent_roi.size() == 4 and p.sent_size == Vector2i(400, 300) and p._view_label.text.contains("roi [")
+	for i in 4:
+		roi_ok = roi_ok and absi(int(p.sent_roi[i]) - want_roi[i]) <= 3
+	# #298: the おく場所 ("ここへおいてね！" in the study mode) and the 読む範囲 around it
+	p.places = {}
+	var no_place: bool = p._place_clear_b.disabled and p._around_b.disabled and p._region_label.text.contains("おく場所: 未設定")
+	p.start_pick("place")
+	var picking: bool = p._place_b.text.contains("ドラッグ…") and not p._pick_b.text.contains("ドラッグ…")
+	p.set_place(Rect2(0.3, 0.2, 0.4, 0.5))
+	var outside: bool = p._region_label.text.contains("はみ出している")
+	p.region_around_place()
+	_ok(roi_ok and no_place and picking and outside and p.place().is_equal_approx(Rect2(0.3, 0.2, 0.4, 0.5))
+		and p.region().is_equal_approx(Rect2(0.28, 0.175, 0.44, 0.55)) and not p._region_label.text.contains("はみ出している")
+		and p._region_label.text.contains("おく場所: 左 30%") and p.place("focus") == Rect2() and p._picking == "",
+		"sheet check: the 読む範囲 goes as the server's roi; the おく場所 is dragged, and the 読む範囲 can be set 5% around it",
+		str([roi_ok, p.sent_roi, no_place, picking, outside, p.place(), p.region(), p._picking, p._view_label.text]))
+	p.set_place(Rect2())
+	p.set_region(Rect2(Vector2(0.9, 0.8), Vector2(-0.5, -0.8)))
+	p.take_frame(img, false)
 	p.show_view("frame")
 	_ok(p.view_mode == "frame" and p._view_label.text.contains("400×300"), "sheet check: the whole frame can be shown again",
 		p._view_label.text)

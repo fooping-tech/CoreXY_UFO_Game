@@ -968,6 +968,213 @@ func _test_study_local_frames(rs: Node) -> void:
 	rs.clear_samples()
 
 
+## #298: the reader's hand-off for a fixed camera: the whole frame upright with roi, quality >= 90,
+## sent only once settled and not again while the same; the おく場所 of "ここへおいてね！".
+func _test_sheet_roi(rs: Node) -> void:
+	# a frame of distinct pixels: the roi's part of the whole upright frame is the part `prepare` cuts
+	var img := Image.create(400, 300, false, Image.FORMAT_RGB8)
+	for y in 300:
+		for x in 400:
+			img.set_pixel(x, y, Color(x / 400.0, y / 300.0, 0.5))
+	var part := Rect2(0.25, 0.1, 0.5, 0.8)
+	var bad: Array = []
+	var off := Rect2(0.1, 0.2, 0.5, 0.6)  # off the middle: a wrong turn would cut another part
+	for deg in SheetFrame.ROTATIONS:
+		var req := SheetFrame.request(img, deg, off)
+		var whole: Image = req.image
+		var roi: Array = req.roi
+		var cut := whole.get_region(SheetCheckPanel.roi_px(roi, whole.get_size()))
+		var shown: Image = req.shown
+		var far := shown.get_size() - Vector2i(4, 6)
+		if roi.size() != 4 or cut.get_size() != shown.get_size() or whole.get_size() != SheetFrame.prepare(img, deg, Rect2()).get_size() \
+				or not cut.get_pixel(3, 5).is_equal_approx(shown.get_pixel(3, 5)) \
+				or not cut.get_pixel(far.x, far.y).is_equal_approx(shown.get_pixel(far.x, far.y)):
+			bad.append([deg, roi, cut.get_size(), shown.get_size()])
+	var none := SheetFrame.request(img, 90, Rect2())
+	var tiny := SheetFrame.roi_of(Vector2i(400, 300), 0, Rect2(0, 0, 0.04, 0.5))  # 16 px: the whole frame
+	var thin := SheetFrame.roi_of(Vector2i(4000, 3000), 0, Rect2(0, 0, 0.04, 0.5))  # 40 of 1000: under the server's 50
+	# (review on #300) a region under the server's minimum falls back to the whole frame everywhere:
+	# what is sent, what is shown and the way back to the frame (HELP's arm target)
+	var narrow := Rect2(0.3, 0.2, 0.04, 0.5)  # 51 px of 1280: past MIN_REGION_PX, under 50/1000
+	var big_frame := Image.create(1280, 960, false, Image.FORMAT_RGB8)
+	var nreq := SheetFrame.request(big_frame, 0, narrow)
+	var same_way: bool = (nreq.roi as Array).is_empty() and (nreq.shown as Image).get_size() == Vector2i(1280, 960) \
+		and SheetFrame.prepare(big_frame, 0, narrow).get_size() == Vector2i(1280, 960) \
+		and SheetFrame.to_frame(Vector2(0.5, 0.5), 0, narrow, Vector2i(1280, 960)).is_equal_approx(Vector2(0.5, 0.5))
+	_ok(same_way and bad.is_empty() and (none.roi as Array).is_empty() and none.shown == none.image and tiny.is_empty() and thin.is_empty()
+		and SheetFrame.roi_of(Vector2i(400, 300), 0, part) == [250, 100, 750, 900]
+		and SheetFrame.roi_of(Vector2i(400, 300), 90, part) == [100, 250, 900, 750],
+		"sheet roi: the whole frame goes upright with the region as roi (0..1000 of it, turned with it), the very part the game shows; none / too small = no roi",
+		str(bad))
+	# the JPEG: not shrunk, quality >= 90; smaller only when it cannot fit
+	var big := Image.create(1280, 960, false, Image.FORMAT_RGB8)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	for y in range(0, 960, 4):
+		for x in range(0, 1280, 4):
+			big.fill_rect(Rect2i(x, y, 4, 4), Color(rng.randf(), rng.randf(), rng.randf()))
+	var full := SheetFrame.encode(big, 4000000)
+	var back := Image.new()
+	back.load_jpg_from_buffer(full)
+	var at90 := big.save_jpg_to_buffer(0.9).size()
+	var squeezed := SheetFrame.encode(big, at90 / 2)
+	var back2 := Image.new()
+	back2.load_jpg_from_buffer(squeezed)
+	_ok(back.get_size() == Vector2i(1280, 960) and full.size() >= at90 and not squeezed.is_empty() and squeezed.size() <= at90 / 2
+		and back2.get_width() < 1280 and SheetFrame.encode(big, 100).is_empty(),
+		"sheet roi: the frame goes at its size and JPEG quality >= 90; only when it cannot fit the link it is made smaller",
+		str([full.size(), at90, squeezed.size(), back2.get_size()]))
+	# the おく場所: the guide shows it (else the 読む範囲); the 読む範囲 = it and 5% more; kept per camera
+	var pl := Rect2(0.3, 0.2, 0.4, 0.5)
+	var around := SheetFrame.region_around(pl)
+	var path := "user://test_sheet_place.cfg"
+	SheetFrame.save_settings({"overview": {"rotation": 90, "region": around, "place": pl}}, path)
+	var got := SheetFrame.load_settings(path)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	_ok(around.is_equal_approx(Rect2(0.28, 0.175, 0.44, 0.55)) and SheetFrame.region_around(Rect2(0, 0, 1, 1)) == Rect2(0, 0, 1, 1)
+		and got.overview.place.is_equal_approx(pl) and SheetFrame.guide_rect(got.overview).is_equal_approx(pl)
+		and SheetFrame.guide_rect({"region": part, "place": Rect2()}).is_equal_approx(part)
+		and SheetFrame.guide_rect({}) == Rect2() and SheetFrame.for_role("overview", "").place == Rect2(),
+		"sheet roi: \"ここへおいてね！\" goes on the おく場所 (else the 読む範囲); the 読む範囲 can be the おく場所 and 5% around it",
+		str([around, got]))
+	# the settling: the camera's first seconds, a dark picture, a moving one; the same picture once
+	var gate := SheetSettle.new()
+	var still := Image.create(64, 48, false, Image.FORMAT_RGB8)
+	still.fill(Color(0.7, 0.7, 0.7))
+	still.fill_rect(Rect2i(10, 10, 20, 20), Color(0.1, 0.1, 0.1))
+	var moved := still.duplicate()
+	moved.fill_rect(Rect2i(30, 10, 30, 30), Color(0.9, 0.3, 0.2))  # a hand comes in
+	var dark := Image.create(64, 48, false, Image.FORMAT_RGB8)
+	gate.sample(still, 10.0)
+	var w1 := gate.blocker(10.0, 0.5)  # the camera opened half a second ago
+	var w2 := gate.blocker(10.5, 5.0)  # still for 0.5 s only
+	gate.sample(still, 11.2)
+	var ok1 := gate.blocker(11.2, 5.0)
+	gate.sample(moved, 11.4)
+	var w3 := gate.blocker(11.4, 5.0)
+	gate.sample(moved, 12.5)
+	var ok2 := gate.blocker(12.5, 5.0)
+	gate.mark_sent()
+	var same := gate.same_as_sent()
+	gate.sample(still, 13.0)
+	var other := not gate.same_as_sent()
+	gate.sample(moved, 13.2)
+	gate.forget_sent()
+	var forgot := not gate.same_as_sent()
+	var g2 := SheetSettle.new()
+	g2.sample(dark, 1.0)
+	g2.sample(dark, 3.0)
+	_ok(w1 == "warming" and w2 == "moving" and ok1 == "" and w3 == "moving" and ok2 == "" and same and other and forgot
+		and g2.blocker(3.0, 5.0) == "dark" and SheetSettle.text("moving").contains("動いて") and gate.due(0.0) and not gate.due(0.1),
+		"sheet roi: a frame goes once the camera warmed up and the picture is lit and has not moved for a second; the same picture is known",
+		str([w1, w2, ok1, w3, ok2, same, other, forgot]))
+	# the camera size: exactly 1280x960, else the largest 4:3 not wider; none = the camera's own
+	var formats := [{"width": 640, "height": 480}, {"width": 1280, "height": 720}, {"width": 960, "height": 720},
+		{"width": 1280, "height": 960}, {"width": 1600, "height": 1200}]
+	_ok(CameraHub.pick_format(formats, Vector2i(1280, 960)) == 3 and CameraHub.pick_format(formats.slice(0, 3), Vector2i(1280, 960)) == 2
+		and CameraHub.pick_format([{"width": 1920, "height": 1080}], Vector2i(1280, 960)) == -1
+		and CameraHub.pick_format([], Vector2i(1280, 960)) == -1 and CameraHub.format_index(formats, Vector2i(640, 480)) == 0,
+		"sheet roi: the overview camera is asked for 1280x960 (else its largest 4:3 up to that; none: its own size)")
+
+	# the watch: settled frames only, the whole frame with the roi, nothing again while the same
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	path = "user://test_sheet_roi_study.cfg"
+	SheetFrame.save_settings({"overview": {"rotation": 180, "region": part, "place": pl}}, path)
+	hw.sheet_settings_path = path
+	hw.worksheet_id = "mon-elem_1-01"
+	hw.study_local = true
+	var cams := _FakeCams.new()
+	cams.img = img
+	var real_cams := hw.cameras
+	var real_link := hw.link
+	var spy := _VoiceLinkSpy.new()
+	hw.cameras = cams
+	hw.link = spy
+	hw.state = "running"
+	hw.session_id = "s1"
+	hw.sheet_gate.reset()
+	hw.sheet_gate.still_s = 60.0  # the picture "moves" for now
+	hw._next_ms = 0
+	hw._process(0.1)
+	var waited: bool = spy.sent.is_empty() and hw.status_text.contains("動いて") and not hw._waiting
+	hw.sheet_gate.still_s = 0.0
+	hw._next_ms = 0
+	hw._process(0.3)
+	var frame: Dictionary = spy.sent[0].data if spy.sent.size() == 1 else {}
+	var jpeg := Image.new()
+	if frame.has("image_jpeg_base64"):
+		jpeg.load_jpg_from_buffer(Marshalls.base64_to_raw(frame.image_jpeg_base64))
+	var sent_ok: bool = spy.sent.size() == 1 and spy.sent[0].type == "homework_frame" and frame.get("roi") == [250, 100, 750, 900] \
+		and jpeg.get_size() == Vector2i(400, 300)
+	hw._on_message({"type": "homework_progress", "data": {"progress_pct": 0.0}})
+	hw._next_ms = 0
+	hw._process(0.3)
+	var skipped: bool = spy.sent.size() == 1 and hw.skipped_same == 1 and hw.status_text.contains("変化なし")
+	hw._waiting = true
+	hw._on_message({"type": "homework_error", "data": {"code": "busy", "message": "混んでいる"}})
+	hw._next_ms = 0
+	hw._process(0.3)
+	_ok(waited and sent_ok and skipped and spy.sent.size() == 2,
+		"sheet roi: the watch waits while the picture moves, sends the whole frame upright with the roi, not again while the same (again after a failure)",
+		str([waited, frame.get("roi"), jpeg.get_size(), skipped, spy.sent.size(), hw.status_text]))
+	# the answer check and HELP wait for a settled picture a few seconds at most
+	var calls := [0, 0]
+	hw.sheet_gate.still_s = 60.0
+	hw.sheet_gate.sample(img, 100.0)
+	sv.when_settled(0.5, func(): return true, func(): calls[0] += 1)
+	var before: int = calls[0]
+	for i in 4:
+		sv._process(0.25)
+	hw.sheet_gate.still_s = 0.0
+	sv.when_settled(3.0, func(): return true, func(): calls[1] += 1)
+	var dropped := [0]
+	hw.sheet_gate.still_s = 60.0
+	hw.sheet_gate.sample(img, 200.0)
+	sv.when_settled(3.0, func(): return false, func(): dropped[0] += 1)
+	for i in 20:
+		sv._process(0.25)
+	_ok(before == 0 and calls[0] == 1 and calls[1] == 1 and dropped[0] == 0,
+		"sheet roi: the answer check / HELP wait for a settled picture (at most a few seconds, then anyway; dropped when no longer wanted)",
+		str([before, calls, dropped]))
+	hw.cameras = real_cams
+	hw.link = real_link
+	hw.state = "stopped"
+	# (review on #300) a new session sends its first picture even when it is the one sent last
+	hw.sheet_gate.sample(img, 300.0)
+	hw.sheet_gate.mark_sent()
+	var was_same := hw.sheet_gate.same_as_sent()
+	hw.start()
+	var fresh := not hw.sheet_gate.same_as_sent()
+	hw.stop()
+	_ok(was_same and fresh, "sheet roi: a new watch session forgets the picture sent in the last one",
+		str([was_same, fresh]))
+	spy.free()
+	cams.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	ctl.stop()
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
+## A camera hub with one fixed picture (the tests have no camera).
+class _FakeCams:
+	extends CameraHub
+	var img: Image
+	var live := 10.0
+
+	func has_feed(_role: String) -> bool:
+		return true
+
+	func texture(_role: String) -> Texture2D:
+		return ImageTexture.create_from_image(img)
+
+	func live_s(_role: String) -> float:
+		return live
+
 ## #233: the voice dialogue: hold V, speak, let go -> the text -> the tutor -> UFOくん says it.
 func _test_study_voice(rs: Node) -> void:
 	var game := _study_game("camera")
