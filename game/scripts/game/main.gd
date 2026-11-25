@@ -1213,7 +1213,14 @@ func easy_blocker() -> String:
 ## (the catch height is the bottom). "" = it has them (or this is not the real crane). While the
 ## backend's easy status has not come yet, nothing starts either (never "" by default).
 func crane_blocker() -> String:
-	if RobotState.source != "websocket" or str(ws.server_robot) != "real":
+	if RobotState.source != "websocket":
+		return ""
+	# review on #301: which crane the backend runs is told by its hello (and forgotten on a
+	# disconnect): until then nothing starts; only a backend that said it is not the real one is free
+	var robot := str(ws.server_robot)
+	if robot == "":
+		return "ロボットの じょうたいを かくにんちゅう…（バックエンドに つながるのを まっています）"
+	if robot != "real":
 		return ""
 	return crane_blocker_for(RobotState.connected, RobotState.z_reference_set, RobotState.z_calibrated,
 		RobotState.easy_mode)

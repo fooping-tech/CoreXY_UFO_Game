@@ -559,8 +559,10 @@ func _test_crane_start_check(rs: Node) -> void:
 		and ctl.difficulty_text().contains("はじめられないよ")
 	ctl.start_tutorial()
 	var no_practice: bool = ctl.phase == "IDLE"
+	game.ws.server_robot = ""  # (review on #301) not told yet / the link went down: wait
+	var unknown_held: bool = ctl.start_blocked().contains("かくにんちゅう")
 	game.ws.server_robot = "mock"  # the mock backend: as before
-	var mock_free: bool = ctl.start_blocked() == ""
+	var mock_free: bool = ctl.start_blocked() == "" and unknown_held
 	game.ws.server_robot = ""
 	RobotState.source = "mock"
 	RobotState.connected = false
