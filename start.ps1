@@ -290,11 +290,13 @@ function Start-Backend([string[]]$argv) {
   Assert-Uv
   Resolve-WsEndpoint $argv
   Assert-PortFree
-  # camera / hand tracking need the optional extras; a plain sync would remove them
-  $sync = @('sync', '--quiet')
+  # camera / hand tracking need the optional extras. --inexact (#312): a sync never removes a
+  # package: mediapipe's opencv-contrib-python shares the cv2 folder with opencv-python, and
+  # removing it (a run without the gesture after one with it) took cv2 away with it
+  $sync = @('sync', '--quiet', '--inexact')
   foreach ($a in $argv) {
     if ($a -in '--gesture', '--hands', '--camera' -or $a -like '--gesture=*' -or $a -like '--camera=*') {
-      $sync = @('sync', '--quiet', '--extra', 'vision', '--extra', 'hands')
+      $sync = @('sync', '--quiet', '--inexact', '--extra', 'vision', '--extra', 'hands')
       break
     }
   }
@@ -302,6 +304,13 @@ function Start-Backend([string[]]$argv) {
   try {
     & uv @sync
     if ($LASTEXITCODE -ne 0) { Fail 'uv sync に失敗しました' }
+    # a cv2 already lost that way (installed on paper, its folder gone): put it back
+    & uv run --no-sync python -c 'import cv2' *> $null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host 'OpenCV（cv2）が読めないので入れ直します'
+      & uv @sync --reinstall-package opencv-python
+      if ($LASTEXITCODE -ne 0) { Fail 'uv sync に失敗しました' }
+    }
   } finally {
     Pop-Location
   }
