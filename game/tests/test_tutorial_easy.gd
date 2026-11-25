@@ -518,6 +518,59 @@ func _test_easy_mode_game(rs: Node) -> void:
 	_gm_free(game, rs)
 
 ## #149: the practice's steps as data, and each step ended only by what the hand really did.
+## #302: a servo command of the easy run that only failed (STOP, no alarm): the claw is opened and
+## the arm brought up by itself a moment later, and play goes on; a few times a round at most.
+func _test_easy_servo_recovery() -> void:
+	var p = _easy_new()
+	var e: EasyModeControl = p[0]
+	var be: EasyBackend = p[1]
+	var open = _easy_hand("open")
+	var fist = _easy_hand("fist")
+	var servo := {"servo_fault": true, "last_result": "fault", "error": "RELEASE failed: SERVO_TURN id=2 result=FAILED reason=feedback_lost"}
+	e.state = "DELIVER_DIAL_1"  # carrying the catch g1 to the portal
+	e.grab_id = "g1"
+	be.report("FAULT", "g1", servo)
+	_easy_run(e, be, 0.1, open)
+	var waits: bool = e.state == "MANUAL_XY" and e.note.contains("つめ") and be.sent.is_empty() and e.servo_recoveries == 1
+	_easy_run(e, be, 0.5, fist)  # a fist meanwhile starts nothing
+	var still: bool = be.sent.is_empty()
+	_easy_run(e, be, 0.6, open)
+	var reset_sent: bool = be.names() == ["easy_reset"] and e.state == "RESET"
+	e.on_ack(be.last_rid(), true, {"grab_id": "r1"})
+	be.report("MANUAL_XY", "r1", {"last_result": "done"})
+	_easy_run(e, be, 0.1, open)
+	var back: bool = e.state == "MANUAL_XY" and not e.faulted()
+	# (review on #303) the stop while the recovery waits calls it off: nothing is sent after it
+	e.state = "DELIVER_DIAL_1"
+	e.grab_id = "g1b"
+	be.report("FAULT", "g1b", servo)
+	_easy_run(e, be, 0.1, open)
+	e.on_stop()
+	_easy_run(e, be, 2.0, open)
+	var stop_calls_off: bool = be.names() == ["easy_reset"] and e.state == "MANUAL_XY" and e.servo_recoveries == 2
+	# a new round has the whole allowance again
+	e.new_round()
+	var allowance: bool = e.servo_recoveries == 0
+	back = back and stop_calls_off and allowance
+	# the last allowed time is used, then a fault as before
+	e.servo_recoveries = e.servo_recoveries_max
+	e.state = "AUTO_GRAB"
+	e.grab_id = "g2"
+	be.report("FAULT", "g2", servo)
+	_easy_run(e, be, 2.0, open)
+	var capped: bool = e.faulted() and be.names() == ["easy_reset"]
+	# a fault that is not only a servo's (ABORT, an alarm, a timeout...): a fault at once
+	e.reset()
+	var fresh: bool = e.servo_recoveries == 0
+	e.state = "AUTO_GRAB"
+	e.grab_id = "g3"
+	be.report("FAULT", "g3", {"last_result": "fault", "error": "LOWER_TO_CATCH timeout"})
+	_easy_run(e, be, 2.0, open)
+	_ok(waits and still and reset_sent and back and capped and fresh and e.faulted() and be.names() == ["easy_reset"],
+		"easy mode #302: after a servo command only failed the claw is opened and the arm brought up by itself and play goes on (a few times a round); other faults stay faults",
+		str([waits, still, reset_sent, back, capped, fresh, e.state, be.names()]))
+
+
 ## #299: the real crane's score game never starts without the Z top and bottom, the portal's XY
 ## and the release height (whatever the difficulty; before #299 only the easy mode asked, and a
 ## missing status or Z top slipped through).

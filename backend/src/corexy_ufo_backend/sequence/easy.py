@@ -348,6 +348,8 @@ class EasySequencer(AutoCatchSequencer):
             "last_result": self.last_result,  # "" | "done" | "cancelled" | "stopped" | "fault" | "expired"
             "error": self.error,
             "reason": self.error,
+            # #302: the FAULT was a servo command's failure stopped with STOP (no alarm): try again
+            "servo_fault": self.servo_fault and self.last_result == "fault",
             "profile": self.params.profile,
             "history": list(self.history[-10:]),
         }
@@ -421,6 +423,7 @@ class EasySequencer(AutoCatchSequencer):
         self.active = True
         self.error = ""
         self.last_result = ""
+        self.servo_fault = False
         self._abort_reason = ""
         self._stop_sent = False
         self.destination = 0

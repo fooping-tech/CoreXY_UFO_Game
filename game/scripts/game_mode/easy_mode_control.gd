@@ -99,6 +99,13 @@ var delivers_sent := 0
 ## carries asked for for this catch, and the time until the next may be
 var _tries := 0
 var _retry_left := 0.0
+## #302: a servo command of the run only failed (the backend stopped with STOP, no alarm): the
+## claw is opened and the arm brought up again (easy_reset) after this long, at most
+## servo_recoveries_max times a round; then a fault as before
+var servo_recovery_s := 1.0
+var servo_recoveries_max := 3
+var servo_recoveries := 0
+var _servo_reset_left := 0.0
 
 var _hold := 0.0
 var _neutral := 0.0
@@ -117,6 +124,8 @@ func configure(cfg: Dictionary) -> void:
 	wait_s = float(cfg.get("wait_destination_s", wait_s))
 	auto_retry_s = clampf(float(cfg.get("auto_retry_s", auto_retry_s)), 0.2, 10.0)
 	auto_tries = clampi(int(cfg.get("auto_tries", auto_tries)), 1, 10)
+	servo_recovery_s = clampf(float(cfg.get("servo_recovery_s", servo_recovery_s)), 0.2, 10.0)
+	servo_recoveries_max = clampi(int(cfg.get("servo_recoveries", servo_recoveries_max)), 0, 10)
 
 func enabled() -> bool:
 	return state != "OFF"
@@ -132,6 +141,11 @@ func faulted() -> bool:
 ## Space (the stop key): whatever this script asked for is over, now. The stop itself
 ## (soft_stop: the backend ends its sequence with ABORT) is the caller's to send.
 func on_stop() -> void:
+	if _servo_reset_left > 0.0:
+		# review on #303: a recovery still waiting is called off by the stop: nothing moves after it
+		_servo_reset_left = 0.0
+		note = "ストップした"
+		return
 	if not busy():
 		return
 	var pending := _rid if _rid_what in ["grab", "reset"] else ""
@@ -157,9 +171,16 @@ func request_reset() -> bool:
 	_set_state("RESET")
 	return true
 
+## #302 (review on #303): a new round (the countdown, the practice) has the whole allowance of
+## servo recoveries again, whoever used them before.
+func new_round() -> void:
+	servo_recoveries = 0
+
 ## A new round, or staff: out of FAULT. Nothing is sent; the backend still refuses
 ## whatever is not in order (an alarm, no homing, ...), and the hand starts from neutral.
 func reset() -> void:
+	servo_recoveries = 0
+	_servo_reset_left = 0.0
 	if state == "OFF":
 		return
 	_forget()
@@ -167,6 +188,7 @@ func reset() -> void:
 	_set_state("MANUAL_XY")
 
 func _forget() -> void:
+	_servo_reset_left = 0.0  # (#302: a recovery waiting is called off too; the recovery sets it after this)
 	_rid = ""
 	_rid_what = ""
 	_rid_left = 0.0
@@ -316,6 +338,13 @@ func tick(dt: float, hand: Dictionary, world: Dictionary) -> void:
 	var link := bool(world.get("link", false))
 	match state:
 		"MANUAL_XY":
+			if _servo_reset_left > 0.0:  # #302: the claw opened and the arm up first (nothing else meanwhile)
+				_servo_reset_left -= dt
+				if _servo_reset_left <= 0.0:
+					_servo_reset_left = 0.0
+					if link:
+						request_reset()
+				return
 			_tick_manual(dt, sgn, hand, world, status)
 		"RESET", "AUTO_GRAB":
 			if not link:
@@ -474,6 +503,16 @@ func _follow(status: Dictionary) -> void:
 	var bs := str(status.get("state", ""))
 	match bs:
 		"FAULT":
+			if bool(status.get("servo_fault", false)) and servo_recoveries < servo_recoveries_max:
+				# #302: only a servo command failed (no alarm): open the claw, up, and play on
+				servo_recoveries += 1
+				_forget()
+				need_neutral = true
+				note = "つめが うまく うごかなかった。つめを ひらいて やりなおすよ"
+				_servo_reset_left = servo_recovery_s
+				_set_state("MANUAL_XY")
+				cue.emit("refused")
+				return
 			_fault("とまったよ: %s" % fault_text(str(status.get("error", ""))))
 		"EXPIRED":
 			_fault("えらばなかったので とまったよ（つめは とじたまま）")

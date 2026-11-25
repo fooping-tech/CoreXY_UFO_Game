@@ -94,12 +94,19 @@ class AbortableSequence:
         self.error += " (servo error: stopped with STOP, no alarm)"
         return True
 
+    # #302: the last FAULT was a servo command's own failure, stopped with STOP (no alarm, homing
+    # kept, nothing moving): the game takes it as "try again", not as a fault of the crane
+    servo_fault: bool = False
+
     async def _fault(self, reason: str, *, servo_ended: bool = False) -> None:
         action = self._action
         self.error = reason
         self.last_result = "fault"
-        if not (servo_ended and not self._abort_reason and await self._soft_stop_instead()):
+        self.servo_fault = False
+        soft = servo_ended and not self._abort_reason and await self._soft_stop_instead()
+        if not soft:
             await self._emergency_stop()
+        self.servo_fault = soft  # (set before the FAULT phase below is reported)
         text = self._fault_text(reason)
         self._set_phase(self.FAULT_PHASE, text)
         self._log.error("%s: FAULT: %s", self.label, text)
