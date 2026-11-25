@@ -116,6 +116,7 @@ func _ready() -> void:
 	_s.game_mode_show._test_portrait_layout(rs)
 	_s.game_mode_show._test_game_mode_scope(rs)
 	_s.game_mode_show._test_game_mode_audio(rs)
+	_s.game_mode_show._test_audio_levels()
 	_s.game_mode_show._test_game_mode_reactions(rs)
 	_s.tutorial_easy._test_gesture_tutorial_logic()
 	_s.tutorial_easy._test_gesture_tutorial_more_steps()

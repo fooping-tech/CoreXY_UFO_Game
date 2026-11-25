@@ -36,8 +36,11 @@ const PIN_GAP_S := 0.06
 const MANIFEST := "res://assets/audio/manifest.json"
 const AUDIO_DIR := "res://assets/audio/"
 const PLAYERS := 8
-## the music under the effects, and how far it steps back for a voice
-const BGM_DB := -8.0
+## the music under the effects, and how far it steps back for a voice. #304: the music files
+## are leveled to -18 LUFS (game_mode.sounds.bgm.gain_db), the effects to about -14 (momentary,
+## before audio.volume_db): -2 keeps the music about 6 dB under the big effects (was -8: lost
+## under them)
+const BGM_DB := -2.0
 const DUCK_DB := -10.0
 ## The music files (#173): game/assets/audio/bgm/ is each machine's own (never in Git, #151).
 ## A track whose file is not there, or does not load, is as before: the synthesised tune for
@@ -59,14 +62,22 @@ const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "sco
 ## falls back to the synthesised sound of the same key.
 const OWN_FILES := {"reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
 	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3"}
+## #304: each own file's level (dB, on audio.volume_db), as the manifest's gain_db: measured with
+## tools/audio_levels.py and brought to the same loudness as the other big effects
+const OWN_GAIN_DB := {"reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0}
+## #304: the synthesised round tune is louder than the leveled music files
+const TUNE_GAIN_DB := -3.0
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
-## two of a key (the counting blips come many a second and must never fill the players)
-const SYNTH_META := {"timeup_hit": {"priority": 2}, "result_count": {"priority": 0, "min_gap_ms": 40}, "score_lock": {"priority": 2},
-	"bonus_show": {"priority": 2}, "bonus_hit": {"priority": 2}, "final_hit": {"priority": 2}, "new_record": {"priority": 2},
-	"power_speed": {"priority": 2, "min_gap_ms": 400}, "power_multi": {"priority": 2, "min_gap_ms": 400},
+## two of a key (the counting blips come many a second and must never fill the players);
+## gain_db (#304): the synthesised sound's level, as the manifest's (tools/audio_levels.py)
+const SYNTH_META := {"timeup_hit": {"priority": 2, "gain_db": -3.0}, "result_count": {"priority": 0, "min_gap_ms": 40, "gain_db": 4.0},
+	"score_lock": {"priority": 2, "gain_db": 4.0}, "bonus_show": {"priority": 2, "gain_db": 6.0}, "bonus_hit": {"priority": 2, "gain_db": 3.0},
+	"final_hit": {"priority": 2, "gain_db": -4.0}, "new_record": {"priority": 2, "gain_db": 1.0},
+	"power_speed": {"priority": 2, "min_gap_ms": 400, "gain_db": -2.0}, "power_multi": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0},
 	"power_double": {"priority": 2, "min_gap_ms": 400},
-	"reveal": {"priority": 2, "min_gap_ms": 400}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
-	"reveal_water": {"priority": 2, "min_gap_ms": 400}, "reveal_green": {"priority": 2, "min_gap_ms": 400}}
+	"reveal": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
+	"reveal_water": {"priority": 2, "min_gap_ms": 400, "gain_db": 3.0}, "reveal_green": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
+	"tutorial_ok": {"gain_db": 3.0}, "gauge": {"gain_db": 4.0}, "summon": {"gain_db": -1.0}}
 
 var enabled := true
 var volume_db := -8.0
@@ -358,6 +369,18 @@ func source_of(name: String) -> String:
 		return "file"
 	return "synth" if _streams.has(name) else ""
 
+## #304: the level of `name` as play() would play it now (dB on volume_db): the manifest's
+## gain_db for a manifest file, OWN_GAIN_DB for an own file, SYNTH_META's for a synthesised one.
+func gain_db_of(name: String) -> float:
+	var src := source_of(name)
+	if src == "file":
+		if _meta.has(name):
+			return float(_meta[name].get("gain_db", 0.0))
+		return float(OWN_GAIN_DB.get(name, 0.0))
+	if src == "synth" and SYNTH_META.has(name):
+		return float(SYNTH_META[name].get("gain_db", 0.0))
+	return 0.0
+
 func priority_of(name: String) -> int:
 	if _meta.has(name):
 		return int(_meta[name].get("priority", 1))
@@ -417,7 +440,7 @@ func play(name: String, side := "", pitch := 0.0) -> void:
 	var p := _players[slot]
 	p.stream = _files[name] if src == "file" else _streams[name]
 	p.bus = AudioBuses.sfx_bus(side)
-	p.volume_db = volume_db + float(m.get("gain_db", 0.0))
+	p.volume_db = volume_db + gain_db_of(name)
 	var jitter := float(m.get("pitch_jitter", 0.0))
 	p.pitch_scale = 1.0 + _rng.randf_range(-jitter, jitter)
 	if name == "combo":
@@ -491,8 +514,8 @@ func _process(dt: float) -> void:
 			pair[0].play()
 	_pickup_duck_left = maxf(_pickup_duck_left - dt, 0.0)
 	_duck = move_toward(_duck, DUCK_DB if AudioBuses.voice_active() else 0.0, dt * 40.0)
-	_fade(_bgm, _bgm_gain)
-	_fade(_bgm_fast, _fast_gain)
+	_fade(_bgm, _bgm_gain, TUNE_GAIN_DB)
+	_fade(_bgm_fast, _fast_gain, TUNE_GAIN_DB)
 	# the jingle is never over a music: silence ends it, and so does the round's or the result's
 	# music (those start on time; a long jingle is cut, not laid over them)
 	if _jingle != null and _jingle.playing and (silent or not enabled or bgm_on or ending_on):
