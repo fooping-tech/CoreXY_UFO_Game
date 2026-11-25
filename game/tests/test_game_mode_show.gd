@@ -13,7 +13,8 @@ func _test_game_mode_visuals(rs: Node) -> void:
 	game._unhandled_input(_key(KEY_3))
 	ctl.tick(1.0 / 60.0)
 	var b := ctl.backdrop
-	var title: bool = ctl.hud.title_showing() and not ctl.fx.ufo_visible and ctl.hud._start.text.contains("Enter")
+	var title: bool = ctl.hud.title_showing() and not ctl.fx.ufo_visible and ctl.hud._start.text.contains("Enter") \
+		and ctl.hud._logo_tex != null and ctl.hud._logo_tex == load(TitleScreen.LOGO_PNG)  # #310: the title screen's logo picture
 	var high := b.star_count()
 	b.quality = "low"
 	var low := b.star_count()

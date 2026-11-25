@@ -37,7 +37,9 @@ When done, report the file and its pixel size.
 
 ## logo
 
-ユーザーが見本に出した「ネオンの文字」のロゴを、木の看板なしの文字の部分だけ、ピクセルアートで作ったもの（それより前の 2 つの案は使っていない）。
+**#310 から:** `logo.png` はユーザーが用意したロゴ「UFOを召喚せよ」（2167 x 725、背景は透明。Codex で作ったものではない）。`tools/build_title_art.py` でほかの絵と同じ格子（幅 165、画面で 4 倍）に変換する。背景が透明なので緑の抜きは何もしない。半透明の光は、不透明度が半分以上のところだけ残る。
+
+それまでの `logo.png`（「SUMMON / THE UFO」、下の指示で作ったもの）は Git の履歴にある。ユーザーが見本に出した「ネオンの文字」のロゴを、木の看板なしの文字の部分だけ、ピクセルアートで作ったもの（それより前の 2 つの案は使っていない）。
 
 ```text
 Use your image generation tool to create a game title logo as PIXEL ART. Save the final image as `logo.png` in the current directory. Do not write code or touch other directories.
