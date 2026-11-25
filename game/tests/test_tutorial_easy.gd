@@ -497,7 +497,7 @@ func _test_easy_mode_game(rs: Node) -> void:
 		"%s %s %s %s %s %s" % [esc_stops, ctl.difficulty, ctl.phase, claws, z_mode, be.sent.size() - n_sent])
 	# the practice shows the difficulty that is played
 	var easy_steps := GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", PinchJoystickScheme.new().claw_poses()).map(func(s): return s.id)
-	_ok(easy_steps.has("easy_grab") and not easy_steps.has("easy_one") and not easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
+	_ok(easy_steps == ["summon", "open", "pinch", "move", "easy_practice"] and not easy_steps.has("easy_one") and not easy_steps.has("easy_two") and CalibrationPanel.easy_state({"dials": {"profile": "dry_run"}}).state == "na"
 		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("投入の高さ")
 		and not CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2]}}).text.contains("キャッチの高さ")
 		and CalibrationPanel.easy_state({"dials": {"profile": "real", "dial_1": [1, 2], "release_z": 60.0, "stale_z": true}}).text.contains("測り直した")
@@ -658,7 +658,9 @@ func _test_gesture_tutorial_logic() -> void:
 		"tutorial steps: the spell, パー, the pinch, moving, the catch, the rule, one capsule; the catch asks for the shape that closes the claw in the hand scheme in use",
 		"%s %s %s" % [ids, hard[4].poses, pose_grab.poses])
 	var easy_own := easy.filter(func(s): return str(s.id).begins_with("easy_"))
-	_ok(easy_own.map(func(s): return s.id) == ["easy_grab"] and str(easy_own[0].sub).contains("ポータル") and int(easy_own[0].goto_demo) == 1
+	# #314: the easy practice is the one real catch (no "グーで キャッチ" of the shape only, no rules)
+	_ok(easy_own.map(func(s): return s.id) == ["easy_practice"] and str(easy_own[0].sub).contains("ポータル") and str(easy_own[0].kind) == "practice"
+		and str(easy_own[0].title).contains("ねらいを さだめて")
 		and easy.filter(func(s): return bool(s.get("future", false))).is_empty() and hard.filter(func(s): return bool(s.get("future", false))).is_empty()
 		and changed.map(func(s): return s.id) == ["open", "practice"] and changed[0].title == "X" and is_equal_approx(float(changed[0].hold_s), 2.0),
 		"tutorial steps: the easy mode teaches the fist, which carries to the left portal by itself (#266: no finger step; no two fingers, #200), none marked as not built; config overrides a step and the order",
@@ -922,7 +924,9 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	var claw := PinchJoystickScheme.new().claw_poses()
 	var easy = GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw)
 	var hard = GestureTutorialSteps.resolve({}, "hard", "pinch_joystick", claw)
-	var only_easy = easy.filter(func(s): return bool(s.get("claw_demo", false))).map(func(s): return s.id) == ["easy_grab"] \
+	# #314: the default practice has no shape-only fist step any more (the catch is the real one);
+	# the step is still there for a config that lists it, and does what it did
+	var only_easy = easy.filter(func(s): return bool(s.get("claw_demo", false))).is_empty() \
 		and hard.filter(func(s): return bool(s.get("claw_demo", false))).is_empty()
 	var game = _gm_game()
 	var ctl: GameModeController = game.game_mode
@@ -930,7 +934,7 @@ func _test_tutorial_claw_demo(rs: Node) -> void:
 	ctl.tutorial_claw.connect(func(w): asked.append(w))
 	var gotos = []
 	ctl.tutorial_goto.connect(func(d): gotos.append(d))
-	var grab = easy.filter(func(s): return s.id == "easy_grab")[0]
+	var grab = GestureTutorialSteps.resolve({"modes": {"easy": {"pinch_joystick": ["easy_grab"]}}}, "easy", "pinch_joystick", claw)[0]
 	ctl._on_tutorial_ok(0, grab)
 	var hard_gotos = hard.filter(func(s): return int(s.get("goto_demo", 0)) != 0).is_empty()
 	ctl._on_tutorial_ok(0, {"goto_demo": 2})  # (an older config's step for Dial 2: nothing is asked)
@@ -1017,7 +1021,7 @@ func _test_gesture_tutorial_done_say() -> void:
 	var moving = {"pinch": true, "active": true, "speed": 0.6}
 	for mode in ["hard", "easy"]:
 		var all = GestureTutorialSteps.resolve({}, mode, "pinch_joystick", claw)
-		var steps = all.filter(func(s): return s.id in ["move", "rules"])
+		var steps = all.filter(func(s): return s.id in ["move", "rules", "easy_practice"])  # #314: easy has no rules
 		var said = []
 		var t = GestureTutorialController.new()
 		t.say.connect(func(lines): said.append(lines))
@@ -1036,13 +1040,13 @@ func _test_gesture_tutorial_done_say() -> void:
 		_ok(waits and t.index == 1, "tutorial done_say (%s): the next step waits for the words" % mode, "%s %d" % [t.state, t.index])
 	# ...but never for long: a voice that never ends does not hold the practice
 	var t2 = GestureTutorialController.new()
-	t2.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["move", "rules"]), true)
+	t2.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["move", "easy_practice"]), true)
 	_tut_run(t2, 3.2, _tut_hand(moving))
 	_tut_run(t2, t2.ok_s + t2.tell_max_s + 0.5, _tut_hand(moving), {"speech_busy": true})
 	_ok(t2.index == 1, "tutorial done_say: a voice that never ends does not hold the practice", str(t2.index))
 	# a step without done_say goes on after the OK alone, as before
 	var t3 = GestureTutorialController.new()
-	t3.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["open", "rules"]), true)
+	t3.begin(GestureTutorialSteps.resolve({}, "easy", "pinch_joystick", claw).filter(func(s): return s.id in ["open", "easy_practice"]), true)
 	_tut_run(t3, 3.2, _tut_hand({"pose": "open"}))
 	_tut_run(t3, t3.ok_s + 0.2, _tut_hand({"pose": "open"}), {"speech_busy": true})
 	_ok(t3.index == 1, "tutorial done_say: a step without it does not wait", str(t3.index))
@@ -1329,3 +1333,111 @@ func _test_park_requests(rs: Node) -> void:
 
 class GameControlParkWait:
 	const RETRY := 1.0
+
+## #314: the practice capsule is explained on the practice board (PracticeShow) instead of the
+## round's pinball: the capsule that came in, the kinds by colour and "more to come", the jackpot
+## chance; each scene waits for UFOくん's lines (never for ever); then the capsule goes back.
+func _test_practice_show(rs: Node) -> void:
+	var show := PracticeShow.new()
+	add_child(show)
+	var said: Array = []
+	show.say = func(lines: Array): said.append_array(lines)
+	var busy := [true]
+	show.speech_busy = func() -> bool: return busy[0]
+	var done: Array = []
+	show.finished.connect(func(id: String): done.append(id))
+	show.begin("c1", "fire")
+	for i in 60 * 5:
+		show.tick(1.0 / 60.0)
+	var waits_for_words: bool = show.scene == "kind" and show.visible
+	busy[0] = false
+	show.tick(1.0 / 60.0)
+	var colours_cards: bool = show.scene == "colours" and show._cards.all(func(c): return c.visible)
+	var more_card := ""
+	for l in show._cards[3].find_children("*", "Label", true, false):
+		more_card += (l as Label).text
+	for i in 60 * 60:
+		if not show.active():
+			break
+		show.tick(1.0 / 60.0)
+	var words := " ".join(said)
+	var whole: bool = done == ["c1"] and show.shown == ["kind", "colours", "switches", "jackpot"] and show.lit.all(func(b): return b) \
+		and show.jackpot_shown and not show.visible and not show.active()
+	var told: bool = words.contains("ファイヤーボールカプセル") and words.contains("おたのしみに") and words.contains("ジャックポット") \
+		and words.contains("タイミングよく") and more_card.contains("おたのしみに")
+	# a voice that never ends does not hold it: each scene's max_s
+	done.clear()
+	busy[0] = true
+	show.begin("c2", "normal")
+	var cap := 0.0
+	for s in PracticeShow.SCENES:
+		cap += float(show.max_s[s[0]])
+	for i in int((cap + 2.0) * 60.0):
+		if not show.active():
+			break
+		show.tick(1.0 / 60.0)
+	var capped: bool = done == ["c2"]
+	# stopped (Space, Esc): gone at once, nothing finished
+	done.clear()
+	show.begin("c3", "water")
+	show.tick(0.5)
+	show.stop()
+	var stopped: bool = not show.active() and not show.visible and done.is_empty()
+	show.free()
+	_ok(waits_for_words and colours_cards and whole and told and capped and stopped,
+		"practice show #314: the capsule in, the kinds by colour with a 'more to come' card, the switches and the jackpot chance; each scene waits for the words (never past max_s); stop drops it",
+		"%s %s %s %s %s %s %s" % [waits_for_words, colours_cards, whole, told, capped, stopped, show.shown if is_instance_valid(show) else []])
+
+	# in the game: the practice capsule goes to the show, not the pinball, and back to its Dial
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))  # the score game's title
+	game._unhandled_input(_key(KEY_T))  # T: the practice
+	while ctl.tutorial.kind() != "practice" and ctl.tutorial.active():
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	var left: GameModeController.Lane = ctl.lanes["left"]
+	ctl.mock_hub.mock_ball(left.device)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.2)
+	var on_show: bool = ctl.practice_show.active() and ctl.practice_show.visible and ctl.field._capsules.is_empty() \
+		and left.state == "SIMULATING"
+	var shown_score := 0
+	for i in 60 * 120:
+		if ctl.practice == "done":
+			break
+		if shown_score == 0 and ctl.score.score > 0:
+			shown_score = ctl.score.score
+		ctl.tick(1.0 / 60.0)
+	var back: bool = ctl.practice == "done" and not ctl.practice_show.active() and ctl.practice_released == 1 \
+		and shown_score >= PracticeShow.JACKPOT_POINTS and ctl.practice_show.shown.size() == PracticeShow.SCENES.size()
+	_gm_step(ctl, ctl.tutorial.ok_s + 0.2)
+	var round_clean: bool = ctl.phase == "COUNTDOWN" and ctl.score.score == 0
+	# Space during the show: it is gone at once
+	ctl._halt("test")
+	game._unhandled_input(_key(KEY_T))
+	while ctl.tutorial.kind() != "practice" and ctl.tutorial.active():
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	ctl.mock_hub.mock_ball(left.device)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.2)
+	var was_on := ctl.practice_show.active()
+	game._unhandled_input(_key(KEY_SPACE))
+	_gm_step(ctl, 0.1)
+	var gone: bool = was_on and not ctl.practice_show.active() and not ctl.practice_show.visible and ctl.phase == "STOPPED"
+	# off in the config: the pinball as before
+	ctl._halt("test")
+	ctl.practice_show_on = false
+	game._unhandled_input(_key(KEY_T))
+	while ctl.tutorial.kind() != "practice" and ctl.tutorial.active():
+		ctl.tutorial.skip_step()
+	_gm_step(ctl, 0.5)
+	ctl.mock_hub.mock_ball(left.device)
+	_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.2)
+	var pinball: bool = not ctl.practice_show.active() and not ctl.field._capsules.is_empty()
+	ctl.practice_show_on = true
+	ctl._halt("test")
+	_ok(on_show and back and round_clean and gone and pinball,
+		"practice show #314 in the game: the practice capsule is explained on the practice board (no pinball), then goes back once; the round starts from zero; Space drops the show; off = the pinball",
+		"%s %s %s %s %s score %d" % [on_show, back, round_clean, gone, pinball, shown_score])
+	_gm_free(game, rs)
