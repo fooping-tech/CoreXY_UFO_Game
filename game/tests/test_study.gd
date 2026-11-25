@@ -1509,6 +1509,61 @@ func _test_study_real_print_problems(rs: Node) -> void:
 	rs.clear_samples()
 
 
+## #306: the answer check right after the print was found uses the reading that found it (the
+## reader is not called twice for the same picture); a rescan, a changed picture or a reading
+## without boxes reads again.
+func _test_study_check_reuses_found_reading(rs: Node) -> void:
+	var game := _study_game("camera")
+	var ctl: StudyModeController = game.study_mode
+	var sv: StudyServices = ctl.services
+	var hw: HomeworkClient = sv.homework
+	hw.sheet_settings_path = ""
+	hw.study_local = true
+	hw.worksheet_id = "real"
+	var pic := Image.create(40, 30, false, Image.FORMAT_RGB8)
+	hw.sent_shown = pic
+	hw.sheet_gate._sig = PackedFloat32Array([0.5, 0.5, 0.5])
+	hw.sheet_gate.mark_sent()
+	sv.watching = true
+	sv.seen = true
+	var answers := [{"number": 1, "answer_status": "correct", "student_answer": "4", "visible": "full", "answer_box": [100, 100, 300, 200]},
+		{"number": 2, "answer_status": "incorrect", "student_answer": "7", "visible": "full", "answer_box": [100, 300, 300, 400]}]
+	sv._on_progress({"questions": [], "held": false, "visible_prob": 1.0, "answers": answers})
+	var ok_now := sv.reusable_reading()
+	var got: Array = []  # appended to (a lambda captures the array, not the variable)
+	var on_graded := func(probs: Array): got.append_array(probs)
+	sv.graded.connect(on_graded)
+	sv.grade(false, true)
+	_study_pump(game, 3.0, func(): return not got.is_empty())
+	var reused: bool = got.size() == 2 and sv.graded_image == pic and sv._grade_rid == "" and got[0].get("answer_box") == [100, 100, 300, 200]
+	# the picture changed since (the sheet moved, a hand over it): read again
+	hw.sheet_gate._sig = PackedFloat32Array([0.9, 0.1, 0.9])
+	var changed := sv.reusable_reading()
+	hw.sheet_gate._sig = PackedFloat32Array([0.5, 0.5, 0.5])
+	# a newer frame on its way, or the reading without boxes: read again
+	hw.sent_shown = Image.create(40, 30, false, Image.FORMAT_RGB8)
+	var newer := sv.reusable_reading()
+	hw.sent_shown = pic
+	sv._on_progress({"questions": [], "held": false, "visible_prob": 1.0,
+		"answers": [{"number": 1, "answer_status": "correct", "student_answer": "4", "visible": "full"}]})
+	var no_boxes := sv.reusable_reading()
+	# a rescan never takes the old reading (no reader here: the watch's answers as the fallback)
+	sv._on_progress({"questions": [], "held": false, "visible_prob": 1.0, "answers": answers})
+	got.clear()
+	sv.graded_image = null
+	sv.grade(true, true)
+	_study_pump(game, 3.0, func(): return not got.is_empty())
+	var rescan_reads: bool = sv.graded_image != pic
+	sv.graded.disconnect(on_graded)
+	ctl.stop()
+	_ok(ok_now == "" and reused and changed == "changed" and newer == "newer_frame" and no_boxes == "no_boxes" and rescan_reads,
+		"study #306: the check right after the print is found takes the reading that found it (once, its picture and boxes); a changed picture, a newer frame, no boxes or a rescan read again",
+		str([ok_now, reused, changed, newer, no_boxes, rescan_reads]))
+	remove_child(game)
+	game.free()
+	rs.clear_samples()
+
+
 ## #237: the power items in dots, and the sounds added for the answer check.
 func _test_study_power_items(rs: Node) -> void:
 	var ok := true

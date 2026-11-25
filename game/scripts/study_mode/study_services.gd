@@ -76,6 +76,11 @@ var _locate_prep := {}
 var located_box: Array = []
 ## #237: the last per-problem reading the watch brought (camera mode: its answer states)
 var last_answers: Array = []
+## #306: the picture those answers were read from (the frame the watch sent; null = unknown)
+var last_answers_image: Image
+## #306: a reading of the watch older than this is not used for the answer check
+const REUSE_MAX_S := 60.0
+var _last_answers_ms := -1
 ## the simulated mode's answer check: the result of each problem the first time (study_mode.answer_check.demo_results);
 ## a rescan finds the ones to look at again written right (the child rewrote them)
 var demo_results: Array = ["correct", "incorrect", "correct"]
@@ -220,6 +225,8 @@ func begin(ws: Dictionary, label: String) -> void:
 	_mock_seen_at = -1.0
 	_occlude_left = 0
 	last_answers = []
+	last_answers_image = null
+	_last_answers_ms = -1
 	_grade_token += 1
 	if homework != null:
 		homework._ensure_link()  # the voice and the answers come over its aux link
@@ -441,6 +448,8 @@ func _on_progress(data: Dictionary) -> void:
 			qs.append({"number": int(q.number), "filled_prob": q.get("filled_prob")})
 	if data.get("answers") is Array and not (data.answers as Array).is_empty():
 		last_answers = (data.answers as Array).duplicate(true)
+		last_answers_image = homework.sent_shown if homework != null else null
+		_last_answers_ms = Time.get_ticks_msec()
 	reading.emit(qs, bool(data.get("held", false)), reason)
 
 ## #237: the problems are the ones read on the real print (any number, any count), not the
@@ -456,8 +465,10 @@ func sheet_problem(n: int) -> Dictionary:
 
 # ------------------------------------------------------------------ the answer check (#237)
 ## Read the whole sheet once for the answer check -> graded(problems) / grade_failed(reason).
-## `rescan`: after the child rewrote what was to be looked at again.
-func grade(rescan := false) -> void:
+## `rescan`: after the child rewrote what was to be looked at again. `reuse` (#306: the check
+## right after the print was found): the reading that found it is used when it still holds
+## (reusable_reading), and the reader is not called a second time for the same picture.
+func grade(rescan := false, reuse := false) -> void:
 	_grade_token += 1
 	var tok := _grade_token
 	graded_image = null
@@ -475,11 +486,35 @@ func grade(rescan := false) -> void:
 			out.append({"number": int(probs[i].number), "answer_status": st, "visible": "full"})
 		_after(1.5, func(): if tok == _grade_token: graded.emit(out))
 		return
+	if reuse and not rescan and reusable_reading() == "":
+		graded_image = last_answers_image
+		var got := last_answers.duplicate(true)
+		trace("answer check: the reading that found the print (no second reading)")
+		_after(0.3, func(): if tok == _grade_token: graded.emit(got))
+		return
 	# camera, read locally: the overview frame once settled (#298) -> the worksheet reader once
 	if reads_whole_sheet() and backend_robot():
 		when_settled(GRADE_SETTLE_MAX_S, func(): return tok == _grade_token, func(): _grade_send(tok))
 		return
 	_grade_from_watch(tok)
+
+## #306: why the watch's last reading may not stand for the answer check now ("" = it may): it
+## must be of a real print read locally, recent, with its picture and the ○'s boxes, the last
+## frame sent (nothing else on its way), and the picture now must still be that one.
+func reusable_reading() -> String:
+	if not reads_whole_sheet():
+		return "not_local"
+	if last_answers.is_empty() or last_answers_image == null:
+		return "no_reading"
+	if _last_answers_ms < 0 or Time.get_ticks_msec() - _last_answers_ms > int(REUSE_MAX_S * 1000.0):
+		return "old"
+	if homework.waiting() or homework.sent_shown != last_answers_image:
+		return "newer_frame"
+	if not last_answers.any(func(a): return a is Dictionary and (a.get("answer_box") is Array or a.get("box") is Array)):
+		return "no_boxes"
+	if not homework.sheet_gate.same_as_sent():
+		return "changed"
+	return ""
 
 ## The answer check's frame -> sheet_read: the whole frame upright with the region as roi (#298;
 ## the boxes come back in the region: the ○ are drawn on graded_image, that region cut out).

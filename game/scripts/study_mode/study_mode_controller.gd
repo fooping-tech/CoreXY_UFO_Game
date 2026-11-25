@@ -63,6 +63,8 @@ var hand_offer_s := 12.0
 var offer_problem := 0  # offered and waiting for a thumbs-up (0 = none)
 ## #281: the print found goes straight to the answer check (study_mode.check_on_found)
 var check_on_found := true
+## #306: this check started because the print was found (its reading may be used)
+var _check_on_found := false
 ## #281: the voice dialogue needs the dialogue mode, entered with a thumbs-up held
 ## dialog_thumb_s, before the print is found or at the check's summary (study_mode.dialog)
 var dialog_needs_thumb := true
@@ -285,6 +287,7 @@ func reset_story() -> void:
 	notice = ""
 	adult_prompt = ""
 	completion_fired = false
+	_check_on_found = false
 	cleanup_ok = false
 	cleanup_status = ""
 	help_phase = ""
@@ -361,6 +364,7 @@ func _on_worksheet_seen() -> void:
 		study_started_ms = Time.get_ticks_msec()
 		sounds.cue("found")
 		GameState.post_event("study_started", {"worksheet_id": worksheet.get("worksheet_id", "")})
+		_check_on_found = true  # #306: the check uses the reading that found the print
 		_complete([{"text": "プリントを見つけたよ！", "face": "happy"},
 			{"text": "UFOくんと答え合わせしよう！", "face": "excited"}])
 		return
@@ -431,7 +435,8 @@ func _scan(rescan: bool) -> void:
 	_set_state("RESCAN" if rescan else "SHEET_SCANNING")
 	notice = ""
 	sounds.play("tick")
-	services.grade(rescan)
+	services.grade(rescan, _check_on_found and not rescan)
+	_check_on_found = false
 	if rescan:
 		_say([{"text": "もういちど 見てみるね！", "face": "normal"}])
 

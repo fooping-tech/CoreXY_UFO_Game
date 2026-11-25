@@ -48,10 +48,13 @@ def questions_from_sheet(problems: list[dict], worksheet: dict | None) -> list[d
 
 def answers_from_sheet(problems: list[dict], worksheet: dict | None) -> list[dict[str, Any]]:
     """What was read per problem of the worksheet: the state, the child's answer and whether the
-    problem was cut off (the answer check never grades a cut-off problem: review on #241)."""
+    problem was cut off (the answer check never grades a cut-off problem: review on #241), and
+    where the problem and its answer box are (0..1000 of the image read: #306, the answer check
+    right after the print is found draws its ○ from this reading). Never the right answer."""
     wanted = set(worksheet_numbers(worksheet, problems))
     return [{"number": int(p["number"]), "answer_status": str(p.get("answer_status", "")),
-             "student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full"))}
+             "student_answer": str(p.get("student_answer", "")), "visible": str(p.get("visible", "full")),
+             "box": p.get("box"), "answer_box": p.get("answer_box")}
             for p in problems if isinstance(p.get("number"), int) and p["number"] in wanted]
 
 

@@ -59,6 +59,9 @@ var skipped := 0
 var errors := 0
 ## #298: when a frame may go to the worksheet reader (settled, not dark, not what went last)
 var sheet_gate := SheetSettle.new()
+## #306: the picture (cut out, upright) of the frame sent last to the worksheet reader: the ○ of an
+## answer check that uses its reading go on it (null = none sent yet)
+var sent_shown: Image
 ## frames not sent because the picture was the one sent last
 var skipped_same := 0
 ## #285: why the last frame could not be read ("" = the last one was read, or none sent yet)
@@ -213,6 +216,10 @@ func stop(reason := "") -> void:
 	link.enabled = false
 	state_changed.emit()
 
+## A frame is with the backend now (its reading has not come back yet).
+func waiting() -> bool:
+	return _waiting
+
 ## Seconds since start (frozen once stopped).
 func elapsed_s() -> float:
 	if running():
@@ -249,6 +256,7 @@ func _process(dt: float) -> void:
 			state_changed.emit()
 			return
 		var req := sheet_request(img)
+		sent_shown = req.shown
 		jpeg = SheetFrame.encode(req.image, max_image_bytes)
 		if not (req.roi as Array).is_empty():
 			data["roi"] = req.roi
