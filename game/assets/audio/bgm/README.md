@@ -16,6 +16,7 @@
 - 設定画面の校正タブを開いている間は、どの曲も鳴らない。
 - 曲はフェードしない（すぐ始まり、すぐ止まる）。声が話している間だけ小さくなる。
 - 曲ごとの音量は `game_mode.sounds.bgm.gain_db` でそろえてある（-18 LUFS）。ファイルを替えたら `ffmpeg -i ファイル -af ebur128 -f null -` の最後に出る `I:`（LUFS）を見て、`gain_db = -18 - その値` にする。
+  `python3 tools/audio_levels.py` で全部の曲と効果音をまとめて測れる（#304）。曲全体は `GameModeSounds.BGM_DB`（-2 dB）で効果音の大きいものより 6 dB ほど下に置いている。
 - どれもループ再生。ファイルがない・読めないときは今までどおり（ゲーム中は合成の曲、メニューと結果発表は無音）で、エラーにはならない。起動時のログに `[bgm] menu: intro.mp3 (83 s, loops)` のように、使う音源が出る。
 - 音量は設定画面の「音楽」（`audio.bgm_enabled` / `audio.bgm_volume_db`）。曲ごとの差は `game_mode.sounds.bgm.gain_db`。
 - 置く音源の利用規約（再配布・展示での利用）は自分で確かめる。リポジトリに入れる効果音の出典は `../SOURCES.md` と `../manifest.json`。

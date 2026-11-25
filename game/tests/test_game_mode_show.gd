@@ -356,6 +356,48 @@ func _test_game_mode_audio(rs: Node) -> void:
 
 ## #144: sparks and rings from a bounded pool, the hit flash, the picture-only hit-stop,
 ## and UFOくん's reactions.
+## #304: every effect is played at its own level (the manifest's gain_db, the own files' and
+## the synthesised sounds' tables), the study mode's and the motion's effects go through the
+## effects' bus, and the music is not far under the effects.
+func _test_audio_levels() -> void:
+	var snd := GameModeSounds.new()
+	add_child(snd)
+	snd.enabled = true
+	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(GameModeSounds.MANIFEST))
+	var at := {}
+	for key in ["go", "pin", "final_hit", "reveal"]:
+		snd.silence()
+		snd.play(key)
+		for i in snd.voices.size():
+			if str(snd.voices[i].get("key", "")) == key:
+				at[key] = snd._players[i].volume_db - snd.volume_db
+	var levels: bool = is_equal_approx(float(at.get("go", 99.0)), float(manifest.sounds.go.gain_db)) \
+		and is_equal_approx(float(at.get("pin", 99.0)), float(manifest.sounds.pin.gain_db)) \
+		and is_equal_approx(float(at.get("final_hit", 99.0)), float(GameModeSounds.SYNTH_META.final_hit.gain_db)) \
+		and is_equal_approx(float(at.get("reveal", 99.0)), snd.gain_db_of("reveal"))
+	var own: bool = snd.source_of("reveal") != "file" or is_equal_approx(snd.gain_db_of("reveal"), float(GameModeSounds.OWN_GAIN_DB.reveal))
+	snd.silence()
+	snd.free()
+	var study := StudySounds.new()
+	add_child(study)
+	study.play("go")  # a manifest file: its gain_db
+	var sp: AudioStreamPlayer = study._players[0]
+	var study_ok: bool = sp.bus == AudioBuses.SFX and is_equal_approx(sp.volume_db - study.volume_db, float(manifest.sounds.go.gain_db))
+	study.play("boom")  # synthesised: its own table
+	var sp2: AudioStreamPlayer = study._players[1]
+	study_ok = study_ok and is_equal_approx(sp2.volume_db - study.volume_db, float(StudySounds.GAIN_DB.boom))
+	for p in study._players:
+		p.stop()
+	study.free()
+	var fx := Sfx.new()
+	add_child(fx)
+	var motion: bool = fx._players.values().all(func(p): return p.bus == AudioBuses.SFX) and fx._cue_player.bus == AudioBuses.SFX \
+		and float(Sfx.VOICE_GAIN_DB.up) < float(Sfx.VOICE_GAIN_DB.move)
+	fx.free()
+	_ok(levels and own and study_ok and motion and GameModeSounds.BGM_DB > -6.0,
+		"audio levels #304: each effect at its own gain (manifest / own file / synthesised), the study's and the motion's on the effects' bus, the music near the effects",
+		"%s %s %s %s %s" % [at, own, study_ok, motion, GameModeSounds.BGM_DB])
+
 func _test_game_mode_reactions(rs: Node) -> void:
 	var ps := GameModeParticles.new()
 	add_child(ps)

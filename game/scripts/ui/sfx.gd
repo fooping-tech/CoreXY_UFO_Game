@@ -14,6 +14,9 @@ const VOICES := ["move", "up", "down"]
 const FADE_IN_S := 0.08
 const FADE_OUT_S := 0.35
 const SILENT_DB := -60.0
+## #304: each motion voice's own level on volume_db, so the three loops sound alike
+## (magic-statusup1.mp3 is about 10 dB louder than wizard-flight1.mp3; tools/audio_levels.py)
+const VOICE_GAIN_DB := {"move": 0.0, "up": -9.0, "down": -6.0}
 
 var enabled := true
 ## Overall level in dB (config audio.volume_db).
@@ -31,6 +34,7 @@ func _ready() -> void:
 		var player := AudioStreamPlayer.new()
 		player.name = "Sfx_" + v
 		player.volume_db = SILENT_DB
+		player.bus = AudioBuses.SFX
 		add_child(player)
 		_players[v] = player
 		_level[v] = 0.0
@@ -66,7 +70,8 @@ const CUE_NOTES := {
 	"lost": [[523.0, 0.08], [392.0, 0.08], [262.0, 0.16]],  # "bu-bu-buu" down
 }
 ## Level of each cue relative to audio.volume_db.
-const CUE_GAIN_DB := {"hand": -8.0, "pinch": 0.0, "pinch_z": 0.0, "release": -3.0, "lost": 0.0}
+## #304: leveled with tools/audio_levels.py (the hand's "pon" kept quiet)
+const CUE_GAIN_DB := {"hand": -4.0, "pinch": -3.0, "pinch_z": -4.0, "release": -3.0, "lost": -4.0}
 ## Every cue played, newest last (tests / debug; capped).
 var cue_log: Array[String] = []
 var _cue_player: AudioStreamPlayer
@@ -77,6 +82,7 @@ var last_cue := ""
 func _enter_tree() -> void:
 	_cue_player = AudioStreamPlayer.new()
 	_cue_player.name = "Sfx_cue"
+	_cue_player.bus = AudioBuses.SFX
 	add_child(_cue_player)
 	var dir := str(GameConfig.get_value("audio", "dir", "res://assets/audio"))
 	for cue in CUE_NOTES.keys():
@@ -136,7 +142,7 @@ func update_sfx(move_i: float, up_i: float, down_i: float, dt: float) -> void:
 		if p.stream == null:
 			continue
 		if cur > 0.001:
-			p.volume_db = volume_db + linear_to_db(cur)
+			p.volume_db = volume_db + float(VOICE_GAIN_DB.get(v, 0.0)) + linear_to_db(cur)
 			p.pitch_scale = 1.0 + 0.2 * cur if v == "move" else 1.0
 			if not p.playing:
 				p.play()

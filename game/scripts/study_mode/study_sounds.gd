@@ -16,7 +16,13 @@ extends Node
 
 const RATE := 22050
 var enabled := true
-var volume_db := -6.0
+## the effects' level: audio.volume_db, as the score game's (#304: was its own -6, and the
+## players were on Master, out of the settings' effects volume)
+var volume_db := -8.0
+## #304: each sound's own level on volume_db (dB), so they sound alike (tools/audio_levels.py):
+## the synthesised ones and the own files here; a manifest file takes the manifest's gain_db
+const GAIN_DB := {"boom": -2.0, "drum": -4.0, "fanfare": 2.0, "pinpon": 3.0, "appear": 2.0, "chime": 4.0,
+	"sparkle": 5.0, "shutter": 8.0, "pop": 6.0, "tick": 8.0, "pico": 1.0, "jan": 1.0, "don": 3.0}
 var _streams: Dictionary = {}
 var _players: Array[AudioStreamPlayer] = []
 var last_played := ""
@@ -27,6 +33,7 @@ var music_track := ""  # what plays now ("" = none)
 var _music: Dictionary = {}  # track -> AudioStreamPlayer (only the files that are there)
 var _music_loaded := false
 var _files: Dictionary = {}  # manifest key -> AudioStream
+var _file_gain: Dictionary = {}  # manifest key -> its gain_db (#304)
 var last_cue := ""
 ## the study mode's own effects in assets/audio/se/ (効果音ラボ, see se/README.md): key -> file.
 ## Read from the disk when there (no import needed); a missing one leaves its stand-in ("a|b").
@@ -52,6 +59,7 @@ const CUES := {
 
 func _ready() -> void:
 	enabled = bool(GameConfig.get_value("audio", "enabled", true))
+	volume_db = float(GameConfig.get_value("audio", "volume_db", -8.0))
 	_streams = {
 		"chime": _tones([[1046.5, 0.09], [1568.0, 0.22]], 0.35),
 		"appear": _sweep(330.0, 990.0, 0.35, 0.3),
@@ -67,7 +75,7 @@ func _ready() -> void:
 	_load_files()
 	for i in 8:
 		var p := AudioStreamPlayer.new()
-		p.volume_db = volume_db
+		p.bus = AudioBuses.SFX
 		add_child(p)
 		_players.append(p)
 
@@ -136,6 +144,7 @@ func _load_files() -> void:
 			var st = load(file)
 			if st is AudioStream:
 				_files[key] = st
+				_file_gain[key] = float(m.get("gain_db", 0.0))
 
 ## Several sounds for one moment (CUES).
 func cue(name: String) -> void:
@@ -157,13 +166,20 @@ func play(name: String) -> void:
 	var stream: AudioStream = _files.get(name, _streams.get(name))
 	if not enabled or stream == null:
 		return
+	var player: AudioStreamPlayer = _players[0]
 	for p in _players:
 		if not p.playing:
-			p.stream = stream
-			p.play()
-			return
-	_players[0].stream = stream
-	_players[0].play()
+			player = p
+			break
+	player.stream = stream
+	player.volume_db = volume_db + gain_db_of(name)
+	player.play()
+
+## #304: the level of `name` on volume_db: the manifest's gain_db for a manifest file, else GAIN_DB.
+func gain_db_of(name: String) -> float:
+	if _file_gain.has(name) and _files.has(name):
+		return float(_file_gain[name])
+	return float(GAIN_DB.get(name, 0.0))
 
 static func _wav(samples: PackedFloat32Array) -> AudioStreamWAV:
 	var data := PackedByteArray()
