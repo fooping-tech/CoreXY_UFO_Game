@@ -74,6 +74,7 @@ func _ready() -> void:
 	_s.study._test_focus_stream()
 	_s.study._test_study_hand_help(rs)
 	_s.study._test_study_local_frames(rs)
+	_s.study._test_sheet_roi(rs)
 	_s.study._test_study_voice(rs)
 	_s.study._test_study_check_on_found_and_dialog(rs)
 	_s.study._test_study_answer_check(rs)

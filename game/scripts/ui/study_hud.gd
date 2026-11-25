@@ -657,7 +657,8 @@ func refresh() -> void:
 		var cam_ok := ctl.services.mode == "camera" and cams != null and cams.has_feed("overview")
 		sheet.guide_texture = cams.texture("overview") if cam_ok else null
 		var hw := ctl.services.homework
-		sheet.guide_region = SheetFrame.for_role("overview", hw.sheet_settings_path).region if hw != null else Rect2()
+		# #298: the プリント tab's おく場所 (else its 読む範囲, as before)
+		sheet.guide_region = SheetFrame.guide_rect(SheetFrame.for_role("overview", hw.sheet_settings_path)) if hw != null else Rect2()
 	sheet.scanning = st in ["ANSWER_CHECK_READY", "SHEET_SCANNING", "RESCAN"]
 	var looking: bool = st in StudyModeController.HELP_STATES or st == "AI_EXPLAINING"
 	sheet.focus_box = ctl.services.located_box if looking else []

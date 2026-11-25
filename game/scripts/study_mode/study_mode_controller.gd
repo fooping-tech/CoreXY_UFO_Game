@@ -218,6 +218,7 @@ func start() -> void:
 		push_warning("study mode: no worksheets (config/worksheets.json)")
 		return
 	reset_story()
+	want_camera(true)
 	if main != null and main.debug_ui != null and main.debug_ui.visible:
 		main.debug_ui.visible = false  # the main screen is the experience (F1 brings the panel back)
 		main._layout()
@@ -229,12 +230,25 @@ func start() -> void:
 		{"text": "席について、プリントを置いてね！", "face": "wink"}], _enter_waiting)
 
 func stop() -> void:
+	want_camera(false)
 	voice.reset()
 	sounds.music_stop()
 	services.abort("学習モードを終えました")
 	services.watch_stop()
 	speech.clear()
 	_set_state("OFF")
+
+## #298: while the study mode reads real prints, the overview camera gives its biggest 4:3 picture
+## (study.sheet_camera_size; the reader's hand-off: 1280x960 for a C270); its own size again after.
+func want_camera(on: bool) -> void:
+	var cams: CameraHub = main.get("cameras") if main != null else null
+	if cams == null:
+		return
+	var size := Vector2i.ZERO
+	var v = GameConfig.get_value("study", "sheet_camera_size", [])
+	if on and services != null and services.mode == "camera" and v is Array and v.size() == 2:
+		size = Vector2i(int(v[0]), int(v[1]))
+	cams.want_size("overview", size)
 
 func reset_story() -> void:
 	_story += 1

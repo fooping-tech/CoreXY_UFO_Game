@@ -57,6 +57,10 @@ var last_update_ms := 0
 var count := 0
 var skipped := 0
 var errors := 0
+## #298: when a frame may go to the worksheet reader (settled, not dark, not what went last)
+var sheet_gate := SheetSettle.new()
+## frames not sent because the picture was the one sent last
+var skipped_same := 0
 ## #285: why the last frame could not be read ("" = the last one was read, or none sent yet)
 var last_error := ""
 var cost_usd := 0.0
@@ -136,6 +140,8 @@ func setup(hub: CameraHub, robot_link: UfoWebSocketClient = null) -> void:
 	interval_s = maxf(float(GameConfig.get_value("homework", "interval_s", 10.0)), 2.0)
 	max_image_edge = int(GameConfig.get_value("homework", "max_image_edge", 1024))
 	max_image_bytes = int(GameConfig.get_value("homework", "max_image_bytes", 700000))
+	var settle = GameConfig.get_value("study", "sheet_settle", {})
+	sheet_gate.configure(settle if settle is Dictionary else {})
 	link = UfoWebSocketClient.new()
 	link.name = "HomeworkLink"
 	link.study_only = true  # aux link: hello + study_* / homework_* only, no RobotState
@@ -212,7 +218,8 @@ func elapsed_s() -> float:
 		return (Time.get_ticks_msec() - _started_ms) / 1000.0
 	return _stopped_elapsed
 
-func _process(_dt: float) -> void:
+func _process(dt: float) -> void:
+	sample_sheet(dt)
 	if state != "running" or Time.get_ticks_msec() < _next_ms:
 		return
 	_next_ms = Time.get_ticks_msec() + int(interval_s * 1000.0)
@@ -223,20 +230,65 @@ func _process(_dt: float) -> void:
 		status_text = "%s カメラに映像がありません" % camera_role
 		state_changed.emit()
 		return
-	var jpeg := StudyClient.encode_jpeg(watch_image(cameras.texture(camera_role).get_image()), max_image_edge, max_image_bytes)
+	var img := cameras.texture(camera_role).get_image()
+	var data := {"session_id": session_id}
+	var jpeg := PackedByteArray()
+	if reads_locally():
+		# #298: the worksheet reader gets a settled picture, once: wait (a moment, not a whole
+		# interval) while it moves or the camera has just opened; nothing again while it is the same
+		var why := sheet_wait()
+		if why != "":
+			_next_ms = Time.get_ticks_msec() + 500
+			status_text = SheetSettle.text(why)
+			state_changed.emit()
+			return
+		if sheet_gate.same_as_sent():
+			skipped_same += 1
+			status_text = "見守り中（プリントに変化なし: 前と同じなので送らない）"
+			state_changed.emit()
+			return
+		var req := sheet_request(img)
+		jpeg = SheetFrame.encode(req.image, max_image_bytes)
+		if not (req.roi as Array).is_empty():
+			data["roi"] = req.roi
+	else:
+		jpeg = StudyClient.encode_jpeg(img, max_image_edge, max_image_bytes)
 	if jpeg.is_empty():
 		status_text = "画像を上限サイズ内に圧縮できませんでした"
 		state_changed.emit()
 		return
 	_seq += 1
-	var err := link.send_aux({"type": "homework_frame", "request_id": "hw-%d" % _seq, "data": {
-		"session_id": session_id, "image_jpeg_base64": Marshalls.raw_to_base64(jpeg)}})
+	data["image_jpeg_base64"] = Marshalls.raw_to_base64(jpeg)
+	var err := link.send_aux({"type": "homework_frame", "request_id": "hw-%d" % _seq, "data": data})
 	if err == OK:
 		_waiting = true
+		if reads_locally():
+			sheet_gate.mark_sent()
 		status_text = "推定中…"
 	else:
 		status_text = "画像を送信できませんでした（WebSocket error %d）" % err
 	state_changed.emit()
+
+## #298: a few looks a second at the overview picture while the worksheet is read locally (the
+## settling of sheet_wait). Not while nothing is read (the gesture's score game, the title).
+func sample_sheet(dt: float) -> void:
+	if not reads_locally() or cameras == null or not cameras.has_feed(camera_role):
+		sheet_gate.reset()
+		return
+	if sheet_gate.due(dt):
+		sheet_gate.sample(cameras.texture(camera_role).get_image(), Time.get_ticks_msec() / 1000.0)
+
+## Why the overview frame may not go to the worksheet reader now ("" = it may): see SheetSettle.
+func sheet_wait() -> String:
+	if cameras == null or not cameras.has_feed(camera_role):
+		return "warming"
+	return sheet_gate.blocker(Time.get_ticks_msec() / 1000.0, cameras.live_s(camera_role))
+
+## #298: what goes to the worksheet reader for a frame: the whole frame upright + roi
+## (SheetFrame.request; the boxes that come back are in its "shown", the cut-out part).
+func sheet_request(img: Image) -> Dictionary:
+	var st := sheet_settings()
+	return SheetFrame.request(img, int(st.rotation), st.region)
 
 func _send_start() -> void:
 	var d := {"session_id": session_id}
@@ -314,6 +366,7 @@ func _on_message(msg: Dictionary) -> void:
 		_locate_failed("問題を読み取れませんでした: " + str(data.get("message", "")), "")
 	elif t == "homework_error":
 		_waiting = false
+		sheet_gate.forget_sent()  # #298: not read: the same picture may go again
 		errors += 1
 		_apply_summary(data)
 		var code := str(data.get("code", ""))
@@ -661,7 +714,7 @@ func reads_locally() -> bool:
 ## The settings of the overview camera's frames for the worksheet reader ({} = sent as they are).
 func sheet_settings() -> Dictionary:
 	if not reads_locally():
-		return {"rotation": 0, "region": Rect2()}
+		return {"rotation": 0, "region": Rect2(), "place": Rect2()}
 	return SheetFrame.for_role(camera_role, sheet_settings_path)
 
 ## The frame sent to watch the worksheet: cut out and turned upright when read locally (#232).
