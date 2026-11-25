@@ -1412,6 +1412,7 @@ func _stop_recovery() -> void:
 ## backend still refuses whatever is not in order.
 func _on_game_mode_phase(p: String) -> void:
 	if p in ["COUNTDOWN", "TUTORIAL"]:
+		easy.new_round()  # #302: every round has its servo recoveries
 		if easy.faulted():
 			easy.reset()
 		# #177: a game starts with the arm at its start (the claw open, the arm at the top):

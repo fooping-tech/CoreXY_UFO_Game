@@ -141,6 +141,11 @@ func faulted() -> bool:
 ## Space (the stop key): whatever this script asked for is over, now. The stop itself
 ## (soft_stop: the backend ends its sequence with ABORT) is the caller's to send.
 func on_stop() -> void:
+	if _servo_reset_left > 0.0:
+		# review on #303: a recovery still waiting is called off by the stop: nothing moves after it
+		_servo_reset_left = 0.0
+		note = "ストップした"
+		return
 	if not busy():
 		return
 	var pending := _rid if _rid_what in ["grab", "reset"] else ""
@@ -166,6 +171,11 @@ func request_reset() -> bool:
 	_set_state("RESET")
 	return true
 
+## #302 (review on #303): a new round (the countdown, the practice) has the whole allowance of
+## servo recoveries again, whoever used them before.
+func new_round() -> void:
+	servo_recoveries = 0
+
 ## A new round, or staff: out of FAULT. Nothing is sent; the backend still refuses
 ## whatever is not in order (an alarm, no homing, ...), and the hand starts from neutral.
 func reset() -> void:
@@ -178,6 +188,7 @@ func reset() -> void:
 	_set_state("MANUAL_XY")
 
 func _forget() -> void:
+	_servo_reset_left = 0.0  # (#302: a recovery waiting is called off too; the recovery sets it after this)
 	_rid = ""
 	_rid_what = ""
 	_rid_left = 0.0

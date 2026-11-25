@@ -540,6 +540,18 @@ func _test_easy_servo_recovery() -> void:
 	be.report("MANUAL_XY", "r1", {"last_result": "done"})
 	_easy_run(e, be, 0.1, open)
 	var back: bool = e.state == "MANUAL_XY" and not e.faulted()
+	# (review on #303) the stop while the recovery waits calls it off: nothing is sent after it
+	e.state = "DELIVER_DIAL_1"
+	e.grab_id = "g1b"
+	be.report("FAULT", "g1b", servo)
+	_easy_run(e, be, 0.1, open)
+	e.on_stop()
+	_easy_run(e, be, 2.0, open)
+	var stop_calls_off: bool = be.names() == ["easy_reset"] and e.state == "MANUAL_XY" and e.servo_recoveries == 2
+	# a new round has the whole allowance again
+	e.new_round()
+	var allowance: bool = e.servo_recoveries == 0
+	back = back and stop_calls_off and allowance
 	# the last allowed time is used, then a fault as before
 	e.servo_recoveries = e.servo_recoveries_max
 	e.state = "AUTO_GRAB"
