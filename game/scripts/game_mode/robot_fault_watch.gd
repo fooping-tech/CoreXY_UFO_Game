@@ -77,8 +77,11 @@ func update(s: Dictionary) -> Array:
 		out.append(fault("z", "z_servo_reset", "巻き上げサーボの電源が切れて 1 回転モードに戻った", err))
 	var easy: Dictionary = s.get("easy_mode", {}) if s.get("easy_mode") is Dictionary else {}
 	var peasy: Dictionary = p.get("easy_mode", {}) if p.get("easy_mode") is Dictionary else {}
+	# #302: a servo command that only failed (stopped with STOP: no alarm, homing kept, nothing
+	# moving, #269) is not the crane's fault: the easy mode tries again by itself. Its alarm, a
+	# servo that wants its power cycled, a lost homing... are still seen above and below.
 	if str(easy.get("state", "")) == "FAULT" and str(peasy.get("state", "")) != "FAULT" \
-			and str(easy.get("last_result", "")) != "stopped":
+			and str(easy.get("last_result", "")) != "stopped" and not bool(easy.get("servo_fault", false)):
 		var e := str(easy.get("error", ""))
 		out.append(fault(category_of(e, "sequence"), "easy_fault", "かんたんモードのシーケンスが止まった" + (": " + e if e != "" else ""), e))
 	if not alarm_new and bool(p.get("homed", false)) and not bool(s.get("homed", false)) and st != "HOMING" and not st in ALARMED:

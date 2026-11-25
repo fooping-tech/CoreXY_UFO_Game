@@ -245,6 +245,7 @@ class AutoCatchSequencer(AbortableSequence):
             raise RobotCommandError("busy: another motion command is running")
         await self.lock.acquire()  # free: returns at once, no other task can slip in
         self.active = True
+        self.servo_fault = False
         self.error = ""
         self.last_result = ""
         self._abort_reason = ""

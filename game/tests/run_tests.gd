@@ -127,6 +127,7 @@ func _ready() -> void:
 	_s.tutorial_easy._test_easy_mode_logic()
 	_s.tutorial_easy._test_easy_mode_game(rs)
 	_s.tutorial_easy._test_crane_start_check(rs)
+	_s.tutorial_easy._test_easy_servo_recovery()
 	await _s.game_mode._test_game_mode_physics()
 	# (after the physics run: the field is chaotic, and a scene made and freed before it shifts
 	# which capsule takes longest; the run's own limit is kept as it is)

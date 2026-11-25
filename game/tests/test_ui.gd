@@ -1250,6 +1250,13 @@ func _test_robot_fault_watch() -> void:
 	w6.arm(e2)
 	e2.easy_mode = {"state": "FAULT", "error": "stopped", "last_result": "stopped"}
 	var stopped_quiet: bool = w6.update(e2).is_empty()
+	# #302: a servo command that only failed (stopped with STOP, no alarm) is not the crane's fault
+	var w6b := RobotFaultWatch.new()
+	var e3 := _fine_state()
+	w6b.arm(e3)
+	e3.easy_mode = {"state": "FAULT", "error": "RELEASE failed: SERVO_TURN id=2 result=FAILED reason=feedback_lost", "last_result": "fault",
+		"servo_fault": true}
+	stopped_quiet = stopped_quiet and w6b.update(e3).is_empty()
 	# homing and the motors lost, without an alarm
 	var w7 := RobotFaultWatch.new()
 	var h := _fine_state()
@@ -1457,9 +1464,17 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	tick.call(3)
 	game.ws._pending.clear()
+	# #302: a servo command that only failed (the backend stopped with STOP): the game plays on
+	RobotState.easy_mode = {"state": "FAULT", "error": "RELEASE failed: SERVO_TURN id=2 result=FAILED reason=feedback_lost",
+		"last_result": "fault", "active": false, "servo_fault": true}
+	tick.call(2)
+	var servo_plays_on: bool = ctl.phase == "PLAYING" and not ctl.robot_fault_latched() and types.call().count("soft_stop") == 0
+	RobotState.easy_mode = {"state": "MANUAL_XY", "last_result": "done", "active": false}
+	tick.call(2)
+	game.ws._pending.clear()
 	RobotState.easy_mode = {"state": "FAULT", "error": "servo id=2 did not reach", "last_result": "fault", "active": false}
 	tick.call(2)
-	var easy_halt: bool = ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "easy_fault" and str(ctl.robot_fault.category) == "claw" \
+	var easy_halt: bool = servo_plays_on and ctl.phase == "STOPPED" and str(ctl.robot_fault.code) == "easy_fault" and str(ctl.robot_fault.category) == "claw" \
 		and types.call().count("soft_stop") == 1 and guard.stop_state == "requested"
 	tick.call(2)
 	var not_yet: bool = guard.stop_state == "requested"  # no sample since: not confirmed

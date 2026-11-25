@@ -216,6 +216,14 @@ async def test_a_fault_in_any_part_ends_in_fault(fault, part, reason):
         assert not rig.lock.locked()
         if fault == "claw_fail":  # #269: a servo failure: STOP, no alarm, homing kept
             assert "ABORT" not in rig.robot.commands and not rig.robot.alarm and rig.robot.homed
+        # #302: the game is told which FAULT was only a servo command's (it then tries again)
+        st = rig.seq.status()
+        assert st["servo_fault"] is (fault == "claw_fail"), (fault, st["servo_fault"])
+        if fault == "claw_fail":  # a new run starts clean
+            rig.robot.faults.clear()
+            await rig.seq.start_grab()
+            assert rig.seq.status()["servo_fault"] is False
+            await rig.seq.wait()
 
 
 async def test_motors_off_or_homing_lost_while_waiting_faults():
