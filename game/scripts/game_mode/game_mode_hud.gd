@@ -26,6 +26,8 @@ const MODE_RECT := Rect2(40, 712, 640, 82)
 ## the title screen, down the screen: the logo on two lines, UFOくん, START, three cards
 const LOGO_LINES := ["SUMMON", "THE UFO"]
 const LOGO_Y := 158.0
+## #310: the top of the logo picture (660 x 216 on the screen: over UFOくん, who starts at about 370)
+const LOGO_PICTURE_Y := 130.0
 const TITLE_UFO_Y := 560.0
 const START_RECT := Rect2(120, 800, 480, 68)
 const CARDS_Y := 920.0
@@ -50,6 +52,8 @@ const RECOVER_RECT := Rect2(60, 600, 600, 150)
 var _how: Array[Label] = []
 var _shown_score := 0.0
 var _ufo_tex: Texture2D
+## #310: the logo picture (the title screen's, TitleScreen.LOGO_PNG); null = the logo drawn in pixel letters
+var _logo_tex: Texture2D
 var _t := 0.0
 
 func setup(c: GameModeController) -> void:
@@ -61,6 +65,8 @@ func setup(c: GameModeController) -> void:
 	z_index = 20  # over the effect sheets and the UFO of the field (z 6 / 7)
 	if ResourceLoader.exists(UFO_SHEET):
 		_ufo_tex = load(UFO_SHEET)
+	if ResourceLoader.exists(TitleScreen.LOGO_PNG):
+		_logo_tex = load(TitleScreen.LOGO_PNG)
 	# the drawn parts (panels, pixel numbers, the title screen) under the labels
 	art = Control.new()
 	art.name = "Art"
@@ -308,11 +314,19 @@ func _panel(r: Rect2, col: Color) -> void:
 ## beam, START, then how to play as three cards one under another.
 func _draw_title() -> void:
 	art.draw_rect(Rect2(0, GameModeLayout.HINT_Y + 14.0, GameModeLayout.SCREEN.x, GameModeLayout.SCREEN.y - GameModeLayout.HINT_Y - 14.0), Color(0.01, 0.02, 0.1, 0.84))
-	# the logo: a magenta shadow, a cyan rim, yellow letters with a shine passing over
 	var bob := sin(_t * 1.6) * 3.0
 	var y := LOGO_Y
 	var widest := 0.0
-	for li in LOGO_LINES.size():
+	if _logo_tex != null:
+		# #310: the logo picture, as on the title screen (its pixels x4, TitleScreen.LOGO_W wide)
+		var lsize := Vector2(TitleScreen.LOGO_W, TitleScreen.LOGO_W * _logo_tex.get_height() / maxf(_logo_tex.get_width(), 1.0))
+		var lpos := Vector2((GameModeLayout.SCREEN.x - lsize.x) * 0.5, LOGO_PICTURE_Y + bob).snapped(Vector2(2, 2))
+		PinballField.glow_rect(art, Rect2(lpos + Vector2(20, 10), lsize - Vector2(40, 20)), PURPLE, 0.5 + 0.2 * sin(_t * 2.0))
+		art.draw_texture_rect(_logo_tex, Rect2(lpos, lsize), false)
+		widest = lsize.x - 80.0
+		y = LOGO_PICTURE_Y + lsize.y + 14.0
+	# the logo in pixel letters (no picture): a magenta shadow, a cyan rim, yellow letters with a shine passing over
+	for li in (LOGO_LINES.size() if _logo_tex == null else 0):
 		var line: String = LOGO_LINES[li]
 		var scale := GameModeLayout.fit_scale(line, GameModeLayout.SAFE_W - 60.0, 16.0)
 		var w := PixelText.width(line, scale)
