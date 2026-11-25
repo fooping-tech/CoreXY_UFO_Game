@@ -617,6 +617,66 @@ func _test_calibration_summary() -> void:
 	remove_child(game)
 	game.free()
 
+## #308: closing the settings screen after the 校正 tab asks first when the score game still lacks
+## some of the real crane's calibration (crane_blocker's conditions, all listed).
+func _test_calibration_close_confirm() -> void:
+	var items: Array = load("res://scripts/game/main.gd").crane_missing_for(true, false, false, {"blockers": ["dial 1 drop point is not recorded", "release height is not recorded", "z bottom"]})
+	var all_listed: bool = items == ["Z の基準（前回の上下を呼び出す か 上を記録）", "Z の上と下", "ポータルの XY", "投入の高さ"]
+	var none: bool = load("res://scripts/game/main.gd").crane_missing_for(true, true, true, {"blockers": []}).is_empty() \
+		and load("res://scripts/game/main.gd").crane_missing_for(false, true, true, {}) == ["ロボットとの接続"]
+	var game := _study_game()
+	var st: SettingsScreen = game.settings
+	RobotState.source = "websocket"
+	game.ws.server_robot = "real"
+	RobotState.connected = true
+	RobotState.z_reference_set = true
+	RobotState.z_calibrated = true
+	RobotState.easy_mode = {"blockers": ["dial 1 drop point is not recorded"]}
+	var closes := [0]
+	st.closed.connect(func(_saved): closes[0] += 1)
+	# the 校正 tab not shown: closes as before
+	st.open()
+	st.show_tab(0)
+	st.cancel()
+	var plain: bool = not st.visible and closes[0] == 1 and not st.confirm_showing()
+	# after the 校正 tab: asked, the screen stays; Esc goes back to 校正
+	st.open()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	st.cancel()
+	var asked: bool = st.visible and st.confirm_showing() and closes[0] == 1 and st.confirm_message.contains("ポータルの XY") \
+		and st.confirm_message.contains("閉じてよいですか")
+	var no_arm_keys: bool = game._jog_input() == Vector3.ZERO
+	st.handle_key(KEY_ESCAPE)
+	var back: bool = st.visible and not st.confirm_showing() and st.tabs.current_tab == SettingsScreen.CALIBRATION_TAB and closes[0] == 1
+	# asked again, Enter closes
+	st.cancel()
+	st.handle_key(KEY_ENTER)
+	var closed_on_enter: bool = not st.visible and closes[0] == 2
+	# all done: no question
+	RobotState.easy_mode = {"blockers": []}
+	st.open()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	st.cancel()
+	var done_free: bool = not st.visible and closes[0] == 3
+	# the simulated crane: no question either
+	game.ws.server_robot = "mock"
+	RobotState.easy_mode = {"blockers": ["dial 1 drop point is not recorded"]}
+	st.open()
+	st.show_tab(SettingsScreen.CALIBRATION_TAB)
+	st.cancel()
+	var mock_free: bool = not st.visible and closes[0] == 4
+	game.ws.server_robot = ""
+	RobotState.source = "mock"
+	RobotState.connected = false
+	RobotState.z_reference_set = false
+	RobotState.z_calibrated = false
+	RobotState.easy_mode = {}
+	_ok(all_listed and none and plain and asked and no_arm_keys and back and closed_on_enter and done_free and mock_free,
+		"settings #308: closing after the 校正 tab asks when the score game lacks calibration (the items listed; Esc back to 校正, Enter closes); never without the tab, when all is done or on the simulated crane",
+		str([items, none, plain, asked, no_arm_keys, back, closed_on_enter, done_free, mock_free, st.confirm_message]))
+	remove_child(game)
+	game.free()
+
 func _test_calibration_tab(rs: Node) -> void:
 	# #114: at start the 校正 tab opens over the title (the backend's checks come when it connects)
 	var g0 := _study_game()
