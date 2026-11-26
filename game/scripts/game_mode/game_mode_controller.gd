@@ -115,7 +115,8 @@ var devices: GameModeDevices
 var mock_hub: MockDialHub
 var backend_hub: BackendDialHub
 var score := ScoreManager.new()
-## #266: the capsule kinds (fire / water / green / normal) and the arm camera's colour votes
+## #266: the capsule kinds (fire / water / green / thunder / dark (#320) / normal) and the arm
+## camera's colour votes
 var kinds := CapsuleKinds.new()
 var colour_reader := CapsuleKinds.Reader.new()
 var kinds_enabled := true
@@ -135,6 +136,9 @@ var colour_events: Array = []
 var _sample_left := 0.0
 var _kind_trail_t := 0.0
 var _easy_was := ""
+## #320: the easy mode's step the colour reading saw last, and how long it has run (seconds)
+var _easy_step_was := ""
+var _easy_step_t := 0.0
 var _kind_rng := RandomNumberGenerator.new()
 var powerups := PowerUpManager.new()
 ## MULTI BALL (#188): one real capsule, up to three balls on the screen.
@@ -1392,11 +1396,28 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 			rp.ring(c, Color("ffe03c"), 330.0, 0.5, 60.0)
 			rp.burst(c, Color("ffe03c"), 40, 440.0)
 		"bonus_show":
-			sounds.play("bonus_show")
+			var ks: Array = d.get("kinds", []) if d.get("kinds") is Array else []
+			var kc := _result_colours(ks, Color("ff4fd8"))
+			match str(d.get("group", "")):
+				"capsule":  # #323: the capsules got, kind by kind: the kind's own entrance sound
+					var rk := "reveal_" + str(ks[0]) if not ks.is_empty() and str(ks[0]) != "normal" else "bonus_show"
+					sounds.play(rk if sounds.source_of(rk) != "" else "reveal")
+				"colour":  # #323: a colour set: the call and a sparkling run
+					sounds.play("bonus_show")
+					sounds.play("colour_bonus")
+				_:
+					sounds.play("bonus_show")
 			_shake(0.15 + 0.2 * k)
 			bounce(0.4 + 0.4 * k)
-			rp.burst(Vector2(c.x, GameModeResultScreen.TITLE_Y), Color("ff4fd8"), int(14 + 20 * k), 320.0)
-			rp.ring(GameModeResultScreen.BONUS_AT, Color("ff4fd8"), 120.0 + 80.0 * k, 0.4, 20.0)
+			for i in kc.size():
+				rp.burst(Vector2(c.x, GameModeResultScreen.TITLE_Y), kc[i], int((14 + 20 * k) / kc.size()) + 2, 320.0)
+			rp.ring(GameModeResultScreen.BONUS_AT, kc[0], 120.0 + 80.0 * k, 0.4, 20.0)
+		"pop":  # #323: one capsule of the bonus's line pops out: a blip climbing with each, a puff of its colour
+			var n := int(d.get("n", 1))
+			var at := GameModeResultScreen.row_at(int(d.get("i", 0)), n, GameModeResultScreen.ROW_Y)
+			sounds.play("capsule_pop", "", 1.0 + 0.09 * minf(float(d.get("i", 0)), 11.0))
+			rp.burst(at, PracticeShow.color_of(str(d.get("kind", "normal"))), 10, 240.0)
+			rp.ring(at, Color.WHITE, GameModeResultScreen.row_r(n) * 1.8, 0.25, 8.0)
 		"bonus_hit":
 			sounds.play("bonus_hit")
 			_shake(0.3 + 0.45 * k)
@@ -1406,6 +1427,10 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 			rp.ring(c, Color.WHITE, 180.0 + 120.0 * k, 0.35, 40.0)
 			rp.burst(c, Color("ffe03c"), int(24 + 50 * k), 380.0 + 180.0 * k)
 			_confetti(2 + int(round(3.0 * k)))
+			if str(d.get("group", "")) == "colour":  # #323: a colour set rains its own colours too
+				for col in _result_colours(d.get("kinds", []) if d.get("kinds") is Array else [], Color("ffe03c")):
+					rp.burst(Vector2(_rng.randf_range(80.0, GameModeLayout.SCREEN.x - 80.0), _rng.randf_range(-10.0, 120.0)), col, 12, 300.0,
+						PI * 0.5, PI * 0.9, 0.15)
 			backdrop.pulse(Color("ffe03c"), 0.5 + 0.5 * k)
 			if k >= 0.6:
 				result_screen.sheet("success_sparkle", c, 4.0)
@@ -1440,6 +1465,15 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 			if str(d.get("how", "")) in ["skipped", "plain"] and not result_show.log.has("final"):
 				sounds.play("result")
 				mist_burst(mist_result_s)  # the score settled without its show: the mist all the same
+
+## #323: the colours of the capsules on a bonus's line (each once), or `fallback`.
+func _result_colours(kinds: Array, fallback: Color) -> Array:
+	var out: Array = []
+	for kd in kinds:
+		var col := PracticeShow.color_of(str(kd))
+		if not out.has(col):
+			out.append(col)
+	return out if not out.is_empty() else [fallback]
 
 ## Paper falls from the top of the screen in the three neon colours.
 func _confetti(bursts: int) -> void:
@@ -1535,7 +1569,7 @@ func decide_kind() -> String:
 	var k := colour_reader.decide(int(kinds.read.min_votes), float(kinds.read.min_ratio))
 	if k == "normal" and colour_reader.count() == 0 and not _camera_live() and devices.can_mock_ball():
 		if mock_kind == "random":
-			return ["fire", "water", "green"][_kind_rng.randi() % 3]
+			return CapsuleKinds.COLOURED[_kind_rng.randi() % CapsuleKinds.COLOURED.size()]
 		if CapsuleKinds.known(mock_kind):
 			return mock_kind
 	return k
@@ -1547,16 +1581,24 @@ func _camera_live() -> bool:
 	var cams = main.get("cameras") if main != null else null
 	return cams != null and (cams.has_feed("focus") or cams.external_live("focus"))
 
-## A capsule may hang in front of the arm camera now: the easy mode's catch coming up and
-## its carry (a new catch starts the votes over); by hand, all the time the Dials take one.
+## The capsule about to be caught is in front of the arm camera now. #320 (measured on the
+## real crane): the claw comes down on what is at the middle of the arm camera, and that
+## capsule is seen clearly only from up high. Low down the camera's exposure washes it out
+## (yellow turns white, the desk navy), and once it is held it covers the lens and the white
+## balance takes its colour away; over the portal the capsule waiting in the Dial shows. So
+## the easy mode reads while the claw opens above the capsule and for the first
+## read.lower_read_s seconds of the way down (a new catch starts the votes over); by hand,
+## all the time the Dials take one (the votes of memory_s seconds back).
 func _reading_colours() -> bool:
 	if not kinds_enabled or not _active or not _taking():
 		return false
 	var e = main.get("easy") if main != null else null
 	if easy_on() and e != null:
-		if e.state == "AUTO_GRAB":
-			return e.step in ["CLOSE_CLAW", "RAISE_WITH_ITEM"]
-		return e.state in ["WAIT_DESTINATION", "DELIVER_DIAL_1"]
+		if e.state != "AUTO_GRAB":
+			return false
+		if e.step == "OPEN_CLAW":
+			return true
+		return e.step == "LOWER_TO_CATCH" and _easy_step_t < float(kinds.read.get("lower_read_s", 2.0))
 	return true
 
 func _read_colours(dt: float) -> void:
@@ -1567,6 +1609,13 @@ func _read_colours(dt: float) -> void:
 		colour_reader.clear()  # a new catch: what was seen before is not this capsule
 		_colour_event("reset", "new_catch")
 	_easy_was = es
+	colour_reader.keep_all = easy_on() and e != null
+	var step: String = str(e.step) if e != null else ""
+	if step != _easy_step_was:
+		_easy_step_was = step
+		_easy_step_t = 0.0
+	else:
+		_easy_step_t += dt
 	if not _reading_colours():
 		_sample_left = 0.0
 		return
@@ -2422,6 +2471,13 @@ static func servos_moving() -> bool:
 			and not str(RobotState.easy_mode.get("state", "")) in ["OFF", "MANUAL_XY", "FAULT"]:
 		return true
 	return RobotState.machine_state in SERVO_MACHINE_STATES
+
+## #318: the settings screen's switch (saved = applied at once). Off also drops a mist that
+## waits for the servos (one already sent ends by itself on the Illumination).
+func set_mist_enabled(on: bool) -> void:
+	mist_enabled = on
+	if not on:
+		cancel_mist()
 
 ## #316 (review on #317): a stop drops the mist that waits for the servos (else it would be sent
 ## once they stopped, right after the stop's STOP_ALL).

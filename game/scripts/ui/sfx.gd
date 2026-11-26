@@ -60,7 +60,8 @@ static func load_mp3(path: String) -> AudioStreamMP3:
 ## caught), "pinch_z" (a palm-down pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and
 ## "lost" (control was cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
 ## square wave with a short envelope), so they need no file; a file named in
-## audio.cue_<name> (in audio.dir, mp3) replaces one.
+## audio.cue_<name> (in audio.dir, mp3) replaces one, at its own level from
+## audio.cue_gain_db.<name> (#321: the hand and the pinch are 効果音ラボ's 決定ボタンを押す 1 / 3).
 const CUE_RATE := 22050
 const CUE_NOTES := {
 	"hand": [[784.0, 0.06]],                           # "pon" (quiet)
@@ -76,6 +77,7 @@ const CUE_GAIN_DB := {"hand": -4.0, "pinch": -3.0, "pinch_z": -4.0, "release": -
 var cue_log: Array[String] = []
 var _cue_player: AudioStreamPlayer
 var _cues: Dictionary = {}
+var _cue_gain: Dictionary = {}  # cue -> dB relative to volume_db
 ## Name of the cue played last (tests / debug).
 var last_cue := ""
 
@@ -85,12 +87,17 @@ func _enter_tree() -> void:
 	_cue_player.bus = AudioBuses.SFX
 	add_child(_cue_player)
 	var dir := str(GameConfig.get_value("audio", "dir", "res://assets/audio"))
+	var file_gain = GameConfig.get_value("audio", "cue_gain_db", {})
+	if not (file_gain is Dictionary):
+		file_gain = {}
 	for cue in CUE_NOTES.keys():
 		var file := str(GameConfig.get_value("audio", "cue_" + cue, ""))
 		var s: AudioStream = load_mp3(dir.path_join(file)) if file != "" else null
 		if s is AudioStreamMP3:
 			s.loop = false
 		_cues[cue] = s if s != null else synth_blips(CUE_NOTES[cue])
+		# a file has its own loudness; the synthesised blip keeps the level made for it
+		_cue_gain[cue] = float(file_gain.get(cue, CUE_GAIN_DB.get(cue, 0.0))) if s != null else float(CUE_GAIN_DB.get(cue, 0.0))
 
 func play_cue(cue: String) -> void:
 	last_cue = cue
@@ -100,11 +107,15 @@ func play_cue(cue: String) -> void:
 	if not enabled or not _cues.has(cue):
 		return
 	_cue_player.stream = _cues[cue]
-	_cue_player.volume_db = volume_db + float(CUE_GAIN_DB.get(cue, 0.0))
+	_cue_player.volume_db = volume_db + cue_gain(cue)
 	_cue_player.play()
 
 func cue_stream(cue: String) -> AudioStream:
 	return _cues.get(cue)
+
+## The cue's level relative to volume_db (dB).
+func cue_gain(cue: String) -> float:
+	return float(_cue_gain.get(cue, CUE_GAIN_DB.get(cue, 0.0)))
 
 ## [[frequency Hz, seconds], ...] -> a 16-bit mono square-wave AudioStreamWAV.
 static func synth_blips(notes: Array) -> AudioStreamWAV:

@@ -56,15 +56,18 @@ const SIDE_SOUNDS := {"absorb": "ABSORBING", "drop": "DROPPING", "return": "RETU
 ## the pitch of "combo" by the step the combo reached
 const COMBO_PITCH := [1.0, 1.0, 1.19, 1.5]
 ## sounds that are only synthesised here (#149: no file was added for the practice)
-const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "bonus_hit", "final_hit", "new_record", "power_speed", "power_multi", "power_double"]
+const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "score_lock", "bonus_show", "capsule_pop", "colour_bonus", "bonus_hit", "final_hit", "new_record", "power_speed", "power_multi", "power_double"]
 ## #266: the capsule's entrance (カプセル回収！ as it comes up big), files of 効果音ラボ (the battle
 ## page's magic; game/assets/audio/se/README.md), not in the Kenney manifest. A missing file
 ## falls back to the synthesised sound of the same key.
+## #320: thunder = 雷魔法1 (the same file as the plain capsule's), dark = 暗黒魔法.
 const OWN_FILES := {"reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
-	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3"}
+	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3",
+	"reveal_thunder": "se/magic-thunder1.mp3", "reveal_dark": "se/magic-dark.mp3"}
 ## #304: each own file's level (dB, on audio.volume_db), as the manifest's gain_db: measured with
 ## tools/audio_levels.py and brought to the same loudness as the other big effects
-const OWN_GAIN_DB := {"reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0}
+const OWN_GAIN_DB := {"reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0,
+	"reveal_thunder": -3.0, "reveal_dark": 5.5}
 ## #325: the countdowns' own files (効果音ラボ; game/assets/audio/se/README.md): the start's
 ## electronic beep (プッ、プッ、プッ、ピー) and the end's voice (「10、9、8、7、6、5、4、3、2、1、0」).
 ## Not play()ed: each is started part-way on a player of its own so its numbers fall on the
@@ -92,11 +95,13 @@ const TUNE_GAIN_DB := -3.0
 ## gain_db (#304): the synthesised sound's level, as the manifest's (tools/audio_levels.py)
 const SYNTH_META := {"timeup_hit": {"priority": 2, "gain_db": -3.0}, "result_count": {"priority": 0, "min_gap_ms": 40, "gain_db": 4.0},
 	"score_lock": {"priority": 2, "gain_db": 4.0}, "bonus_show": {"priority": 2, "gain_db": 6.0}, "bonus_hit": {"priority": 2, "gain_db": 3.0},
+	"capsule_pop": {"priority": 1, "min_gap_ms": 40, "gain_db": 2.0}, "colour_bonus": {"priority": 2, "gain_db": 1.0},
 	"final_hit": {"priority": 2, "gain_db": -4.0}, "new_record": {"priority": 2, "gain_db": 1.0},
 	"power_speed": {"priority": 2, "min_gap_ms": 400, "gain_db": -2.0}, "power_multi": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0},
 	"power_double": {"priority": 2, "min_gap_ms": 400},
 	"reveal": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
 	"reveal_water": {"priority": 2, "min_gap_ms": 400, "gain_db": 3.0}, "reveal_green": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
+	"reveal_thunder": {"priority": 2, "min_gap_ms": 400}, "reveal_dark": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
 	"tutorial_ok": {"gain_db": 3.0}, "gauge": {"gain_db": 4.0}, "summon": {"gain_db": -1.0}}
 
 var enabled := true
@@ -222,6 +227,11 @@ func _ready() -> void:
 		"bonus_show": StudySounds._tones([[523.3, 0.09], [0.0, 0.04], [523.3, 0.07], [784.0, 0.28]], 0.4),
 		"bonus_hit": StudySounds._tones([[1046.5, 0.045], [1318.5, 0.045], [1568.0, 0.045], [2093.0, 0.045], [2637.0, 0.2]], 0.35),
 		"final_hit": StudySounds._sweep(520.0, 45.0, 0.7, 0.55),
+		# #323: a capsule pops out on a bonus's line (played higher for each one), and a colour
+		# set's sparkling run (a quick rainbow up the scale)
+		"capsule_pop": StudySounds._tones([[784.0, 0.03], [1568.0, 0.06]], 0.3),
+		"colour_bonus": StudySounds._tones([[1046.5, 0.05], [1174.7, 0.05], [1318.5, 0.05], [1568.0, 0.05], [1760.0, 0.05],
+			[2093.0, 0.05], [2637.0, 0.3]], 0.3),
 		# a round made the top ten (#155): a quick climb to a long high note
 		"new_record": StudySounds._tones([[784.0, 0.07], [987.8, 0.07], [1174.7, 0.07], [1568.0, 0.07], [1975.5, 0.07], [2349.3, 0.45]], 0.4),
 		"alien": StudySounds._tones([[659.3, 0.06], [880.0, 0.06], [1318.5, 0.06], [1760.0, 0.2]], 0.35),
@@ -239,6 +249,10 @@ func _ready() -> void:
 		"reveal_water": StudySounds._tones([[784.0, 0.05], [0.0, 0.02], [1046.5, 0.05], [0.0, 0.02], [659.3, 0.05], [0.0, 0.02],
 			[1318.5, 0.05], [0.0, 0.02], [1046.5, 0.3]], 0.42),
 		"reveal_green": StudySounds._tones([[1318.5, 0.05], [1568.0, 0.05], [1975.5, 0.05], [2637.0, 0.05], [3136.0, 0.3]], 0.38),
+		# #320: thunder a crackle of quick high blips, dark a slow fall into the low notes
+		"reveal_thunder": StudySounds._tones([[1760.0, 0.03], [0.0, 0.02], [2349.3, 0.03], [0.0, 0.02], [1760.0, 0.03], [0.0, 0.02],
+			[2637.0, 0.25]], 0.42),
+		"reveal_dark": StudySounds._sweep(440.0, 70.0, 0.6, 0.5),
 	}
 	load_manifest()
 	_cue_player = AudioStreamPlayer.new()

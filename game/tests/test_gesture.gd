@@ -238,13 +238,23 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 		feed.call(_hev(0, true, true, 0.5, 0.5))
 	feed.call(_hev(0, false, false))  # the hand vanishes while steering
 	var lost_cue: String = game.sfx.last_cue
-	var blips: AudioStreamWAV = game.sfx.cue_stream("pinch")
+	var blips: AudioStreamWAV = game.sfx.cue_stream("release")  # synthesised (the hand and the pinch are files, #321)
 	var log_: Array[String] = game.sfx.cue_log
 	var first_hand := log_.find("hand")
 	_ok(first_hand >= 0 and log_.find("pinch") > first_hand and pinch_cue == "pinch" and release_cue == "release" and lost_cue == "lost"
 		and blips != null and blips.data.size() > 4000 and game.sfx.cue_stream("hand") != null and game.sfx.cue_stream("release") != null,
-		"gesture sound: hand seen, pinch caught, fingers opened, control cut - each its own blip",
+		"gesture sound: hand seen, pinch caught, fingers opened, control cut - each its own sound",
 		"%s | %s %s %s" % [log_, pinch_cue, release_cue, lost_cue])
+	# #321: the open hand / the pinch are 効果音ラボ's 決定ボタンを押す 1 / 3 (config audio.cue_hand / cue_pinch)
+	var hand_snd = game.sfx.cue_stream("hand")
+	var pinch_snd = game.sfx.cue_stream("pinch")
+	_ok(hand_snd is AudioStreamMP3 and pinch_snd is AudioStreamMP3 and not hand_snd.loop and not pinch_snd.loop
+		and str(GameConfig.get_value("audio", "cue_hand", "")) == "decide-button1.mp3"
+		and str(GameConfig.get_value("audio", "cue_pinch", "")) == "decide-button3.mp3"
+		and is_equal_approx(game.sfx.cue_gain("hand"), -5.0) and is_equal_approx(game.sfx.cue_gain("pinch"), 3.0)
+		and is_equal_approx(game.sfx.cue_gain("lost"), Sfx.CUE_GAIN_DB["lost"]),
+		"gesture sound: the open hand plays decide-button1.mp3, the pinch decide-button3.mp3, each at its own level",
+		str([hand_snd, pinch_snd, game.sfx.cue_gain("hand"), game.sfx.cue_gain("pinch")]))
 	var ov := GestureCameraOverlay.new()
 	ov.size = Vector2(320, 240)
 	var straight := ov.to_px(Vector2(0.25, 0.5))
@@ -851,3 +861,104 @@ func _test_staff_remote_game(rs: Node) -> void:
 	remove_child(game)
 	game.free()
 	rs.clear_samples()
+
+## #321: pixel dots on the hand window: a ring around the hand, a burst on a pinch (once, with
+## the grab_burst sheet), sparks behind the hand while steering; off with the VFX.
+func _test_hand_fx() -> void:
+	var fx := HandFx.new()
+	fx.size = Vector2(292, 219)
+	add_child(fx)
+	var dt := 1.0 / 60.0
+	var at := Vector2(146, 110)
+	fx.step(dt, false, at)
+	var none := fx.orbit_points().is_empty() and fx.particles.is_empty()
+	for i in 30:
+		fx.step(dt, true, at)
+	var ring := fx.orbit_points()
+	var round_ok := ring.size() == HandFx.ORBIT_N
+	for q in ring:
+		round_ok = round_ok and absf(q.distance_to(at) - fx.radius) <= fx.radius * 0.2 + 1.5
+	var whole := ring.all(func(q: Vector2) -> bool: return q == q.floor())
+	_ok(none and round_ok and whole and fx.presence > 0.99 and fx.particles.is_empty(),
+		"hand fx: a ring of whole-pixel dots circles the seen hand (nothing without a hand)", str([none, ring.size(), fx.presence]))
+	# the pinch: the dots fly outwards, the sheet plays on the hand, the ring goes and comes back
+	var before := VFXManager.spawned_log.size()
+	fx.step(dt, true, at, true)
+	var n := fx.particles.size()
+	var d0 := 0.0
+	for p in fx.particles:
+		d0 += Vector2(p.p).distance_to(at)
+	fx.step(dt * 3.0, true, at, true)
+	var d1 := 0.0
+	for p in fx.particles:
+		d1 += Vector2(p.p).distance_to(at)
+	var sheet_ok := VFXManager.spawned_log.size() == before + 1 and VFXManager.spawned_log[-1] == HandFx.BURST_SHEET \
+		and is_instance_valid(fx.sheet) and fx.sheet.get_parent() == fx
+	_ok(fx.bursts == 1 and n == HandFx.ORBIT_N + HandFx.BURST_EXTRA and d1 > d0 * 1.2 and fx.orbit_points().is_empty() and sheet_ok,
+		"hand fx: a pinch bursts the ring outwards and plays grab_burst on the hand", str([fx.bursts, n, d0, d1, sheet_ok]))
+	# held, flickering within the cooldown: still one burst; after the cooldown a new pinch bursts again
+	for i in 10:
+		fx.step(dt, true, at, true)
+	fx.step(dt, true, at, false)
+	fx.step(dt, true, at, true)
+	var once := fx.bursts == 1
+	for i in 40:
+		fx.step(dt, true, at, false)
+	var back := fx.presence > 0.99 and fx.particles.is_empty()
+	fx.step(dt, true, at, true)
+	_ok(once and back and fx.bursts == 2, "hand fx: one burst per pinch (a flicker does not pile them up); the ring forms again",
+		str([once, back, fx.bursts]))
+	# steering: sparks behind the hand (against the way it goes), more the faster
+	for i in 60:
+		fx.step(dt, true, at, false)
+	fx.particles.clear()
+	for i in 30:
+		fx.step(dt, true, at, false, 1.0, Vector2(1, 0))
+	var fast := fx.particles.size()
+	var vx := 0.0
+	for p in fx.particles:
+		vx += Vector2(p.v).x
+	fx.particles.clear()
+	for i in 30:
+		fx.step(dt, true, at, false, 0.2, Vector2(1, 0))
+	var slow := fx.particles.size()
+	fx.particles.clear()
+	for i in 30:
+		fx.step(dt, true, at, false, 0.0, Vector2(1, 0))
+	var still := fx.particles.size()
+	_ok(fast >= 8 and vx < 0.0 and slow < fast and slow > 0 and still == 0,
+		"hand fx: steering streams sparks behind the hand, more when faster, none when still", str([fast, vx, slow, still]))
+	# the hand lost: the ring fades away; off (render.vfx): nothing at all
+	for i in 40:
+		fx.step(dt, false, Vector2.ZERO)
+	var gone := fx.orbit_points().is_empty() and fx.particles.is_empty()
+	fx.enabled = false
+	var b := fx.bursts
+	for i in 5:
+		fx.step(dt, true, at, i % 2 == 0, 1.0, Vector2(1, 0))
+	_ok(gone and fx.particles.is_empty() and fx.orbit_points().is_empty() and fx.bursts == b,
+		"hand fx: fades out when the hand is lost; nothing when the VFX are off", str([gone, fx.particles.size(), fx.bursts]))
+	fx.queue_free()
+	# the HUD feeds it from the GestureControl (read only): the ring on the hand's spot in the picture
+	var g := GestureControl.new()
+	g.enabled = true
+	g.detected = true
+	g.hand_norm = Vector2(0.25, 0.5)
+	g.state = GestureControl.State.HAND_DETECTED
+	var hud := GestureHud.new()
+	hud.gesture = g
+	add_child(hud)
+	for i in 30:
+		hud.step(dt)
+	var spot := hud._overlay.to_px(g.hand_norm)
+	var on_hand := hud.hand_fx.seen and hud.hand_fx.hand.is_equal_approx(spot) and not hud.hand_fx.orbit_points().is_empty() \
+		and hud.hand_fx.clip_contents and hud.stick_fx.particles.is_empty()
+	g.pinch = true
+	hud.step(dt)
+	var popped := hud.hand_fx.bursts == 1 and g.state == GestureControl.State.HAND_DETECTED
+	hud.hidden_by_study = true
+	hud.step(dt)
+	_ok(on_hand and popped and hud.hand_fx.particles.is_empty() and hud.hand_fx.orbit_points().is_empty(),
+		"hand fx in the HUD: the ring sits on the hand in the camera picture, a pinch bursts it, hidden clears it",
+		str([on_hand, popped, spot, hud.hand_fx.hand]))
+	hud.queue_free()

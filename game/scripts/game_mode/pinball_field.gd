@@ -468,7 +468,7 @@ func capsule_ids() -> Array:
 func capsule_color(id: String) -> Color:
 	return _capsules[id].color if _capsules.has(id) else Color.WHITE
 
-## "normal" / "fire" / "water" / "green" (CapsuleKinds, #266)
+## "normal" / "fire" / "water" / "green" / "thunder" / "dark" (CapsuleKinds, #266, #320)
 func capsule_kind(id: String) -> String:
 	return str(_capsules[id].kind) if _capsules.has(id) else "normal"
 

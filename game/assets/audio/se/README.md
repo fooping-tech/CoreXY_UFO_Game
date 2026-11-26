@@ -19,6 +19,8 @@
 | `magic-fire2.mp3` | 火炎魔法2 | ファイヤーボールカプセル（`reveal_fire`） |
 | `magic-ice2.mp3` | 氷魔法2 | ウォーターボールカプセル（`reveal_water`） |
 | `magic-wind1.mp3` | 風魔法1 | グリーンボールカプセル（`reveal_green`） |
+| `magic-thunder1.mp3` | 雷魔法1 | サンダーボールカプセル（`reveal_thunder`、#320。ふつうと同じファイル） |
+| `magic-dark.mp3` | 暗黒魔法 | ダークボールカプセル（`reveal_dark`、#320） |
 
 ファイルが無いときは、ゲームが合成した音で代わりに鳴らす（止まらない）。
 
