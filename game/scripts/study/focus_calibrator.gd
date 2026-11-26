@@ -73,7 +73,11 @@ func active() -> bool:
 	return state in [MOVING, SETTLING, RETURNING, COMPUTING]
 
 ## Why it cannot start now ("" when it can).
-static func blocker(limits: Dictionary, at: Vector2, homed: bool, motors: bool, machine: String, has_frame: bool) -> String:
+## home_margin (#339): the backend keeps every XY target this far from X = x_min / Y = y_min (the
+## home limit switches) and moves a nearer one out to that line, so the -X / -Y samples need room
+## beyond it too (else the arm would not reach the sample's target).
+static func blocker(limits: Dictionary, at: Vector2, homed: bool, motors: bool, machine: String, has_frame: bool,
+		home_margin := 0.0) -> String:
 	if not motors:
 		return "モーターが無効:「モーター有効」を押す"
 	if not homed:
@@ -82,9 +86,10 @@ static func blocker(limits: Dictionary, at: Vector2, homed: bool, motors: bool, 
 		return "アームが止まってから（いま %s）" % machine
 	if not has_frame:
 		return "先端カメラの映像がない（設定の「先端カメラ」を確かめる）"
-	if at.x - STEP_MM < float(limits.get("x_min_mm", 0.0)) or at.x + STEP_MM > float(limits.get("x_max_mm", 390.0)) \
-			or at.y - STEP_MM < float(limits.get("y_min_mm", 0.0)) or at.y + STEP_MM > float(limits.get("y_max_mm", 200.0)):
-		return "端に近すぎる: 動ける範囲の端から %d mm 以上はなす" % int(STEP_MM)
+	var m := maxf(home_margin, 0.0)
+	if at.x - STEP_MM < float(limits.get("x_min_mm", 0.0)) + m or at.x + STEP_MM > float(limits.get("x_max_mm", 390.0)) \
+			or at.y - STEP_MM < float(limits.get("y_min_mm", 0.0)) + m or at.y + STEP_MM > float(limits.get("y_max_mm", 200.0)):
+		return "端に近すぎる: 動ける範囲の端から %d mm 以上（左と手前は %d mm 以上）はなす" % [int(STEP_MM), int(STEP_MM + m)]
 	return ""
 
 ## Starts at the arm's position now. -> "" or why not.
@@ -93,7 +98,8 @@ func start(at_height: String) -> String:
 		return "校正の途中"
 	var frame: Image = capture.call() if capture.is_valid() else null
 	var why := blocker(GameConfig.robot(), Vector2(RobotState.x_mm, RobotState.y_mm), RobotState.homed,
-		RobotState.motors_enabled, RobotState.machine_state, frame != null and not frame.is_empty())
+		RobotState.motors_enabled, RobotState.machine_state, frame != null and not frame.is_empty(),
+		float(GameConfig.get_value("backend", "xy_home_edge_margin_mm", 15.0)))
 	if why != "":
 		return why
 	height = at_height

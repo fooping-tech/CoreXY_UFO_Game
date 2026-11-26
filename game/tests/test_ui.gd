@@ -1153,9 +1153,19 @@ func _test_focus_calibrator() -> void:
 	RobotState.homed = true
 	RobotState.x_mm = 5.0
 	var at_edge := fc.start("10cm")
+	# #339: X = 20 is 10 mm off the edge, but its -X sample (X = 10) is inside the home switches'
+	# 15 mm margin (the backend would move it to 15): not enough room
+	RobotState.x_mm = 20.0
+	var at_home_edge := fc.start("10cm")
 	RobotState.x_mm = 150.0
-	_ok(not_homed.contains("原点復帰") and at_edge.contains("端") and sent.is_empty() and not fc.active(),
-		"focus calibration: needs homing and room to move; nothing is sent then", "%s / %s" % [not_homed, at_edge])
+	RobotState.y_mm = 24.0
+	var at_front := fc.start("10cm")
+	RobotState.y_mm = 100.0
+	var room: bool = FocusCalibrator.blocker({}, Vector2(25.0, 25.0), true, true, "IDLE", true, 15.0) == ""
+	_ok(not_homed.contains("原点復帰") and at_edge.contains("端") and at_home_edge.contains("端") and at_front.contains("端")
+		and room and sent.is_empty() and not fc.active(),
+		"focus calibration: needs homing and room to move (25 mm from the home switches' side); nothing is sent then",
+		"%s / %s / %s / %s" % [not_homed, at_edge, at_home_edge, at_front])
 	var started := fc.start("10cm")
 	var before_still := sent.size()
 	for k in 30:
