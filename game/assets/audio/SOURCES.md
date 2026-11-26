@@ -20,6 +20,8 @@
 | XY の移動（`audio.motion_xy`） | メニューを開く3（ブォン。サイバー感強め） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/menu3.mp3`） | `menu3.mp3` |
 | 手のジョイスティック: パー（開いた手）が見えた（`audio.cue_hand`、#321） | 決定ボタンを押す1 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button1.mp3` |
 | 手のジョイスティック: つまんだ（`audio.cue_pinch`、#321） | 決定ボタンを押す3 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button3.mp3` |
+| 手のジョイスティック: つまんだあとパーに戻した（指を開いて操縦をやめた。`audio.cue_release`、#332） | キャンセル4（ヒュッ） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/cancel4.mp3`） | `cancel4.mp3` |
+| かんたんモード: グーで自動キャッチ（「じどうキャッチ！」。練習のグーのステップも。`audio.cue_catch`、#332） | 決定ボタンを押す23（控え目な決定音） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/decision23.mp3`） | `decision23.mp3` |
 
 #327: メニューを開く2 / 3 はページの配布ファイルとバイト単位で同じことを確認した（2026-11-26、SHA-1 一致）。
 
@@ -31,8 +33,15 @@
 `audio.motion_z` / `audio.motion_xy` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
 
-手のジョイスティックの音（`audio.cue_hand` / `audio.cue_pinch`）は `game/scripts/ui/sfx.gd` の `play_cue` で鳴る。同じ音は爪を閉じるとき（`pinch`）や
-かんたんモードのキャッチ（`hand` / `pinch`）でも使っている。ファイルごとの音量は `audio.cue_gain_db`（`tools/audio_levels.py` で測って合わせる）。
+手のジョイスティックの音（`audio.cue_hand` / `audio.cue_pinch` / `audio.cue_release`）とかんたんモードのグーの音（`audio.cue_catch`）は
+`game/scripts/ui/sfx.gd` の `play_cue` で鳴る。同じ音は爪を閉じるとき（`pinch`）、かんたんモードのつかんだ合図・運ぶ合図（`hand` / `pinch`）、
+手で爪を開くとき・かんたんモードの運び終わり・キャッチのやめ（`release`）でも使っている。ファイルごとの音量は `audio.cue_gain_db`
+（`tools/audio_levels.py` で測って合わせる。#332: キャンセル4 -25.3、決定ボタンを押す23 -23.9 LUFS（瞬間最大）→ どちらも +8 dB で
+volume_db -8 のとき約 -25 / -24）。
+
+#332 の 2 つ（キャンセル4・決定ボタンを押す23）はユーザーが効果音ラボからダウンロードしたファイル。ページ（ボタン・システム音[1]）に
+同じ名前で載っていることと配布ファイル名は確認した（2026-11-26）。サイトがスクリプトからのダウンロードを断る（403）ため、
+バイト単位の照合はしていない。
 ファイルが無いときは、ゲームが合成した「ピッ」という音で鳴る。
 
 ## 学習モードの効果音（`se/`）

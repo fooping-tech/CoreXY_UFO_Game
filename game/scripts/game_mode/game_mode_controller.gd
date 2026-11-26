@@ -300,6 +300,13 @@ var tutorial_hud: GestureTutorialHud
 var tutorial_speech: StudySpeech
 ## #271: what UFOくん says when the round's time is up
 const TIME_UP_LINE := "ゲーム終了！！"
+## #332: what UFOくん may say as the arm goes down to catch (the easy mode's LOWER_TO_CATCH):
+## one of these, at random, never the same twice in a row
+const DESCENT_CHEERS := ["よし、いくぞぉー！", "がんばるよ！", "つかんでみせるよ！", "いくね！", "いくよ！",
+	"みててね！", "よしっ！", "それっ！", "えいっ！", "まかせて！"]
+## the cheer said last ("" = none yet)
+var last_cheer := ""
+var _cheer_rng := RandomNumberGenerator.new()
 ## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
 var tutorial_auto := true
 ## #314: the practice capsule's show on a plain board (the kinds by colour, the jackpot chance)
@@ -1300,10 +1307,29 @@ func _time_up() -> void:
 	sounds.set_bgm(false)
 	sounds.play("timeup")
 	if not demo:
+		tutorial_speech.clear()  # #332: a cheer still being said gives way: the end is what counts
 		tutorial_speech.say([TIME_UP_LINE])  # #271: UFOくん calls the end
 	result_show.time_up()  # the picture and the thud; SETTLING goes on by itself
 	_trace("time_up", null, {})
 	_close_idle_lanes()
+
+## #332: the arm goes down to catch (the easy mode's LOWER_TO_CATCH, once per catch): UFOくん
+## says a cheer. Only as a voice (no voice now, or off: nothing), only in the practice and the
+## round, never over another of its lines (the practice's words, "ゲーム終了！！": then it says
+## nothing; it is never queued to come late). Returns the line said ("" = none).
+func cheer_descent() -> String:
+	if not active() or demo or phase not in ["TUTORIAL", "PLAYING"]:
+		return ""
+	if tutorial_speech.busy() or not tutorial_voice.pending.is_empty() or not tutorial_voice.can_speak():
+		return ""
+	last_cheer = pick_cheer(last_cheer, _cheer_rng)
+	tutorial_speech.say([last_cheer])
+	return last_cheer
+
+## One of DESCENT_CHEERS at random, never `last`.
+static func pick_cheer(last: String, rng: RandomNumberGenerator) -> String:
+	var lines: Array = DESCENT_CHEERS.filter(func(l): return l != last)
+	return str(lines[rng.randi() % lines.size()])
 
 ## The Dials that hold nothing stop taking capsules (the round's end, the practice's end).
 func _close_idle_lanes() -> void:

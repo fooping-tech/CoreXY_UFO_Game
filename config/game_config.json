@@ -59,8 +59,10 @@
     "motion_xy": "menu3.mp3",
     "cue_hand": "decide-button1.mp3",
     "cue_pinch": "decide-button3.mp3",
-    "cue_gain_db": {"hand": -5.0, "pinch": 3.0},
-    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). motion_z = the arm going up or down (both ways), motion_xy = the XY travel: one sound per second while moving (#327, sfx.gd). cue_hand / cue_pinch (#321): the hand joystick's open hand seen / pinch caught (also the claw closing and the easy mode's catch, which share those cues); cue_gain_db = each file's level (tools/audio_levels.py: about -26 / -25 dB at volume_db -8). Without a file the synthesised blip plays."
+    "cue_release": "cancel4.mp3",
+    "cue_catch": "decision23.mp3",
+    "cue_gain_db": {"hand": -5.0, "pinch": 3.0, "release": 8.0, "catch": 8.0},
+    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). motion_z = the arm going up or down (both ways), motion_xy = the XY travel: one sound per second while moving (#327, sfx.gd). cue_hand / cue_pinch (#321): the hand joystick's open hand seen / pinch caught (also the claw closing, which shares the pinch's cue); cue_release (#332): the fingers opened after a pinch (also the claw opening by hand and the easy mode's carry done / catch given up); cue_catch (#332): the easy mode's fist (じどうキャッチ) and the practice's fist step; cue_gain_db = each file's level (tools/audio_levels.py: hand / pinch / release / catch about -26 / -25 / -25 / -24 dB at volume_db -8). Without a file the synthesised blip plays."
   },
   "gesture": {
     "enabled": false,
