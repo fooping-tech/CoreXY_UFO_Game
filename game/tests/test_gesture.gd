@@ -238,7 +238,7 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 		feed.call(_hev(0, true, true, 0.5, 0.5))
 	feed.call(_hev(0, false, false))  # the hand vanishes while steering
 	var lost_cue: String = game.sfx.last_cue
-	var blips: AudioStreamWAV = game.sfx.cue_stream("release")  # synthesised (the hand and the pinch are files, #321)
+	var blips: AudioStreamWAV = game.sfx.cue_stream("lost")  # synthesised (the hand, the pinch and the release are files, #321 / #332)
 	var log_: Array[String] = game.sfx.cue_log
 	var first_hand := log_.find("hand")
 	_ok(first_hand >= 0 and log_.find("pinch") > first_hand and pinch_cue == "pinch" and release_cue == "release" and lost_cue == "lost"
@@ -255,6 +255,18 @@ func _test_gesture_with_mock_robot(rs: Node) -> void:
 		and is_equal_approx(game.sfx.cue_gain("lost"), Sfx.CUE_GAIN_DB["lost"]),
 		"gesture sound: the open hand plays decide-button1.mp3, the pinch decide-button3.mp3, each at its own level",
 		str([hand_snd, pinch_snd, game.sfx.cue_gain("hand"), game.sfx.cue_gain("pinch")]))
+	# #332: the fingers opened after a pinch play 効果音ラボ's キャンセル4 (it was the synthesised "pon-pi"),
+	# the easy mode's fist 決定ボタンを押す23 (it shared the pinch's decide-button3)
+	var release_snd = game.sfx.cue_stream("release")
+	var catch_snd = game.sfx.cue_stream("catch")
+	_ok(release_cue == "release" and release_snd is AudioStreamMP3 and not release_snd.loop
+		and catch_snd is AudioStreamMP3 and not catch_snd.loop and catch_snd != pinch_snd and release_snd != catch_snd
+		and str(GameConfig.get_value("audio", "cue_release", "")) == "cancel4.mp3"
+		and str(GameConfig.get_value("audio", "cue_catch", "")) == "decision23.mp3"
+		and FileAccess.file_exists("res://assets/audio/cancel4.mp3") and FileAccess.file_exists("res://assets/audio/decision23.mp3")
+		and is_equal_approx(game.sfx.cue_gain("release"), 8.0) and is_equal_approx(game.sfx.cue_gain("catch"), 8.0),
+		"gesture sound (#332): pinch -> open hand plays cancel4.mp3, the fist's catch decision23.mp3, each at its own level",
+		str([release_cue, release_snd, catch_snd, game.sfx.cue_gain("release"), game.sfx.cue_gain("catch")]))
 	var ov := GestureCameraOverlay.new()
 	ov.size = Vector2(320, 240)
 	var straight := ov.to_px(Vector2(0.25, 0.5))
