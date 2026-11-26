@@ -1352,9 +1352,11 @@ func _test_practice_show(rs: Node) -> void:
 	var waits_for_words: bool = show.scene == "kind" and show.visible
 	busy[0] = false
 	show.tick(1.0 / 60.0)
-	var colours_cards: bool = show.scene == "colours" and show._cards.all(func(c): return c.visible)
+	# #320: five kinds and the "？" card, all on the board
+	var colours_cards: bool = show.scene == "colours" and show._cards.all(func(c): return c.visible) \
+		and show._cards.size() == 6 and show._cards.all(func(c): return c.position.y + c.size.y <= PracticeShow.RECT.size.y)
 	var more_card := ""
-	for l in show._cards[3].find_children("*", "Label", true, false):
+	for l in show._cards[-1].find_children("*", "Label", true, false):
 		more_card += (l as Label).text
 	for i in 60 * 60:
 		if not show.active():

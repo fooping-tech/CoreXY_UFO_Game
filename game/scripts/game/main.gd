@@ -480,6 +480,7 @@ func apply_live_settings() -> void:
 		game_mode.sounds.enabled = sfx.enabled
 		game_mode.sounds.volume_db = sfx.volume_db
 		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
+		game_mode.set_mist_enabled(bool(GameConfig.value("game_mode.mist.enabled", game_mode.mist_enabled)))  # #318
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))

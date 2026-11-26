@@ -14,6 +14,8 @@ the kind's colours, with what makes the kind:
     fire   a crown of flames licking up, embers; a turning bright stripe
     water  a wave running round its middle, droplets circling it
     green  a sprout swaying on top, sparkles blinking round it
+    thunder  a lightning bolt flashing up out of the top, sparks crackling round it (#320)
+    dark   a purple haze curling up from it, dark motes orbiting it (#320)
 
 Made from code (no drawing program, no outside files), the same every run: change the
 numbers here and run it again. Only the standard library (zlib, struct) is used.
@@ -59,6 +61,12 @@ PALETTES = {
     "green": {"top": hexc("1fb84a"), "band": hexc("5ae07a"), "stripe": hexc("d0ffd8"),
               "clear": hexc("d4f8dc"), "clear_shade": hexc("98dca8"), "seam": hexc("0e6a28"),
               "fx": [hexc("1fb84a"), hexc("7dff6a"), hexc("d8ff9a"), PURE]},
+    "thunder": {"top": hexc("ffc81f"), "band": hexc("ffe46a"), "stripe": hexc("fff6c0"),
+                "clear": hexc("fff4cc"), "clear_shade": hexc("f0d890"), "seam": hexc("a07808"),
+                "fx": [hexc("ffb000"), hexc("ffe83a"), hexc("fffbd0"), PURE]},
+    "dark": {"top": hexc("6a1fc8"), "band": hexc("a24bff"), "stripe": hexc("dcb8ff"),
+             "clear": hexc("e4d4ff"), "clear_shade": hexc("b8a0e8"), "seam": hexc("3a0a78"),
+             "fx": [hexc("3a0a78"), hexc("7a2ee0"), hexc("c890ff"), hexc("f0e0ff")]},
 }
 
 
@@ -189,7 +197,55 @@ def green(f: Frame, pal: dict, n: int) -> None:
                 f.put(x + ox, y + oy, fx[1])
 
 
-EXTRA = {"fire": fire, "water": water, "green": green}
+def thunder(f: Frame, pal: dict, n: int) -> None:
+    fx = pal["fx"]
+    top = CY - R - 1
+    # a zigzag bolt over the top, flashing: drawn on most frames, brightest on the flash
+    if n % FRAMES not in (3, 7):
+        flash = n % FRAMES in (0, 4)
+        side = -1 if (n // 4) % 2 else 1
+        path = [(0, 0), (1 * side, -1), (2 * side, -2), (0, -3), (-1 * side, -4), (1 * side, -5), (2 * side, -6), (0, -7)]
+        for dx, dy in path:  # an orange outline first, the bolt over it
+            x, y = CX + dx, top + dy
+            for ox in (-1, 2):
+                f.put(x + ox, y, fx[0])
+        for dx, dy in path:
+            x, y = CX + dx, top + dy
+            f.put(x, y, fx[3] if flash else fx[2])
+            f.put(x + 1, y, fx[2] if flash else fx[1])
+    # sparks crackling round it: short dashes that jump place every frame
+    spots = ((-13, -2), (12, -4), (-11, 8), (12, 9), (-6, -12), (7, -11))
+    for i, (dx, dy) in enumerate(spots):
+        if (n + i) % 3 == 0:
+            x, y = CX + dx, CY + dy
+            f.put(x, y, fx[3])
+            f.put(x + (1 if i % 2 else -1), y + 1, fx[1])
+            f.put(x + (2 if i % 2 else -2), y + 1, fx[0])
+
+
+def dark(f: Frame, pal: dict, n: int) -> None:
+    fx = pal["fx"]
+    t = n / FRAMES * math.tau
+    top = CY - R - 1
+    # a haze curling up from the top: two wisps winding round each other
+    for k in range(7):
+        y = top - 1 - k
+        for w, ph in ((0, 0.0), (1, math.pi)):
+            x = CX + round(2.2 * math.sin(k * 0.9 - t + ph))
+            f.put(x, y, fx[1] if k < 4 else fx[2])
+            if k < 3:
+                f.put(x + (1 if w else -1), y, fx[0])
+    # dark motes orbiting it on a tilted ring, the near ones light
+    for i in range(4):
+        a = t + i * math.tau / 4
+        x = CX + math.cos(a) * (R + 4)
+        y = CY + math.sin(a) * (R + 1) * 0.5 + 2
+        near = math.sin(a) > 0
+        f.put(x, y, fx[3] if near else fx[0])
+        f.put(x + 1, y, fx[2] if near else fx[1])
+
+
+EXTRA = {"fire": fire, "water": water, "green": green, "thunder": thunder, "dark": dark}
 
 
 def sheet(kind: str) -> tuple[list[Frame], list[Frame]]:

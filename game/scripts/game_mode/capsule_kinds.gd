@@ -6,24 +6,34 @@ extends RefCounted
 ##   red    fire   ファイヤーボールカプセル   fast and fierce: kicks harder, hits score more
 ##   blue   water  ウォーターボールカプセル   slow and floating: stays longer, the goal scores more
 ##   green  green  グリーンボールカプセル     bouncy and lucky: bounces high, everything a bit more
+##   yellow thunder サンダーボールカプセル    electric: the bumpers fling it hardest, hits score more
+##   purple dark   ダークボールカプセル       heavy: falls hard, hardly bounces, the goal scores most
 ##   (none) normal the capsule as it always was
 ##
 ## The colour is read from the arm camera (the focus role) while the capsule hangs in front of
 ## it: classify() judges one frame (the ROI's saturated pixels by hue), a Reader collects the
 ## frames' votes, and the capsule taken into the portal gets the kind most of them saw. Nothing
-## sure enough = normal. This is presentation only: it never decides anything for the crane
-## and is never sent anywhere.
+## sure enough = normal. #320: the claw comes down on what is at the middle of the arm camera,
+## so the ROI is a small box there, read from up high (see GameModeController._reading_colours
+## for when). This is presentation only: it never decides anything for the crane and is never
+## sent anywhere.
 ##
-## The values are tuning values (config game_mode.capsule_kinds), the thresholds of the colour
-## reading are not measured on the real camera yet (実機未検証).
+## The values are tuning values (config game_mode.capsule_kinds). #320: the ROI, the hues and
+## the time to read were measured on the real crane (2026-11-26: the arm camera Innomaker
+## U20CAM 1280x720, three catches recorded with the easy mode, each colour at the top height);
+## not yet over whole rounds.
 
-const KINDS := ["normal", "fire", "water", "green"]
+const KINDS := ["normal", "fire", "water", "green", "thunder", "dark"]
+## the kinds a colour makes (KINDS without normal), in the order they are shown
+const COLOURED := ["fire", "water", "green", "thunder", "dark"]
 const NAMES := {"normal": "カプセル", "fire": "ファイヤーボールカプセル", "water": "ウォーターボールカプセル",
-	"green": "グリーンボールカプセル"}
+	"green": "グリーンボールカプセル", "thunder": "サンダーボールカプセル", "dark": "ダークボールカプセル"}
 ## the one line under the name in the collection show
 const TRAITS := {"fire": "はやい！ あてると とくてん アップ", "water": "ゆっくり ふわふわ… ゴールで とくてん アップ",
-	"green": "よく はねる！ ぜんぶ ちょっと アップ"}
-const COLORS := {"fire": Color("ff4a2a"), "water": Color("3f8cff"), "green": Color("3fe06a")}
+	"green": "よく はねる！ ぜんぶ ちょっと アップ", "thunder": "ビリビリ！ バンパーで びゅんっと とぶ",
+	"dark": "ずっしり おもい… ゴールで とくてん だいアップ"}
+const COLORS := {"fire": Color("ff4a2a"), "water": Color("3f8cff"), "green": Color("3fe06a"), "thunder": Color("ffd83a"),
+	"dark": Color("a24bff")}
 ## what each kind changes (k = times the field's own value; bounce = the capsule's own):
 ##   gravity_k  how hard it falls       damp     how much the air slows it
 ##   kick_k     bumpers, pops, slings   stay_k   how long it may stay on the field
@@ -34,19 +44,32 @@ const DEFAULTS := {
 	"fire": {"gravity_k": 1.15, "bounce": 0.6, "damp": 0.02, "kick_k": 1.35, "stay_k": 0.85, "hit_k": 2.0, "goal_k": 1.0},
 	"water": {"gravity_k": 0.6, "bounce": 0.25, "damp": 0.9, "kick_k": 0.8, "stay_k": 1.4, "hit_k": 1.0, "goal_k": 2.0},
 	"green": {"gravity_k": 0.8, "bounce": 0.8, "damp": 0.05, "kick_k": 1.1, "stay_k": 1.15, "hit_k": 1.3, "goal_k": 1.3},
+	"thunder": {"gravity_k": 0.95, "bounce": 0.95, "damp": 0.0, "kick_k": 1.6, "stay_k": 0.95, "hit_k": 1.6, "goal_k": 1.0},
+	"dark": {"gravity_k": 1.3, "bounce": 0.2, "damp": 0.15, "kick_k": 0.85, "stay_k": 1.2, "hit_k": 1.0, "goal_k": 2.5},
 }
 ## The colour reading's defaults (config game_mode.capsule_kinds.read):
-##   roi        the part of the frame looked at (fractions of its size)
-##   min_sat / min_val   a pixel counts only this saturated and this bright (0..1)
-##   min_share  a colour must cover this much of the ROI's looked-at pixels
+##   roi        the part of the frame looked at (fractions of its size). #320: the middle of
+##              the frame a little above the centre, about one capsule wide at the top height
+##              (the capsule under the claw sat at x 0.52, y 0.46 there and drifts up and right
+##              as the arm comes down)
+##   min_sat / min_val   a pixel counts only this saturated and this bright (0..1). #320: the
+##              yellow capsule is only 0.43-0.49 saturated on the arm camera (the desk at most
+##              0.25), so 0.3
+##   min_share  a colour must cover this much of the ROI's looked-at pixels (#320: the capsule
+##              fills 0.7-0.8 of the box from the top)
 ##   dominance  ... and this many times more than the next colour
-##   hues       [from, to] of each colour (0..1; red wraps round: [0.93, 0.045])
+##   hues       [from, to] of each colour (0..1; red wraps round: [0.92, 0.05]). #320: measured
+##              on the arm camera at the top height (5th-95th percentile): red 0.95-0.99,
+##              yellow 0.145-0.175, green 0.40-0.45, blue 0.56-0.58 (0.51-0.63 in the
+##              portal), purple 0.72-0.77; the borders lie between them
 ##   sample_hz  frames read per second while a capsule may be in front of the camera
 ##   min_votes / min_ratio   the kind of the capsule: this many frames saw it, this share of
 ##              the frames that saw a colour at all
-const READ := {"roi": [0.2, 0.15, 0.6, 0.7], "min_sat": 0.45, "min_val": 0.25, "min_share": 0.05, "dominance": 1.6,
-	"hues": {"fire": [0.93, 0.045], "green": [0.22, 0.45], "water": [0.53, 0.72]},
-	"sample_hz": 6.0, "min_votes": 3, "min_ratio": 0.6}
+##   lower_read_s  the easy mode reads the claw opening and this many seconds of its way down
+##              (#320: the yellow capsule was clear for 2.1 s of a 5.8 s descent, then white)
+const READ := {"roi": [0.47, 0.33, 0.12, 0.2], "min_sat": 0.3, "min_val": 0.2, "min_share": 0.2, "dominance": 1.6,
+	"hues": {"fire": [0.92, 0.05], "thunder": [0.08, 0.2], "green": [0.2, 0.5], "water": [0.5, 0.68], "dark": [0.68, 0.88]},
+	"sample_hz": 10.0, "min_votes": 3, "min_ratio": 0.6, "lower_read_s": 2.0}
 const SHEET_DIR := "res://assets/capsules/"
 ## the sprite's frame (tools/build_capsule_sprites.py; row 1 the capsule, row 2 the kind's part):
 ## its size and the capsule's radius in it
@@ -113,10 +136,10 @@ const REASONS := {"ok": "判定できた", "no_frame": "カメラ未取得", "du
 const SAMPLE_LOW_SAT := 0
 const SAMPLE_LOW_VAL := 1
 const SAMPLE_HUE_MISS := 2
-const SAMPLE_KIND := {"fire": 3, "water": 4, "green": 5}
+const SAMPLE_KIND := {"fire": 3, "water": 4, "green": 5, "thunder": 6, "dark": 7}
 const HUE_BINS := 36
 
-## Which colour fills the ROI of `img`: {"kind": "fire" / "water" / "green" / "", "share": the
+## Which colour fills the ROI of `img`: {"kind": one of COLOURED / "", "share": the
 ## winner's share of the looked-at pixels, "counts": {kind: pixels}}. "" = no colour sure
 ## enough (too little of it, or two colours close together). Every step-th pixel is looked
 ## at (about 80 across), so a whole camera frame costs little.
@@ -133,10 +156,15 @@ const HUE_BINS := 36
 ##   samples    PackedByteArray, cols x rows, one SAMPLE_* value per looked-at pixel (row major)
 ##   hue_hist   HUE_BINS counts of the hues of the saturated, bright pixels
 static func classify(img: Image, cfg := {}, detail := false) -> Dictionary:
-	var out := {"kind": "", "share": 0.0, "counts": {"fire": 0, "water": 0, "green": 0}, "reason": "no_frame",
+	var zero := {}
+	for kind in COLOURED:
+		zero[kind] = 0
+	var out := {"kind": "", "share": 0.0, "counts": zero.duplicate(), "reason": "no_frame",
 		"roi": Rect2i(), "roi_pixels": 0, "step": 1, "looked": 0, "low_sat": 0, "low_val": 0, "hue_miss": 0,
-		"shares": {"fire": 0.0, "water": 0.0, "green": 0.0}, "best": "", "second": "", "best_n": 0, "second_n": 0,
+		"shares": {}, "best": "", "second": "", "best_n": 0, "second_n": 0,
 		"share_ok": false, "dominance_ok": false}
+	for kind in COLOURED:
+		out.shares[kind] = 0.0
 	if img == null or img.is_empty():
 		return out
 	var c: Dictionary = READ.duplicate(true)
@@ -180,9 +208,9 @@ static func classify(img: Image, cfg := {}, detail := false) -> Dictionary:
 				hist[mini(int(p.h * HUE_BINS), HUE_BINS - 1)] += 1
 			var got := ""
 			for kind in hues.keys():
-				var r: Array = hues[kind]
-				var lo := float(r[0])
-				var hi := float(r[1])
+				var hr: Array = hues[kind]
+				var lo := float(hr[0])
+				var hi := float(hr[1])
 				var hit := (p.h >= lo or p.h <= hi) if lo > hi else (p.h >= lo and p.h <= hi)
 				if hit:
 					counts[kind] = int(counts.get(kind, 0)) + 1
@@ -245,6 +273,9 @@ class Reader:
 	var clock := 0.0
 	## only the votes of this many seconds back count
 	var memory_s := 20.0
+	## #320: every vote counts however old (the easy mode: its votes are taken before the
+	## descent and the capsule reaches the portal some 20 s later; each catch starts them over)
+	var keep_all := false
 	## #291: when the votes were last started over (the clock; -1 = never)
 	var cleared_at := -1.0
 
@@ -264,7 +295,7 @@ class Reader:
 	func count(kind := "*") -> int:
 		var n := 0
 		for v in votes:
-			if clock - float(v[1]) > memory_s:
+			if not keep_all and clock - float(v[1]) > memory_s:
 				continue
 			var k := str(v[0])
 			if (kind == "" and k == "") or (k != "" and (kind == "*" or k == kind)):
@@ -284,7 +315,7 @@ class Reader:
 		var best := "normal"
 		var best_n := 0
 		var counts := {}
-		for kind in ["fire", "water", "green"]:
+		for kind in COLOURED:
 			var n := count(kind)
 			counts[kind] = n
 			if n > best_n:
@@ -292,7 +323,7 @@ class Reader:
 				best = kind
 		var first := -1.0
 		for v in votes:
-			if clock - float(v[1]) <= memory_s:
+			if keep_all or clock - float(v[1]) <= memory_s:
 				first = float(v[1])
 				break
 		var ratio := float(best_n) / any if any > 0 else 0.0
