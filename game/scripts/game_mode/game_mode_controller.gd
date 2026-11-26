@@ -2402,6 +2402,13 @@ static func servos_moving() -> bool:
 		return true
 	return RobotState.machine_state in SERVO_MACHINE_STATES
 
+## #318: the settings screen's switch (saved = applied at once). Off also drops a mist that
+## waits for the servos (one already sent ends by itself on the Illumination).
+func set_mist_enabled(on: bool) -> void:
+	mist_enabled = on
+	if not on:
+		cancel_mist()
+
 ## #316 (review on #317): a stop drops the mist that waits for the servos (else it would be sent
 ## once they stopped, right after the stop's STOP_ALL).
 func cancel_mist() -> void:
