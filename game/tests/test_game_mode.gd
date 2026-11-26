@@ -575,7 +575,8 @@ func _test_game_mode_dial_leds(rs: Node) -> void:
 func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	var game := _gm_game()
 	var ctl := _gm_playing(game)
-	ctl.mist_capsule_s = 3  # #316: the repo's config has the capsule's mist off for now; the code still sends it
+	ctl.mist_capsule_s = 3  # #316 / #318: the repo's config has the mist off for now; the code still sends it
+	ctl.mist_enabled = true
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
 	_ok(GameModeHud.clock_text(150.0) == "2:30" and GameModeHud.clock_text(29.2) == "0:30" and GameModeHud.clock_text(0.0) == "0:00",
@@ -694,6 +695,19 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_gm_step(ctl, 0.3)
 	_ok(waited and ctl.mist_pending_s == 0 and mist_of.call().size() == n0 + 1,
 		"game mode #316: Space drops a mist that waited for the servos; nothing is sent after the stop")
+	# #318: the settings switch: off also drops a waiting mist, nothing is sent; on again sends
+	RobotState.easy_mode = {"state": "DELIVER_DIAL_1", "step": "RELEASE"}
+	ctl.mist_burst(ctl.mist_capsule_s)
+	ctl.set_mist_enabled(false)
+	RobotState.easy_mode = {"state": "MANUAL_XY", "step": "IDLE"}
+	ctl.lights_tick(0.1)
+	_gm_step(ctl, 0.3)
+	var off_ok: bool = ctl.mist_pending_s == 0 and not ctl.mist_burst(5) and mist_of.call().size() == n0 + 1
+	ctl.set_mist_enabled(true)
+	var on_ok := ctl.mist_burst(5)
+	_gm_step(ctl, 0.3)
+	_ok(off_ok and on_ok and mist_of.call().size() == n0 + 2,
+		"game mode #318: the settings switch turns the mist off (a waiting one is dropped) and on again")
 	RobotState.easy_mode = em0
 	RobotState.machine_state = ms0
 	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"

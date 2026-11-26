@@ -114,6 +114,8 @@ func _ready() -> void:
 	_s.game_mode_show._test_game_mode_juice(rs)
 	_s.game_mode_show._test_game_mode_result_logic()
 	_s.game_mode_show._test_game_mode_result_show(rs)
+	_s.game_mode_show._test_result_capsule_bonus()
+	_s.game_mode_show._test_result_capsule_bonus_game(rs)
 	_s.game_mode_show._test_ranking_logic()
 	_s.game_mode_show._test_game_mode_ranking(rs)
 	_s.game_mode_show._test_portrait_layout(rs)
