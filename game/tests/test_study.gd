@@ -410,11 +410,11 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	_study_pump(game, 20.0, func(): return ctl.state == "REWARD_REVEAL")
 	hud.refresh()
 	var reward_ok: bool = ctl.state == "REWARD_REVEAL" and ctl.grading.all_correct() and order.size() == 4 and order[3] == [2, "study_answer_correct"] \
-		and int(ctl.reward.time_bonus_s) == 30 and int(ctl.reward.power_tickets) == 1 and bool(ctl.reward.perfect) \
+		and int(ctl.reward.time_bonus_s) == 40 and int(ctl.reward.power_tickets) == 1 and bool(ctl.reward.perfect) \
 		and ctl.celebrate_count == 1 and game.vfx.celebrations == celebrations_before + 1 and game._mood() == "SUCCESS" \
-		and hud._banner.text == "PERFECT!" and hud._sub_banner.text.contains("TIME +30") and hud._sub_banner.text.contains("POWER TICKET ×1")
+		and hud._banner.text == "PERFECT!" and hud._sub_banner.text.contains("TIME +40") and hud._sub_banner.text.contains("POWER TICKET ×1")
 	GameState.event.disconnect(on_shown)
-	_ok(rescanning and reward_ok, "study mock: R reads the rewritten sheet again; all right: +30 s (the cap), a ticket, PERFECT! once",
+	_ok(rescanning and reward_ok, "study mock: R reads the rewritten sheet again; all right: +30 s (the cap) +10 s perfect bonus, a ticket, PERFECT! once",
 		str([rescanning, ctl.state, order, ctl.reward, hud._banner.text, hud._sub_banner.text]))
 	# the ticket: a roulette goes round the powers and stops on one (here DOUBLE SCORE), once
 	ctl.roulette_force = "double"
@@ -441,7 +441,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	_study_pump(game, 40.0, func(): return ctl.state == "GAME_READY_WITH_REWARD")
 	hud.refresh()
 	var unlocked: bool = ctl.state == "GAME_READY_WITH_REWARD" and ctl.cleanup_ok \
-		and hud._play.visible and hud._banner.text == "STUDY POWER LOADED!" and hud._sub_banner.text.contains("TIME +30") \
+		and hud._play.visible and hud._banner.text == "STUDY POWER LOADED!" and hud._sub_banner.text.contains("TIME +40") \
 		and hud._sub_banner.text.contains("DOUBLE SCORE READY")
 	_ok(grip_wait and still and unlocked, "study mock: the tidy-up waits for the grip confirmation, then STUDY POWER LOADED!",
 		"%s %s %s %s %s" % [grip_wait, still, unlocked, ctl.state, hud._sub_banner.text])
@@ -453,7 +453,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	ctl.play_game()
 	GameState.event.disconnect(on_reward)
 	_ok(ctl.state == "OFF" and not hud.visible and game._mood() != "SUCCESS" and not ctl.blocks_manual_control()
-		and handed.size() == 1 and ctl.last_reward.selected_powerups == ["double"] and int(ctl.last_reward.time_bonus_s) == 30,
+		and handed.size() == 1 and ctl.last_reward.selected_powerups == ["double"] and int(ctl.last_reward.time_bonus_s) == 40,
 		"study mock: 'ゲームで遊ぶ' hands the reward over once and leaves the study mode", str(handed))
 	GameState.event.disconnect(on_event)
 	remove_child(game)
@@ -1341,12 +1341,17 @@ func _test_study_answer_check(rs: Node) -> void:
 	g.reset([1, 2, 3, 4])
 	g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
 		{"number": 3, "answer_status": "correct"}, {"number": 4, "answer_status": "correct"}])
-	var capped := g.time_bonus_s() == 30 and g.power_tickets() == 0
+	# #338: all right: the perfect bonus (+10 s) on top of the cap
+	var capped := g.time_bonus_s() == 40 and g.perfect_bonus() == 10 and g.power_tickets() == 0
 	g.checked = true
 	g.used_help = true
 	var r := g.reward("ws")
-	_ok(capped and r.power_tickets == 1 and r.time_bonus_s == 30 and r.perfect and r.used_help,
-		"answer check: +10 s a right problem up to +30 s, a ticket once all were checked; a HELP takes nothing away", str(r))
+	g.reset([1, 2, 3, 4])
+	g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "correct"}, {"number": 4, "answer_status": "incorrect"}])
+	var three_of_four := g.time_bonus_s() == 30 and g.perfect_bonus() == 0
+	_ok(capped and three_of_four and r.power_tickets == 1 and r.time_bonus_s == 40 and r.perfect_bonus_s == 10 and r.perfect and r.used_help,
+		"answer check: +10 s a right problem up to +30 s, all right +10 s more (#338), a ticket once all were checked; a HELP takes nothing away", str(r))
 	g.reset([1, 2])
 	g.apply([{"number": 1, "answer_status": "correct"}])
 	_ok(g.fail_all() == [2] and g.verdicts[1] == "correct" and g.verdicts[2] == "unclear" and g.count("review") == 0,
@@ -1946,3 +1951,161 @@ func _test_study_review_box_by_hand(rs: Node) -> void:
 		"study #333: a shape held on does not fire again until the hand changes; an open hand held 1 s goes on (as Enter); R / Enter still work",
 		"%s %s %s %s %s %s %s" % [no_repeat, again, next_ok, stays, key_r, key_enter, keys_ok])
 	_gm_free(game, rs)
+
+
+## #338: after the check UFOくん says one line by the result and goes on to the reward by itself;
+## the review (見直し) only when the settings screen's 「見直しを有効にする」 is on.
+func _test_study_result_lines(rs: Node) -> void:
+	# which line: "wrong" is only review (incorrect / half); unclear is never counted as wrong
+	var g := StudyGrading.new()
+	var kind_of := func(statuses: Array) -> String:
+		g.reset(range(1, statuses.size() + 1))
+		var ps: Array = []
+		for i in statuses.size():
+			ps.append({"number": i + 1, "answer_status": statuses[i]})
+		g.apply(ps)
+		return g.result_kind()
+	var kinds := [kind_of.call(["correct", "correct", "correct"]), kind_of.call(["incorrect", "incorrect", "partial"]),
+		kind_of.call(["incorrect", "unreadable", "unreadable"]), kind_of.call(["correct", "incorrect", "correct"]),
+		kind_of.call(["correct", "unreadable", "correct"]), kind_of.call(["unreadable", "unreadable"]), kind_of.call([])]
+	_ok(kinds == ["perfect", "all_review", "all_review", "some_review", "unclear", "unclear", ""],
+		"result line: all right = perfect; none right = all_review; some = some_review; only unreadable misses = unclear (never 'wrong')",
+		str(kinds))
+	# the reward matches the words: all wrong still gets an item (the ticket), all right gets more
+	g.reset([1, 2, 3])
+	g.apply([{"number": 1, "answer_status": "incorrect"}, {"number": 2, "answer_status": "incorrect"},
+		{"number": 3, "answer_status": "incorrect"}])
+	g.checked = true
+	var none_right := g.reward("ws")
+	g.reset([1, 2, 3])
+	g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "incorrect"}])
+	g.checked = true
+	var some_right := g.reward("ws")
+	g.reset([1, 2, 3])
+	g.apply([{"number": 1, "answer_status": "correct"}, {"number": 2, "answer_status": "correct"},
+		{"number": 3, "answer_status": "correct"}])
+	g.checked = true
+	var all_right := g.reward("ws")
+	_ok(int(none_right.power_tickets) == 1 and int(none_right.time_bonus_s) == 0
+		and int(all_right.time_bonus_s) == 40 and int(all_right.perfect_bonus_s) == 10
+		and int(all_right.time_bonus_s) > int(some_right.time_bonus_s) + 10 and int(all_right.power_tickets) == 1,
+		"result line: all wrong still gets an item (a power ticket); all right gets the perfect bonus (+10 s) on top",
+		str([none_right, some_right, all_right]))
+
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = false
+	var said: Array = []
+	ctl.speech.line_started.connect(func(text, _f): said.append([text, ctl.state]))
+	var states: Array = []
+	ctl.state_changed.connect(func(_p, c): states.append(c))
+	var run := func(results: Array) -> void:
+		ctl.services.demo_results = results
+		ctl.start()
+		ctl.debug_skip()
+		ctl.debug_skip()
+		ctl.tracker.confirm_complete()
+		ctl._check_complete()
+		said.clear()
+		states.clear()
+		_study_pump(game, 60.0, func(): return ctl.state in ["REWARD_REVEAL", "REVIEW_SUMMARY", "HINT_ASK"])
+	# off (the default of the config): each result says its line in REWARD_CALCULATING, then the reward
+	ctl.review_enabled = bool(GameConfig.base_value("study_mode.answer_check.review_enabled"))
+	var default_off := not ctl.review_enabled
+	var cases := [["all_review", ["incorrect", "incorrect", "incorrect"]], ["perfect", ["correct", "correct", "correct"]],
+		["some_review", ["correct", "incorrect", "correct"]]]
+	for c in cases:
+		run.call(c[1])
+		var line: String = StudyModeController.RESULT_LINES[c[0]].text
+		var said_it := false
+		for s in said:
+			said_it = said_it or (s[0] == line and s[1] == "REWARD_CALCULATING")
+		var no_review := not states.has("REVIEW_SUMMARY") and not states.has("HINT_ASK") and not states.has("RESCAN")
+		_ok(ctl.state == "REWARD_REVEAL" and ctl.result_kind == c[0] and said_it and no_review
+			and int(ctl.reward.power_tickets) >= 1 and ctl.adult_prompt == "",
+			"result line (見直し off): %s says its line and goes on to the reward by itself, no review" % c[0],
+			str([ctl.state, ctl.result_kind, said, states]))
+	var lines_ok: bool = StudyModeController.RESULT_LINES.perfect.text == "すごい！ よく がんばったね。ごほうび たくさん おまけ しちゃうね！" \
+		and StudyModeController.RESULT_LINES.all_review.text.begins_with("ちょっと ぼくの さいてん、まちがえちゃった かもしれない。") \
+		and StudyModeController.RESULT_LINES.some_review.text.begins_with("うーん、ぼくの さいてん、まちがえちゃった かも。") \
+		and not StudyModeController.RESULT_LINES.unclear.text.contains("まちが")
+	_ok(default_off and lines_ok, "result line: 見直し is off by default; the unclear line never says まちがい", str(default_off))
+	# the voice never comes: the line ends at result_line_max_s at most, the reward follows
+	ctl.result_line_max_s = 2.0
+	ctl.services.demo_results = ["correct", "incorrect", "correct"]
+	ctl.start()
+	ctl.debug_skip()
+	ctl.debug_skip()
+	ctl.tracker.confirm_complete()
+	ctl._check_complete()
+	_study_pump(game, 30.0, func(): return ctl.state == "GRADING_QUESTION")
+	ctl.speech.voice_on = true  # from the verdicts on, every line waits 6 s for a voice that never comes
+	ctl.speech.voice_wait_s = 6.0
+	var real_request: Callable = ctl.speech.voice_request
+	ctl.speech.voice_request = func(_t): return "never"
+	said.clear()
+	_study_pump(game, 60.0, func(): return ctl.state == "REWARD_CALCULATING")
+	var calculating := ctl.state == "REWARD_CALCULATING" and ctl.speech.busy()
+	var line: String = StudyModeController.RESULT_LINES.some_review.text
+	_study_pump(game, 30.0, func(): return ctl.speech.current == line)
+	var line_up := ctl.speech.current == line and ctl.state == "REWARD_CALCULATING"  # the verdict backlog never uses its time
+	_study_pump(game, 1.5)
+	var still := ctl.state == "REWARD_CALCULATING"
+	_study_pump(game, 1.0)
+	_ok(calculating and line_up and still and ctl.state == "REWARD_REVEAL",
+		"result line: the voice never comes back: the line still shows, then the reward after result_line_max_s (never waits on the voice)",
+		str([calculating, line_up, still, ctl.state]))
+	ctl.speech.voice_on = false
+	ctl.speech.voice_wait_s = 3.0
+	ctl.speech.voice_request = real_request
+	ctl.result_line_max_s = 15.0
+	# on: the summary and the finger hint as before; the line when it goes on (Enter) to the reward
+	ctl.review_enabled = true
+	run.call(["correct", "incorrect", "correct"])
+	var reviewed: bool = states.has("REVIEW_SUMMARY") and ctl.state in ["REVIEW_SUMMARY", "HINT_ASK"]
+	_study_pump(game, 30.0, func(): return ctl.state == "HINT_ASK")
+	var hint_asked := ctl.state == "HINT_ASK"
+	var line_before := false
+	for s in said:
+		line_before = line_before or s[0] == StudyModeController.RESULT_LINES.some_review.text
+	ctl.handle_key(KEY_ENTER)  # つぎへ
+	var calc := ctl.state == "REWARD_CALCULATING" and ctl.speech.current == StudyModeController.RESULT_LINES.some_review.text
+	_study_pump(game, 30.0, func(): return ctl.state == "REWARD_REVEAL")
+	_ok(reviewed and hint_asked and not line_before and calc and ctl.state == "REWARD_REVEAL" and ctl.result_kind == "some_review",
+		"result line (見直し on): the summary and the finger hint as before; the line is said when it goes on to the reward",
+		str([reviewed, hint_asked, line_before, calc, ctl.state, states]))
+	ctl.stop()
+	# the settings screen's switch: saved to local_settings.json, applied on 保存, read back
+	var real_path := GameConfig.local_path
+	var path := "user://test_local_settings_review.json"
+	GameConfig.local_path = path
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var st: SettingsScreen = game.settings
+	var item: Dictionary = GameConfig.schema_items(GameConfig.schema).get("study_mode.answer_check.review_enabled", {})
+	var in_schema: bool = item.get("type") == "bool" and item.get("label") == "見直しを有効にする" and item.get("apply") == "now"
+	ctl.review_enabled = false
+	game.show_title()
+	game.open_settings()
+	st.set_form_value("study_mode.answer_check.review_enabled", true)
+	var err := st.save()
+	var saved = GameConfig.read_json(path)
+	var applied := ctl.review_enabled
+	GameConfig.load_local()
+	var read_back: bool = GameConfig.local == {"study_mode.answer_check.review_enabled": true}
+	game.open_settings()
+	var shown: bool = st.form_value("study_mode.answer_check.review_enabled") == true
+	st.reset_defaults()
+	st.save()
+	_ok(in_schema and err == "" and saved == {"study_mode": {"answer_check": {"review_enabled": true}}} and applied and read_back
+		and shown and not ctl.review_enabled and GameConfig.read_json(path) == {},
+		"result line: 「見直しを有効にする」 in the settings saves, applies on 保存, reads back and goes back to off",
+		str([in_schema, err, saved, applied, read_back, shown, ctl.review_enabled]))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	GameConfig.local_path = real_path
+	GameConfig.load_local()
+	GameConfig.data["study_mode"]["cleanup"]["enabled"] = true
+	remove_child(game)
+	game.free()
+	rs.clear_samples()

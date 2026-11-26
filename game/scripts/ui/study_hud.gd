@@ -658,8 +658,9 @@ func refresh() -> void:
 	if sheet.crop_texture == null and ctl.services.mode == "camera" and cams != null and cams.has_feed("overview") \
 			and not sheet.showing_photo():
 		sheet.crop_texture = cams.texture("overview")
-	# #237: the answer check: the very picture read, frozen, with its ○ / ？
-	var in_check := ctl.completion_fired and st in StudyModeController.CHECK_STATES
+	# #237: the answer check: the very picture read, frozen, with its ○ / ？ (#338: still while
+	# UFOくん says the result's line, before the reward)
+	var in_check := ctl.completion_fired and (st in StudyModeController.CHECK_STATES or st == "REWARD_CALCULATING")
 	var img: Image = ctl.services.graded_image
 	if in_check and img != null and not img.is_empty():
 		if _frozen_src != img:
