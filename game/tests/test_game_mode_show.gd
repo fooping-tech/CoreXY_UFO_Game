@@ -377,6 +377,8 @@ func _test_audio_levels() -> void:
 		and is_equal_approx(float(at.get("final_hit", 99.0)), float(GameModeSounds.SYNTH_META.final_hit.gain_db)) \
 		and is_equal_approx(float(at.get("reveal", 99.0)), snd.gain_db_of("reveal"))
 	var own: bool = snd.source_of("reveal") != "file" or is_equal_approx(snd.gain_db_of("reveal"), float(GameModeSounds.OWN_GAIN_DB.reveal))
+	# #328: 「ジャン！」 is the file se/jan.mp3, at its own level
+	own = own and snd.source_of("result_jan") == "file" and is_equal_approx(snd.gain_db_of("result_jan"), float(GameModeSounds.OWN_GAIN_DB.result_jan))
 	snd.silence()
 	snd.free()
 	var study := StudySounds.new()
@@ -996,11 +998,11 @@ func _test_game_mode_result_show(rs: Node) -> void:
 			same_commands = same_commands and sent["%d %s" % [dev, cmd]] == hub.count(dev, cmd)
 	_ok(panel_same, "game mode result: the HUD's score panel shows the same number as the big one all through the show (no easing of its own)",
 		"%s %s" % [ctl.hud.shown_score(), show.shown])
-	_ok(started and counted and show.log.count("bonus_hit") == 2 and show.log.has("final") and ctl.sounds.log.has("final_hit")
-		and ctl.sounds.log.has("result") and ctl.sounds.log.has("bonus_hit") and int(round(show.shown)) == res.final_score
+	_ok(started and counted and show.log.count("bonus_hit") == 2 and show.log.has("final") and ctl.sounds.log.has("result_jan")
+		and not ctl.sounds.log.has("final_hit") and not ctl.sounds.log.has("result") and ctl.sounds.log.has("bonus_hit") and int(round(show.shown)) == res.final_score
 		and top <= float(res.final_score) + 0.001 and ctl.score.score == base and ctl.result == res
 		and screen.number_text() == str(res.final_score) and ctl.fx.reactions.has("big"),
-		"game mode result: the score counts up, each bonus lands with its sound, FINAL SCORE; the score and the breakdown stay as they were",
+		"game mode result: the score counts up, each bonus lands with its sound, FINAL SCORE with 「ジャン！」 (#328, not the old sad jingle / sweep); the score and the breakdown stay as they were",
 		"%s %s %s %d" % [started, counted, str(show.log.filter(func(n): return n != "count" and n != "confetti")), int(round(show.shown))])
 	_ok(same_commands and ctl.phase == "RESULT" and l.state == "CLOSED" and hub.dials[GM_L].op_mode == "STANDBY",
 		"game mode result: the show sends nothing to the Dials (STANDBY after the round as before)")
