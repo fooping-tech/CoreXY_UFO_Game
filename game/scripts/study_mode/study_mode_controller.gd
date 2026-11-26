@@ -170,6 +170,7 @@ var review_enabled := false
 ## most this long: the reward never waits on the voice engine (answer_check.result_line_max_s)
 var result_line_max_s := 15.0
 var result_kind := ""  # the line said before this reward (StudyGrading.result_kind; "" = none)
+var _result_story := -1  # the story whose result line is waiting to start (its max time from then)
 ## #338: what UFOくん says before the reward, by StudyGrading.result_kind(). The reader may be
 ## wrong, so the misses are "my grading may be wrong"; the reward always has an item (a ticket).
 const RESULT_LINES := {
@@ -418,6 +419,10 @@ func _say(lines: Array, then := Callable()) -> void:
 	speech.say(lines)
 
 func _on_line_started(_text: String, face: String) -> void:
+	if _result_story == _story and state == "REWARD_CALCULATING" and result_kind != "" \
+			and _text == str(RESULT_LINES[result_kind].text):
+		_result_story = -1
+		_later(result_line_max_s, _reveal_reward)  # #338: the result's line is up: at most this long
 	if face != "" and main != null and main.ufo != null:
 		main.ufo.flash(face, speech.reading_time(_text) + 0.5)
 	changed.emit()
@@ -621,15 +626,19 @@ func _calc_reward() -> void:
 	if result_kind == "":
 		_later(0.8, _reveal_reward)  # nothing was checked (a grown-up went on): no line
 		return
-	# #338: the result's line, after the last verdict's words (from the summary: instead of what
-	# was being said), then the reward: when it is said, or result_line_max_s at most
+	# #338: the result's line, after the verdict being said now (the ones still queued behind it
+	# are dropped; from the summary: instead of what was being said), then the reward: when it is
+	# said, or result_line_max_s at most from when the line itself starts (a slow voice on the
+	# verdicts never uses up its time: each line ends by itself, StudySpeech)
 	GameState.post_event("study_result", {"kind": result_kind})
 	services.trace("answer check: result %s" % result_kind)
-	if not from_check:
+	if from_check:
+		speech.drop_queued()
+	else:
 		speech.clear()
 	_after_speech = _reveal_reward
+	_result_story = _story
 	speech.say([RESULT_LINES[result_kind]])
-	_later(result_line_max_s, _reveal_reward)
 
 func _reveal_reward() -> void:
 	if state != "REWARD_CALCULATING":

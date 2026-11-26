@@ -2040,18 +2040,22 @@ func _test_study_result_lines(rs: Node) -> void:
 	ctl.tracker.confirm_complete()
 	ctl._check_complete()
 	_study_pump(game, 30.0, func(): return ctl.state == "GRADING_QUESTION")
-	ctl.speech.voice_on = true  # from the verdicts on, every line waits 100 s for a voice
-	ctl.speech.voice_wait_s = 100.0
+	ctl.speech.voice_on = true  # from the verdicts on, every line waits 6 s for a voice that never comes
+	ctl.speech.voice_wait_s = 6.0
 	var real_request: Callable = ctl.speech.voice_request
 	ctl.speech.voice_request = func(_t): return "never"
+	said.clear()
 	_study_pump(game, 60.0, func(): return ctl.state == "REWARD_CALCULATING")
 	var calculating := ctl.state == "REWARD_CALCULATING" and ctl.speech.busy()
+	var line: String = StudyModeController.RESULT_LINES.some_review.text
+	_study_pump(game, 30.0, func(): return ctl.speech.current == line)
+	var line_up := ctl.speech.current == line and ctl.state == "REWARD_CALCULATING"  # the verdict backlog never uses its time
 	_study_pump(game, 1.5)
 	var still := ctl.state == "REWARD_CALCULATING"
 	_study_pump(game, 1.0)
-	_ok(calculating and still and ctl.state == "REWARD_REVEAL",
-		"result line: the voice never comes back: the reward follows after result_line_max_s (never waits on the voice)",
-		str([calculating, still, ctl.state]))
+	_ok(calculating and line_up and still and ctl.state == "REWARD_REVEAL",
+		"result line: the voice never comes back: the line still shows, then the reward after result_line_max_s (never waits on the voice)",
+		str([calculating, line_up, still, ctl.state]))
 	ctl.speech.voice_on = false
 	ctl.speech.voice_wait_s = 3.0
 	ctl.speech.voice_request = real_request
