@@ -100,6 +100,8 @@ func _study_game(mode := "simulated") -> Node:
 	# checked at once and the dialogue mode have their own test
 	game.study_mode.check_on_found = false
 	game.study_mode.dialog_needs_thumb = false
+	# #338: these tests go through the review (見直し) as before; the default (off) has its own test
+	game.study_mode.review_enabled = true
 	return game
 
 func _key(code: int) -> InputEventKey:

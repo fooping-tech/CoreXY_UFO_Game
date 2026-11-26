@@ -8,7 +8,9 @@ extends Node
 ##            -> CAPTURE_LANDING -> AI_EXPLAINING -> RESUME_STUDY -> STUDYING
 ##   STUDYING --3 problems stably filled / grown-up's Enter--> the answer check (#236, #237):
 ##            ANSWER_CHECK_READY -> SHEET_SCANNING -> GRADING_QUESTION (one problem at a time, from 1)
-##            -> REVIEW_SUMMARY (only when something is to be looked at again)
+##            -> REWARD_CALCULATING (#338: UFOくん says the result's line, RESULT_LINES, then goes on by
+##               itself) when answer_check.review_enabled is off (the default)
+##            -> REVIEW_SUMMARY (only when review_enabled is on and something is to be looked at again)
 ##                 --R / a thumbs-up held 1 s (#333): rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
 ##                 --Enter / an open hand held 1 s (#333)--> REWARD_CALCULATING
 ##            REVIEW_SUMMARY --its words said, once a story (#334)--> HINT_ASK ("わからない もんだいが
@@ -160,6 +162,22 @@ var hint_note := ""  # why the worksheet's hint was used (for the staff)
 var _hint_offered := false  # asked once a story
 var _hint_saved: Array = []  # the summary's grown-up prompt, given back after the step
 var _hint_idle_ms := -1.0
+## #338: the review (見直し: the summary, R / いいね reads again, the finger hint) only when the
+## settings screen's 「見直しを有効にする」 is on (study_mode.answer_check.review_enabled, off by
+## default). Off: after the last verdict UFOくん says the result's line and the reward follows.
+var review_enabled := false
+## the result's line ends when it has been said (the voice, or its reading time without one), at
+## most this long: the reward never waits on the voice engine (answer_check.result_line_max_s)
+var result_line_max_s := 15.0
+var result_kind := ""  # the line said before this reward (StudyGrading.result_kind; "" = none)
+## #338: what UFOくん says before the reward, by StudyGrading.result_kind(). The reader may be
+## wrong, so the misses are "my grading may be wrong"; the reward always has an item (a ticket).
+const RESULT_LINES := {
+	"perfect": {"text": "すごい！ よく がんばったね。ごほうび たくさん おまけ しちゃうね！", "face": "excited"},
+	"all_review": {"text": "ちょっと ぼくの さいてん、まちがえちゃった かもしれない。よく がんばったね。ごほうびに アイテムを あげよう！", "face": "wink"},
+	"some_review": {"text": "うーん、ぼくの さいてん、まちがえちゃった かも。きみの がんばり、わかって いるから、ごほうびに アイテムを あげよう！", "face": "wink"},
+	"unclear": {"text": "よく 見えない ところが あったけど、よく がんばったね。ごほうびに アイテムを あげよう！", "face": "happy"},
+}
 
 func setup(m: Node, hw: HomeworkClient) -> void:
 	main = m
@@ -208,6 +226,8 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 		grading.configure(ac)
 		grade_checking_s = maxf(float(ac.get("checking_s", grade_checking_s)), 0.1)
 		grade_reveal_s = maxf(float(ac.get("reveal_s", grade_reveal_s)), grade_checking_s + 0.2)
+		review_enabled = bool(ac.get("review_enabled", review_enabled))
+		result_line_max_s = clampf(float(ac.get("result_line_max_s", result_line_max_s)), 1.0, 60.0)
 		if ac.get("demo_results") is Array:
 			services.demo_results = (ac.demo_results as Array).duplicate()
 	var w = GameConfig.get_value("study_mode", "watch", {})
@@ -296,6 +316,7 @@ func reset_story() -> void:
 	grading.reset([])
 	used_help = false
 	reward = {}
+	result_kind = ""
 	selected_powerups = []
 	roulette_spinning = false
 	roulette_index = -1
@@ -363,6 +384,9 @@ func reload_settings() -> void:
 		return
 	_load_grade()
 	services.load_demo_config()
+	var ac = GameConfig.get_value("study_mode", "answer_check", {})
+	if ac is Dictionary:
+		review_enabled = bool(ac.get("review_enabled", false))  # #338: 見直しを有効にする
 	sounds.enabled = bool(GameConfig.get_value("audio", "enabled", true))
 
 func change_grade(step: int) -> void:
@@ -570,8 +594,8 @@ func _summary() -> void:
 		return
 	grading.checked = true
 	var look := grading.to_look_again()
-	if look.is_empty():
-		_calc_reward()
+	if look.is_empty() or not review_enabled:
+		_calc_reward()  # #338: the result's line, then the reward (no review unless it is on)
 		return
 	_set_state("REVIEW_SUMMARY")
 	var lines: Array = []
@@ -590,9 +614,22 @@ func _calc_reward() -> void:
 	adult_prompt = ""
 	services.watch_stop()
 	selected_powerups = []
+	var from_check := state == "GRADING_QUESTION"
 	_set_state("REWARD_CALCULATING")
 	reward = grading.reward(str(worksheet.get("worksheet_id", "")))
-	_later(0.8, _reveal_reward)
+	result_kind = grading.result_kind() if grading.checked else ""
+	if result_kind == "":
+		_later(0.8, _reveal_reward)  # nothing was checked (a grown-up went on): no line
+		return
+	# #338: the result's line, after the last verdict's words (from the summary: instead of what
+	# was being said), then the reward: when it is said, or result_line_max_s at most
+	GameState.post_event("study_result", {"kind": result_kind})
+	services.trace("answer check: result %s" % result_kind)
+	if not from_check:
+		speech.clear()
+	_after_speech = _reveal_reward
+	speech.say([RESULT_LINES[result_kind]])
+	_later(result_line_max_s, _reveal_reward)
 
 func _reveal_reward() -> void:
 	if state != "REWARD_CALCULATING":
@@ -606,6 +643,8 @@ func _reveal_reward() -> void:
 	var lines: Array = []
 	if grading.all_correct():
 		lines.append({"text": "ぜんぶ せいかい！パーフェクト！！", "face": "excited"})
+		if int(reward.get("perfect_bonus_s", 0)) > 0:  # #338: the おまけ promised
+			lines.append({"text": "パーフェクト ボーナスで %d びょう おまけ！" % int(reward.perfect_bonus_s), "face": "happy"})
 	else:
 		lines.append({"text": "やったー！ 答え合わせ おわり！", "face": "excited"})
 	if int(reward.time_bonus_s) > 0:
@@ -1496,6 +1535,7 @@ func debug_skip() -> void:
 		"HINT_ASK", "HINT_THINKING", "HINT_GIVING":
 			_finish_hints(false)
 		"REWARD_CALCULATING":
+			speech.clear()
 			_reveal_reward()
 		"REWARD_REVEAL":
 			speech.clear()
