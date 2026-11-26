@@ -251,6 +251,8 @@ class ApproachSequencer(AbortableSequence):
         errs = []
         if not lim.xy_inside(spot.x, spot.y):
             errs.append(f"spot XY ({spot.x:g},{spot.y:g}) outside the soft limits")
+        elif lim.home_edge_refusal(spot.x, spot.y):
+            errs.append("spot: " + lim.home_edge_refusal(spot.x, spot.y) + " (record it further in)")
         if not lim.z_min <= spot.z <= lim.z_max:
             errs.append(f"spot Z {spot.z:g} outside {lim.z_min:g}..{lim.z_max:g}")
         return errs
@@ -319,6 +321,13 @@ class ApproachSequencer(AbortableSequence):
                 errs.append("target XY is not a number")
             elif not self.limits.xy_inside(tx, ty):
                 errs.append(f"target XY ({tx:.1f},{ty:.1f}) outside the soft limits")
+            elif self.limits.home_edge_refusal(tx, ty):
+                # #339: a point pointed at on the picture, just inside the home limit switches'
+                # margin: looked at from the margin's line instead
+                cx, cy = self.limits.clamp_home_edge(tx, ty)
+                log.info("approach target (%.1f, %.1f) moved to (%.1f, %.1f): %g mm from the home limit switches",
+                         tx, ty, cx, cy, self.limits.home_margin)
+                target = (cx, cy)
         if errs:
             raise RobotCommandError("approach refused: " + "; ".join(errs))
         if self.lock.locked():

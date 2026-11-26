@@ -868,7 +868,7 @@ WAIT_DESTINATION ─運べないまま 15 秒→ EXPIRED（バックエンド）
 ### 効果
 - **SPEED UP!**: `duration_s.speed`（10 秒）。手のスティックと矢印キーの XY 速度が `speed.boost_mm_s`（100 mm/s）まで上がる。取っていないときはゲームの外と同じ（手は `gesture.joystick.max_speed_mm_s` = 60 mm/s、キーはいつもの速さ）。Z、かんたんモードの自動搬送は変わらない。
   - 実機では、速度を許すのはバックエンド。ゲームは取った瞬間に `jog_boost {seconds}` を送り、バックエンドはその秒数だけ JOG の上限を `backend.jog_max_mm_s`（60）から `backend.jog_boost_mm_s`（100）へ上げる。**期限はバックエンドが持ち、自分で元へ戻す**（1 回の依頼は `backend.jog_boost_max_s` = 30 秒まで）。`stop`（緊急停止）、モーター無効、最後のクライアントの切断ですぐ終わる。`soft_stop` は動きを止めるだけで上限は戻さない（手を見失ったとき・ウィンドウが外れたときにゲームが送る。手が戻れば同じ効果の続きなので、ここで戻すと画面は SPEED UP のまま実機だけ遅くなる）。ゲームは効果が早く終わったとき（Space での停止、タイムアップ、タイトル）に `jog_boost {seconds: 0}` を送る。
-  - 端 5 mm のマージンと減速（`jog_edge_margin_mm` / `jog_edge_slow_s`）、デッドマン、ファームウェアのソフトリミットはそのまま。`backend.jog_boost_mm_s` がない（または `jog_max_mm_s` 以下の）バックエンドは `jog_boost` を断り、実機は 60 mm/s のまま動く。
+  - 端のマージンと減速（X=0 / Y=0 側 15 mm・最大側 5 mm、位置の遅れを見込む。`xy_home_edge_margin_mm` / `jog_edge_margin_mm` / `jog_edge_lag_s` ほか、#339）、デッドマン、ファームウェアのソフトリミットはそのまま。`backend.jog_boost_mm_s` がない（または `jog_max_mm_s` 以下の）バックエンドは `jog_boost` を断り、実機は 60 mm/s のまま動く。
   - **100 mm/s は実機未検証**（ファームウェアの JOG の上限はそれより上）。
 - **MULTI BALL!**: 実物の 1 カプセルに対して、画面のボールを 3 個にする。3 個の得点を合計するが、実物の `cycle` / `command_id` は 1 つのままで、**最後のボールが盤面を出るまで排出しない**。最後に元の Dial へ 1 回だけ排出を頼む（#185 の再排出の条件は同じ）。1 カプセルにつき 1 回。
   - 分裂は取った次の tick で行う（物理のコールバックの中では物体を足せない）。そのときボールがもう盤面にいなければ分裂しない。

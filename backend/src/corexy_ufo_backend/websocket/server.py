@@ -825,7 +825,17 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                         await self.robot.home()
                         await self._center_after_home()
                     elif name == "move_xy":
-                        await self.robot.move_xy(float(params["x"]), float(params["y"]), params.get("feed"))
+                        x, y = float(params["x"]), float(params["y"])
+                        lim = self.robot.limits
+                        if lim is not None and lim.xy_inside(x, y) and lim.home_edge_refusal(x, y):
+                            # #339: a point someone asked for, just inside the home limit
+                            # switches' margin: to the margin's line instead (the robot refuses
+                            # a target in it)
+                            cx, cy = lim.clamp_home_edge(x, y)
+                            log.info("move_xy (%.1f, %.1f) moved to (%.1f, %.1f): %g mm from the home "
+                                     "limit switches", x, y, cx, cy, lim.home_margin)
+                            x, y = cx, cy
+                        await self.robot.move_xy(x, y, params.get("feed"))
                     elif name == "move_z":
                         await self.robot.move_z(float(params["z"]))
                     elif name == "grab":

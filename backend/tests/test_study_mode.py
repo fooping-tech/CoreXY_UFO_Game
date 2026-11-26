@@ -16,7 +16,7 @@ import websockets
 
 from corexy_ufo_backend.config import REPO_ROOT, BackendConfig, RobotLimits
 from corexy_ufo_backend.homework import HomeworkConfig, HomeworkService, LocateParams
-from corexy_ufo_backend.homework.approach import ApproachParams, ApproachPhase, ApproachSequencer
+from corexy_ufo_backend.homework.approach import ApproachParams, ApproachPhase, ApproachSequencer, HomeworkSpot
 from corexy_ufo_backend.homework.camera_map import apply
 from corexy_ufo_backend.homework.jev import JevResult
 from corexy_ufo_backend.homework.questions import add_questions, parse_questions
@@ -545,3 +545,19 @@ async def test_the_mock_backend_robot_can_tidy_up_without_a_claw_calibration():
     assert s.arm_closed_deg is not None and s.arm_open_deg is not None
     seq = CleanupSequencer(r, LIMITS, CleanupProfile.from_raw(RAW, "dry_run"))
     assert not any("claw" in e for e in seq.preconditions(need_spot=False, need_claw=True))
+
+
+async def test_a_target_inside_the_home_switches_margin_is_looked_at_from_its_line():
+    """#339: a point on the overview picture within 15 mm of X = 0 / Y = 0 (the home limit
+    switches): the arm goes to the margin's line instead; a recorded spot there is refused."""
+    import dataclasses
+    lim = dataclasses.replace(LIMITS, home_margin=15.0)
+    r = await ready_robot()
+    seq = ApproachSequencer(r, lim, ApproachParams(settle_s=0.05))
+    await seq.start((200.0, 5.0), STAGES, open_claw=False)
+    assert seq.target == (200.0, 15.0)
+    await wait_for(lambda: seq.holding and seq.stage == "10cm")
+    assert r.snapshot().y == pytest.approx(15.0, abs=0.5)
+    await seq.abort("emergency stop (stop)")
+    await seq.wait()
+    assert any("home limit switches" in e for e in seq._spot_errors(HomeworkSpot(x=100.0, y=3.0, z=50.0)))

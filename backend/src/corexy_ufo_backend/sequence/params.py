@@ -182,6 +182,8 @@ def validate(p: AutoCatchParams, limits: RobotLimits, backend: BackendConfig | N
                 errs.append(f"{k}: drum turn {turns:.2f} > max_drum_turns {p.max_drum_turns}")
     if not limits.xy_inside(p.box_x_mm, p.box_y_mm):  # type: ignore[arg-type]
         errs.append(f"box ({p.box_x_mm},{p.box_y_mm}) outside the XY soft limits")
+    elif limits.home_edge_refusal(p.box_x_mm, p.box_y_mm):  # type: ignore[arg-type]
+        errs.append("box: " + limits.home_edge_refusal(p.box_x_mm, p.box_y_mm))  # type: ignore[arg-type]
     if not 0 < p.xy_feed_mm_min <= p.xy_feed_max_mm_min:  # type: ignore[operator]
         errs.append(f"xy_feed_mm_min={p.xy_feed_mm_min} outside 0..{p.xy_feed_max_mm_min}")
     if not 0 < p.claw_span_min_deg <= p.claw_span_max_deg < 360:  # type: ignore[operator]

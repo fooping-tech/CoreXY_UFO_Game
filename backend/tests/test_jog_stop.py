@@ -373,10 +373,10 @@ async def test_jog_stays_inside_the_edges_and_slows_towards_them(robot):
     assert jogs()[-1] == (0.0, -40.0)  # far from the edge: as asked
     await robot.jog(0, 0)
     await settle()
-    await robot.move_xy(100, 10)  # 5 mm from the line (margin 5): at most 5 / 0.25 = 20 mm/s towards it
+    await robot.move_xy(100, 10)  # 5 mm from the line (margin 5): slowed (#339: jog_edges.py)
     await robot.jog(30, -40)
     vx, vy = jogs()[-1]
-    assert vx == 30.0 and vy == pytest.approx(-20.0, abs=0.5)
+    assert vx == 30.0 and -robot.edge_guard.max_speed(5.0) - 0.1 <= vy < -15.0  # 25.9 mm/s
     await robot.jog(0, 0)
     await settle()
     await robot.move_xy(100, 3)  # beyond the line: nothing towards the edge, the way back is free
@@ -425,7 +425,7 @@ async def test_jog_boost_keeps_the_edge_margin(robot):
     await robot.move_xy(100, 7)  # 2 mm before the line (margin 5): slowed, boost or not
     await robot.jog(0, -100)
     vy = float(fw(robot).sent[-1].split()[2])
-    assert -100.0 < vy < 0.0 and abs(vy) <= 2.0 / robot.cfg.jog_edge_slow_s + 1e-6
+    assert -100.0 < vy < 0.0 and abs(vy) <= robot.edge_guard.max_speed(2.0) + 0.1
     await robot.jog(0, 0)
     await settle()
     await robot.move_xy(100, 5)

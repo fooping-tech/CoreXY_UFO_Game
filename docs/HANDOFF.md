@@ -134,6 +134,7 @@ Python から直接叩く例は `websockets` で `{"type":"command","request_id"
 - 移動中は `POS` に応答しない → 移動中 XY は推定（`measured:false`）。
 - ホストウォッチドッグ無し → USB を抜いても実機は止まらない。バックエンド終了時は `ABORT` を送るが、物理的な抜去には無力。ファームウェア側のハートビート監視追加を推奨。
 - `ABORT` はアラーム + HOMED 解除。
+- ホーム側のリミットスイッチ（X=0 / Y=0）は約 0.7 mm で押される。旧ファームウェアはジョグで押すと `hard limit active away from home` のアラーム（ゲームは異常で止まる）。CoreXY_UFO #33 以降はホームの端から 8 mm 以内ならアラームにせずその軸を止めるだけ。バックエンドはジョグ・XY 移動とも X=0 / Y=0 から 15 mm（`backend.xy_home_edge_margin_mm`）の内側に保ち、位置の遅れを見込んで減速する（#339、実機未検証）。詳細は [firmware_protocol.md](firmware_protocol.md) §4。
 
 ## 8. 次のタスク候補
 
