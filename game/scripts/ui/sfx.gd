@@ -95,10 +95,12 @@ static func load_mp3(path: String) -> AudioStreamMP3:
 # ------------------------------------------------------------ one-shot cues
 ## Hand joystick cues: "hand" (an open hand is seen), "pinch" (the pinch is
 ## caught), "pinch_z" (a palm-down pinch: Z, a different tune), "release" (the fingers opened: a normal end of steering) and
-## "lost" (control was cut: hand lost, two hands, stale events...). Synthesised 8-bit blips (a
+## "lost" (control was cut: hand lost, two hands, stale events...), "catch" (#332: the easy
+## mode's fist, じどうキャッチ, and the practice's fist step). Synthesised 8-bit blips (a
 ## square wave with a short envelope), so they need no file; a file named in
 ## audio.cue_<name> (in audio.dir, mp3) replaces one, at its own level from
-## audio.cue_gain_db.<name> (#321: the hand and the pinch are 効果音ラボ's 決定ボタンを押す 1 / 3).
+## audio.cue_gain_db.<name> (#321: the hand and the pinch are 効果音ラボ's 決定ボタンを押す 1 / 3;
+## #332: the release is キャンセル4, the catch 決定ボタンを押す23).
 const CUE_RATE := 22050
 const CUE_NOTES := {
 	"hand": [[784.0, 0.06]],                           # "pon" (quiet)
@@ -106,10 +108,11 @@ const CUE_NOTES := {
 	"pinch_z": [[523.0, 0.05], [784.0, 0.05], [523.0, 0.05], [784.0, 0.1]],  # "po-pi-po-pi": Z mode
 	"release": [[1480.0, 0.05], [988.0, 0.11]],        # "pon-pi" down: the pinch reversed
 	"lost": [[523.0, 0.08], [392.0, 0.08], [262.0, 0.16]],  # "bu-bu-buu" down
+	"catch": [[659.0, 0.05], [988.0, 0.05], [1319.0, 0.12]],  # "pi-po-pon!" up: the fist's catch
 }
 ## Level of each cue relative to audio.volume_db.
 ## #304: leveled with tools/audio_levels.py (the hand's "pon" kept quiet)
-const CUE_GAIN_DB := {"hand": -4.0, "pinch": -3.0, "pinch_z": -4.0, "release": -3.0, "lost": -4.0}
+const CUE_GAIN_DB := {"hand": -4.0, "pinch": -3.0, "pinch_z": -4.0, "release": -3.0, "lost": -4.0, "catch": -3.0}
 ## Every cue played, newest last (tests / debug; capped).
 var cue_log: Array[String] = []
 var _cue_player: AudioStreamPlayer

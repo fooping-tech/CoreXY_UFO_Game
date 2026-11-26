@@ -150,7 +150,7 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 685 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 689 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
@@ -181,6 +181,6 @@ cd backend && unset VIRTUAL_ENV && uv run pytest
 | HUD・メニュー | `game-ui-ux`, `godot-ui-control` | デバッグパネルはコードで構築（`debug_ui.gd`）。プレイ画面にクレーンアームを描かない |
 | 性能 | `performance-optimization` | `physics_usec`、`--capture` の FPS で計測してから直す |
 | ピクセル VFX（pixelfx） | `pixelfx-vfx`（このリポジトリ専用） | カタログ → `tools/build_vfx.py` → `VFXManager.spawn_fx`。場面は `vfx_director.gd` |
-| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（#327: Z = アームの上下、XY = 移動。`main.gd::_store_tick` が物理 tick ごとに `tick_motion` を呼び、動いている間 1 秒ごとに 1 回。タイミングはそこだけで決める）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける。スコアゲームの音は `game_mode/game_mode_sounds.gd`（Kenney の CC0 のファイル + 合成音のフォールバック、`assets/audio/manifest.json`）とバス `ui/audio_buses.gd`。出典は `docs/audio_sources.md`。音源を足すときは配布元でライセンスを確かめ、マニフェストと文書に記録する（確認できないものは入れない） |
+| 音 | `audio-design`, `godot-audio` | 動きの効果音は `scripts/ui/sfx.gd`（#327: Z = アームの上下、XY = 移動。`main.gd::_store_tick` が物理 tick ごとに `tick_motion` を呼び、動いている間 1 秒ごとに 1 回。タイミングはそこだけで決める）。音源は効果音ラボで、ゲームの一部としてリポジトリに入れている。単体での再配布は規約で禁止（`game/assets/audio/SOURCES.md`）。イベント音を足すなら `GameState` のイベントか mood に結びつける。手の合図の音は `sfx.gd::play_cue`（`hand` / `pinch` / `release` / `catch` = かんたんモードのグー、#332。ファイルは `audio.cue_<名前>`）。かんたんモードの降下の掛け声（#332）は `GameModeController.cheer_descent`（`EasyModeControl` の cue `lower` から。声だけ・話し中は言わない）。スコアゲームの音は `game_mode/game_mode_sounds.gd`（Kenney の CC0 のファイル + 合成音のフォールバック、`assets/audio/manifest.json`）とバス `ui/audio_buses.gd`。出典は `docs/audio_sources.md`。音源を足すときは配布元でライセンスを確かめ、マニフェストと文書に記録する（確認できないものは入れない） |
 | カメラ | `camera-systems` | 基本は不要。固定カメラの投影（`origin_px`）を壊す追従カメラを入れない |
 | どれか分からない | `router` | このスキルを読んだ後に使う |

@@ -136,6 +136,7 @@ func _ready() -> void:
 	_s.tutorial_easy._test_practice_show(rs)
 	_s.tutorial_easy._test_easy_mode_logic()
 	_s.tutorial_easy._test_easy_mode_game(rs)
+	_s.tutorial_easy._test_easy_descent_cheer(rs)
 	_s.tutorial_easy._test_crane_start_check(rs)
 	_s.tutorial_easy._test_easy_servo_recovery()
 	await _s.game_mode._test_game_mode_physics()
