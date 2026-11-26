@@ -1270,6 +1270,29 @@ static func _fine_state() -> Dictionary:
 		"z_servo_reset": false, "z_servo_power_cycle": false, "arm_servo_power_cycle": false, "easy_mode": {"state": "MANUAL_XY"},
 		"calibration_prepare": {}, "auto_catch": {}}
 
+## #339: a jog (or an XY move) stopped by a home limit switch at the stage's edge, as the
+## backend reports it with the firmware of CoreXY_UFO #33: the arm moved and stopped, still
+## homed, no alarm, no error (POS LIMIT_Y=ON is not in robot_state's judged keys). Not a fault,
+## and nothing keeps a new game. The older firmware's alarm for the same switch stays one.
+func _test_robot_fault_watch_limit_edge() -> void:
+	var w := RobotFaultWatch.new()
+	var s := _fine_state()
+	s.state = "MOVING_XY"
+	w.arm(s)
+	s.state = "IDLE"
+	s["limit_y"] = true
+	var quiet: bool = w.update(s).is_empty()
+	var free: bool = RobotFaultWatch.problems(s, true).is_empty() and RobotFaultWatch.still(s)
+	var old := RobotFaultWatch.new()
+	var o := _fine_state()
+	old.arm(o)
+	o.state = "ALARM"
+	o.error = "hard limit active away from home x=OFF y=ON x_raw=OFF y_raw=ON"
+	var alarm: Array = old.update(o).map(func(f): return "%s/%s" % [f.category, f.code])
+	_ok(quiet and free and alarm == ["corexy/alarm"],
+		"robot fault #339: a stop at a home limit switch without an alarm is not a fault (nor a blocker); the older firmware's hard-limit alarm still is",
+		"%s %s %s" % [quiet, free, alarm])
+
 ## #292: what is a new fault of the crane (only changes), and what keeps it from a new game.
 func _test_robot_fault_watch() -> void:
 	var w := RobotFaultWatch.new()
