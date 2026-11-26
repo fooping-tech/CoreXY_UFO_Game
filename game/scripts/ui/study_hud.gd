@@ -76,6 +76,7 @@ var _voice_text: Label
 var sheet: StudyWorksheetView
 var scope: StudyScopeView
 var crackers: StudyCrackers
+var hint_panel: StudyHintPanel  # #334: the finger hint after the answer check
 var _typed := 0.0
 var _last_line := ""
 
@@ -92,6 +93,9 @@ func setup(controller: StudyModeController) -> void:
 	_build_bubble()
 	_build_voice()
 	_build_centre()
+	hint_panel = StudyHintPanel.new()
+	hint_panel.setup(ctl)
+	root.add_child(hint_panel)
 	_build_pops()
 	GameState.event.connect(_on_event)
 	ctl.changed.connect(refresh)
@@ -732,6 +736,7 @@ func refresh() -> void:
 	_error_text.text = ctl.error_text + "\n（Enter で続ける）"
 	_error.position = Vector2(40, vs.y * 0.5)
 	_keys.text = key_help(st, ctl.services.mode, "off" if ctl.dialog_needs_thumb and not ctl.dialog_mode else "on")
+	hint_panel.refresh(vs)
 
 static func banner_text(st: String, r: Dictionary) -> String:
 	if st == "GAME_READY_WITH_REWARD":
@@ -780,6 +785,8 @@ static func key_help(state: String, mode: String, dialog := "on") -> String:
 		parts.append("パワールーレット！")  # #237
 	elif state == "REVIEW_SUMMARY":
 		parts.append("R もう一度読む")
+	elif state in StudyModeController.HINT_STATES:
+		parts.append("指 1〜5 ヒント（1〜5 キーも）  グー おわり  R もう一度読む")  # #334
 	elif mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
 	elif state in StudyVoice.TALK_STATES and dialog == "on":
