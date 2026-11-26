@@ -64,6 +64,10 @@ var _play: Button
 var _time_panel: PanelContainer
 var _time_label: Label
 var _adult: PanelContainer
+## #333: the summary's box, at the top (UFOくん's sky, over the sheet): the two hands, held 1 s
+var _review: Control
+const REVIEW_RECT := Rect2(16, 104, 688, 214)
+const REVIEW_CARDS := [["thumb", "いいね", "もう一度読む", Color("3ff0ff")], ["open", "パー", "つぎへ", Color("ffe03c")]]
 var _adult_text: Label
 var _error: PanelContainer
 var _error_text: Label
@@ -357,6 +361,14 @@ func _build_centre() -> void:
 	_adult_text.custom_minimum_size = Vector2(560, 0)
 	_adult.add_child(_adult_text)
 	root.add_child(_adult)
+	_review = Control.new()
+	_review.name = "StudyReviewBox"
+	_review.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_review.position = REVIEW_RECT.position
+	_review.size = REVIEW_RECT.size
+	_review.visible = false
+	_review.draw.connect(_draw_review)
+	root.add_child(_review)
 	_error = panel(Color("ffe3e3"), Color("d33a3a"), 14, 5)
 	_error_text = label("", 22, Color("7a1010"))
 	_error_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -650,9 +662,10 @@ func refresh() -> void:
 			_frozen_src = img
 			_crop_frozen = ImageTexture.create_from_image(img)
 		sheet.crop_texture = _crop_frozen
-	# #237: until the sheet is found: where to put it, over the camera's whole picture
-	sheet.guide = st == "WAITING_FOR_WORKSHEET"
-	sheet.guide_error = ctl.services.watch_problem() if sheet.guide else ""
+	# #237: until the sheet is found: where to put it, over the camera's whole picture; #333:
+	# again while the summary waits for the rewritten sheet (it goes back to the same place)
+	sheet.guide = guide_shown(st)
+	sheet.guide_error = ctl.services.watch_problem() if st == "WAITING_FOR_WORKSHEET" else ""
 	if sheet.guide:
 		var cam_ok := ctl.services.mode == "camera" and cams != null and cams.has_feed("overview")
 		sheet.guide_texture = cams.texture("overview") if cam_ok else null
@@ -725,13 +738,60 @@ func refresh() -> void:
 	_time_label.text = study_time_text(ctl.elapsed_s())
 	_time_panel.position = Vector2(vs.x * 0.5 - 200, EXPLAIN_Y)
 	_time_panel.custom_minimum_size = Vector2(400, 0)
-	_adult.visible = ctl.adult_prompt != ""
+	_review.visible = ctl.review_waiting()  # #333: at the top, by hand
+	_review.queue_redraw()
+	_adult.visible = ctl.adult_prompt != "" and not _review.visible
 	_adult_text.text = ctl.adult_prompt
 	_adult.position = Vector2(40, vs.y - 250 - 190)
 	_error.visible = st in ["ERROR"] and ctl.error_text != ""
 	_error_text.text = ctl.error_text + "\n（Enter で続ける）"
 	_error.position = Vector2(40, vs.y * 0.5)
 	_keys.text = key_help(st, ctl.services.mode, "off" if ctl.dialog_needs_thumb and not ctl.dialog_mode else "on")
+
+## "ここへおいてね！" over the camera: while waiting for the sheet and, #333, while the summary
+## waits for it rewritten (the re-read: RESCAN shows the picture read again).
+static func guide_shown(st: String) -> bool:
+	return st in ["WAITING_FOR_WORKSHEET", "REVIEW_SUMMARY"]
+
+## #333: the summary's box: what to do (the prompt), then a card per hand: the hand in dots,
+## its name, what it does and a gauge that fills while it is held (review_hold_s).
+func _draw_review() -> void:
+	var c := _review
+	var r := Rect2(Vector2.ZERO, c.size)
+	var t := Time.get_ticks_msec() / 1000.0
+	c.draw_rect(r.grow(4.0), GestureTutorialHud.DARK)
+	c.draw_rect(r, GestureTutorialHud.GLASS)
+	c.draw_rect(r, Color("ffe03c"), false, 4.0)
+	var body := UiFonts.body()
+	var title := UiFonts.title()
+	var head := ctl.adult_prompt if ctl.adult_prompt != "" else "書きなおしたら もう一度読む ／ このまま つぎへ"
+	c.draw_string(body, Vector2(16, 34), head, HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 32, 22, Color.WHITE)
+	var gap := 14.0
+	var cw := (r.size.x - gap * 3.0) * 0.5
+	for i in REVIEW_CARDS.size():
+		var card: Array = REVIEW_CARDS[i]
+		var pose := str(card[0])
+		var col: Color = card[3]
+		var held: bool = ctl.review_pose == pose
+		var k: float = ctl.review_progress if held else 0.0
+		var box := Rect2(gap + i * (cw + gap), 50.0, cw, r.size.y - 64.0)
+		c.draw_rect(box, Color(0.08, 0.08, 0.24, 0.95))
+		c.draw_rect(box, col if held else col.darkened(0.45), false, 4.0 if held else 2.0)
+		var d := 3.5
+		var bob := snappedf(sin(t * 3.0 + i * 1.7) * 3.0, 2.0) if not held else 0.0
+		GestureTutorialHud.paint_hand(c, box.position + Vector2(18.0, 10.0 + bob), d, pose)
+		var tx := box.position.x + 18.0 + 22.0 * d + 10.0
+		var tw := box.end.x - tx - 10.0
+		c.draw_string_outline(title, Vector2(tx, box.position.y + 42.0), str(card[1]), HORIZONTAL_ALIGNMENT_LEFT, tw, 34, 8, GestureTutorialHud.DARK)
+		c.draw_string(title, Vector2(tx, box.position.y + 42.0), str(card[1]), HORIZONTAL_ALIGNMENT_LEFT, tw, 34, col)
+		c.draw_string(body, Vector2(tx, box.position.y + 70.0), "%dびょう" % roundi(ctl.review_hold_s) if is_equal_approx(ctl.review_hold_s, roundf(ctl.review_hold_s)) else "%.1fびょう" % ctl.review_hold_s,
+			HORIZONTAL_ALIGNMENT_LEFT, tw, 18, Color("c8d6f0"))
+		c.draw_string(body, Vector2(tx, box.position.y + 104.0), "→ " + str(card[2]), HORIZONTAL_ALIGNMENT_LEFT, tw, 24, Color.WHITE)
+		var bar := Rect2(tx, box.end.y - 30.0, tw, 16.0)
+		c.draw_rect(bar.grow(2.0), GestureTutorialHud.DARK)
+		c.draw_rect(bar, Color(0.1, 0.12, 0.3))
+		c.draw_rect(Rect2(bar.position, Vector2(snappedf(bar.size.x * clampf(k, 0.0, 1.0), 2.0), bar.size.y)), col)
+		c.draw_rect(bar, Color.WHITE, false, 2.0)
 
 static func banner_text(st: String, r: Dictionary) -> String:
 	if st == "GAME_READY_WITH_REWARD":
@@ -779,12 +839,13 @@ static func key_help(state: String, mode: String, dialog := "on") -> String:
 	if state == "POWERUP_SELECT":
 		parts.append("パワールーレット！")  # #237
 	elif state == "REVIEW_SUMMARY":
-		parts.append("R もう一度読む")
+		parts.append("R もう一度読む")  # #333: 👍 1 s too (the box shows the hands)
 	elif mode == "simulated":
 		parts.append("1/2/3 記入（模擬）")
 	elif state in StudyVoice.TALK_STATES and dialog == "on":
 		parts.append("V 押して話す")  # #233
-	if dialog == "off" and state in StudyModeController.DIALOG_ENTRY_STATES:
+	# #333: at the summary the thumbs-up reads again (the box), so only while waiting for the print
+	if dialog == "off" and state == "WAITING_FOR_WORKSHEET":
 		parts.append("👍 3びょう おはなし")  # #281
 	# #260: the staff's keys (StaffControl), then the developers' (Shift)
 	parts.append_array(["F6 とばす", "F7 ゲームへ", "F8 メニュー", "F9 ふっき", "Shift+F7 失敗注入", "Shift+F8 最初から", "F5 終了"])
@@ -850,6 +911,8 @@ func _process(dt: float) -> void:
 				_last_tick = int(_time_shown)
 				ctl.sounds.cue("count")
 			_sub_banner.text = reward_text(ctl.state, ctl.reward, int(_time_shown))
+	if _review.visible:  # the hands bob
+		_review.queue_redraw()
 	_typed += dt * 28.0
 	_bubble_text.visible_characters = -1 if _typed >= _bubble_text.text.length() else int(_typed)
 	_timer.text = "べんきょう " + HomeworkClient.format_elapsed(ctl.elapsed_s())

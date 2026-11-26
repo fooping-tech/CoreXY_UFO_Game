@@ -88,6 +88,7 @@ func _ready() -> void:
 	_s.study._test_study_reading_error_shown(rs)
 	_s.study._test_study_reward_show(rs)
 	_s.study._test_study_voice_goes_to_look(rs)
+	_s.study._test_study_review_box_by_hand(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)
