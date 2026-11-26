@@ -32,7 +32,7 @@
 
 ## 学習モードの効果音（`se/`）
 
-`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266。`magic-dark.mp3` = 暗黒魔法は #320）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。使っている場面と規約は `se/README.md`。
+`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266。`magic-dark.mp3` = 暗黒魔法は #320）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。NEW RECORD! の歓声 `cheer-applause1.mp3`（効果音ラボ「歓声と拍手1」、人の声 https://soundeffect-lab.info/sound/voice/people.html 、#328）も `se/` にある。使っている場面と規約は `se/README.md`。
 
 ## スコアゲームの音（`sfx/`）は別
 

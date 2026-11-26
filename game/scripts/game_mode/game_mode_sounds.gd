@@ -62,13 +62,14 @@ const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "sco
 ## falls back to the synthesised sound of the same key.
 ## #320: thunder = 雷魔法1 (the same file as the plain capsule's), dark = 暗黒魔法.
 ## #328: the result's party poppers (FINAL SCORE) sound 「ジャン！」 (se/jan.mp3, the study mode's
-## fanfare): the jingle and the falling sweep played there before sounded a little sad.
-const OWN_FILES := {"result_jan": "se/jan.mp3", "reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
+## fanfare): the jingle and the falling sweep played there before sounded a little sad. A new
+## place in the top ten (NEW RECORD!) sounds it too, with 歓声と拍手1 (cheer, se/cheer-applause1.mp3).
+const OWN_FILES := {"result_jan": "se/jan.mp3", "cheer": "se/cheer-applause1.mp3", "reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
 	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3",
 	"reveal_thunder": "se/magic-thunder1.mp3", "reveal_dark": "se/magic-dark.mp3"}
 ## #304: each own file's level (dB, on audio.volume_db), as the manifest's gain_db: measured with
 ## tools/audio_levels.py and brought to the same loudness as the other big effects
-const OWN_GAIN_DB := {"result_jan": 1.5, "reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0,
+const OWN_GAIN_DB := {"result_jan": 1.5, "cheer": -1.0, "reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0,
 	"reveal_thunder": -3.0, "reveal_dark": 5.5}
 ## #304: the synthesised round tune is louder than the leveled music files
 const TUNE_GAIN_DB := -3.0
@@ -84,7 +85,7 @@ const SYNTH_META := {"timeup_hit": {"priority": 2, "gain_db": -3.0}, "result_cou
 	"reveal": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
 	"reveal_water": {"priority": 2, "min_gap_ms": 400, "gain_db": 3.0}, "reveal_green": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
 	"reveal_thunder": {"priority": 2, "min_gap_ms": 400}, "reveal_dark": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
-	"result_jan": {"priority": 2},
+	"result_jan": {"priority": 2}, "cheer": {"priority": 2},
 	"tutorial_ok": {"gain_db": 3.0}, "gauge": {"gain_db": 4.0}, "summon": {"gain_db": -1.0}}
 
 var enabled := true
@@ -203,6 +204,8 @@ func _ready() -> void:
 		"final_hit": StudySounds._sweep(520.0, 45.0, 0.7, 0.55),
 		# #328: the stand-in of 「ジャン！」 (se/jan.mp3) when the file is missing: a bright chord up
 		"result_jan": StudySounds._tones([[784.0, 0.06], [1046.5, 0.06], [1568.0, 0.45]], 0.5),
+		# the stand-in of the cheer when its file is missing: the new record's climb
+		"cheer": StudySounds._tones([[784.0, 0.07], [987.8, 0.07], [1174.7, 0.07], [1568.0, 0.07], [1975.5, 0.07], [2349.3, 0.45]], 0.4),
 		# #323: a capsule pops out on a bonus's line (played higher for each one), and a colour
 		# set's sparkling run (a quick rainbow up the scale)
 		"capsule_pop": StudySounds._tones([[784.0, 0.03], [1568.0, 0.06]], 0.3),

@@ -594,7 +594,7 @@ DeviceHub 側のトレース（`pc/trace.py`。バックエンドの `--devicehu
 
 1. リザルト演出が終わった tick で登録する（`GameModeRankingFlow.register_score`）。ファイルもこのとき書く。
 2. 最終スコアをそのまま `hold_s`（1.2 秒）見せる。
-3. TOP10 に入ったとき: 「NEW RECORD!」と「第 ○ 位！」を `record_s`（3.2 秒）。同じ tick で、合成音 `new_record` とファンファーレ（`jackpot`）、シェイク、バウンド、ヒットストップ、衝撃波 3 重、火花、紙吹雪（pixelfx `success_confetti` `success_sparkle`）。順位が高いほど強い。
+3. TOP10 に入ったとき: 「NEW RECORD!」と「第 ○ 位！」を `record_s`（3.2 秒）。同じ tick で、「ジャン！」（`result_jan`）と歓声と拍手（`cheer` = 効果音ラボ「歓声と拍手1」`se/cheer-applause1.mp3`。#328 で合成音 `new_record` とファンファーレ `jackpot` から変えた）、シェイク、バウンド、ヒットストップ、衝撃波 3 重、火花、紙吹雪（pixelfx `success_confetti` `success_sparkle`）。順位が高いほど強い。
 4. ランキングの画面（HIGH SCORES）。今回の順位はネオンの枠で光り、点滅し、`NEW` の印が付く。圏外・登録なしのときは 3 を飛ばしてここに来る。
 
 - **表からタイトルへ（#253、#271）**: 表（HIGH SCORES）が出ている間にパーを 1 秒（`game_mode.ranking.exit_hold_s`）続けると、最初のタイトルへ戻る（Esc と同じ。表が出たときにもう出ていたパーは数えない）。ラウンドの後の表は、何もしなくても 8 秒（`board_max_s`）で最初のタイトルへ戻る（スコアゲームのタイトルで R で開いた表は戻らない）。

@@ -378,7 +378,8 @@ func _test_audio_levels() -> void:
 		and is_equal_approx(float(at.get("reveal", 99.0)), snd.gain_db_of("reveal"))
 	var own: bool = snd.source_of("reveal") != "file" or is_equal_approx(snd.gain_db_of("reveal"), float(GameModeSounds.OWN_GAIN_DB.reveal))
 	# #328: 「ジャン！」 is the file se/jan.mp3, at its own level
-	own = own and snd.source_of("result_jan") == "file" and is_equal_approx(snd.gain_db_of("result_jan"), float(GameModeSounds.OWN_GAIN_DB.result_jan))
+	own = own and snd.source_of("result_jan") == "file" and is_equal_approx(snd.gain_db_of("result_jan"), float(GameModeSounds.OWN_GAIN_DB.result_jan)) \
+		and snd.source_of("cheer") == "file" and is_equal_approx(snd.gain_db_of("cheer"), float(GameModeSounds.OWN_GAIN_DB.cheer))
 	snd.silence()
 	snd.free()
 	var study := StudySounds.new()
@@ -1235,10 +1236,10 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	_gm_step(ctl, ctl.rank_hold_s + 0.1)
 	_process_frame(board)
 	_process_frame(ctl.result_screen)
-	_ok(ctl.ranking_view == "record" and board.place_text() == "第 1 位！" and ctl.sounds.log.has("new_record") and game.shake.trauma > 0.0
+	_ok(ctl.ranking_view == "record" and board.place_text() == "第 1 位！" and ctl.sounds.log.has("result_jan") and ctl.sounds.log.has("cheer") and game.shake.trauma > 0.0
 		and board.particles.sparks() > 0 and board.particles.rings() > 0 and board.sheets() > 0 and ctl.result_screen.mode() == ""
 		and ctl.phase == "RESULT" and board.keys_text().contains("ランキング"),
-		"game mode ranking: a new place in the top ten: NEW RECORD! and the place, with the sound, the shake, the sparks and the confetti at once",
+		"game mode ranking: a new place in the top ten: NEW RECORD! and the place, with 「ジャン！」 and the cheer (#328), the shake, the sparks and the confetti at once",
 		"%s %s" % [ctl.ranking_view, board.place_text()])
 	_gm_step(ctl, ctl.rank_record_s + 0.1)
 	_process_frame(board)
@@ -1315,7 +1316,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	_gm_step(ctl, ctl.rank_hold_s + 0.1)
 	_process_frame(board)
 	_ok(kept and loaded and ctl.final_score() == 1100 and ctl.ranking_rank == 0 and ctl.ranking_note == "out" and ctl.ranking_view == "board"
-		and not ctl.sounds.log.has("new_record") and board.note_text().contains("1100") and ctl.ranking.entries.size() == 10
+		and not ctl.sounds.log.has("cheer") and board.note_text().contains("1100") and ctl.ranking.entries.size() == 10
 		and ctl.ranking.rank_of(ctl.round_id) == 0 and FileAccess.get_file_as_string(path).count("\t1100\t") == 1,
 		"game mode ranking: the records survive a restart; a round below the ten goes straight to the board and is not kept (a tie with the 10th stays out)",
 		"%s %s %d %s" % [kept, loaded, ctl.final_score(), ctl.ranking_note])
