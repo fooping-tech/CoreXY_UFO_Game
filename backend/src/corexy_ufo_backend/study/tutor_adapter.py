@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Awaitable, Callable, Sequence
+from typing import Any, Awaitable, Callable, Sequence
 
 from .errors import StudyAdapterError
 
@@ -89,6 +89,38 @@ def gives_answer(sentence: str, answers: Sequence[str] = ()) -> bool:
     return False
 
 
+class TutorHTTPError(StudyAdapterError):
+    """The server answered with an HTTP error (docs/ufo_api_spec.md §3): `status` tells what to do
+    (401 never again, 503 later, 500 once more)."""
+
+    def __init__(self, message: str, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+        self.kind = {401: "auth", 403: "forbidden", 429: "blocked", 503: "busy"}.get(status, "tutor_error")
+
+
+# #334: the hint step's history: at most this many earlier hints (§5.2), each at most this long
+HINT_HISTORY_MAX = 6
+HINT_MESSAGE_MAX = 200
+
+
+def hint_history(history: Sequence[Any]) -> list[dict]:
+    """The hints already given for this problem, as §5.2 wants them: [{hint_level 0..3, message}],
+    the last HINT_HISTORY_MAX, anything else dropped."""
+    out = []
+    for h in history or []:
+        if not isinstance(h, dict):
+            continue
+        msg = str(h.get("message", "")).strip()[:HINT_MESSAGE_MAX]
+        try:
+            level = int(h.get("hint_level", 0))
+        except (TypeError, ValueError):
+            level = 0
+        if msg:
+            out.append({"hint_level": max(min(level, 3), 0), "message": msg})
+    return out[-HINT_HISTORY_MAX:]
+
+
 NO_CALIBRATION = "先端カメラの校正がまだ（校正タブの「先端カメラの校正」）"
 IMAGE_DIRECTIONS = ("up", "down", "left", "right")
 
@@ -108,7 +140,8 @@ class TutorStudyAdapter:
 
     def __init__(self, base_url: str, token: str, *, model: str = "tutor-ufo", grade: int = 3, image_role: str = "10cm",
                  cafile: str | None = None, timeout_s: float = 20.0, focus_calibration: str | None = None,
-                 fail_limit: int = 2, cooldown_s: float = 120.0) -> None:
+                 fail_limit: int = 2, cooldown_s: float = 120.0,
+                 busy_retry_s: Sequence[float] = (5.0, 10.0, 20.0), sleep: Callable[[float], None] = time.sleep) -> None:
         # token "" = none (#128: a server started without one); then no Authorization header
         self.url = base_url.rstrip("/") + "/v1/chat/completions"
         self.token, self.model, self.grade, self.image_role, self.timeout_s = token, model, grade, image_role, timeout_s
@@ -123,6 +156,8 @@ class TutorStudyAdapter:
         # （StudyAdapterError → ゲームの既存の処理が、プリントのヒント fallback_explanation に切り替える）
         # ゲームは解説のたびにアダプタを作り直す（advice_factory）ので、失敗の記録は接続先ごとにクラスで共有する
         self.fail_limit, self.cooldown_s = fail_limit, cooldown_s
+        # #334 (§3): a busy server (503) is asked again after these waits; 401 never again
+        self.busy_retry_s, self.sleep = tuple(float(x) for x in busy_retry_s), sleep
         self.breaker = TutorStudyAdapter._breakers.setdefault(self.url, {"fails": 0, "open_until": 0.0})
         # 先端カメラのキャリブレーション（calibration.json の focus_camera か、そのファイル）。
         # ないか壊れていれば d_mm を付けない = アームは動かない
@@ -148,15 +183,16 @@ class TutorStudyAdapter:
             with urllib.request.urlopen(req, timeout=self.timeout_s, context=self.ctx) as r:
                 out = json.load(r)
         except urllib.error.HTTPError as e:
-            self._failed()
+            if e.code != 503:  # busy (§3): the server is there, only full: not a reason to rest it
+                self._failed()
             detail = ""
             try:
                 detail = json.load(e).get("error", {}).get("message", "")
             except Exception:  # noqa: BLE001
                 pass
             if e.code == 401:
-                raise StudyAdapterError(self.auth_problem() + (f": {detail}" if detail else "")) from e
-            raise StudyAdapterError(f"学習支援 AI がエラーを返しました（HTTP {e.code}）: {detail}") from e
+                raise TutorHTTPError(self.auth_problem() + (f": {detail}" if detail else ""), 401) from e
+            raise TutorHTTPError(f"学習支援 AI がエラーを返しました（HTTP {e.code}）: {detail}", e.code) from e
         except Exception as e:  # noqa: BLE001  つながらない・時間切れ・証明書など
             self._failed()
             raise StudyAdapterError(f"学習支援 AI に接続できません: {e}") from e
@@ -251,6 +287,60 @@ class TutorStudyAdapter:
             out["speech_text"] = out["explanation"] = words
             out["hint"] = ""
         return out
+
+    def _post_retrying(self, body: dict) -> dict:
+        """_post, asked again as §3 says: 503 (busy) after each of busy_retry_s, 500 once more;
+        401 / 400 / 403 / 429 / no answer at all: never again (the caller falls back)."""
+        waits = list(self.busy_retry_s)
+        server_error_left = 1
+        while True:
+            try:
+                return self._post(body)
+            except TutorHTTPError as e:
+                if e.status == 503 and waits:
+                    self.sleep(waits.pop(0))
+                    continue
+                if e.status == 500 and server_error_left > 0:
+                    server_error_left -= 1
+                    continue
+                raise
+
+    def hint(self, image: bytes, target: int, *, grade: int | None = None, history: Sequence[Any] = (),
+             utterance: str = "", answers: Sequence[str] = ()) -> dict:
+        """#334: a hint for problem `target` the child showed with the fingers (docs/ufo_api_spec.md §5,
+        format "tutor", mode "normal": never the answer). `history`: the hints already given for this
+        problem ({hint_level, message}): the next one is a little stronger. Blocking; StudyAdapterError
+        when it fails (the game then uses the worksheet's hints).
+        Only tutor_result.game goes back: the observation (solution, correct_answer) never leaves here,
+        and a message that still seems to say the answer (`answers`, "こたえは 5") is refused.
+        -> {message, hint_level, action, target_problem, need_recapture, visual_effect, notes}"""
+        if not isinstance(target, int) or not 1 <= target <= 30:
+            raise StudyAdapterError("問題の番号は 1〜30 です")
+        said = (utterance or f"{target}ばんが わからない").strip()[:100]
+        body = {"model": self.model, "max_tokens": 400,
+                "messages": [{"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(image).decode()}},
+                    {"type": "text", "text": ""}]}],
+                "tutor": {"grade": max(min(int(grade or self.grade), 6), 1), "target_problem": target,
+                          "format": "tutor", "mode": "normal", "history": hint_history(history), "utterance": said}}
+        tr = self._post_retrying(body).get("tutor_result") or {}
+        g = tr.get("game") if isinstance(tr.get("game"), dict) else {}
+        message = str(g.get("message") or "").strip()
+        if not message:
+            raise StudyAdapterError("学習支援 AI の返事に、話すことばがありません")
+        if any(gives_answer(line, answers) for line in split_sentences(message)):
+            err = StudyAdapterError("学習支援 AI のヒントが答えを言っていそうなので使いません")
+            err.kind = "held_back"  # type: ignore[attr-defined]
+            raise err
+        try:
+            level = max(min(int(g.get("hint_level", 0)), 3), 0)
+        except (TypeError, ValueError):
+            level = 0
+        tp = g.get("target_problem")
+        return {"message": message, "hint_level": level, "action": str(g.get("action", "")),
+                "target_problem": tp if isinstance(tp, int) and tp > 0 else target,
+                "need_recapture": bool(g.get("need_recapture", False)),
+                "visual_effect": str(g.get("visual_effect", "")), "notes": [str(n) for n in tr.get("notes") or []]}
 
     def converse_stream(self, image: bytes, utterance: str, *, turns: Sequence[dict] = (), target: int | None = None,
                         grade: int | None = None, on_sentence: Callable[[str], None] | None = None,

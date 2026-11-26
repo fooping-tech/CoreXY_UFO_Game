@@ -484,3 +484,60 @@ def test_thumbs_up_is_told_from_a_fist_and_reports_where_the_thumb_points():
     fist = shaped_hand(folded=("index", "middle", "ring", "pinky"), thumb_at="index")
     assert frames(ctrl, [fist])[-1]["pose"] == "fist"
     assert ctrl.camera_lost()["thumb_dy"] == 0.0
+
+
+# ---------------------------------------------------------------- #334: the number shown with the fingers
+def tucked_thumb(pts, cx=0.5, cy=0.5, size=0.2):
+    """The thumb folded across the palm (its tip by the ring finger's MCP), as for a "4"."""
+    s = size * H
+    out = list(pts)
+    out[4] = (cx + 0.25 * s / W, cy + 0.2 * s / H, 0.0)
+    return out
+
+
+def test_finger_count_one_to_five_with_the_thumb_tucked_or_out():
+    from corexy_ufo_backend.vision_service.hand_control import finger_count
+    cases = {
+        1: tucked_thumb(shaped_hand(folded=("middle", "ring", "pinky"))),      # the index
+        2: tucked_thumb(shaped_hand(folded=("ring", "pinky"))),                # peace
+        3: tucked_thumb(shaped_hand(folded=("pinky",))),                       # index, middle, ring
+        4: tucked_thumb(shaped_hand()),                                        # the thumb across the palm
+        5: shaped_hand(),                                                      # an open hand, thumb out
+        0: tucked_thumb(shaped_hand(folded=("index", "middle", "ring", "pinky"))),  # a fist
+    }
+    for want, lm in cases.items():
+        assert finger_count(lm, W, H) == want, want
+        # palm or back of the hand to the camera, turned, small or big: the same count
+        assert finger_count(rotated(lm, 70), W, H) == want, want
+        assert finger_count(rotated(lm, 180), W, H) == want, want
+    # every finger out counts, the thumb too: index + middle with the thumb out is 3
+    assert finger_count(shaped_hand(folded=("ring", "pinky")), W, H) == 3
+    # the palm to the camera (a mirrored hand): the same counts
+    assert finger_count(shaped_hand(palm_up=True), W, H) == 5
+    assert finger_count(shaped_hand(folded=("index", "middle", "ring", "pinky"), thumb_at="index", palm_up=True), W, H) == 0
+    for size in (0.08, 0.4):
+        assert finger_count(tucked_thumb(shaped_hand(folded=("pinky",), size=size), size=size), W, H) == 3, size
+    # a thumbs-up counts one (the game does not take it as a number: its pose is "thumb")
+    assert finger_count(thumbs_up(), W, H) == 1
+
+
+def test_finger_count_is_unclear_for_a_half_bent_finger_or_a_half_tucked_thumb():
+    from corexy_ufo_backend.vision_service.hand_control import finger_count
+    half = tucked_thumb(shaped_hand(folded=("ring", "pinky")))
+    x, _y, _ = half[12]
+    pip = half[10]
+    half[12] = (x, pip[1] - 0.03 * 0.2 * H / H, 0.0)  # the middle tip just past its PIP: neither out nor folded
+    assert finger_count(half, W, H) == -1
+    lm = shaped_hand(folded=("middle", "ring", "pinky"))
+    s = 0.2 * H
+    lm[4] = (0.5 + (-0.15 - 0.75) * s / W, 0.5, 0.0)  # thumb tip 0.75 hand widths from the middle MCP
+    assert finger_count(lm, W, H) == -1
+
+
+def test_the_finger_count_rides_on_the_hand_event():
+    ctrl = HandControl(HandControlConfig(pinch_confirm_ms=0, pinch_start=1.0, pinch_release=1.5, lost_grace_ms=0))
+    ev = frames(ctrl, [tucked_thumb(shaped_hand(folded=("pinky",)))])[-1]
+    assert ev["detected"] and ev["fingers"] == 3 and ev["pose"] == "three"
+    assert frames(ctrl, [None])[-1]["fingers"] == -1  # no hand: no number
+    assert frames(ctrl, [[shaped_hand(), shaped_hand(cx=0.2)]])[-1]["fingers"] == -1  # two hands: none
+    assert ctrl.camera_lost()["fingers"] == -1

@@ -42,6 +42,12 @@ Rules (all thresholds from config `gesture.*`):
     MCP (2) -> tip (4) direction, used for a "thumb" pose. No pinch starts in a fist, a thumbs-up or a peace
     sign (the thumb lies near the fingertips there, or no finger is out to pinch), nor with the pinching finger folded,
     and turning into one ends a running pinch
+  - `fingers` (#334): how many fingers are out, 0..5 (the study mode's "show the problem's number"),
+    or -1 when one of them is neither clearly out nor clearly folded. A finger is out when its tip is
+    more than FINGER_OUT times as far from the wrist as its PIP, folded under FINGER_IN; the thumb is
+    out when its tip is more than THUMB_OUT hand sizes from the middle finger's MCP (as for a
+    thumbs-up), tucked under THUMB_IN. Distances only, so the palm or the back of the hand may face
+    the camera, and the hand may be turned. One hand only (two hands are no control, as above)
 
 Pure logic, no MediaPipe import: tests feed landmarks directly.
 """
@@ -75,6 +81,13 @@ THUMB_MCP = 2
 # a fist (tucked over the fingers about 0.4-0.6; a thumbs-up about 1.0). Not yet
 # checked on the real camera.
 THUMB_OUT = 0.85
+# #334: below this the thumb is tucked (over the folded fingers or across the palm for a "4");
+# between THUMB_IN and THUMB_OUT the finger count is unclear (-1)
+THUMB_IN = 0.65
+# #334: wrist-to-tip over wrist-to-PIP: a finger is out above FINGER_OUT (stretched out about
+# 1.3), folded below FINGER_IN (as finger_folded); in between the finger count is unclear
+FINGER_OUT = 1.12
+FINGER_IN = 1.0
 
 
 @dataclass
@@ -220,6 +233,34 @@ def hand_pose(lm: list[Landmark], w: int, h: int) -> str:
     return "other"
 
 
+def finger_count(lm: list[Landmark], w: int, h: int) -> int:
+    """#334: the fingers out (thumb included), 0..5, or -1 when one is half bent (unclear: the
+    child is still moving, or a finger points at the camera). See the module doc."""
+    wx, wy = _px(lm[WRIST], w, h)
+    n = 0
+    for tip, pip in FINGERS.values():
+        t, p = _px(lm[tip], w, h), _px(lm[pip], w, h)
+        dp = math.hypot(p[0] - wx, p[1] - wy)
+        if dp <= 1e-6:
+            return -1
+        r = math.hypot(t[0] - wx, t[1] - wy) / dp
+        if r > FINGER_OUT:
+            n += 1
+        elif r >= FINGER_IN:
+            return -1
+    tx, ty = _px(lm[THUMB_TIP], w, h)
+    mx, my = _px(lm[MIDDLE_MCP], w, h)
+    scale = hand_scale(lm, w, h)
+    if scale <= 1e-6:
+        return -1
+    t = math.hypot(tx - mx, ty - my) / scale
+    if t > THUMB_OUT:
+        n += 1
+    elif t >= THUMB_IN:
+        return -1
+    return n
+
+
 def thumb_out(lm: list[Landmark], w: int, h: int) -> bool:
     """The thumb sticks out (its tip well away from the folded fingers)."""
     tx, ty = _px(lm[THUMB_TIP], w, h)
@@ -273,6 +314,7 @@ class HandControl:
             "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": round(latency_ms, 1),
             "pinch_finger": "", "pose": "", "palm": "", "palm_sin": 0.0,
             "point_dx": 0.0, "point_dy": 0.0, "point_len": 0.0, "thumb_dx": 0.0, "thumb_dy": 0.0,
+            "fingers": -1,
         }
         conf = float(confidences[0]) if len(hands) == 1 and confidences else 0.0
         lost = ""
@@ -297,7 +339,7 @@ class HandControl:
         ev.update(hand_x=round(cx, 4), hand_y=round(cy, 4), pinch_ratio=round(min(ratio, 99.0), 3),
                   pose=pose, palm=palm, palm_sin=round(palm_sin, 3),
                   point_dx=round(pdx, 4), point_dy=round(pdy, 4), point_len=round(min(plen, 99.0), 3),
-                  thumb_dx=round(tdx, 4), thumb_dy=round(tdy, 4))
+                  thumb_dx=round(tdx, 4), thumb_dy=round(tdy, 4), fingers=finger_count(lm, frame_w, frame_h))
         if not self._in_roi(cx, cy):
             self.reset()
             ev["reason"] = "outside_roi"
@@ -341,7 +383,8 @@ class HandControl:
         ev["pinch_finger"] = self._finger if self._pinched else ""
         self._last_good = {k: ev[k] for k in ("detected", "pinch", "hand_x", "hand_y", "pinch_ratio", "confidence", "in_roi",
                                               "pinch_finger", "pose", "palm", "palm_sin",
-                                              "point_dx", "point_dy", "point_len", "thumb_dx", "thumb_dy")}
+                                              "point_dx", "point_dy", "point_len", "thumb_dx", "thumb_dy",
+                                              "fingers")}
         return ev
 
     def _lost(self, ev: dict[str, Any], reason: str, now_ms: float) -> dict[str, Any]:
@@ -366,4 +409,4 @@ class HandControl:
                 "hand_x": 0.0, "hand_y": 0.0, "pinch_ratio": 0.0, "confidence": 0.0, "in_roi": False,
                 "reason": "camera_lost", "frame_w": frame_w, "frame_h": frame_h,
                 "timestamp": int(timestamp_ms), "sequence": self.sequence, "latency_ms": 0.0,
-                "point_dx": 0.0, "point_dy": 0.0, "point_len": 0.0, "thumb_dx": 0.0, "thumb_dy": 0.0}
+                "point_dx": 0.0, "point_dy": 0.0, "point_len": 0.0, "thumb_dx": 0.0, "thumb_dy": 0.0, "fingers": -1}
