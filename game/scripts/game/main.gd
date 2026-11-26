@@ -1118,6 +1118,8 @@ func _handle_input(dt: float) -> void:
 		var hand_age := gesture.age_ms(Time.get_ticks_msec())
 		var fresh := gesture.detected and hand_age >= 0.0 and hand_age <= gesture.stale_ms
 		study_mode.hand_tick(gesture.pose if fresh else "", Time.get_ticks_msec())
+		# #334: after the answer check, the problem's number shown with the fingers
+		study_mode.finger_tick(gesture.fingers if fresh else -1, gesture.pose if fresh else "", Time.get_ticks_msec())
 	if homework != null and (study_mode == null or not study_mode.active()) and not title_active():
 		# a thumbs-up answers the helper's offer (#79) only while the gesture control is off:
 		# with it on, the thumb steers (pose_direction) or closes the claw (pinch joystick)

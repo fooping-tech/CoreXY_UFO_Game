@@ -39,6 +39,10 @@ signal navigate_failed(reason: String)
 ## #237: the answer check's reading of the whole sheet ([{number, answer_status, student_answer?, visible?}])
 signal graded(problems: Array)
 signal grade_failed(reason: String)
+## #334: the tutor's hint for the problem shown with the fingers ({problem, message, hint_level,
+## source}), or why not and the worksheet's own hint to say instead
+signal hinted(result: Dictionary)
+signal hint_failed(reason: String, fallback: Dictionary)
 
 const MODES := ["simulated", "camera"]
 ## the earlier study_mode.demo.mode values (#86), read as the new ones
@@ -96,6 +100,10 @@ const LOCATE_SETTLE_MAX_S := 3.0
 const GRADE_IMAGE_BYTES := 600000
 const SETTLE_STEP_S := 0.25
 var _explain_rid := ""
+var _hint_rid := ""
+var _hint_problem := 0
+var _hint_given := 0
+const HINT_IMAGE_EDGE := 1800  # docs/ufo_api_spec.md §3: a longer side than 1600-2000 px does not help
 var _help_rid := ""
 var _nav_rid := ""
 ## #116: the worksheet's corner marks in the overview frame (as shown): {tl, tr, bl, br: Vector2 0..1}
@@ -195,6 +203,7 @@ func abort(reason := "") -> void:
 	_timers.clear()
 	_locate_rid = ""
 	_explain_rid = ""
+	_hint_rid = ""
 	if not _walk.is_empty():
 		_walk.clear()
 		_walk_kind = ""
@@ -344,6 +353,8 @@ func _log_signals() -> void:
 	navigate_failed.connect(func(r): trace("navigate failed: " + r))
 	explained.connect(func(r): trace("explained (%s)" % str(r.get("source", r.get("provider", "?")))))
 	explain_failed.connect(func(r, _fb): trace("explain failed: " + r))
+	hinted.connect(func(r): trace("hint for %d (%s, level %d)" % [int(r.get("problem", 0)), str(r.get("source", "?")), int(r.get("hint_level", 0))]))
+	hint_failed.connect(func(r, _fb): trace("hint failed: " + r))
 	motion_update.connect(func(k, ph, st, _h, _d):
 		var m := "motion %s %s %s" % [k, ph, st]
 		if m != _motion_last_note:
@@ -906,6 +917,70 @@ func explain(problem: int) -> void:
 			_explain_rid = ""
 			explain_failed.emit("AI の解説が時間内に届きませんでした", fb))
 
+# ------------------------------------------------------------------ the finger hint (#334)
+## A hint for problem n, which the child showed with the fingers after the answer check:
+## -> hinted({problem, message, hint_level, source}) or hint_failed(reason, fallback).
+## `history`: the hints already given for it ([{hint_level, message}]): the tutor then gives a
+## stronger one. The picture is the answer check's (graded_image), else the overview camera now.
+## Never the answer (the tutor's mode "normal"; the backend sends only its game.message), never
+## the robot. Simulated: the worksheet's hints, one after another.
+func hint(n: int, history: Array) -> void:
+	_hint_problem = n
+	_hint_given = history.size()
+	var tok := _token
+	var fb := fallback_hint(sheet_problem(n), n, history.size())
+	if inject_fail == "ai":
+		inject_fail = ""
+		_after(1.0, func(): if tok == _token: hint_failed.emit("AI につながりませんでした（失敗の注入）", fb))
+		return
+	if mode == "simulated":
+		var demo := fb.duplicate()
+		demo["source"] = "demo"
+		_after(1.2, func(): if tok == _token: hinted.emit(demo))
+		return
+	if homework == null or not homework.hint_available or not homework.link.is_open():
+		hint_failed.emit("ヒントの AI（学習支援 AI）が使えません", fb)
+		return
+	var img: Image = graded_image if graded_image != null and not graded_image.is_empty() else _overview_image()
+	if img == null or img.is_empty():
+		hint_failed.emit("プリントの画像がないので、AI に見せられませんでした", fb)
+		return
+	img = img.duplicate()
+	img.convert(Image.FORMAT_RGB8)
+	var jpeg := StudyClient.encode_jpeg(img, HINT_IMAGE_EDGE, homework.max_image_bytes)
+	if jpeg.is_empty():
+		hint_failed.emit("プリントの画像を作れませんでした", fb)
+		return
+	_hint_rid = _rid("hint")
+	var err := homework.link.send_aux({"type": "homework_hint", "request_id": _hint_rid, "data": {
+		"image_jpeg_base64": Marshalls.raw_to_base64(jpeg), "problem": n, "history": history,
+		"grade_label": grade_label,
+		# #287: a real print is not the sample sheet
+		"worksheet_id": "" if reads_whole_sheet() else str(worksheet.get("worksheet_id", ""))}})
+	if err != OK:
+		_hint_rid = ""
+		hint_failed.emit("画像を送れませんでした（WebSocket error %d）" % err, fb)
+		return
+	var rid := _hint_rid
+	var limit := float(GameConfig.get_value("homework", "explain_timeout_s", 150.0)) + 10.0
+	_after(limit, func():
+		if _hint_rid == rid:
+			_hint_rid = ""
+			hint_failed.emit("AI のヒントが時間内に届きませんでした", fb))
+
+func cancel_hint() -> void:
+	_hint_rid = ""  # a late answer is dropped
+
+## The worksheet's own hint for problem n, the `given`-th (one after another, the last kept);
+## a real print (`p` empty, #287): hints that fit any problem. Never the answer.
+static func fallback_hint(p: Dictionary, n: int, given: int) -> Dictionary:
+	var hints: Array = p.get("hints", []) if p.get("hints") is Array and not (p.hints as Array).is_empty() \
+		else ANY_PROBLEM_HINTS.duplicate()
+	var h := str(hints[clampi(given, 0, hints.size() - 1)])
+	if not (h.ends_with("。") or h.ends_with("？") or h.ends_with("！")):
+		h += "。"
+	return {"problem": n, "message": h, "hint_level": clampi(given + 1, 1, 3), "source": "worksheet"}
+
 ## #287: hints for any problem (a real print's: its own are not known). Never the answer.
 const ANY_PROBLEM_HINTS := ["問題の 文を ゆっくり 声に 出して 読んでみよう", "わかっている ことと、きかれている ことを 分けてみよう",
 	"図や 絵に かいて 考えてみよう"]
@@ -1083,6 +1158,15 @@ func _on_aux(msg: Dictionary) -> void:
 			locate_failed.emit("問題の位置がはっきりしないので動かしません: " + str(data.get("reason", "")))
 		else:
 			locate_failed.emit("問題を読み取れませんでした: " + str(data.get("message", "")))
+	elif rid == _hint_rid and t in ["homework_hint_result", "homework_hint_error", "homework_error"]:
+		_hint_rid = ""
+		var fb := fallback_hint(sheet_problem(_hint_problem), _hint_problem, _hint_given)
+		var words := str(data.get("message", "")).strip_edges()
+		if t == "homework_hint_result" and words != "":
+			hinted.emit({"problem": _hint_problem, "message": words, "hint_level": int(data.get("hint_level", 0)),
+				"source": "tutor"})
+		else:
+			hint_failed.emit("%s（%s）" % [str(data.get("message", "ヒントを作れませんでした")), str(data.get("code", t))], fb)
 	elif rid == _explain_rid and t in ["homework_explain_result", "homework_explain_error", "homework_error"]:
 		_explain_rid = ""
 		if t == "homework_explain_result":

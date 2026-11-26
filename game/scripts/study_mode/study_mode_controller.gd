@@ -11,6 +11,12 @@ extends Node
 ##            -> REVIEW_SUMMARY (only when something is to be looked at again)
 ##                 --R / a thumbs-up held 1 s (#333): rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
 ##                 --Enter / an open hand held 1 s (#333)--> REWARD_CALCULATING
+##            REVIEW_SUMMARY --its words said, once a story (#334)--> HINT_ASK ("わからない もんだいが
+##                 あったら…ゆびで おしえてね！") --a finger count held 1 s--> HINT_THINKING (the tutor)
+##                 -> HINT_GIVING (UFOくん says the hint) -> HINT_ASK (again: the same number = a stronger
+##                 hint) --a fist (グー) held / no hand for finger_hint.ask_s / Enter / R--> REVIEW_SUMMARY
+##                 (the thumbs-up / open hand of #333 are read only in REVIEW_SUMMARY, the finger counts
+##                 only in HINT_ASK: they never meet)
 ##            -> REWARD_REVEAL -> POWERUP_SELECT (a power ticket: a roulette picks it) -> CLEANUP -> GAME_READY_WITH_REWARD
 ##            --"ゲームで遊ぶ"--> (off; the reward is handed over: StudyGrading.reward)
 ##   CLEANUP --fault--> CLEANUP_FAILED --Enter--> GAME_READY_WITH_REWARD (tidy-up left unchecked)
@@ -28,9 +34,14 @@ signal changed  # anything shown changed (HUD refresh)
 const STATES := ["OFF", "INTRO", "WAITING_FOR_WORKSHEET", "STUDYING", "HELP_LOCATING", "HELP_MOVING",
 	"CAPTURE_10CM", "CAPTURE_5CM", "CAPTURE_LANDING", "AI_EXPLAINING", "RESUME_STUDY", "ANSWER_CHECK_READY",
 	"SHEET_SCANNING", "GRADING_QUESTION", "REVIEW_SUMMARY", "RESCAN", "REWARD_CALCULATING", "REWARD_REVEAL",
-	"POWERUP_SELECT", "CLEANUP", "CLEANUP_FAILED", "GAME_READY_WITH_REWARD", "ERROR"]
+	"POWERUP_SELECT", "CLEANUP", "CLEANUP_FAILED", "GAME_READY_WITH_REWARD", "ERROR",
+	"HINT_ASK", "HINT_THINKING", "HINT_GIVING"]
 ## #237: the answer check, and the reward that follows it
-const CHECK_STATES := ["ANSWER_CHECK_READY", "SHEET_SCANNING", "GRADING_QUESTION", "REVIEW_SUMMARY", "RESCAN"]
+const CHECK_STATES := ["ANSWER_CHECK_READY", "SHEET_SCANNING", "GRADING_QUESTION", "REVIEW_SUMMARY", "RESCAN",
+	"HINT_ASK", "HINT_THINKING", "HINT_GIVING"]
+## #334: the finger hint after the answer check (its own states: the summary's gestures, #333's
+## いいね / パー, are not read here; here the finger counts are)
+const HINT_STATES := ["HINT_ASK", "HINT_THINKING", "HINT_GIVING"]
 const REWARD_STATES := ["REWARD_CALCULATING", "REWARD_REVEAL", "POWERUP_SELECT"]
 const POWERUPS := [["speed", "SPEED UP"], ["double", "DOUBLE SCORE"], ["multiball", "MULTI BALL"]]
 const CAPTURE_STATE := {"10cm": "CAPTURE_10CM", "5cm": "CAPTURE_5CM", "landing": "CAPTURE_LANDING"}
@@ -138,6 +149,17 @@ var _timers: Array = []  # [seconds_left, Callable, story]: dropped when the sto
 var _story := 0
 var _photo_src: Image
 var _photo_tex: ImageTexture
+## #334: the finger hint (study_mode.finger_hint)
+var finger_hint := StudyFingerHint.new()
+var hint_enabled := true
+var hint_ask_s := 30.0  # no hand this long while asking: back to the summary
+var hint_problem := 0  # the problem the hint is about (0 = none yet)
+var hint_text := ""  # the hint shown (until the step ends)
+var hint_source := ""  # "tutor" | "worksheet" (the fallback) | "demo"
+var hint_note := ""  # why the worksheet's hint was used (for the staff)
+var _hint_offered := false  # asked once a story
+var _hint_saved: Array = []  # the summary's grown-up prompt, given back after the step
+var _hint_idle_ms := -1.0
 
 func setup(m: Node, hw: HomeworkClient) -> void:
 	main = m
@@ -174,6 +196,13 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 	services.navigate_failed.connect(_on_navigate_failed)
 	services.graded.connect(_on_graded)
 	services.grade_failed.connect(_on_grade_failed)
+	services.hinted.connect(_on_hinted)
+	services.hint_failed.connect(_on_hint_failed)
+	var fh = GameConfig.get_value("study_mode", "finger_hint", {})
+	if fh is Dictionary:
+		hint_enabled = bool(fh.get("enabled", hint_enabled))
+		hint_ask_s = maxf(float(fh.get("ask_s", hint_ask_s)), 0.0)
+		finger_hint.configure(fh)
 	var ac = GameConfig.get_value("study_mode", "answer_check", {})
 	if ac is Dictionary:
 		grading.configure(ac)
@@ -279,6 +308,14 @@ func reset_story() -> void:
 	dialog_progress = 0.0
 	_thumb_since_ms = -1.0
 	offer_problem = 0
+	finger_hint.reset()
+	_hint_offered = false
+	_hint_saved = []
+	hint_problem = 0
+	hint_text = ""
+	hint_source = ""
+	hint_note = ""
+	_hint_idle_ms = -1.0
 	_hand_used = ""
 	_hand_since_ms = -1.0
 	_review_reset()
@@ -543,7 +580,7 @@ func _summary() -> void:
 	for n in grading.with_verdict(StudyGrading.UNCLEAR):
 		lines.append({"text": "%dばんは、紙の位置や 手で かくれていないかを 見てね。" % n, "face": "worried"})
 	lines.append({"text": "書きなおしたら、もういちど 見るよ。あとで見直してもいいよ！", "face": "wink"})
-	_say(lines)
+	_say(lines, _offer_hint)  # #334: then "わからない もんだいが あったら…"
 	_ask_adult("review", "書きなおしたら もう一度読む ／ このまま つぎへ（見直しはあとでも OK）")
 
 func _calc_reward() -> void:
@@ -645,6 +682,136 @@ func _after_reward() -> void:
 		_begin_cleanup()
 	else:
 		_unlock()
+
+# ------------------------------------------------------------------ the finger hint (#334)
+## The summary's words are said: once a story, "わからない もんだいが あったら、もんだいの ばんごうを
+## ゆびで おしえてね！" (only when the check read some problem). The summary's grown-up prompt
+## (R / Enter) is kept aside and given back when the step ends.
+func _offer_hint() -> void:
+	if state != "REVIEW_SUMMARY" or not hint_enabled or _hint_offered or grading.numbers.is_empty():
+		return
+	_hint_offered = true
+	_hint_saved = [_pending_adult, adult_prompt]
+	_pending_adult = ""
+	adult_prompt = ""
+	_review_reset()  # #333's box is not up meanwhile: a half-held いいね / パー is dropped
+	services.trace("finger hint: asked")
+	_enter_hint_ask([{"text": "わからない もんだいが あったら、もんだいの ばんごうを ゆびで おしえてね！", "face": "happy"},
+		{"text": "だいじょうぶなら、グーを みせてね。", "face": "wink"}])
+
+func _enter_hint_ask(lines: Array) -> void:
+	_set_state("HINT_ASK")
+	finger_hint.restart()  # the hand shown now (the same count as before) does not count
+	_hint_idle_ms = -1.0
+	sounds.play("tick")
+	_say(lines)
+
+## The hand on the camera now, every frame while the study mode runs: `fingers` (the backend's
+## count, -1 = none / unclear) and its pose. A count held finger_hint.hold_ms picks (1..5 a
+## problem, a fist ends the step); no hand for hint_ask_s (and nothing being said) ends it too.
+func finger_tick(fingers: int, pose: String, now_ms: float) -> void:
+	if state != "HINT_ASK":
+		return
+	if _hint_idle_ms < 0.0:
+		_hint_idle_ms = now_ms
+	var was := finger_hint.held
+	var got := finger_hint.tick(fingers, pose, now_ms)
+	if finger_hint.held != StudyFingerHint.NONE:
+		_hint_idle_ms = now_ms  # a hand is there: not idle
+	if got == StudyFingerHint.FIST:
+		services.trace("finger hint: a fist (no more questions)")
+		_finish_hints()
+		return
+	if got > 0:
+		pick_hint(got)
+		return
+	if finger_hint.progress > 0.0 or was != finger_hint.held:
+		changed.emit()
+	if hint_ask_s > 0.0 and now_ms - _hint_idle_ms > hint_ask_s * 1000.0 and not speech.busy():
+		services.trace("finger hint: no hand for %.0f s" % hint_ask_s)
+		_finish_hints()
+
+## Problem n was shown (or typed): "3ばん だね！" and the tutor is asked (with the hints already
+## given for it: the same number again gets a stronger one). A number not on the sheet: said so.
+func pick_hint(n: int) -> void:
+	if state != "HINT_ASK":
+		return
+	if n not in grading.numbers:
+		sounds.play("tick")
+		_say([{"text": "%dばんは ないみたい。もんだいの ばんごうを ゆびで おしえてね。" % n, "face": "worried"}])
+		return
+	var again := finger_hint.count_for(n) > 0
+	hint_problem = n
+	hint_text = ""
+	hint_note = ""
+	_set_state("HINT_THINKING")
+	sounds.play("chime")
+	services.trace("finger hint: problem %d (%d given)" % [n, finger_hint.count_for(n)])
+	_say([{"text": "%dばん だね！" % n, "face": "excited"},
+		{"text": "もうすこし ヒントを だすね。" if again else "ヒントを かんがえるね。", "face": "normal"}])
+	services.hint(n, finger_hint.given(n))
+
+func _on_hinted(result: Dictionary) -> void:
+	if state != "HINT_THINKING" or int(result.get("problem", 0)) != hint_problem:
+		return
+	_give_hint(str(result.get("message", "")), int(result.get("hint_level", 1)), str(result.get("source", "tutor")), "")
+
+## The tutor failed (or was not there): the worksheet's own hint instead (never the answer).
+func _on_hint_failed(reason: String, fallback: Dictionary) -> void:
+	if state != "HINT_THINKING":
+		return
+	_give_hint(str(fallback.get("message", "")), int(fallback.get("hint_level", 1)), "worksheet", reason)
+
+func _give_hint(message: String, level: int, source: String, note: String) -> void:
+	if message.strip_edges() == "":
+		message = StudyServices.fallback_hint({}, hint_problem, finger_hint.count_for(hint_problem)).message
+		source = "worksheet"
+	finger_hint.add(hint_problem, level, message, source)
+	hint_text = message
+	hint_source = source
+	hint_note = note
+	_set_state("HINT_GIVING")
+	_after_speech = func():
+		if state == "HINT_GIVING":
+			_enter_hint_ask([{"text": "もっと ヒントが ほしかったら、また ばんごうを ゆびで おしえてね。", "face": "wink"},
+				{"text": "だいじょうぶなら、グー！", "face": "happy"}])
+	speech.say([{"text": message, "face": "happy"}])  # after "3ばん だね！" if it is still being said
+	changed.emit()
+
+## The step ends: back to the summary with its grown-up prompt (#333's gestures read there).
+## `say`: "わかった！…" (not when a key goes on at once).
+func _finish_hints(say := true) -> void:
+	if state not in HINT_STATES:
+		return
+	services.cancel_hint()
+	hint_text = ""
+	hint_note = ""
+	_set_state("REVIEW_SUMMARY")
+	if _hint_saved.size() == 2 and str(_hint_saved[0]) != "":
+		_ask_adult(str(_hint_saved[0]), str(_hint_saved[1]))  # #333: a shape already up waits for a change
+	_hint_saved = []
+	if say:
+		_say([{"text": "わかった！ 書きなおしたら、もういちど 見せてね。", "face": "wink"}])
+	changed.emit()
+
+## Keys while the finger hint runs (the staff, tests): 1..5 pick that problem, Enter goes on as at
+## the summary (つぎへ), R reads the sheet again. True when used.
+func _hint_key(keycode: int) -> bool:
+	if keycode >= KEY_1 and keycode <= KEY_5:
+		if state == "HINT_ASK":
+			pick_hint(keycode - KEY_0)
+		return true
+	if keycode == keys.advance or keycode == KEY_KP_ENTER:
+		_finish_hints(false)
+		advance()
+		return true
+	if keycode == keys.rescan:
+		_finish_hints(false)
+		_pending_adult = ""
+		adult_prompt = ""
+		_scan(true)
+		return true
+	return false
 
 ## study_mode.cleanup.enabled (#110: off = no tidy-up, the game unlocks after the celebration).
 static func cleanup_enabled() -> bool:
@@ -1183,7 +1350,9 @@ func handle_key(keycode: int) -> bool:
 		return true
 	if not active():
 		return false
-	if state == "POWERUP_SELECT" and keycode in [KEY_1, KEY_2, KEY_3]:
+	if state in HINT_STATES and _hint_key(keycode):
+		pass  # #334: the finger hint's keys (1..5 pick, Enter / R end it)
+	elif state == "POWERUP_SELECT" and keycode in [KEY_1, KEY_2, KEY_3]:
 		pass  # the roulette picks it (the fill keys do nothing here)
 	elif state == "REVIEW_SUMMARY" and keycode == keys.rescan:
 		rescan()
@@ -1324,6 +1493,8 @@ func debug_skip() -> void:
 			_summary()
 		"REVIEW_SUMMARY":
 			_calc_reward()
+		"HINT_ASK", "HINT_THINKING", "HINT_GIVING":
+			_finish_hints(false)
 		"REWARD_CALCULATING":
 			_reveal_reward()
 		"REWARD_REVEAL":

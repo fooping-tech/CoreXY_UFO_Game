@@ -87,6 +87,8 @@ var study_local := false
 ## #233: the backend can listen (push to talk + Whisper) and talk with the tutor (hello's study_voice)
 var voice_available := false
 var voice_problem := ""
+## #334: the backend can ask the tutor for a hint on one problem (hello's homework_hint)
+var hint_available := false
 ## where the プリント tab keeps the overview camera's turn and region (SheetFrame; "" = none: tests)
 var sheet_settings_path := SheetFrame.SETTINGS_PATH
 ## The backend's camera calibration: {points, camera, usable, problem, rms_mm, max_mm, h_inv, ...}
@@ -317,6 +319,7 @@ func _on_message(msg: Dictionary) -> void:
 		voice_available = bool(data.get("study_voice", false))
 		voice_problem = str(data.get("study_voice_problem", ""))
 		speech_available = bool(data.get("homework_speech", false))
+		hint_available = bool(data.get("homework_hint", false))
 		hello_seen = true
 		if state != "connecting" and state != "running":
 			return

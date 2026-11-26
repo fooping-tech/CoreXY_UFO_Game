@@ -384,6 +384,7 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                 "study_voice": self.homework is not None and self.homework.voice_available,
                 "study_voice_problem": self.homework.voice_problem() if self.homework is not None else "",
                 "homework_speech": self.homework is not None and self.homework.speech_available,
+                "homework_hint": self.homework is not None and self.homework.hint_available,
                 "study_profile": self.study_profile}}))
             await ws.send(json.dumps(self.robot.snapshot().to_message()))
             queue: asyncio.Queue = asyncio.Queue()
@@ -517,6 +518,14 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
                                          target=int(target) if isinstance(target, (int, float)) and target else None,
                                          history=data.get("history") if isinstance(data.get("history"), list) else [],
                                          worksheet_id=str(data.get("worksheet_id", "")))
+            elif msg["type"] == "homework_hint":  # #334: the problem shown with the fingers -> the tutor's hint
+                problem = data.get("problem")
+                await self.homework.hint(rid, str(data.get("image_jpeg_base64", "")),
+                                         int(problem) if isinstance(problem, (int, float)) else 0,
+                                         lambda reply: self._study_send(ws, reply),
+                                         history=data.get("history") if isinstance(data.get("history"), list) else [],
+                                         worksheet_id=str(data.get("worksheet_id", "")),
+                                         grade_label=str(data.get("grade_label", "")))
             elif msg["type"] == "homework_say":
                 await self.homework.say(rid, str(data.get("text", "")), lambda reply: self._study_send(ws, reply))
             elif msg["type"] == "homework_stop":

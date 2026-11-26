@@ -11,6 +11,7 @@ const SUITES := {
 	"rope_robot": preload("res://tests/test_rope_robot.gd"),
 	"gesture": preload("res://tests/test_gesture.gd"),
 	"study": preload("res://tests/test_study.gd"),
+	"study_hint": preload("res://tests/test_study_hint.gd"),
 	"ui": preload("res://tests/test_ui.gd"),
 	"game_mode": preload("res://tests/test_game_mode.gd"),
 	"game_mode_show": preload("res://tests/test_game_mode_show.gd"),
@@ -89,6 +90,9 @@ func _ready() -> void:
 	_s.study._test_study_reward_show(rs)
 	_s.study._test_study_voice_goes_to_look(rs)
 	_s.study._test_study_review_box_by_hand(rs)
+	_s.study_hint._test_finger_hint_logic()  # #334
+	_s.study_hint._test_finger_hint_story(rs)
+	_s.study_hint._test_finger_hint_request(rs)
 	_s.ui._test_title_screen(rs)
 	_s.ui._test_settings(rs)
 	_s.ui._test_calibration_tab(rs)

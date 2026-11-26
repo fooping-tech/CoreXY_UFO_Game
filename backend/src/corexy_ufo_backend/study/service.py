@@ -48,6 +48,8 @@ class StudyConfig:
     tutor_timeout_s: float = 20.0
     tutor_fail_limit: int = 2  # failures in a row before the tutor rests...
     tutor_cooldown_s: float = 120.0  # ...for this long (the worksheet's hints meanwhile)
+    # #334: a busy tutor (503) is asked again after each of these waits (docs/ufo_api_spec.md §3)
+    tutor_busy_retry_s: tuple = (5.0, 10.0, 20.0)
     sheet_timeout_s: float = 180.0  # POST /v1/sheet (#230): ~10 s a sheet, at least 120
     # #232: "local" = the study mode uses the local LLM server (study.tutor_url) only: the watch and the
     # locate with POST /v1/sheet, the explanation with the tutor; "cloud" = Jev + Claude / Codex as before
@@ -75,8 +77,19 @@ class StudyConfig:
                    tutor_timeout_s=max(float(data.get("tutor_timeout_s", 20.0)), 1.0),
                    tutor_fail_limit=max(int(data.get("tutor_fail_limit", 2)), 1),
                    tutor_cooldown_s=max(float(data.get("tutor_cooldown_s", 120.0)), 0.0),
+                   tutor_busy_retry_s=_waits(data.get("tutor_busy_retry_s"), cls.tutor_busy_retry_s),
                    sheet_timeout_s=max(float(data.get("sheet_timeout_s", 180.0)), 120.0),
                    ai="cloud" if str(data.get("ai", "local")).strip().lower() == "cloud" else "local")
+
+
+def _waits(value: Any, default: tuple) -> tuple:
+    """A list of waits in seconds (each 0..60, at most 5 of them); anything else: the default."""
+    if not isinstance(value, (list, tuple)):
+        return default
+    try:
+        return tuple(min(max(float(v), 0.0), 60.0) for v in value)[:5]
+    except (TypeError, ValueError):
+        return default
 
 
 PROVIDERS = ("claude", "codex", "tutor")
@@ -122,7 +135,8 @@ def make_adapter(config: StudyConfig, provider: str | None = None) -> StudyAdapt
         token, cafile = _tutor_access(config, StudyAdapterError)
         return TutorStudyAdapter(config.tutor_url, token, grade=config.tutor_grade, cafile=cafile,
                                  focus_calibration=config.focus_calibration, timeout_s=config.tutor_timeout_s,
-                                 fail_limit=config.tutor_fail_limit, cooldown_s=config.tutor_cooldown_s)
+                                 fail_limit=config.tutor_fail_limit, cooldown_s=config.tutor_cooldown_s,
+                                 busy_retry_s=config.tutor_busy_retry_s)
     config = replace(config, provider=provider)
     if config.provider == "claude":
         from .claude_adapter import ClaudeCodeStudyAdapter

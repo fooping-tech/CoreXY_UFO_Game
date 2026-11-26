@@ -215,8 +215,12 @@ class HomeworkService:
                  locate: LocateParams | None = None, speech: SpeechService | None = None,
                  worksheets: WorksheetCatalog | None = None,
                  sheet_factory: Callable[[], Any] | None = None, voice: Any = None,
-                 talk_factory: Callable[[], Any] | None = None) -> None:
+                 talk_factory: Callable[[], Any] | None = None,
+                 hint_factory: Callable[[], Any] | None = None) -> None:
         self.config = config
+        # #334: the finger hint after the answer check: the tutor (format "tutor", one problem)
+        self._hint_factory = hint_factory
+        self._hint_task: asyncio.Task | None = None
         # #233: the voice dialogue: push to talk (homework/voice.VoiceService) and the tutor (converse)
         self.voice = voice
         self._talk_factory = talk_factory
@@ -396,6 +400,67 @@ class HomeworkService:
         except Exception as e:
             await emit({"type": "homework_talk_error", "request_id": request_id,
                         "data": {"code": getattr(e, "kind", "tutor_error"), "message": str(e)}})
+
+    # ------------------------------------------------------------------ the finger hint (#334)
+    @property
+    def hint_available(self) -> bool:
+        return self._hint_factory is not None
+
+    async def hint(self, request_id: str, image_b64: str, problem: int, emit: Emit, *, history: list | None = None,
+                   worksheet_id: str = "", grade_label: str = "") -> None:
+        """A hint for the problem the child showed with the fingers after the answer check
+        (docs/ufo_api_spec.md §5: format "tutor", mode "normal", target_problem = `problem`,
+        history = the hints already given for it). -> homework_hint_result {problem, message,
+        hint_level, action, visual_effect, need_recapture, latency_ms} or homework_hint_error
+        {code, message} (the game then says the worksheet's own hint). One at a time; never the
+        answer, never the robot."""
+        if self._hint_factory is None:
+            raise ValueError("ヒントには学習支援 AI（study.tutor_url）が要ります")
+        if self._hint_task is not None and not self._hint_task.done():
+            raise ValueError("前のヒントを考えているところです")
+        if not request_id:
+            raise ValueError("request_id is required")
+        if not isinstance(problem, int) or not 1 <= problem <= 30:
+            raise ValueError("問題の番号は 1〜30 です")
+        image = decode_jpeg(image_b64, self.config.max_image_bytes)
+        from ..study.tutor_adapter import grade_in_prompt
+        label = grade_label
+        answers: list[str] = []
+        if worksheet_id:
+            ws = self.worksheet(worksheet_id)
+            label = label or str(ws.get("grade_label", ""))
+            if not self.study_local:
+                answers = [str(p.get("answer", "")) for p in ws.get("problems", []) if p.get("answer") not in (None, "")]
+        if self.study_local:  # #287: a real print: its own answers as read
+            answers = list(self.read_answers)
+        grade = grade_in_prompt(f"{label}の宿題プリント", 3) if label else None
+        self._hint_task = asyncio.create_task(
+            self._hint(request_id, image, problem, list(history or []), grade, answers, emit))
+
+    async def _hint(self, request_id: str, image: bytes, problem: int, history: list, grade: int | None,
+                    answers: list[str], emit: Emit) -> None:
+        t0 = time.monotonic()
+        try:
+            adapter = self._hint_factory()  # type: ignore[misc]
+            res = await asyncio.wait_for(asyncio.to_thread(adapter.hint, image, problem, grade=grade, history=history,
+                                                           utterance=f"{problem}ばんが わからない", answers=answers),
+                                         self.config.explain_timeout_s)
+            if res.get("notes"):
+                log.info("hint: the server's notes %s", res.get("notes"))
+            await emit({"type": "homework_hint_result", "request_id": request_id, "data": {
+                "problem": problem, "message": res["message"], "hint_level": res.get("hint_level", 0),
+                "action": res.get("action", ""), "visual_effect": res.get("visual_effect", ""),
+                "need_recapture": bool(res.get("need_recapture", False)), "source": "tutor",
+                "latency_ms": round((time.monotonic() - t0) * 1000)}})
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            await emit({"type": "homework_hint_error", "request_id": request_id,
+                        "data": {"problem": problem, "code": "timeout", "message": "ヒントが まにあいませんでした"}})
+        except Exception as e:
+            log.info("hint: the tutor failed (%s): the worksheet's hints", getattr(e, "kind", type(e).__name__))
+            await emit({"type": "homework_hint_error", "request_id": request_id,
+                        "data": {"problem": problem, "code": getattr(e, "kind", "tutor_error"), "message": str(e)}})
 
     def worksheet(self, worksheet_id: str) -> dict:
         if not worksheet_id:
@@ -928,7 +993,7 @@ class HomeworkService:
             await self.stop(session_id)
         if self.voice is not None:
             self.voice.cancel()
-        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, self._talk_task, self._warm_task,
+        tasks = [t for t in (self._advice_task, self._locate_task, self._explain_task, self._talk_task, self._warm_task, self._hint_task,
                              *self._speech_tasks)
                  if t is not None and not t.done()]
         for t in tasks:

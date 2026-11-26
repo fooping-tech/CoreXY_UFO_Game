@@ -254,6 +254,8 @@
     "tutor_timeout_s": 20.0,
     "tutor_fail_limit": 2,
     "tutor_cooldown_s": 120.0,
+    "tutor_busy_retry_s": [5.0, 10.0, 20.0],
+    "_tutor_hint_note": "#334: the study mode's finger hint (study_mode.finger_hint) asks the tutor (POST /v1/chat/completions, format tutor, mode normal, target_problem = the number shown, history = the hints given for it) through homework_hint. A busy tutor (503) is asked again after each of tutor_busy_retry_s; 500 once more; 401 / 403 / 429 never again. Any failure: the worksheet's own hints.",
     "sheet_camera_size": [1280, 960],
     "sheet_settle": {"warmup_s": 2.0, "still_s": 1.0, "move_diff": 0.03, "same_diff": 0.012, "dark_level": 0.06, "sample_hz": 4.0},
     "_sheet_send_note": "#298: how the overview frame goes to the worksheet reader (POST /v1/sheet, the server's hand-off §3.1 for a fixed camera). The whole frame goes, only turned upright (the プリント tab's 向き), not shrunk (long side up to 2000 px), JPEG quality >= 90, with roi = the プリント tab's 読む範囲 (0..1000 of that image): the server cuts it out itself, one request (no paper finding or zoomed second look). Without a 読む範囲 the frame is read as before (#252). sheet_camera_size: the overview camera is asked for this size while the study mode runs (C270: 1280x960; 4:3; without it macOS may give 1280x720), and given its own size back when the study mode ends (the gesture reads the same camera at 640x480 in the backend); [] = never asked. sheet_settle: a frame goes only when the camera has given frames for warmup_s, the picture is not dark (mean brightness >= dark_level) and has not moved (mean change of a 32x24 grey copy > move_diff) for still_s; the watch sends nothing while the picture is the one sent last (change < same_diff) after a good reading. The answer check and HELP wait for that at most a few seconds, then send anyway. A hand held still is not seen. Thresholds not yet tuned with the real C270.",
@@ -666,6 +668,7 @@
   },
   "study_mode": {
       "check_on_found": true,
+      "finger_hint": {"enabled": true, "hold_ms": 1000, "ask_s": 30.0, "_note": "#334: after the answer check's summary (REVIEW_SUMMARY, once a story, when some problem was read) UFOくん asks for the number of a problem not understood, shown with the fingers to the hand camera (the backend's hand_control fingers: 1..5 with one hand; a thumbs-up is never a number). A count held hold_ms picks it; the tutor (homework_hint) gives a hint, the same number again a stronger one (history); the worksheet's hints when the tutor fails. A fist (グー) held, no hand for ask_s, Enter (つぎへ) or R (もういちど よむ) end it. Nothing moves the robot. Not yet checked with the real hand camera."},
       "dialog": {"needs_thumb": true, "thumb_s": 3.0, "_note": "#281: the voice dialogue (V / the microphone button) needs the dialogue mode: a thumbs-up held thumb_s while waiting for the print (then the homework time as before #281: STUDYING, the check when the problems are written) or at the answer check's summary. needs_thumb false = talking as before (no thumbs-up). check_on_found: the print found goes straight to the answer check (without the dialogue mode)."},
     "enabled": true,
     "autostart": false,

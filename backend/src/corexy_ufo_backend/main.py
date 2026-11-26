@@ -211,7 +211,10 @@ async def run(args: argparse.Namespace) -> int:
                                locate=LocateParams.from_raw(cfg.raw),
                                speech=SpeechService(SpeechConfig.from_raw(cfg.raw)),
                                worksheets=worksheets, sheet_factory=sheet_factory,
-                               voice=voice, talk_factory=talk_factory) if (hw_cfg.enabled or study_mode_on) else None
+                               voice=voice, talk_factory=talk_factory,
+                               # #334: the finger hint after the answer check (the tutor, one problem)
+                               hint_factory=(lambda: make_adapter(study_cfg, "tutor")) if explain_provider == "tutor" else None,
+                               ) if (hw_cfg.enabled or study_mode_on) else None
     if homework is not None:
         log.info("homework watch enabled (Jev; key from the environment or %s)", hw_cfg.env_path)
     # the peripherals' hub (#108): its auto-detect never tries the robot's (Core2) ports

@@ -94,6 +94,8 @@ var pinch_ratio := 0.0
 var pinch_finger := ""  # "index" / "middle" / "ring" while pinching
 var palm := ""  # "up" / "down" / "side" from the backend
 var pose := ""  # "fist" / "thumb" / "peace" / "point" / "open" / "other" from the backend
+## #334: the fingers out, 0..5, from the backend (-1 = no hand / unclear; an older backend: from the pose)
+var fingers := -1
 ## Where the index finger points (image axes, unit; zero when unknown) and its
 ## length over the hand size (short: pointing at the camera), from the backend.
 var point_dir := Vector2.ZERO
@@ -223,11 +225,20 @@ func on_event(ev: Dictionary, recv_ms: float) -> bool:
 	if pinch and pinch_finger == "":
 		pinch_finger = "index"  # older backends / the simulator only know the index pinch
 	pose = str(ev.get("pose", "")) if detected else ""
+	fingers = fingers_of(ev) if detected else -1
 	palm = str(ev.get("palm", "")) if detected else ""
 	point_dir = Vector2(float(ev.get("point_dx", 0.0)), float(ev.get("point_dy", 0.0))) if detected else Vector2.ZERO
 	point_len = float(ev.get("point_len", 0.0)) if detected else 0.0
 	thumb_dir = Vector2(float(ev.get("thumb_dx", 0.0)), float(ev.get("thumb_dy", 0.0))) if detected else Vector2.ZERO
 	return true
+
+## #334: the finger count of a hand event (-1 = unclear). A backend without `fingers` (before #334):
+## the poses that name a count (the index; peace; three), else unclear.
+static func fingers_of(ev: Dictionary) -> int:
+	if ev.has("fingers"):
+		var n := int(ev.get("fingers", -1))
+		return n if n >= 0 and n <= 5 else -1
+	return {"point": 1, "peace": 2, "three": 3}.get(str(ev.get("pose", "")), -1)
 
 ## 0..1 of the claw-pose hold before the claw moves (0 when none is building up).
 func claw_progress(now_ms: float) -> float:
