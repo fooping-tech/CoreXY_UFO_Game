@@ -214,6 +214,8 @@
         {"key": "devicehub.port", "apply": "backend", "label": "ハブのシリアルポート（auto / mock / ポート名）", "type": "text", "max_length": 200,
          "note": "auto はロボット（Core2）のポートを外して探す。mock は実機なしの模擬ハブ"},
         {"key": "devicehub.system_id", "apply": "backend", "label": "ハブのシステム番号", "type": "number", "min": 1, "max": 2, "step": 1},
+        {"key": "game_mode.mist.enabled", "apply": "now", "label": "ミスト（イルミネーションの霧）", "type": "bool",
+         "note": "当面オフ。霧を出すとサーボの通信が約 16 秒乱れ、その間に爪や Z を動かすとゲームが止まる（#316）。ハードウェアで直したらオン"},
         {"key": "backend.serial_port_2", "apply": "backend", "label": "シリアルポート 2 台目", "type": "text", "max_length": 200,
          "note": "つながっているほうを使う（両方なら 1 台目）。./start.sh --port が優先。ポート名は ./start.sh --backend-only -- --list-ports で見る。校正値はここでは変えられない"}
       ]}
@@ -361,12 +363,12 @@
     "devices": "auto",
     "lights": true,
     "mist": {
-      "enabled": true,
-      "capsule_s": 0,
+      "enabled": false,
+      "capsule_s": 3,
       "result_s": 8,
       "study_s": 6,
       "defer_max_s": 15,
-      "_capsule_note": "#316: capsule_s 0 for now: one mist floods the servos' reply line for about 15 s (measured 2026-11-26: the Illumination reported the mist off after 3 s, the servos answered again about 12 s later), longer than any wait; the next catch then stopped. Back to 3 once the mist's noise is fixed in hardware.",
+      "_enabled_note": "#318: off for now (the settings screen, 実機: ミスト). One mist floods the servos' reply line for about 16 s (measured 2026-11-26: the Illumination reports the mist off after 3 s / 8 s, the servos answer again about 12 s later), longer than the firmware's 5 s wait: a claw or Z move in that time (the next game's first claw open after the result's mist) stops the game. Turn it on once the mist's noise is fixed in hardware; the capsule / result / study seconds below then apply as before.",
       "_defer_note": "#316: the mist module's drive floods the servos' reply line (claw and drum share it; a move under the mist lost its feedback). A mist asked for while a servo moves (the easy mode's claw / Z steps, a manual claw or Z move) waits until none does; one that waited longer than defer_max_s is dropped.",
       "_note": "The Illumination's mist module: continuous mist for capsule_s when a capsule is taken in (the portal opens), for result_s when the result's score settles (FINAL SCORE, or the show skipped), and for study_s when the study mode's reward is shown (0 = none for that one). Sent and forgotten like the lights; the Illumination ends it by itself, and at STOP_ALL or a lost hub link."
     },
