@@ -40,11 +40,20 @@ const GOLD := Color("ffb020")
 const CYAN := Color("3ff0ff")
 const MAGENTA := Color("ff4fd8")
 const UFO_FACES_SHEET := "res://assets/ufo/ufo_expressions.png"
-const TITLE_SCALES := {"YOUR SCORE": 10.0, "BONUS!": 14.0, "FINAL SCORE!": 8.0}
+const TITLE_SCALES := {"YOUR SCORE": 10.0, "BONUS!": 14.0, "FINAL SCORE!": 8.0, "GET!": 16.0, "COLOR BONUS!": 8.0}
+## #323: the capsules on a bonus's line pop out in a row here (under its points), and after
+## the show all the round's capsules stand in a row here (over the round's numbers)
+const ROW_Y := 932.0
+const ROW_END_Y := 918.0
+const ROW_W := 620.0
+## the capsules' radius in a row, at most (fewer, bigger)
+const ROW_R := 34.0
+const ROW_END_R := 22.0
 
 var seq: ResultShow
 var _sub: Label
 var _stats: Label
+var _say: Label
 var _faults: Label
 var _keys: Label
 var _faces: Texture2D
@@ -57,6 +66,7 @@ func setup(c: GameModeController) -> void:
 	particles.z_index = 1  # over the dimmed field and the rays, under the letters
 	_sub = _label(30, Color.WHITE, SUB_Y, 44.0)
 	_stats = _label(22, Color("c8d6ff"), 980.0, 34.0)
+	_say = _label(28, YELLOW, 980.0, 40.0)  # #323: a colour set's line for the children (where the numbers go after)
 	_keys = _label(24, Color.WHITE, 1030.0, 38.0)
 	_faults = _label(20, Color("ff6b6b"), 1080.0, 64.0)
 	_faults.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
@@ -99,6 +109,28 @@ func item_text() -> String:
 	if it.is_empty():
 		return ""
 	return "%s    %d %s × %d" % [it.label, int(it.count), it.unit, int(it.each)]
+
+## #323: the line for the children under a colour set ("あか と みどり で スイカ！").
+func say_text() -> String:
+	return str(seq.item().get("say", "")) if seq.item_showing() else ""
+
+## #323: where the `i`th of `n` capsules of a row stands, and how big they are: as wide
+## as ROW_W at most, never bigger than `r_max`. Whole dots.
+static func row_at(i: int, n: int, y: float, r_max := ROW_R) -> Vector2:
+	var step := minf(r_max * 2.6, ROW_W / float(maxi(n, 1)))
+	return Vector2(SCREEN.x * 0.5 + (float(i) - float(n - 1) * 0.5) * step, y).snapped(Vector2(2, 2))
+
+static func row_r(n: int, r_max := ROW_R) -> float:
+	return clampf(snappedf(ROW_W / float(maxi(n, 1)) / 2.6, 2.0), 8.0, r_max)
+
+## #323: every capsule of the round, kind by kind (the plain ones first), for the row after the show.
+func round_kinds() -> Array:
+	var by: Dictionary = seq.data.get("kinds", {}) if seq.data.get("kinds") is Dictionary else {}
+	var out: Array = []
+	for k in CapsuleKinds.KINDS:
+		for i in int(by.get(k, 0)):
+			out.append(k)
+	return out.slice(0, 24)
 
 func stats_text() -> String:
 	var d := seq.data
@@ -144,6 +176,8 @@ func _process(dt: float) -> void:
 		_sub.modulate.a = 1.0 - seq.fly_k()
 	_faults.text = faults_text() if m == "result" else ""
 	_stats.text = stats_text() if m == "result" and seq.finale() else ""
+	_say.text = say_text() if m == "result" else ""
+	_say.modulate.a = 1.0 - seq.fly_k()
 	_keys.text = keys_text()
 	_keys.modulate.a = (0.75 + 0.25 * sin(_t * 5.0)) if seq.settled() else 0.6
 
@@ -183,6 +217,7 @@ func _draw_front() -> void:
 		_draw_ufo()
 		_draw_title()
 		_draw_number()
+		_draw_capsules()
 		_draw_bonus()
 
 ## "TIME UP!" slams in, on two lines as big as the screen is wide: bigger for a moment,
@@ -237,6 +272,14 @@ func _draw_title() -> void:
 		if ctl.effects:
 			dy = -44.0 * exp(-9.0 * lt) * cos(lt * 16.0)
 		match text:
+			"GET!":  # #323: in the colour of the capsules being got
+				var kc: Color = CapsuleKinds.COLORS.get(str(seq.item_kinds()[0]) if not seq.item_kinds().is_empty() else "", CYAN)
+				col = YELLOW if int(_t * 8.0 + i) % 2 == 0 else kc
+			"COLOR BONUS!":  # #323: every colour the capsules have, running along the letters
+				var cs: Array = CapsuleKinds.COLORS.values()
+				col = cs[(i + int(_t * 8.0)) % cs.size()] if not cs.is_empty() else YELLOW
+				if ctl.effects:
+					dy += sin(_t * 7.0 + i * 0.8) * 4.0
 			"BONUS!":
 				col = YELLOW if int(_t * 8.0 + i) % 2 == 0 else MAGENTA
 			"FINAL SCORE!":
@@ -267,6 +310,32 @@ func _draw_number() -> void:
 	if not hot:
 		PixelText.draw_rows(_front, text, pos, sc, Color(1, 1, 0.86), 0, 2)
 		PixelText.draw_rows(_front, text, pos, sc, GOLD, 6, 7)
+
+## #323: the capsules on a bonus's line pop out one after another under its points (each
+## with a bounce), then fly into the number with the points. After the show, all the
+## round's capsules stand in a row over its numbers.
+func _draw_capsules() -> void:
+	if seq.finale():
+		var all := round_kinds()
+		var re := row_r(all.size(), ROW_END_R)
+		for i in all.size():
+			var bob := sin(_t * 4.0 + i * 0.7) * 3.0 if ctl.effects else 0.0
+			PracticeShow.draw_capsule(_front, row_at(i, all.size(), ROW_END_Y + bob, ROW_END_R), re, str(all[i]), _t + i * 0.13)
+		return
+	if not seq.item_showing():
+		return
+	var ks := seq.item_kinds()
+	var n := ks.size()
+	var r := row_r(n)
+	var e := seq.fly_k() * seq.fly_k()
+	for i in mini(seq.popped, n):
+		var age := seq.t - seq.pop_at(i, n) if seq.stage == "announce" else 1.0
+		var k := 1.0
+		if ctl.effects:
+			k = clampf(age / 0.08, 0.2, 1.0) * (1.0 + 0.45 * exp(-8.0 * maxf(age, 0.0)) * cos(maxf(age, 0.0) * 16.0))
+		var p := row_at(i, n, ROW_Y).lerp(CENTRE, e).snapped(Vector2(2, 2))
+		var rr := maxf(snappedf(r * k * lerpf(1.0, 0.3, e), 2.0), 4.0)
+		PracticeShow.draw_capsule(_front, p, rr, str(ks[i]), _t + i * 0.13)
 
 ## A bonus's points: they jump out under the number, then fly into it, shrinking.
 func _draw_bonus() -> void:

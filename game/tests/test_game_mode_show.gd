@@ -716,10 +716,10 @@ func _test_game_mode_result_logic() -> void:
 		last = show.shown
 		if titles.is_empty() or titles[-1] != show.title():
 			titles.append(show.title())
-	var order: Array = show.log.filter(func(n): return n != "count" and n != "confetti")
+	var order: Array = show.log.filter(func(n): return n != "count" and n != "confetti" and n != "pop")  # (#323: the capsules' pops have their own test)
 	var locks_ok := at_lock.values().all(func(v): return int(round(v[0])) == int(v[1]))
 	_ok(flashed and order == ["reveal", "score_lock", "bonus_show", "bonus_hit", "bonus_lock", "bonus_show", "bonus_hit", "bonus_lock",
-		"bonus_show", "bonus_hit", "bonus_lock", "wind_up", "final", "settled"] and titles == ["YOUR SCORE", "BONUS!", "FINAL SCORE!"]
+		"bonus_show", "bonus_hit", "bonus_lock", "wind_up", "final", "settled"] and titles == ["YOUR SCORE", "GET!", "BONUS!", "FINAL SCORE!"]
 		and secs > 8.0 and secs < 20.0, "result show: TIME UP, the score, each bonus announced then added, FINAL SCORE, in one timeline",
 		"%s %.1f s %s" % [str(order), secs, str(titles)])
 	_ok(mono and not over and locks_ok and at_lock.size() == 4 and int(round(show.shown)) == 14290 and show.banked == 14290
@@ -773,6 +773,155 @@ func _test_game_mode_result_logic() -> void:
 		and GameModeResultScreen.number_scale(5) >= 16.0 and GameModeResultScreen.number_scale(12) < GameModeResultScreen.number_scale(6)
 		and PixelText.height(GameModeResultScreen.number_scale(1, 1.72)) <= 300.0,
 		"result screen: the number is huge and never wider than the screen, however many digits (its dots are whole canvas dots)")
+
+## The capsules got, kind by kind, and the colour sets (#323), with no game: the sums, the
+## sets each round makes, the kinds the game does not have, the pops in the timeline.
+func _test_result_capsule_bonus() -> void:
+	var cols := ResultBonus.colours()
+	var finished: Array = [{"kind": "fire"}, {"kind": "fire", "late": true}, {"kind": "water"}, {"kind": "nonsense"}, {}]
+	var kc := ResultBonus.kind_counts(finished)
+	_ok(kc == {"fire": 1, "water": 1, "normal": 2} and ResultBonus.valid_capsules(finished) == 4 and not cols.has("normal")
+		and cols.size() == CapsuleKinds.KINDS.size() - 1,
+		"capsule bonus #323: the capsules are counted kind by kind (a late one does not count, an unknown kind is a plain one); the colours are CapsuleKinds' kinds but normal",
+		str(kc))
+	# fire x2, water, green, one plain
+	var b := ResultBonus.compute(1000, 5, 0, 0, {}, {"fire": 2, "water": 1, "green": 1, "normal": 1})
+	var ids: Array = b.items.map(func(it): return it.id)
+	var want := ["capsule", "capsule_fire", "capsule_water", "capsule_green", "pair", "watermelon", "steam", "forest", "complete"]
+	if cols.size() > 3:
+		want.erase("complete")  # (more colours than these three: not every colour)
+	_ok(ids == want and b.capsule_bonus == 100 + 4 * 200 and b.capsules == 5
+		and b.colour_bonus == 300 + 500 * 3 + (2000 if want.has("complete") else 0) and b.total_bonus == b.capsule_bonus + b.colour_bonus
+		and b.final_score == 1000 + b.total_bonus and b.items[1].count == 2 and b.items[1].kinds == ["fire", "fire"]
+		and b.items[1].label == CapsuleKinds.display_name("fire") and b.items[1].title == "GET!" and b.items[4].title == "COLOR BONUS!"
+		and b.items[4].kinds == ["fire", "fire"] and not ids.has("colourful"),
+		"capsule bonus #323: each kind announced with its count (plain x100, colour x200), then the sets: a pair, the named pairs of colours, every colour",
+		str(ids))
+	# one of each: all different (colourful)
+	var one := {}
+	for k in ["fire", "water", "green"]:
+		one[k] = 1
+	var c3 := ResultBonus.compute(0, 3, 0, 0, {}, one)
+	var ids3: Array = c3.items.map(func(it): return it.id)
+	_ok(ids3.has("colourful") and not ids3.has("pair") and ids3.has("watermelon") and c3.items.filter(func(it): return it.id == "colourful")[0].kinds.size() == 3,
+		"capsule bonus #323: three capsules all of different colours is the colourful bonus", str(ids3))
+	# three of one colour, and two pairs
+	var tri := ResultBonus.compute(0, 7, 0, 0, {}, {"fire": 3, "water": 2, "green": 2})
+	var tri_ids: Array = tri.items.map(func(it): return it.id)
+	var pair: Dictionary = tri.items.filter(func(it): return it.id == "pair")[0]
+	_ok(tri_ids.has("triple") and pair.count == 2 and pair.points == 600 and pair.kinds == ["water", "water", "green", "green"]
+		and not tri_ids.has("colourful") and tri.items.filter(func(it): return it.id == "triple")[0].kinds.size() == 3,
+		"capsule bonus #323: three of a colour is the triple bonus, two of a colour a pair (each pair counts); repeats are not colourful", str(tri_ids))
+	# every colour the game has (whatever CapsuleKinds defines), and the named sets only of kinds it has
+	var every := {}
+	for k in cols:
+		every[k] = 1
+	var all := ResultBonus.compute(0, cols.size(), 0, 0, {}, every)
+	var all_ids: Array = all.items.map(func(it): return it.id)
+	var only_known := true
+	for it in all.items:
+		only_known = only_known and (it.kinds as Array).all(func(k): return k in CapsuleKinds.KINDS)
+	var sets_ok := true
+	for st in ResultBonus.SETS:
+		sets_ok = sets_ok and all_ids.has(st.id) == (st.kinds as Array).all(func(k): return k in cols)
+	_ok(all_ids.has("complete") and all_ids.has("colourful") == (cols.size() >= ResultBonus.COLOURFUL_MIN) and only_known and sets_ok
+		and all_ids.has("storm") == cols.has("thunder") and all_ids.has("signal") == cols.has("thunder"),
+		"capsule bonus #323: one of every colour CapsuleKinds has is the complete bonus; a named set needing a kind the game lacks is never made",
+		str(all_ids))
+	# the points are config values; 0 leaves one out; nothing coloured, no set
+	var tuned := ResultBonus.compute(0, 2, 0, 0, {"colour_each": 7, "colour_sets": {"pair": 0, "complete": 9}}, {"fire": 2})
+	var plain := ResultBonus.compute(0, 4, 0, 0, {}, {"normal": 4})
+	_ok(tuned.capsule_bonus == 14 and tuned.colour_bonus == 0 and tuned.items.size() == 1 and plain.colour_bonus == 0
+		and plain.items.size() == 1 and plain.items[0].id == "capsule" and plain.capsule_bonus == 400,
+		"capsule bonus #323: the points are config values (0 = left out); plain capsules make no colour set")
+	# the timeline: the capsules of each line pop out one by one, inside its announcement
+	var show := ResultShow.new()
+	var pops: Array = []
+	var stage_at_pop: Array = []
+	show.cue.connect(func(name, d):
+		if name == "pop":
+			pops.append([show.item_index, int(d.i), str(d.kind)])
+			stage_at_pop.append(show.stage))
+	show.begin(b)
+	var titles: Array = []
+	var secs := 0.0
+	var last := 0.0
+	var mono := true
+	while not show.settled() and secs < 60.0:
+		show.advance(1.0 / 60.0)
+		secs += 1.0 / 60.0
+		mono = mono and show.shown >= last - 0.001
+		last = show.shown
+		if titles.is_empty() or titles[-1] != show.title():
+			titles.append(show.title())
+	var want_pops := 0
+	for it in b.items:
+		want_pops += (it.kinds as Array).size()
+	var in_order := true
+	for i in range(1, pops.size()):
+		if pops[i][0] == pops[i - 1][0]:
+			in_order = in_order and pops[i][1] == pops[i - 1][1] + 1
+	_ok(pops.size() == want_pops and stage_at_pop.all(func(st): return st == "announce") and in_order and pops[1][2] == "fire"
+		and titles.has("GET!") and titles.has("COLOR BONUS!") and mono and int(round(show.shown)) == b.final_score
+		and show.log.count("bonus_hit") == b.items.size(),
+		"capsule bonus #323: each line's capsules pop out one by one while it is announced (a cue each), GET! then COLOR BONUS!, and the number lands on the final score",
+		"%d/%d %s %s %.1f s" % [pops.size(), want_pops, str(titles), str(stage_at_pop.slice(0, 3)), secs])
+	for c in show.cue.get_connections():
+		show.cue.disconnect(c.callable)
+	# the rows fit the screen
+	var fits := true
+	for n in range(1, 25):
+		var r := GameModeResultScreen.row_r(n)
+		fits = fits and GameModeResultScreen.row_at(0, n, 0.0).x - r >= 0.0 and GameModeResultScreen.row_at(n - 1, n, 0.0).x + r <= GameModeResultScreen.SCREEN.x
+	_ok(fits, "capsule bonus #323: a row of capsules (up to 24) always fits the screen")
+
+## The capsules' bonuses in a round (#323): the kinds taken in are counted, announced with
+## their sounds, and nothing is sent to a device for it.
+func _test_result_capsule_bonus_game(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl := _gm_playing(game)
+	var hub := ctl.mock_hub
+	var show := ctl.result_show
+	var l: GameModeController.Lane = ctl.lanes["left"]
+	ctl.mock_kind = "fire"
+	for i in 2:
+		hub.mock_ball(GM_L)
+		_gm_step(ctl, ctl.absorb_s + ctl.drop_s + 0.05)
+		ctl.field.capsule_exited.emit(str(l.capsule.capsule_id), "center", Vector2(640, 660))
+		_gm_step(ctl, 5.0)
+	ctl.time_left = 0.05
+	_gm_step(ctl, 3.0)
+	var res: Dictionary = ctl.result
+	var ids: Array = res.get("items", []).map(func(it): return it.id)
+	var base := ctl.score.score
+	# what the Dials have heard once the result is reached: the show adds nothing to it
+	var sent := {}
+	for dev in [GM_L, GM_R]:
+		for cmd in ["SET_MODE", "ARM_RECEIVER", "DISARM_RECEIVER", "RELEASE_BALL", "STOP_ALL", "SET_DIAL_EFFECT"]:
+			sent["%d %s" % [dev, cmd]] = hub.count(dev, cmd)
+	var secs := 0.0
+	while not show.settled() and secs < 60.0:
+		_gm_step(ctl, 0.05)
+		secs += 0.05
+	_process_frame(ctl.result_screen)
+	var same := true
+	for key in sent.keys():
+		var parts: PackedStringArray = key.split(" ")
+		same = same and hub.count(int(parts[0]), parts[1]) == int(sent[key])
+	var row: Dictionary = ctl.trace.named("result")[-1]
+	_ok(ctl.phase == "RESULT" and res.kinds == {"fire": 2} and ids.has("capsule_fire") and ids.has("pair") and res.capsule_bonus == 400
+		and res.colour_bonus == 300 and res.final_score == base + res.total_bonus and ctl.score.score == base
+		and row.breakdown.kinds == {"fire": 2} and int(row.breakdown.colour_bonus) == 300,
+		"game mode result #323: the capsules taken in are counted by kind; their bonus and the pair are in the breakdown and the trace; the score while playing is unchanged",
+		"%s %s" % [str(res.get("kinds")), str(ids)])
+	var snd: Array = ctl.sounds.log
+	_ok(show.log.count("pop") == 4 and snd.has("capsule_pop") and snd.has("colour_bonus") and (snd.has("reveal_fire") or snd.has("reveal"))
+		and int(round(show.shown)) == res.final_score and ctl.result_screen.round_kinds() == ["fire", "fire"]
+		and ctl.result_screen.stats_text().contains("カプセル  2"),
+		"game mode result #323: each capsule pops out with its blip, the fire capsules with their own sound, the set with its run; after the show the round's capsules stand in a row",
+		"%s %s" % [str(show.log.filter(func(n): return n != "count" and n != "confetti")), str(snd.slice(-12))])
+	_ok(same, "game mode result #323: the capsules' announcement sends nothing to the Dials")
+	_gm_free(game, rs)
 
 ## The round's end in the game (#153): 0 s -> SETTLING -> RESULT, the breakdown fixed once,
 ## the show and its keys, a new round clean, no command to a device because of the show.

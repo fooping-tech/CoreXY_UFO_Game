@@ -13,6 +13,9 @@ extends RefCounted
 ## Stages: off -> intro -> count -> hold -> (announce -> absorb -> bonus_count -> bonus_hold)
 ## per bonus -> wind_up -> final -> settled.
 ##
+## #323: a bonus with capsules on its line (the capsules got, kind by kind; a colour set)
+## brings them out one by one while it is announced: a "pop" cue each, in this timeline.
+##
 ## Pure (no nodes): the tests drive advance() directly.
 
 signal cue(name: String, data: Dictionary)
@@ -49,6 +52,8 @@ var punch := 0.0
 var flash := 0.0
 ## seconds since the stage's title came up (the letters arrive one after another)
 var title_t := 0.0
+## the capsules of the bonus being announced that have popped out so far (#323)
+var popped := 0
 ## every cue emitted, newest last (tests)
 var log: Array[String] = []
 var _from := 0.0
@@ -70,6 +75,7 @@ func reset() -> void:
 	shown = 0.0
 	banked = 0
 	item_index = -1
+	popped = 0
 	punch = 0.0
 	flash = 0.0
 	title_t = 0.0
@@ -139,10 +145,21 @@ func title() -> String:
 		"off":
 			return ""
 		"announce", "absorb", "bonus_count", "bonus_hold":
-			return "BONUS!"
+			return str(item().get("title", "BONUS!"))  # #323: GET! for the capsules, COLOR BONUS! for a set
 		"wind_up", "final", "settled":
 			return "FINAL SCORE!"
 	return "YOUR SCORE"
+
+## The capsules drawn on the line of the bonus being announced (#323; [] = none).
+func item_kinds() -> Array:
+	return item().get("kinds", []) if item().get("kinds") is Array else []
+
+## When (seconds into the announcement) the `i`th of `n` capsules pops out: one after
+## another, all of them out a little before the stage ends.
+func pop_at(i: int, n: int) -> float:
+	var lead := minf(0.15, announce_s * 0.2)
+	var step := minf(0.16, maxf(announce_s - lead - 0.1, 0.0) / float(maxi(n, 1)))
+	return lead + step * float(i)
 
 ## 0 -> 1: how far the bonus's points have flown into the number (absorb).
 func fly_k() -> float:
@@ -198,6 +215,12 @@ func advance(dt: float) -> void:
 			if t >= hold_s:
 				_next_item()
 		"announce":
+			# #323: the capsules on the bonus's line pop out one after another; any left
+			# when the stage ends come out with its end (the timeline never waits for them)
+			var ks := item_kinds()
+			while popped < ks.size() and (t >= pop_at(popped, ks.size()) or t >= announce_s):
+				_emit("pop", {"i": popped, "n": ks.size(), "kind": str(ks[popped])})
+				popped += 1
 			if t >= announce_s:
 				_enter("absorb", false)
 		"absorb":
@@ -207,7 +230,8 @@ func advance(dt: float) -> void:
 				banked += int(it.get("points", 0))
 				punch = 1.0
 				flash = 0.55 * strength(int(it.get("points", 0)))
-				_emit("bonus_hit", {"id": it.get("id", ""), "points": int(it.get("points", 0)), "strength": strength(int(it.get("points", 0)))})
+				_emit("bonus_hit", {"id": it.get("id", ""), "points": int(it.get("points", 0)), "strength": strength(int(it.get("points", 0))),
+					"group": str(it.get("group", "play")), "kinds": item_kinds()})
 				_enter("bonus_count", false)
 		"bonus_count":
 			_run_number(dt, bonus_count_s)
@@ -252,9 +276,11 @@ func _next_item() -> void:
 	item_index += 1
 	if item_index < items().size():
 		var it := item()
+		popped = 0
 		_enter("announce")
 		title_t = 0.0  # "BONUS!" jumps out again for each one
-		_emit("bonus_show", {"id": it.get("id", ""), "points": int(it.get("points", 0)), "strength": strength(int(it.get("points", 0)))})
+		_emit("bonus_show", {"id": it.get("id", ""), "points": int(it.get("points", 0)), "strength": strength(int(it.get("points", 0))),
+			"group": str(it.get("group", "play")), "kinds": item_kinds()})
 	else:
 		_enter("wind_up")
 		_emit("wind_up", {})
