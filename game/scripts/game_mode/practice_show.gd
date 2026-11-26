@@ -5,7 +5,8 @@ extends Control
 ## time:
 ##
 ##   kind      the capsule that came in (its colour read by the arm camera), big, named
-##   colours   the kinds by colour: red / blue / green, each a picture and one line, and a "？"
+##   colours   the kinds by colour: red / blue / green / yellow / purple (#320), each a picture
+##             and one line, and a "？"
 ##             card: there are more to come (お楽しみに). The one that came in is lit.
 ##   switches  a plain board: three switches and three goals. The capsule hops over the
 ##             switches and lights them one by one: JACKPOT チャンス
@@ -33,6 +34,13 @@ const MAGENTA := Color("ff4fd8")
 const NORMAL_COLOR := Color("dfe6ff")
 ## the scenes in order: id, min_s, max_s
 const SCENES := [["kind", 3.0, 12.0], ["colours", 5.0, 18.0], ["switches", 4.5, 16.0], ["jackpot", 4.0, 16.0]]
+## the cards of the colours scene, top to bottom ("more": the "？" card)
+const CARDS := ["fire", "water", "green", "thunder", "dark", "more"]
+## where the cards stand (#320: six of them fit the board's 778 px)
+const CARD_TOP := 160.0
+const CARD_STEP := 100.0
+const CARD_H := 90.0
+const CARD_BALL := 56.0
 ## the plain board (design coordinates, inside RECT)
 const SWITCH_Y := 640.0
 const SWITCH_X := [200.0, 360.0, 520.0]
@@ -84,7 +92,7 @@ func _ready() -> void:
 		add_child(l)
 	_title.position.y = 24.0
 	_sub.position.y = 86.0
-	for k in ["fire", "water", "green", "more"]:
+	for k in CARDS:
 		var card := _card(k)
 		_cards.append(card)
 		add_child(card)
@@ -177,7 +185,7 @@ func _next() -> void:
 	_sub.position.y = _title.position.y + _title.get_combined_minimum_size().y + 4.0  # under the title, however it wraps
 	for i in _cards.size():
 		_cards[i].visible = scene == "colours"
-		var k: String = ["fire", "water", "green", "more"][i]
+		var k: String = CARDS[i]
 		(_cards[i] as Control).modulate = Color(1, 1, 1, 1) if (k == kind or kind == "normal" or k == "more") else Color(1, 1, 1, 0.55)
 
 ## The capsule on the board: from the top over the three switches, then into the centre goal.
@@ -282,8 +290,8 @@ func _card(k: String) -> Control:
 	sb.set_corner_radius_all(10)
 	sb.content_margin_left = 14
 	sb.content_margin_right = 14
-	sb.content_margin_top = 8
-	sb.content_margin_bottom = 8
+	sb.content_margin_top = 4
+	sb.content_margin_bottom = 4
 	card.add_theme_stylebox_override("panel", sb)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 16)
@@ -294,7 +302,7 @@ func _card(k: String) -> Control:
 		q.text = "？"
 		q.add_theme_font_size_override("font_size", 52)
 		q.add_theme_color_override("font_color", MAGENTA)
-		q.custom_minimum_size = Vector2(64, 64)
+		q.custom_minimum_size = Vector2(CARD_BALL, CARD_BALL)
 		q.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		q.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		ball = q
@@ -302,20 +310,20 @@ func _card(k: String) -> Control:
 		var dot := CapsuleDot.new()
 		dot.kind = k
 		_dots.append(dot)
-		dot.custom_minimum_size = Vector2(64, 64)
+		dot.custom_minimum_size = Vector2(CARD_BALL, CARD_BALL)
 		ball = dot
 	row.add_child(ball)
 	var words := VBoxContainer.new()
 	words.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(words)
-	var name := StudyHud.label("ほかにも いろんな カプセルが あるよ" if more else str(CapsuleKinds.NAMES.get(k, k)), 24, INK, 3)
-	var line := StudyHud.label("おたのしみに！" if more else str(CapsuleKinds.TRAITS.get(k, "")), 20, YELLOW if more else color_of(k).lerp(Color.WHITE, 0.4), 3)
+	var name := StudyHud.label("ほかにも いろんな カプセルが あるよ" if more else str(CapsuleKinds.NAMES.get(k, k)), 22, INK, 3)
+	var line := StudyHud.label("おたのしみに！" if more else str(CapsuleKinds.TRAITS.get(k, "")), 18, YELLOW if more else color_of(k).lerp(Color.WHITE, 0.4), 3)
 	for l in [name, line]:
 		l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		l.custom_minimum_size = Vector2(440, 0)
 		words.add_child(l)
-	card.position = Vector2(40, 170.0 + _cards.size() * 128.0)
-	card.size = Vector2(RECT.size.x - 80.0, 112)
+	card.position = Vector2(40, CARD_TOP + _cards.size() * CARD_STEP)
+	card.size = Vector2(RECT.size.x - 80.0, CARD_H)
 	card.visible = false
 	return card
 

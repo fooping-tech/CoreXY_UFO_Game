@@ -448,22 +448,48 @@
         "hit_k": 1.3,
         "goal_k": 1.3
       },
+      "thunder": {
+        "gravity_k": 0.95,
+        "bounce": 0.95,
+        "damp": 0.0,
+        "kick_k": 1.6,
+        "stay_k": 0.95,
+        "hit_k": 1.6,
+        "goal_k": 1.0
+      },
+      "dark": {
+        "gravity_k": 1.3,
+        "bounce": 0.2,
+        "damp": 0.15,
+        "kick_k": 0.85,
+        "stay_k": 1.2,
+        "hit_k": 1.0,
+        "goal_k": 2.5
+      },
       "read": {
         "roi": [
-          0.2,
-          0.15,
-          0.6,
-          0.7
+          0.47,
+          0.33,
+          0.12,
+          0.2
         ],
-        "min_sat": 0.45,
-        "min_val": 0.25,
-        "min_share": 0.05,
+        "min_sat": 0.3,
+        "min_val": 0.2,
+        "min_share": 0.2,
         "dominance": 1.6,
-        "sample_hz": 6,
+        "hues": {
+          "fire": [0.92, 0.05],
+          "thunder": [0.08, 0.2],
+          "green": [0.2, 0.5],
+          "water": [0.5, 0.68],
+          "dark": [0.68, 0.88]
+        },
+        "sample_hz": 10,
         "min_votes": 3,
-        "min_ratio": 0.6
+        "min_ratio": 0.6,
+        "lower_read_s": 2.0
       },
-      "_note": "#266 capsule kinds (docs/game_mode_spec.md §3.6). The arm camera (focus) is read while a capsule may hang in front of it (the easy mode: from CLOSE_CLAW to the end of the carry; by hand: all the time the Dials take one, the votes of memory_s seconds back), and the capsule taken into the portal becomes the colour most frames saw: red = fire (ファイヤーボールカプセル), blue = water (ウォーターボールカプセル), green = green (グリーンボールカプセル), nothing sure = normal. Per kind (times the field's value): gravity_k, damp (air), kick_k (bumpers/pops/slings), stay_k (time on the field), hit_k / goal_k (points); bounce is the capsule's own (< 0 = the field's). read: roi = [x, y, w, h] fractions of the frame; a pixel counts when saturation >= min_sat and value >= min_val; a frame is one colour when it covers min_share of the looked-at pixels and dominance times the next; the capsule's kind needs min_votes frames and min_ratio of the coloured ones; hues (0..1) may be overridden as {\"fire\": [0.93, 0.045], ...}. mock_kind: with no camera and mock Dials only (random / fire / water / green / normal). The thresholds are not measured on the real arm camera yet."
+      "_note": "#266 capsule kinds (docs/game_mode_spec.md §3.6). The capsule about to be caught becomes the colour most frames of the arm camera (focus) saw: red = fire (ファイヤーボールカプセル), blue = water (ウォーターボールカプセル), green = green (グリーンボールカプセル), yellow = thunder (サンダーボールカプセル, #320), purple = dark (ダークボールカプセル, #320), nothing sure = normal. #320, measured on the real crane (2026-11-26, three easy catches recorded): the claw comes down on what is at the middle of the arm camera; that capsule is clear only from up high (low down the exposure turns yellow white and the desk navy; once held it covers the lens and the white balance takes its colour; over the portal the capsule waiting in the Dial shows). So the easy mode reads while the claw opens at the top and for the first lower_read_s seconds of the way down, and keeps those votes until the capsule reaches the portal (a new catch starts them over); by hand the Dials take one all the time, the votes of memory_s seconds back. Per kind (times the field's value): gravity_k, damp (air), kick_k (bumpers/pops/slings), stay_k (time on the field), hit_k / goal_k (points); bounce is the capsule's own (< 0 = the field's). read: roi = [x, y, w, h] fractions of the frame (#320: one capsule wide at the top height, where the claw comes down); a pixel counts when saturation >= min_sat (#320: the yellow capsule is only 0.43-0.49 saturated, the desk at most 0.25) and value >= min_val; a frame is one colour when it covers min_share of the looked-at pixels and dominance times the next; the capsule's kind needs min_votes frames and min_ratio of the coloured ones; hues (0..1, #320 measured on the arm camera at the top height: red 0.95-0.99, yellow 0.145-0.175, green 0.40-0.45, blue 0.56-0.58, purple 0.72-0.77). mock_kind: with no camera and mock Dials only (random / fire / water / green / thunder / dark / normal). Not yet run over whole rounds on the real crane."
     },
     "easy": {
       "hold_s": 0.6,

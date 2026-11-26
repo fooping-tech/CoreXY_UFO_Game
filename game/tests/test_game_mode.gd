@@ -1015,13 +1015,26 @@ func _test_capsule_colour_read() -> void:
 	var green := CapsuleKinds.classify(_colour_frame(Color("20c040"), 0.2))
 	var grey := CapsuleKinds.classify(_colour_frame(Color(0.6, 0.6, 0.62), 0.3))
 	var dark_red := CapsuleKinds.classify(_colour_frame(Color(0.15, 0.02, 0.02), 0.3))  # too dark to be sure
-	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.01))
+	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.001))
 	var mixed := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.12, Color("2860f0"), 0.1))
 	var none := CapsuleKinds.classify(null)
 	_ok(red.kind == "fire" and blue.kind == "water" and green.kind == "green" and grey.kind == "" and dark_red.kind == ""
 		and speck.kind == "" and mixed.kind == "" and none.kind == "" and float(red.share) > 0.1,
 		"capsule kinds #266: a frame is red (fire), blue (water) or green when that colour fills enough of it; grey, dark, a speck or two colours close together are nothing",
 		"%s %s %s %s %s %s %s" % [red, blue, green, grey.kind, dark_red.kind, speck.kind, mixed])
+	# #320: yellow and purple, as the arm camera saw them from the top (HSV measured on the real
+	# crane): yellow only 0.43 saturated, purple 0.75; the desk (0.1 saturated) is nothing
+	var yellow := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.16, 0.43, 0.93), 0.2))
+	var purple := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.745, 0.75, 0.58), 0.2))
+	var red_cam := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.98, 0.62, 0.85), 0.2))
+	var blue_cam := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.573, 0.9, 0.88), 0.2))
+	var green_cam := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.435, 0.76, 0.77), 0.2))
+	var desk := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.8, 0.1, 0.35), 0.5))
+	var white := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.15, 0.06, 0.95), 0.5))  # yellow washed out up close
+	var cam_ok: bool = yellow.kind == "thunder" and purple.kind == "dark" and red_cam.kind == "fire" and blue_cam.kind == "water" \
+		and green_cam.kind == "green" and desk.kind == "" and white.kind == ""
+	_ok(cam_ok, "capsule kinds #320: the five colours as the real arm camera sees them from the top (yellow = thunder, purple = dark, red, blue, green); the desk and a washed-out capsule are nothing",
+		"%s %s %s %s %s %s %s" % [yellow.kind, purple.kind, red_cam.kind, blue_cam.kind, green_cam.kind, desk.kind, white.kind])
 	var r := CapsuleKinds.Reader.new()
 	for k in ["fire", "", "fire", "water", "fire", "", "fire"]:
 		r.add(k)
@@ -1050,7 +1063,15 @@ func _test_capsule_colour_read() -> void:
 	var sprites: bool = tex != null and tex.get_width() == CapsuleKinds.FRAME * 8 and tex.get_height() == CapsuleKinds.FRAME * 2 \
 		and CapsuleKinds.sheet("water") != null and CapsuleKinds.sheet("green") != null and CapsuleKinds.sheet("normal") == null
 	var names: bool = CapsuleKinds.display_name("fire") == "ファイヤーボールカプセル" and CapsuleKinds.display_name("water") == "ウォーターボールカプセル" \
-		and CapsuleKinds.display_name("green") == "グリーンボールカプセル"
+		and CapsuleKinds.display_name("green") == "グリーンボールカプセル" and CapsuleKinds.display_name("thunder") == "サンダーボールカプセル" \
+		and CapsuleKinds.display_name("dark") == "ダークボールカプセル"
+	# #320: the two new kinds: their own sheets, colours, lines and values (thunder flung hardest,
+	# dark heaviest with the biggest goal)
+	sprites = sprites and CapsuleKinds.sheet("thunder") != null and CapsuleKinds.sheet("dark") != null
+	defaults_ok = defaults_ok and CapsuleKinds.COLOURED.all(func(kk): return CapsuleKinds.COLORS.has(kk) and CapsuleKinds.TRAITS.has(kk)) \
+		and CapsuleKinds.DEFAULTS.thunder.kick_k > CapsuleKinds.DEFAULTS.fire.kick_k \
+		and CapsuleKinds.DEFAULTS.dark.gravity_k > CapsuleKinds.DEFAULTS.fire.gravity_k \
+		and CapsuleKinds.DEFAULTS.dark.goal_k > CapsuleKinds.DEFAULTS.water.goal_k
 	_ok(defaults_ok and clamped and sprites and names,
 		"capsule kinds #266: each kind has its own values (config overrides them, kept in range), its name and an 8-frame pixel-art sprite sheet (the capsule, which turns with the ball, and the kind's upright part)",
 		"%s %s %s %s" % [defaults_ok, clamped, sprites, names])
@@ -1071,7 +1092,7 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 	var title_no_read: bool = frames[0] == 0  # nothing is read before the round takes capsules
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	_gm_step(ctl, 1.0)
-	var read_some: bool = frames[0] >= 4 and frames[0] <= 8 and ctl.colour_reader.count("fire") >= 4  # about sample_hz a second
+	var read_some: bool = frames[0] >= 8 and frames[0] <= 12 and ctl.colour_reader.count("fire") >= 8  # about sample_hz a second
 	var l: GameModeController.Lane = ctl.lanes["left"]
 	ctl.kinds.params["fire"]["hit_k"] = 3.0
 	game._unhandled_input(_key(KEY_Z))
@@ -1140,12 +1161,57 @@ func _test_capsule_kinds_game(rs: Node) -> void:
 	ctl.mock_kind = "green"
 	var mock_green: bool = ctl.decide_kind() == "green"
 	ctl.mock_kind = "random"
-	var random_one: bool = ctl.decide_kind() in ["fire", "water", "green"]
+	var random_one: bool = ctl.decide_kind() in CapsuleKinds.COLOURED
 	ctl.mock_kind = "normal"
 	var mock_plain: bool = ctl.decide_kind() == "normal"
 	_ok(plain and water and off and mock_green and random_one and mock_plain,
 		"capsule kinds #266: frames with no clear colour make a normal capsule; blue makes water; switched off always normal; with no camera and mock Dials the config's mock_kind (random by default)",
 		"%s %s %s %s %s %s" % [plain, water, off, mock_green, random_one, mock_plain])
+	_gm_free(game, rs)
+
+## #320: the easy mode reads the capsule only from up high, before the claw gets close: while
+## the claw opens and for lower_read_s of the way down. Not when it is low (washed out), held
+## (the lens covered) or over the portal (the Dial's own capsule). The votes are kept until
+## the capsule reaches the portal, however long that takes.
+func _test_capsule_easy_read_window(rs: Node) -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = _gm_playing(game)
+	var frames := [0]
+	var col := [Color("ffd83a")]
+	ctl.colour_source = func() -> Image:
+		frames[0] += 1
+		return _colour_frame(col[0], 0.2)
+	ctl.difficulty = "easy"
+	ctl.easy_block = ""
+	var e: EasyModeControl = game.easy
+	var at := func(state: String, step: String, secs: float) -> int:
+		e.state = state
+		e.step = step
+		var before: int = frames[0]
+		_gm_step(ctl, secs)
+		return frames[0] - before
+	var idle: int = at.call("MANUAL_XY", "IDLE", 1.0)
+	var opening: int = at.call("AUTO_GRAB", "OPEN_CLAW", 0.6)
+	var lower_s := float(ctl.kinds.read.lower_read_s)
+	var lowering: int = at.call("AUTO_GRAB", "LOWER_TO_CATCH", lower_s - 0.05)
+	var low: int = at.call("AUTO_GRAB", "LOWER_TO_CATCH", 3.0)  # the same step, lower down
+	col[0] = Color("2860f0")  # what the camera sees later (the Dial's blue capsule) must not count
+	var later := 0
+	for st in [["AUTO_GRAB", "CLOSE_CLAW"], ["AUTO_GRAB", "RAISE_WITH_ITEM"], ["WAIT_DESTINATION", "WAIT_DESTINATION"],
+			["DELIVER_DIAL_1", "MOVE_TO_DIAL"], ["DELIVER_DIAL_1", "LOWER_TO_RELEASE"], ["DELIVER_DIAL_1", "RELEASE"]]:
+		later += at.call(st[0], st[1], 6.0)  # 36 s in all: far past memory_s
+	# (low: the window's last 0.05 s fall in it, one frame at most)
+	var window: bool = idle == 0 and opening >= 4 and lowering >= int(lower_s * 10.0) - 5 and low <= 1 and later == 0
+	var kept: bool = ctl.colour_reader.keep_all and ctl.colour_reader.count("thunder") == opening + lowering + low \
+		and ctl.decide_kind() == "thunder"
+	# a new catch starts over
+	at.call("MANUAL_XY", "IDLE", 0.2)
+	at.call("AUTO_GRAB", "OPEN_CLAW", 0.1)
+	var fresh: bool = ctl.colour_reader.count("thunder") <= 2
+	_ok(window and kept and fresh,
+		"capsule kinds #320: the easy mode reads the capsule while the claw opens and for lower_read_s of the way down, never lower, held or over the portal; the votes last until the capsule comes in (yellow = thunder); a new catch starts over",
+		"idle %d open %d lower %d low %d later %d / %s %d %s / %s" % [idle, opening, lowering, low, later, ctl.colour_reader.keep_all,
+			ctl.colour_reader.count("thunder"), ctl.decide_kind(), fresh])
 	_gm_free(game, rs)
 
 ## #291: a frame `w` x `h` of `bg`, with blocks [Rect2i, Color] painted on it.
@@ -1161,8 +1227,8 @@ func _test_capsule_colour_explain() -> void:
 	var red := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.2), {}, true)
 	var grey := CapsuleKinds.classify(_colour_frame(Color(0.6, 0.6, 0.62), 0.3))
 	var dark := CapsuleKinds.classify(_colour_frame(Color(0.15, 0.02, 0.02), 0.3))
-	var violet := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.8, 0.9, 0.9), 0.3))  # in no colour's range
-	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.01))
+	var violet := CapsuleKinds.classify(_colour_frame(Color.from_hsv(0.9, 0.9, 0.9), 0.3))  # magenta: in no colour's range (#320)
+	var speck := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.001))
 	var mixed := CapsuleKinds.classify(_colour_frame(Color("e83020"), 0.12, Color("2860f0"), 0.1))
 	var none := CapsuleKinds.classify(null)
 	var reasons: bool = red.reason == "ok" and grey.reason == "dull" and dark.reason == "dull" and violet.reason == "hue" \
@@ -1170,7 +1236,9 @@ func _test_capsule_colour_explain() -> void:
 		and {mixed.best: 1, mixed.second: 1}.keys().size() == 2 and int(mixed.best_n) >= int(mixed.second_n) and int(mixed.second_n) > 0 and not mixed.dominance_ok and mixed.share_ok
 	# every looked-at pixel is counted once, the left-out ones are in the share's denominator
 	var looked := int(red.looked)
-	var parts: int = int(red.low_sat) + int(red.low_val) + int(red.hue_miss) + int(red.counts.fire) + int(red.counts.water) + int(red.counts.green)
+	var parts: int = int(red.low_sat) + int(red.low_val) + int(red.hue_miss)
+	for kk in CapsuleKinds.COLOURED:
+		parts += int(red.counts[kk])
 	var hist_n := 0
 	for c in red.hue_hist:
 		hist_n += c
@@ -1198,7 +1266,7 @@ func _test_capsule_colour_explain() -> void:
 	# red wraps round 1.0: just under and just over are both red; cyan is not
 	var wrap: bool = CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.97, 0.9, 0.9))).kind == "fire" \
 		and CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.02, 0.9, 0.9))).kind == "fire" \
-		and CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.48, 0.9, 0.9))).reason == "hue"
+		and CapsuleKinds.classify(_probe_frame([], Color.from_hsv(0.065, 0.9, 0.9))).reason == "hue"  # orange (#320)
 	var edges: bool = at_share and over_share.kind == "" and over_share.reason == "small" and at_dom and over_dom.reason == "dominance" \
 		and at_sat and over_sat.reason == "dull" and int(over_sat.low_sat) == int(over_sat.looked) \
 		and over_val.reason == "dull" and int(over_val.low_val) == int(over_val.looked) and wrap
@@ -1253,7 +1321,7 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 	# a new picture each time (one pixel changes, as a real camera's noise)
 	probe.frame_source = func() -> Image:
 		n[0] += 1
-		var img := _colour_frame(col[0], 0.2)
+		var img := _colour_frame(col[0], 0.03)  # #320: about half the (small) ROI
 		img.set_pixel(0, 0, Color(float(n[0] % 7) / 10.0, 0.1, 0.1))
 		return img
 	var sent_before: int = game.ws._seq
@@ -1265,7 +1333,7 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 		probe.tick(1.0 / 60.0)
 	var voted: int = probe.reader.count("fire")
 	var same: bool = probe.result.kind == "fire" and probe.result.kind == CapsuleKinds.classify(probe.frame, ctl.kinds.read).kind \
-		and probe.base_result.kind == "fire" and voted >= 4 and voted <= 8 \
+		and probe.base_result.kind == "fire" and voted >= 8 and voted <= 12 \
 		and probe.reader.explain(int(probe.cfg.min_votes), float(probe.cfg.min_ratio)).kind == "fire"
 	var text_ok: bool = probe.numbers_text().contains("色ごと") and probe.numbers_text().contains("min_share") \
 		and probe.votes_text().contains("最終判定: fire")

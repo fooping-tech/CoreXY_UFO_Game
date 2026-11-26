@@ -64,9 +64,15 @@ func burst(at: Vector2, color: Color, count: int, speed := 240.0, dir := -PI * 0
 ##   fire   embers rising, orange and yellow; a hit throws a ring of flame
 ##   water  drops falling off it, blue and white; a hit splashes up and spreads a ripple
 ##   green  leaves and sparkles drifting; a hit scatters green sparkles
+##   thunder  sparks crackling off it in every direction, quick; a hit flashes a bright
+##          double ring and throws sparks far (#320)
+##   dark   a purple haze sinking and spreading slowly; a hit sucks in a dark ring and
+##          sends a slow purple cloud out (#320)
 const KIND_COLORS := {"fire": [Color("ff3b1f"), Color("ff8a1f"), Color("ffe03c")],
 	"water": [Color("2f6cff"), Color("6fc8ff"), Color("e8f8ff")],
-	"green": [Color("1fb84a"), Color("7dff6a"), Color("d8ff9a")]}
+	"green": [Color("1fb84a"), Color("7dff6a"), Color("d8ff9a")],
+	"thunder": [Color("ffc81f"), Color("fff06a"), Color("ffffff")],
+	"dark": [Color("5a1fa8"), Color("a24bff"), Color("e0b8ff")]}
 
 func kind_trail(kind: String, at: Vector2) -> void:
 	if not KIND_COLORS.has(kind):
@@ -80,6 +86,10 @@ func kind_trail(kind: String, at: Vector2) -> void:
 			burst(at + Vector2(_rng.randf_range(-12, 12), 6), col, 1, 50.0, PI * 0.5, 1.6, 0.2, 0.9)
 		"green":
 			burst(at + Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-12, 12)), col, 1, 60.0, -PI * 0.5, TAU, 0.25, 0.08)
+		"thunder":
+			burst(at + Vector2(_rng.randf_range(-8, 8), _rng.randf_range(-8, 8)), col, 2, 180.0, -PI * 0.5, TAU, 0.05, 0.0)
+		"dark":
+			burst(at + Vector2(_rng.randf_range(-12, 12), _rng.randf_range(-4, 8)), col, 1, 30.0, PI * 0.5, TAU, 0.3, 0.25)
 
 func kind_hit(kind: String, at: Vector2) -> void:
 	if not KIND_COLORS.has(kind):
@@ -96,6 +106,13 @@ func kind_hit(kind: String, at: Vector2) -> void:
 		"green":
 			burst(at, cols[1], 10, 200.0, -PI * 0.5, TAU, 0.4, 0.1)
 			ring(at, cols[0], 48.0, 0.35)
+		"thunder":
+			burst(at, cols[1], 14, 340.0, -PI * 0.5, TAU, 0.05, 0.0)
+			ring(at, cols[2], 40.0, 0.15)
+			ring(at, cols[0], 70.0, 0.3)
+		"dark":
+			burst(at, cols[1], 10, 110.0, -PI * 0.5, TAU, 0.5, 0.2)
+			ring(at, cols[2], 6.0, 0.4, 56.0)
 
 ## A ring spreads from `at` out to radius `r1`.
 func ring(at: Vector2, color: Color, r1 := 60.0, secs := 0.35, r0 := 8.0) -> void:
