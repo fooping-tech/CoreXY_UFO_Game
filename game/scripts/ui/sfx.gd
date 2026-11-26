@@ -1,30 +1,60 @@
 class_name Sfx
 extends Node
-## Motion sound effects: one looping voice each for sideways movement, the UFO
-## rising and the UFO sinking. A voice fades in while its intensity (0..1, from
-## the physics) is up and fades out when the motion stops; moving faster raises
-## the pitch a little.
+## Motion sound effects (#327): while the crane moves, one short sound every
+## second. The arm going up or down (Z) plays audio.motion_z, the XY travel
+## audio.motion_xy. All the timing is in tick_motion(), called once per physics
+## tick (60 Hz) with the motion intensities (0..1) from main.gd::motion_intensities:
+##
+## - an axis counts as moving after its intensity has stayed above MOVE_ON for
+##   START_CONFIRM_S (a one-tick spike, e.g. a reconnect, plays nothing), and as
+##   stopped after it has stayed below MOVE_OFF for STOP_DEBOUNCE_S (a short dip
+##   does not restart anything);
+## - one shared clock: the first sound plays as soon as something moves, then
+##   one every INTERVAL_S while anything moves, never two closer than INTERVAL_S
+##   (a stop and a quick restart wait for the rest of the second);
+## - Z and XY together: one sound per beat, the Z one (the arm's motion is the
+##   one that matters at the claw); the XY sound still ringing is faded out;
+## - when the axis of a sound still playing stops, that sound fades to silence
+##   over FADE_OUT_S and then stops.
 ##
 ## The MP3s in game/assets/audio/ come from 効果音ラボ (soundeffect-lab.info):
 ## built into the game as its sounds, which its terms allow (GitHub included);
 ## they must not be handed out on their own (see game/assets/audio/SOURCES.md).
 ## They are read as raw bytes (no import step); a missing file just means silence.
 
-const VOICES := ["move", "up", "down"]
-const FADE_IN_S := 0.08
-const FADE_OUT_S := 0.35
+const VOICES := ["z", "xy"]
+const INTERVAL_S := 1.0
+const START_CONFIRM_S := 0.05
+const STOP_DEBOUNCE_S := 0.2
+const FADE_OUT_S := 0.3
+## Intensity hysteresis (0..1 of main.gd's FX_MOVE_FULL_CM_S / FX_ROPE_FULL_CM_S).
+const MOVE_ON := 0.04
+const MOVE_OFF := 0.015
 const SILENT_DB := -60.0
-## #304: each motion voice's own level on volume_db, so the three loops sound alike
-## (magic-statusup1.mp3 is about 10 dB louder than wizard-flight1.mp3; tools/audio_levels.py)
-const VOICE_GAIN_DB := {"move": 0.0, "up": -9.0, "down": -6.0}
+## Each motion sound's own level on volume_db (tools/audio_levels.py: menu2 -14.0,
+## menu3 -15.3 LUFS momentary; both to about -27 at volume_db -8, under the ordinary
+## effects' -24 because they repeat every second).
+const VOICE_GAIN_DB := {"z": -5.0, "xy": -3.5}
+## Which file each voice plays (config keys audio.motion_z / audio.motion_xy).
+const VOICE_KEYS := {"z": "motion_z", "xy": "motion_xy"}
 
 var enabled := true
 ## Overall level in dB (config audio.volume_db).
 var volume_db := -8.0
+## Every motion sound started, newest last: "z" / "xy" (tests / debug; capped).
+var beat_log: Array[String] = []
+## Time of each of those starts on the motion clock (s, same order).
+var beat_times: Array[float] = []
 
 var _players: Dictionary = {}  # voice -> AudioStreamPlayer
-var _level: Dictionary = {}    # voice -> current linear gain 0..1
+var _level: Dictionary = {}    # voice -> current linear gain 0..1 (1 while it plays, falls in a fade)
+var _fading: Dictionary = {}   # voice -> true while fading out
 var _files: Dictionary = {}    # voice -> path it was loaded from ("" = missing)
+var _active: Dictionary = {}   # axis -> moving (debounced)
+var _above: Dictionary = {}    # axis -> time above MOVE_ON while not moving
+var _below: Dictionary = {}    # axis -> time below MOVE_OFF while moving
+var _clock := 0.0
+var _last_beat := -INF
 
 func _ready() -> void:
 	var dir := str(GameConfig.get_value("audio", "dir", "res://assets/audio"))
@@ -35,12 +65,19 @@ func _ready() -> void:
 		player.name = "Sfx_" + v
 		player.volume_db = SILENT_DB
 		player.bus = AudioBuses.SFX
+		player.max_polyphony = 2  # menu3 is 1.35 s: the next beat starts over its tail
 		add_child(player)
 		_players[v] = player
 		_level[v] = 0.0
-		var file := str(GameConfig.get_value("audio", v, ""))
+		_fading[v] = false
+		_active[v] = false
+		_above[v] = 0.0
+		_below[v] = 0.0
+		var file := str(GameConfig.get_value("audio", VOICE_KEYS[v], ""))
 		var path := dir.path_join(file) if file != "" else ""
 		player.stream = load_mp3(path)
+		if player.stream != null:
+			player.stream.loop = false
 		_files[v] = path if player.stream != null else ""
 
 ## An AudioStreamMP3 from a raw .mp3 file (looping), or null if it is missing.
@@ -126,25 +163,71 @@ static func synth_blips(notes: Array) -> AudioStreamWAV:
 	w.data = data
 	return w
 
+## The voice's current gain 0..1 (1 while it plays, falling during a fade).
 func level(voice: String) -> float:
 	return float(_level.get(voice, 0.0))
 
-## Called every render frame with the motion intensities (0..1).
-func update_sfx(move_i: float, up_i: float, down_i: float, dt: float) -> void:
-	var want := {"move": move_i, "up": up_i, "down": down_i}
+## Whether the axis ("z" / "xy") counts as moving (after the debounce).
+func moving(axis: String) -> bool:
+	return bool(_active.get(axis, false))
+
+## Whether the voice is sounding (playing, fading included). Works without the files.
+func sounding(voice: String) -> bool:
+	return _level.get(voice, 0.0) > 0.0
+
+## Called once per physics tick with the motion intensities (0..1): z = the arm
+## going up or down (either way), xy = the travel. The only place the motion
+## sounds are timed (see the top of this file).
+func tick_motion(z_i: float, xy_i: float, dt: float) -> void:
+	_clock += dt
+	var want := {"z": z_i, "xy": xy_i}
+	for a in VOICES:
+		var i: float = want[a] if enabled else 0.0
+		if not _active[a]:
+			_above[a] = _above[a] + dt if i > MOVE_ON else 0.0
+			if _above[a] >= START_CONFIRM_S - 1e-6:
+				_active[a] = true
+				_below[a] = 0.0
+		else:
+			_below[a] = _below[a] + dt if i < MOVE_OFF else 0.0
+			if _below[a] >= STOP_DEBOUNCE_S - 1e-6:
+				_active[a] = false
+				_above[a] = 0.0
+				_fade(a)  # its movement stopped: the sound still ringing fades out
+	if (_active.z or _active.xy) and _clock - _last_beat >= INTERVAL_S - 1e-6:
+		var v := "z" if _active.z else "xy"
+		_fade("xy" if v == "z" else "z")
+		_start(v)
+		_last_beat = _clock
 	for v in VOICES:
-		var target: float = clampf(want[v], 0.0, 1.0) if enabled else 0.0
-		var cur: float = _level[v]
-		var rate := (1.0 / FADE_IN_S) if target > cur else (1.0 / FADE_OUT_S)
-		cur = move_toward(cur, target, rate * dt)
-		_level[v] = cur
-		var p: AudioStreamPlayer = _players[v]
-		if p.stream == null:
-			continue
-		if cur > 0.001:
-			p.volume_db = volume_db + float(VOICE_GAIN_DB.get(v, 0.0)) + linear_to_db(cur)
-			p.pitch_scale = 1.0 + 0.2 * cur if v == "move" else 1.0
-			if not p.playing:
-				p.play()
-		elif p.playing:
-			p.stop()
+		if _fading[v]:
+			_level[v] = maxf(0.0, _level[v] - dt / FADE_OUT_S)
+			if _level[v] <= 0.0:
+				_fading[v] = false
+				var p: AudioStreamPlayer = _players[v]
+				p.stop()
+		_apply(v)
+
+func _start(v: String) -> void:
+	beat_log.append(v)
+	beat_times.append(_clock)
+	if beat_log.size() > 64:
+		beat_log.remove_at(0)
+		beat_times.remove_at(0)
+	var p: AudioStreamPlayer = _players[v]
+	if _fading[v]:
+		p.stop()  # a tail fading out does not jump back to full volume
+	_fading[v] = false
+	_level[v] = 1.0
+	_apply(v)
+	if p.stream != null:
+		p.play()
+
+func _fade(v: String) -> void:
+	if _level[v] > 0.0:
+		_fading[v] = true
+
+func _apply(v: String) -> void:
+	var p: AudioStreamPlayer = _players[v]
+	var g: float = _level[v]
+	p.volume_db = volume_db + float(VOICE_GAIN_DB.get(v, 0.0)) + linear_to_db(g) if g > 0.001 else SILENT_DB

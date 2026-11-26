@@ -393,7 +393,7 @@ func _test_audio_levels() -> void:
 	var fx := Sfx.new()
 	add_child(fx)
 	var motion: bool = fx._players.values().all(func(p): return p.bus == AudioBuses.SFX) and fx._cue_player.bus == AudioBuses.SFX \
-		and float(Sfx.VOICE_GAIN_DB.up) < float(Sfx.VOICE_GAIN_DB.move)
+		and float(Sfx.VOICE_GAIN_DB.z) < float(Sfx.VOICE_GAIN_DB.xy)
 	fx.free()
 	_ok(levels and own and study_ok and motion and GameModeSounds.BGM_DB > -6.0,
 		"audio levels #304: each effect at its own gain (manifest / own file / synthesised), the study's and the motion's on the effects' bus, the music near the effects",

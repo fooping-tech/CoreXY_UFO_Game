@@ -18,7 +18,7 @@ const DEFAULTS := {
 	"projection": {"pitch_deg": 28.0, "pixels_per_unit": 6.0, "xy_display_scale": 1.0, "perspective": 0.0045, "depth_scale": 1.0, "edge_margin_px": 24.0},
 	"render": {"pixel_scale": 3.0, "rope_width_px": 6.0, "particles": true, "screen_shake": true, "shake_max_px": 12.0, "particle_amount": 1.0},
 	"audio": {"enabled": true, "volume_db": -8.0, "dir": "res://assets/audio",
-		"move": "wizard-flight1.mp3", "up": "magic-statusup1.mp3", "down": "hyun1.mp3"},
+		"motion_z": "menu2.mp3", "motion_xy": "menu3.mp3"},
 	"gesture": {"enabled": false, "allow_real_robot": false, "camera": "C270", "stale_ms": 350.0, "arm_delay_ms": 120.0,
 		"scheme": "pinch_joystick", "schemes": {},
 		"roi": [0.0, 0.0, 1.0, 1.0], "roi_enabled": false, "pinch_start": 1.0, "pinch_release": 1.5, "pinch_confirm_ms": 0.0, "lost_grace_ms": 300.0,

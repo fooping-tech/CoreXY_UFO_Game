@@ -55,10 +55,9 @@
     "bgm_enabled": true,
     "bgm_volume_db": 0.0,
     "dir": "res://assets/audio",
-    "move": "wizard-flight1.mp3",
-    "up": "magic-statusup1.mp3",
-    "down": "hyun1.mp3",
-    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). up/down = the UFO rising/sinking on screen (arm going down/up)."
+    "motion_z": "menu2.mp3",
+    "motion_xy": "menu3.mp3",
+    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). motion_z = the arm going up or down (both ways), motion_xy = the XY travel: one sound per second while moving (#327, sfx.gd)."
   },
   "gesture": {
     "enabled": false,
