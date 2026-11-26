@@ -26,7 +26,7 @@
 
 ## 学習モードの効果音（`se/`）
 
-`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。使っている場面と規約は `se/README.md`。
+`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。スコアゲームのカウントダウン（#325）の `electronic-countdown1.mp3`（演出・アニメ）と `info-girl1-countdown2.mp3`（アプリ・音声案内 https://soundeffect-lab.info/sound/voice/ ）も同じ。使っている場面と規約は `se/README.md`。
 
 ## スコアゲームの音（`sfx/`）は別
 

@@ -1397,3 +1397,109 @@ func _test_capsule_colour_probe(rs: Node) -> void:
 		"%s %s %s %s %s %s" % [status_ok, agree, decided, nothing_sent, closed, esc_closes])
 	ctl.colour_source = Callable()
 	_gm_free(game, rs)
+
+## #325: the countdowns' own sounds (the start's beep, the end's voice), in step with the
+## numbers on the screen: each number's measured onset is heard when the screen shows it.
+func _test_game_mode_countdown_cues(rs: Node) -> void:
+	var start_on: Array = GameModeSounds.CUE_ONSETS["countdown_start"]
+	var end_on: Array = GameModeSounds.CUE_ONSETS["countdown_end"]
+	var files := true
+	for key in GameModeSounds.CUE_FILES:
+		var st := GameModeSounds.load_music_stream(GameModeSounds.AUDIO_DIR + str(GameModeSounds.CUE_FILES[key]), false)
+		files = files and st != null and st.get_length() > float((GameModeSounds.CUE_ONSETS[key] as Array).back()) + 0.3
+	# every measured number is within a frame of 1 s steps from the last one (GO! / 0)
+	var steps := true
+	for on in [start_on, end_on]:
+		for i in on.size():
+			steps = steps and absf(float(on[i]) - (float(on.back()) - float(on.size() - 1 - i))) < 0.017
+	_ok(files and steps and start_on.size() == 4 and end_on.size() == 11,
+		"game mode countdown (#325): both files load; their numbers are 1 s apart (within a frame), GO! / 0 last")
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var snd: GameModeSounds = ctl.sounds
+	snd.enabled = true
+	snd.volume_db = -80.0
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	var lat := GameModeSounds.output_latency()
+	# the start: the beep from its first tick, each プッ on the number it goes with, ピー on GO!
+	var dt := 1.0 / 60.0
+	var left0 := ctl.countdown_left
+	_gm_step(ctl, dt)
+	var heard0 := snd.cue_from - lat  # what is heard on this tick's screen
+	var left1 := ctl.countdown_left
+	var beep_in_step := true
+	for n in [3, 2, 1, 0]:  # the screen shows n from countdown_left = n (GO! at 0)
+		var heard := heard0 + (left1 - float(n))
+		beep_in_step = beep_in_step and absf(heard - float(start_on[start_on.size() - 1 - n])) < 0.017
+	var started: bool = snd.cue == "countdown_start" and snd.cue_starts == 1 and snd.cue_playing() and left0 == ctl.countdown_s
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	var go_ok: bool = ctl.phase == "PLAYING" and snd.cue_starts == 1 and not snd.log.has("count") and not snd.log.has("go")
+	_ok(started and beep_in_step and go_ok,
+		"game mode countdown (#325): the beep starts with 3 and each プッ lands on 3 / 2 / 1, ピー on GO! (no count / go blips over it)",
+		"%s %s %s %s %.3f" % [started, beep_in_step, go_ok, str(snd.log), snd.cue_from])
+	# the end: the voice comes in at 10 s, each number with the clock's, 0 on TIME UP
+	ctl.time_left = 10.3
+	_gm_step(ctl, 0.2)
+	var none_yet: bool = snd.cue == "countdown_start" and snd.cue_starts == 1
+	var t_before := ctl.time_left
+	for i in 30:  # tick by tick to the one that starts it
+		_gm_step(ctl, dt)
+		if snd.cue == "countdown_end":
+			break
+	var t_at := ctl.time_left  # the clock on the tick the voice started
+	var voice_heard := snd.cue_from - lat
+	var voice_in_step := true
+	for k in 11:  # the clock shows k from time_left = k (0:00 = TIME UP)
+		var heard := voice_heard + (t_at - float(k))
+		voice_in_step = voice_in_step and absf(heard - float(end_on[end_on.size() - 1 - k])) < 0.017
+	var voiced: bool = snd.cue == "countdown_end" and snd.cue_starts == 2 and t_before > 10.007 and absf(voice_heard - (10.007 - t_at)) < 0.001
+	_gm_step(ctl, 10.0)
+	var at_up: bool = ctl.phase in ["SETTLING", "RESULT"] and snd.cue == "countdown_end" and snd.cue_starts == 2 \
+		and not snd.log.has("warning") and snd.log.has("timeup")
+	_ok(none_yet and voiced and voice_in_step and at_up,
+		"game mode countdown (#325): the voice comes in at 10 s, each number on the clock's, its 0 on TIME UP; it plays on into TIME UP (no warning blips)",
+		"%s %s %s %s %.3f %.3f" % [none_yet, voiced, voice_in_step, at_up, voice_heard, t_at])
+	# a stop in the voice: it stops at once
+	var before_phase := ctl.phase
+	for i in 3:  # the result's show: the first Enter may only take it to its last picture
+		if ctl.phase != "COUNTDOWN":
+			game._unhandled_input(_key(KEY_ENTER))
+			_gm_step(ctl, 0.05)
+	_gm_step(ctl, 0.05)
+	var restarted: bool = ctl.phase == "COUNTDOWN" and snd.cue == "countdown_start" and snd.cue_starts == 3
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 6.0
+	_gm_step(ctl, 0.5)
+	var mid: bool = snd.cue == "countdown_end" and snd.cue_playing() and snd.cue_from > 4.0
+	game._unhandled_input(_key(KEY_SPACE))
+	var stopped: bool = ctl.phase == "STOPPED" and snd.cue == "" and not snd.cue_playing()
+	_gm_step(ctl, 0.5)
+	_ok(restarted and mid and stopped and snd.cue == "",
+		"game mode countdown (#325): a new round starts its own beep; a stop in the middle of the voice stops it at once",
+		"%s %s %s %s %s %d" % [restarted, mid, stopped, before_phase, ctl.phase, snd.cue_starts])
+	# the title in the middle of the voice: silent too; a short round starts the voice part-way
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 4.0
+	_gm_step(ctl, dt)
+	var part_way: bool = snd.cue == "countdown_end" and absf(snd.cue_from - lat - (10.007 - ctl.time_left)) < 0.001
+	ctl.close()
+	var closed: bool = snd.cue == "" and not snd.cue_playing()
+	_ok(part_way and closed,
+		"game mode countdown (#325): 4 s left: the voice starts at its 4; leaving to the title stops it", "%s %s" % [part_way, closed])
+	# no files (config game_mode.sounds.files off): the blips per number, as before
+	ctl.open()
+	snd.use_files = false
+	snd.log.clear()
+	var starts := snd.cue_starts
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	game._unhandled_input(_key(KEY_ENTER))
+	_gm_step(ctl, ctl.countdown_s + 0.2)
+	ctl.time_left = 3.5
+	_gm_step(ctl, 4.0)
+	_ok(snd.cue_starts == starts and snd.log.count("count") == 3 and snd.log.has("go") and snd.log.count("warning") == 4 and snd.cue == "",
+		"game mode countdown (#325): without the files: count x3, go, a warning per second (4, 3, 2, 1; as before)", str(snd.log))
+	_gm_free(game, rs)

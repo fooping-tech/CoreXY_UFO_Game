@@ -108,6 +108,7 @@ func _ready() -> void:
 	_s.game_mode._test_game_mode_release_faults(rs)
 	_s.game_mode._test_game_mode_dial_leds(rs)
 	_s.game_mode._test_game_mode_clock_and_stop(rs)
+	_s.game_mode._test_game_mode_countdown_cues(rs)
 	_s.game_mode._test_game_mode_backend_hub(rs)
 	_s.game_mode_show._test_game_mode_visuals(rs)
 	_s.game_mode_show._test_game_mode_juice(rs)

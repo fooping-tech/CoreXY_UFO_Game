@@ -803,6 +803,7 @@ func close() -> void:
 	ranking_flow.flush()
 	_active = false
 	sounds.set_bgm(false)
+	sounds.stop_cue()  # #325: the countdown's sound is not heard on the title
 	sounds.ending_on = false
 	field.clear()
 	_clear_powerups()
@@ -1022,6 +1023,7 @@ func _reset_round() -> void:
 	_hitstop_left = 0.0
 	_bounce = 0.0
 	sounds.set_bgm(false)
+	sounds.stop_cue()  # #325: a new round's countdown starts its own
 	sounds.ending_on = false
 	practice = ""
 	practice_released = 0
@@ -1202,13 +1204,18 @@ func tick(dt: float) -> void:
 			var n := int(ceil(countdown_left))
 			if n < _counted and n > 0:
 				_counted = n
-				sounds.play("count")
+				if not sounds.cue_covers("countdown_start", n):
+					sounds.play("count")  # no file (#325): a blip per number, as before
+			# #325: the beep's プッ on 3 / 2 / 1 and its ピー on GO!, in step with the number shown
+			sounds.follow_cue("countdown_start", GameModeSounds.cue_position("countdown_start", countdown_left))
 			if countdown_left <= 0.0:
 				_go()
 		"PLAYING":
 			clock += dt
 			time_left = maxf(time_left - dt, 0.0)
 			_clock_cues()
+			# #325: the voice's 10 ... 0 with the clock's, its 0 on TIME UP
+			sounds.follow_cue("countdown_end", GameModeSounds.cue_position("countdown_end", time_left))
 			_demo_tick(dt)
 			if time_left <= 0.0:
 				_time_up()
@@ -1223,6 +1230,7 @@ func tick(dt: float) -> void:
 					if not l.state in ["CLOSED", "FAULT"]:
 						_fault(l, "清算が時間内に終わらなかった")
 				_result()
+	_countdown_cue_after()
 	if running():
 		for side in SIDES:
 			_tick_lane(lanes[side], dt)
@@ -1236,7 +1244,8 @@ func _go() -> void:
 	fx.react("start")
 	particles.burst(ufo.position(), Color("ffe03c"), 24, 260.0)
 	particles.ring(ufo.position(), Color("3ff0ff"), 110.0, 0.5)
-	sounds.play("go")
+	if not sounds.cue_covers("countdown_start", 0):
+		sounds.play("go")  # (#325: else the beep's ピー is GO!)
 	sounds.set_bgm(true)
 	_sync_light()
 	_light("TRIGGER_EFFECT", {"effect": "GAME_START", "duration_ms": 1000, "intensity": 200})
@@ -1265,7 +1274,19 @@ func _clock_cues() -> void:
 	var s := int(ceil(time_left))
 	if time_left <= warning_s and s < _warned_at and s > 0:
 		_warned_at = s
-		sounds.play("warning")
+		if not sounds.cue_covers("countdown_end", s):
+			sounds.play("warning")  # (#325: else the voice says the number)
+
+## #325: the countdowns' cues end with them: the end's voice plays on after TIME UP (it is on
+## its 0, 0.55 s left), anything else stops; the practice, a stop, the title: nothing at all.
+func _countdown_cue_after() -> void:
+	match phase:
+		"COUNTDOWN", "PLAYING":
+			pass  # follow_cue
+		"SETTLING", "RESULT":
+			sounds.end_cue("countdown_end")
+		_:
+			sounds.stop_cue()
 
 ## 0 s: nothing new is taken. Capsules in play finish (their score counts) and go out.
 func _time_up() -> void:
