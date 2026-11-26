@@ -54,7 +54,8 @@ extends RefCounted
 signal state_changed(from: String, to: String)
 ## The backend said the delivery to Dial `destination` (1, the only one) ended. Not "a capsule landed".
 signal delivered(destination: int)
-## For the sounds and UFOくん: "grab" / "caught" / "deliver" / "done" / "refused" / "fault"
+## For the sounds and UFOくん: "grab" / "lower" / "caught" / "deliver" / "done" / "refused" / "fault"
+## ("lower", #332: the backend's catch began to go down, LOWER_TO_CATCH; once per catch)
 signal cue(name: String)
 
 const STATES := ["OFF", "MANUAL_XY", "RESET", "AUTO_GRAB", "WAIT_DESTINATION", "DELIVER_DIAL_1", "CANCEL", "FAULT"]
@@ -115,6 +116,8 @@ var _rid_left := 0.0
 ## a catch asked for and then stopped before its answer came: if the answer says it
 ## started after all, it is stopped again
 var _stopped_rid := ""
+## #332: the catch whose way down was already announced ("lower" once per catch)
+var _lowered_id := ""
 
 func configure(cfg: Dictionary) -> void:
 	hold_s = clampf(float(cfg.get("hold_s", hold_s)), 0.2, 5.0)
@@ -199,6 +202,7 @@ func _forget() -> void:
 	need_neutral = true
 	destination = 0
 	grab_id = ""
+	_lowered_id = ""
 	step = ""
 	wait_left_s = 0.0
 	_tries = 0
@@ -498,6 +502,9 @@ func _follow(status: Dictionary) -> void:
 	if grab_id == "" or str(status.get("grab_id", "")) != grab_id:
 		return
 	step = str(status.get("step", ""))
+	if step == "LOWER_TO_CATCH" and _lowered_id != grab_id and state == "AUTO_GRAB":
+		_lowered_id = grab_id
+		cue.emit("lower")
 	wait_left_s = float(status.get("wait_left_s", 0.0))
 	wait_s = float(status.get("wait_s", wait_s))
 	var bs := str(status.get("state", ""))

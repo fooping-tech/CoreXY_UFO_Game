@@ -1332,8 +1332,11 @@ func _on_easy_delivered(destination: int) -> void:
 func _on_easy_cue(name: String) -> void:
 	match name:
 		"grab":
-			sfx.play_cue("pinch")
+			sfx.play_cue("catch")  # #332: the fist's own sound (決定ボタンを押す23), not the pinch's
 			gesture_hud.flash("じどうキャッチ！", 0.9)
+		"lower":
+			if game_mode != null:
+				game_mode.cheer_descent()  # #332: UFOくん's cheer as the arm goes down to catch
 		"caught":
 			sfx.play_cue("hand")
 		"deliver":
@@ -1638,7 +1641,7 @@ func _tick_tutorial_goto(dt: float) -> void:
 func _on_tutorial_claw(which: String) -> void:
 	debug_log.emit("tutorial: claw %s" % which)
 	if which == "closed":
-		sfx.play_cue("pinch")
+		sfx.play_cue("catch")  # #332: the practice's fist sounds like the round's fist
 	arm_goto(which)
 
 ## A held fist / peace sign: the claw to its recorded position (like A / Q).

@@ -44,6 +44,17 @@ func tick(dt: float) -> void:
 		pending = []
 		ctl.tutorial_speech.say(lines)
 
+## A voice can be had right now: UFOくん's voice is on (the speech's and the helper's switch),
+## the backend can speak (its hello said so) and the link is open. #332: the lines said only
+## as a voice (the descent's cheer) are left out when not.
+func can_speak() -> bool:
+	var hw := client()
+	if hw == null or not ctl.tutorial_speech.voice_on or not bool(hw.get("speech_available")):
+		return false
+	if hw.get("voice_on") != null and not bool(hw.get("voice_on")):
+		return false
+	return hw.get("link") != null and hw.link.is_open()
+
 ## UFOくん's voice for a line: asked of the backend (VOICEVOX / say) over the helper's link.
 ## "" = no voice now: the line is shown as words for its reading time.
 func request(text: String) -> String:

@@ -42,7 +42,7 @@ func _test_easy_mode_logic() -> void:
 	_easy_run(e, be, 2.0, fist)  # a shape still held after the end: not a new request
 	var no_repeat = be.sent.size() == 2
 	_ok(needs_neutral and not_yet and asked1 and following and chose and carrying and done and no_repeat
-		and cues == ["grab", "caught", "deliver", "done"] and not EasyModeControl.STATES.has("DELIVER_DIAL_2"),
+		and cues == ["grab", "lower", "caught", "deliver", "done"] and not EasyModeControl.STATES.has("DELIVER_DIAL_2"),
 		"easy mode: fist -> catch -> carried to Dial 1 by itself as soon as the catch is up (#266: no finger) -> back to the hand; the fist asks once, only after a neutral hand; fingers mean nothing",
 		"%s %s %s %s %s %s %s %s %s" % [needs_neutral, not_yet, asked1, following, chose, carrying, done, no_repeat, cues])
 	# --- a sign must be held, unbroken, by one fresh hand
@@ -1443,3 +1443,139 @@ func _test_practice_show(rs: Node) -> void:
 		"practice show #314 in the game: the practice capsule is explained on the practice board (no pinball), then goes back once; the round starts from zero; Space drops the show; off = the pinball",
 		"%s %s %s %s %s score %d" % [on_show, back, round_clean, gone, pinball, shown_score])
 	_gm_free(game, rs)
+
+## #332: the easy mode's way down to the catch: "lower" once per catch; the fist's own sound;
+## UFOくん's cheer (one per descent, never the same twice in a row, only as a voice).
+func _test_easy_descent_cheer(rs: Node) -> void:
+	# --- the easy mode's logic: one "lower" per catch, only with LOWER_TO_CATCH
+	var p = _easy_new()
+	var e: EasyModeControl = p[0]
+	var be: EasyBackend = p[1]
+	var cues = []
+	e.cue.connect(func(c): cues.append(c))
+	var catch_once := func(gid: String, lower: bool) -> void:
+		_easy_run(e, be, 0.3, _easy_hand("open"))
+		_easy_run(e, be, 0.8, _easy_hand("fist"))
+		e.on_ack(be.last_rid(), true, {"grab_id": gid})
+		if lower:
+			for i in 3:  # the backend repeats its report while it goes down
+				be.report("AUTO_GRAB", gid, {"step": "LOWER_TO_CATCH"})
+				_easy_run(e, be, 0.2, _easy_hand("fist"))
+		be.report("AUTO_GRAB", gid, {"step": "CLOSE_CLAW"})
+		_easy_run(e, be, 0.1, _easy_hand("fist"))
+		be.report("WAIT_DESTINATION", gid, {"step": "WAIT_DESTINATION"})
+		_easy_run(e, be, 1.0 / 60.0, _easy_hand("fist"))
+		e.on_ack(be.last_rid(), true, {})
+		be.report("MANUAL_XY", gid, {"destination": 1, "last_result": "done"})
+		_easy_run(e, be, 0.1, _easy_hand("open"))
+	catch_once.call("g1", true)
+	var one: int = cues.count("lower")
+	catch_once.call("g2", true)
+	var two: int = cues.count("lower")
+	catch_once.call("g3", false)  # the arm was already down: nothing goes down, nothing said
+	var three: int = cues.count("lower")
+	_ok(one == 1 and two == 2 and three == 2 and cues.find("lower") == cues.find("grab") + 1,
+		"easy mode #332: the way down to the catch (LOWER_TO_CATCH) is told once per catch, after the fist's grab",
+		"%d %d %d %s" % [one, two, three, cues])
+	# --- the cheer's pick: from the list, never the same twice in a row
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 332
+	var last := ""
+	var repeat := false
+	var outside := false
+	var seen := {}
+	for i in 200:
+		var l := GameModeController.pick_cheer(last, rng)
+		repeat = repeat or l == last
+		outside = outside or not GameModeController.DESCENT_CHEERS.has(l)
+		seen[l] = true
+		last = l
+	var asked := ["よし、いくぞぉー！", "がんばるよ！", "つかんでみせるよ！", "いくね！", "いくよ！", "みててね！", "よしっ！", "それっ！"]
+	var has_asked := asked.all(func(l): return GameModeController.DESCENT_CHEERS.has(l))
+	_ok(not repeat and not outside and seen.size() == GameModeController.DESCENT_CHEERS.size() and has_asked,
+		"easy mode #332: the descent's cheer is one of its lines at random, never the one said just before",
+		"%s %s %d %s" % [repeat, outside, seen.size(), has_asked])
+	# --- in the game: the fist's sound, the cheer as a voice, nothing over another line
+	var game = _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var real_hw = game.homework
+	var helper := _CheerHelper.new()
+	var link := _CheerLink.new()
+	helper.link = link
+	game.homework = helper
+	game.sfx.cue_log.clear()
+	game.easy.cue.emit("grab")
+	var fist_sound: bool = game.sfx.last_cue == "catch" and not game.sfx.cue_log.has("pinch")
+	game._on_tutorial_claw("closed")  # the practice's fist step: the same sound
+	fist_sound = fist_sound and game.sfx.last_cue == "catch" and not game.sfx.cue_log.has("pinch")
+	game.show_title()
+	game._unhandled_input(_key(KEY_3))
+	var on_title: String = ctl.cheer_descent()  # the title: no cheer
+	ctl = _gm_playing(game)
+	ctl.tutorial_speech.clear()
+	game.easy.cue.emit("lower")
+	var said: String = ctl.tutorial_speech.current
+	var voiced: bool = link.sent.size() == 1 and str(link.sent[0].get("type", "")) == "homework_say" \
+		and str(link.sent[0].data.get("text", "")) == said and GameModeController.DESCENT_CHEERS.has(said) and ctl.last_cheer == said
+	game.easy.cue.emit("lower")  # while UFOくん speaks: nothing over it, nothing queued
+	var not_over: bool = link.sent.size() == 1 and ctl.tutorial_speech.current == said and ctl.tutorial_speech.busy() \
+		and ctl.tutorial_speech._queue.is_empty()
+	var said_all := [said]
+	for i in 20:
+		ctl.tutorial_speech.clear()
+		said_all.append(ctl.cheer_descent())
+	var no_twice := true
+	for i in range(1, said_all.size()):
+		no_twice = no_twice and said_all[i] != said_all[i - 1] and said_all[i] != ""
+	# the voice off / not available / no link: nothing at all (not even the words)
+	var quiet := true
+	for off in ["voice_on", "speech_available", "link"]:
+		ctl.tutorial_speech.clear()
+		var before: int = link.sent.size()
+		helper.voice_on = off != "voice_on"
+		helper.speech_available = off != "speech_available"
+		link.open = off != "link"
+		quiet = quiet and ctl.cheer_descent() == "" and ctl.tutorial_speech.current == "" and link.sent.size() == before
+	helper.voice_on = true
+	helper.speech_available = true
+	link.open = true
+	ctl.tutorial_speech.clear()
+	ctl.tutorial_speech.voice_on = false
+	quiet = quiet and ctl.cheer_descent() == "" and ctl.tutorial_speech.current == ""
+	ctl.tutorial_speech.voice_on = true
+	# "ゲーム終了！！" is never held back by a cheer
+	ctl.tutorial_speech.clear()
+	ctl.cheer_descent()
+	ctl.time_left = 0.05
+	_gm_step(ctl, 0.1)
+	var time_up: bool = ctl.phase in ["SETTLING", "RESULT"] and ctl.tutorial_speech.current == GameModeController.TIME_UP_LINE
+	var after_end: String = ctl.cheer_descent()  # the round is over: no cheer
+	_ok(fist_sound and on_title == "" and voiced and not_over and no_twice and quiet and time_up and after_end == "",
+		"easy mode #332 in the game: the fist plays its own sound; one cheer per descent as UFOくん's voice, never over another line, never twice in a row; voice off = nothing; ゲーム終了！！ cuts a cheer",
+		"%s %s %s %s %s %s %s %s %s" % [fist_sound, on_title, voiced, not_over, no_twice, quiet, time_up, after_end, said_all])
+	game.homework = real_hw
+	helper.free()
+	link.free()
+	_gm_free(game, rs)
+
+## #332: a stand-in for the helper that carries UFOくん's voice (never added to the tree).
+class _CheerHelper:
+	extends Node
+	signal aux_message(msg: Dictionary)
+	var speech_available := true
+	var voice_on := true
+	var hello_seen := true
+	var link: Node
+
+## #332: its link: records the voice requests, sends nothing.
+class _CheerLink:
+	extends UfoWebSocketClient
+	var sent: Array = []
+	var open := true
+
+	func is_open() -> bool:
+		return open
+
+	func send_aux(msg: Dictionary) -> Error:
+		sent.append(msg)
+		return OK
