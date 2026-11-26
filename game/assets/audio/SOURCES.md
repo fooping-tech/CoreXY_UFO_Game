@@ -18,8 +18,10 @@
 |---|---|---|---|
 | アームの上下（Z。上げ・下げとも。`audio.motion_z`） | メニューを開く2（ブォン。重低音） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/menu2.mp3`） | `menu2.mp3` |
 | XY の移動（`audio.motion_xy`） | メニューを開く3（ブォン。サイバー感強め） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/menu3.mp3`） | `menu3.mp3` |
+| 手のジョイスティック: パー（開いた手）が見えた（`audio.cue_hand`、#321） | 決定ボタンを押す1 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button1.mp3` |
+| 手のジョイスティック: つまんだ（`audio.cue_pinch`、#321） | 決定ボタンを押す3 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button3.mp3` |
 
-#327: 2 つともページの配布ファイルとバイト単位で同じことを確認した（2026-11-26、SHA-1 一致）。
+#327: メニューを開く2 / 3 はページの配布ファイルとバイト単位で同じことを確認した（2026-11-26、SHA-1 一致）。
 
 鳴らし方（`game/scripts/ui/sfx.gd`）: 動き始めにすぐ 1 回、動いている間は 1 秒ごとに 1 回。Z と XY が同時に動くときは Z の音だけ。
 止まったら（0.2 秒続けて止まっていたら）鳴っている途中の音を 0.3 秒でフェードして消す。音量はそれぞれ `Sfx.VOICE_GAIN_DB`
@@ -29,9 +31,13 @@
 `audio.motion_z` / `audio.motion_xy` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
 
+手のジョイスティックの音（`audio.cue_hand` / `audio.cue_pinch`）は `game/scripts/ui/sfx.gd` の `play_cue` で鳴る。同じ音は爪を閉じるとき（`pinch`）や
+かんたんモードのキャッチ（`hand` / `pinch`）でも使っている。ファイルごとの音量は `audio.cue_gain_db`（`tools/audio_levels.py` で測って合わせる）。
+ファイルが無いときは、ゲームが合成した「ピッ」という音で鳴る。
+
 ## 学習モードの効果音（`se/`）
 
-`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。使っている場面と規約は `se/README.md`。
+`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266。`magic-dark.mp3` = 暗黒魔法は #320）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。使っている場面と規約は `se/README.md`。
 
 ## スコアゲームの音（`sfx/`）は別
 

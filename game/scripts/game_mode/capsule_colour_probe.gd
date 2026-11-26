@@ -29,10 +29,13 @@ signal closed
 const WIDTH := 680.0
 const VIEW_H := 440.0
 const DIR := "user://capsule_probe/"
-const KIND_LABELS := {"fire": "赤（fire）", "water": "青（water）", "green": "緑（green）", "": "なし"}
+const KIND_LABELS := {"fire": "赤（fire）", "water": "青（water）", "green": "緑（green）", "thunder": "黄（thunder）",
+	"dark": "紫（dark）", "": "なし"}
+## the short name of each colour in the counts (CapsuleKinds.COLOURED's order)
+const SHORT := {"fire": "赤", "water": "青", "green": "緑", "thunder": "黄", "dark": "紫"}
 ## what the capsule in front of the camera really is (the recording's label)
 const LABELS := [["", "ラベルなし"], ["fire", "赤のカプセル"], ["water", "青のカプセル"], ["green", "緑のカプセル"],
-	["none", "カプセルなし（背景のみ）"]]
+	["thunder", "黄のカプセル"], ["dark", "紫のカプセル"], ["none", "カプセルなし（背景のみ）"]]
 const FRAME_STATUS := {"live": "取得", "no_camera": "カメラ未接続", "headless": "画面なし（headless）",
 	"failed": "取得失敗", "stale": "未更新（前と同じ画像）", "none": "まだ取っていない", "file": "保存した画像"}
 const MASK_COLORS := {CapsuleKinds.SAMPLE_LOW_SAT: Color(0.1, 0.12, 0.3, 0.55),
@@ -462,8 +465,8 @@ func game_text() -> String:
 	var s := "ゲーム %s・%s" % [st.phase, "読取中" if st.reading else "読んでいない"]
 	if st.easy:
 		s += "・かんたん %s %s" % [st.easy_state, st.easy_step]
-	s += "\n票（%d 秒）: 赤 %d・青 %d・緑 %d・色なし %d → %s（%s）" % [int(st.memory_s), int(v.counts.fire), int(v.counts.water),
-		int(v.counts.green), int(v.none), str(v.kind), CapsuleKinds.VOTE_REASONS.get(str(v.reason), str(v.reason))]
+	s += "\n票（%d 秒）: %s・色なし %d → %s（%s）" % [int(st.memory_s), counts_text(v.counts), int(v.none), str(v.kind),
+		CapsuleKinds.VOTE_REASONS.get(str(v.reason), str(v.reason))]
 	var last: Dictionary = st.last
 	if not last.is_empty():
 		s += "\n最後のフレーム: %s（%s）%.1f 秒前" % [KIND_LABELS.get(str(last.kind), str(last.kind)),
@@ -499,9 +502,7 @@ func numbers_text() -> String:
 	var roi: Rect2i = r.roi
 	s += "\nROI: x %d y %d w %d h %d（%d 画素）・間引き %d → 見た画素 %d" % [roi.position.x, roi.position.y,
 		roi.size.x, roi.size.y, int(r.roi_pixels), int(r.step), int(r.looked)]
-	s += "\n色ごと（分母は見た画素すべて）: 赤 %d（%.1f%%）・青 %d（%.1f%%）・緑 %d（%.1f%%）" % [
-		int(r.counts.fire), 100.0 * float(r.shares.fire), int(r.counts.water), 100.0 * float(r.shares.water),
-		int(r.counts.green), 100.0 * float(r.shares.green)]
+	s += "\n色ごと（分母は見た画素すべて）: %s" % counts_text(r.counts, r.shares)
 	s += "\n除外: 彩度不足 %d（%.1f%%）・明度不足 %d（%.1f%%）・色相範囲外 %d（%.1f%%）" % [
 		int(r.low_sat), 100.0 * r.low_sat / looked, int(r.low_val), 100.0 * r.low_val / looked,
 		int(r.hue_miss), 100.0 * r.hue_miss / looked]
@@ -515,11 +516,21 @@ func numbers_text() -> String:
 		CapsuleKinds.REASONS.get(str(base_result.get("reason", "")), "?")]
 	return s
 
+## "赤 3・青 0・..." of every colour (with `shares`: "赤 3（1.2%）・...").
+static func counts_text(counts: Dictionary, shares := {}) -> String:
+	var parts: Array[String] = []
+	for k in CapsuleKinds.COLOURED:
+		var n := int(counts.get(k, 0))
+		if shares.is_empty():
+			parts.append("%s %d" % [SHORT[k], n])
+		else:
+			parts.append("%s %d（%.1f%%）" % [SHORT[k], n, 100.0 * float(shares.get(k, 0.0))])
+	return "・".join(parts)
+
 func votes_text() -> String:
 	var v := reader.explain(int(cfg.min_votes), float(cfg.min_ratio))
 	var bv := base_reader.explain(int(base_cfg.min_votes), float(base_cfg.min_ratio))
-	var s := "票（直近 %d 秒）: 赤 %d・青 %d・緑 %d・色なし %d" % [int(memory_s), int(v.counts.fire), int(v.counts.water),
-		int(v.counts.green), int(v.none)]
+	var s := "票（直近 %d 秒）: %s・色なし %d" % [int(memory_s), counts_text(v.counts), int(v.none)]
 	s += "\nmin_votes %d: %s・min_ratio %.2f: %s（%.2f）" % [int(cfg.min_votes), "○" if v.votes_ok else "×",
 		float(cfg.min_ratio), "○" if v.ratio_ok else "×", float(v.ratio)]
 	s += "\n最終判定: %s（%s）　ゲームの値なら: %s" % [str(v.kind), CapsuleKinds.VOTE_REASONS.get(str(v.reason), str(v.reason)),
@@ -665,6 +676,8 @@ func _build() -> void:
 			["hue:fire:0", "赤 から", 0.0, 1.0, 0.005], ["hue:fire:1", "赤 まで", 0.0, 1.0, 0.005],
 			["hue:water:0", "青 から", 0.0, 1.0, 0.005], ["hue:water:1", "青 まで", 0.0, 1.0, 0.005],
 			["hue:green:0", "緑 から", 0.0, 1.0, 0.005], ["hue:green:1", "緑 まで", 0.0, 1.0, 0.005],
+			["hue:thunder:0", "黄 から", 0.0, 1.0, 0.005], ["hue:thunder:1", "黄 まで", 0.0, 1.0, 0.005],
+			["hue:dark:0", "紫 から", 0.0, 1.0, 0.005], ["hue:dark:1", "紫 まで", 0.0, 1.0, 0.005],
 			["sample_hz", "sample_hz", 0.5, 30.0, 0.5], ["min_votes", "min_votes", 1, 50, 1],
 			["min_ratio", "min_ratio", 0.0, 1.0, 0.05], ["memory_s", "memory_s", 2.0, 120.0, 1.0]]:
 		var key: String = d[0]
@@ -784,7 +797,7 @@ func _draw_hist() -> void:
 			_hist.draw_rect(Rect2(i * bw + 1, h - 10 - bh, bw - 2, bh), Color.from_hsv((i + 0.5) / n, 0.7, 1.0))
 	var hues: Dictionary = cfg.get("hues", {})
 	var y := 2.0
-	for k in ["fire", "water", "green"]:
+	for k in CapsuleKinds.COLOURED:
 		if not hues.has(k):
 			continue
 		var lo := float(hues[k][0])

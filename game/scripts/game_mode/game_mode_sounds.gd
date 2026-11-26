@@ -60,11 +60,14 @@ const SYNTH_ONLY := ["tutorial_ok", "summon", "timeup_hit", "result_count", "sco
 ## #266: the capsule's entrance (カプセル回収！ as it comes up big), files of 効果音ラボ (the battle
 ## page's magic; game/assets/audio/se/README.md), not in the Kenney manifest. A missing file
 ## falls back to the synthesised sound of the same key.
+## #320: thunder = 雷魔法1 (the same file as the plain capsule's), dark = 暗黒魔法.
 const OWN_FILES := {"reveal": "se/magic-thunder1.mp3", "reveal_fire": "se/magic-fire2.mp3",
-	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3"}
+	"reveal_water": "se/magic-ice2.mp3", "reveal_green": "se/magic-wind1.mp3",
+	"reveal_thunder": "se/magic-thunder1.mp3", "reveal_dark": "se/magic-dark.mp3"}
 ## #304: each own file's level (dB, on audio.volume_db), as the manifest's gain_db: measured with
 ## tools/audio_levels.py and brought to the same loudness as the other big effects
-const OWN_GAIN_DB := {"reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0}
+const OWN_GAIN_DB := {"reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0,
+	"reveal_thunder": -3.0, "reveal_dark": 5.5}
 ## #304: the synthesised round tune is louder than the leveled music files
 const TUNE_GAIN_DB := -3.0
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
@@ -78,6 +81,7 @@ const SYNTH_META := {"timeup_hit": {"priority": 2, "gain_db": -3.0}, "result_cou
 	"power_double": {"priority": 2, "min_gap_ms": 400},
 	"reveal": {"priority": 2, "min_gap_ms": 400, "gain_db": 1.0}, "reveal_fire": {"priority": 2, "min_gap_ms": 400},
 	"reveal_water": {"priority": 2, "min_gap_ms": 400, "gain_db": 3.0}, "reveal_green": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
+	"reveal_thunder": {"priority": 2, "min_gap_ms": 400}, "reveal_dark": {"priority": 2, "min_gap_ms": 400, "gain_db": 2.0},
 	"tutorial_ok": {"gain_db": 3.0}, "gauge": {"gain_db": 4.0}, "summon": {"gain_db": -1.0}}
 
 var enabled := true
@@ -216,6 +220,10 @@ func _ready() -> void:
 		"reveal_water": StudySounds._tones([[784.0, 0.05], [0.0, 0.02], [1046.5, 0.05], [0.0, 0.02], [659.3, 0.05], [0.0, 0.02],
 			[1318.5, 0.05], [0.0, 0.02], [1046.5, 0.3]], 0.42),
 		"reveal_green": StudySounds._tones([[1318.5, 0.05], [1568.0, 0.05], [1975.5, 0.05], [2637.0, 0.05], [3136.0, 0.3]], 0.38),
+		# #320: thunder a crackle of quick high blips, dark a slow fall into the low notes
+		"reveal_thunder": StudySounds._tones([[1760.0, 0.03], [0.0, 0.02], [2349.3, 0.03], [0.0, 0.02], [1760.0, 0.03], [0.0, 0.02],
+			[2637.0, 0.25]], 0.42),
+		"reveal_dark": StudySounds._sweep(440.0, 70.0, 0.6, 0.5),
 	}
 	load_manifest()
 	for i in PLAYERS:

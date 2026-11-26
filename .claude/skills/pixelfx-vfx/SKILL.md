@@ -55,6 +55,8 @@ VFXManager.stop_fx(sprite); VFXManager.stop_all(); VFXManager.enabled = false
 | 失敗 | `RESULT` かつ失敗 | `fail_poof`（UFO の下。顔を隠さない） |
 | ラウンド終了 | `RESULT` を抜けたとき | `end_fade` |
 
+手のカメラの窓（`GestureHud`）の演出も別の持ち主（#321）: `game/scripts/ui/hand_fx.gd`（`HandFx`）。検出した手の周りを回るドット（自前で描く四角いピクセル）、つまんだ瞬間にそれが外へ弾け飛び `grab_burst` を手の位置で再生（`parent` = 窓の中、`clip_contents` で窓からはみ出さない。シートの絵は pivot の 32 px 上にあるので、その分下に置く）、手で動かしている間は手の後ろと操作リングの点からドットの火花。`VFXManager.enabled` が false なら何も出さない。テストは `test_gesture.gd::_test_hand_fx`。
+
 スコアゲーム（#138）の転送の演出は別の持ち主: `game/scripts/game_mode/game_mode_vfx.gd`（`GameModeVFX`。`capsule_*` の 6 シート。灰色で焼き、Dial ごとの色を `color` で掛ける。スコアゲームの CanvasLayer に出すので `spawn_fx` の `parent` を使う）。対応は `docs/game_mode_spec.md` §11。
 
 守ること:
