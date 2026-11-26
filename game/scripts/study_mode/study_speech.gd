@@ -47,6 +47,10 @@ func say(lines: Array, face := "") -> void:
 	if current == "":
 		_next()
 
+## Drop the lines still waiting; the one being said goes on to its end (#338).
+func drop_queued() -> void:
+	_queue.clear()
+
 ## Drop everything (state change, reset); the bubble keeps the last line until the next.
 func clear() -> void:
 	_queue.clear()

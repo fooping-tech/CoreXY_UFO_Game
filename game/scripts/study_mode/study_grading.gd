@@ -27,10 +27,14 @@ var used_help := false
 var checked := false  # every problem has been through the check (its summary was reached)
 var time_per_correct_s := 10
 var time_max_s := 30
+## #338: every problem right gets this much more TIME on top (after time_max_s): the "ごほうび
+## たくさん おまけ" UFOくん promises. answer_check.perfect_bonus_s (0 = none)
+var perfect_bonus_s := 10
 
 func configure(cfg: Dictionary) -> void:
 	time_per_correct_s = maxi(int(cfg.get("time_per_correct_s", time_per_correct_s)), 0)
 	time_max_s = maxi(int(cfg.get("time_max_s", time_max_s)), 0)
+	perfect_bonus_s = maxi(int(cfg.get("perfect_bonus_s", perfect_bonus_s)), 0)
 
 func reset(problem_numbers: Array) -> void:
 	numbers.clear()
@@ -122,9 +126,30 @@ func all_correct() -> bool:
 	return not numbers.is_empty() and count(CORRECT) == numbers.size()
 
 func time_bonus_s() -> int:
-	return mini(count(CORRECT) * time_per_correct_s, time_max_s)
+	return mini(count(CORRECT) * time_per_correct_s, time_max_s) + perfect_bonus()
 
-## Every problem checked: one power ticket (HELP and looking again never take it away).
+## #338: the extra TIME for every problem right (0 otherwise).
+func perfect_bonus() -> int:
+	return perfect_bonus_s if all_correct() else 0
+
+## #338: which line UFOくん says before the reward. "Wrong" is only REVIEW (the reader said
+## incorrect / half written); UNCLEAR (unreadable, cut off, not read) is never counted as wrong:
+##   perfect     - every problem right
+##   all_review  - none right, at least one to look at again (unclear ones may be among them)
+##   some_review - some right and at least one to look at again
+##   unclear     - none to look at again, but not all right (some could not be read)
+## "" when nothing was checked (no problem read).
+func result_kind() -> String:
+	if numbers.is_empty():
+		return ""
+	if all_correct():
+		return "perfect"
+	if count(REVIEW) == 0:
+		return "unclear"
+	return "all_review" if count(CORRECT) == 0 else "some_review"
+
+## Every problem checked: one power ticket (HELP and looking again never take it away). #338: so
+## even all to look at again gets an item ("ごほうびに アイテムを あげよう").
 func power_tickets() -> int:
 	return 1 if checked else 0
 
@@ -132,7 +157,7 @@ func power_tickets() -> int:
 func reward(worksheet_id: String, selected: Array = []) -> Dictionary:
 	return {"worksheet_id": worksheet_id, "question_count": numbers.size(), "confirmed_correct": count(CORRECT),
 		"needs_review": with_verdict(REVIEW), "unclear": with_verdict(UNCLEAR), "time_bonus_s": time_bonus_s(),
-		"power_tickets": power_tickets(), "selected_powerups": selected.duplicate(), "used_help": used_help,
+		"perfect_bonus_s": perfect_bonus(), "power_tickets": power_tickets(), "selected_powerups": selected.duplicate(), "used_help": used_help,
 		"perfect": all_correct(), "completed_at": int(Time.get_unix_time_from_system())}
 
 ## What a verdict looks like: [mark, words].

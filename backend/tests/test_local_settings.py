@@ -101,3 +101,16 @@ def test_two_serial_ports_from_the_settings_screen(cfg_dir: Path) -> None:
     write_local(cfg_dir, {"backend": {"serial_port": "/dev/cu.usbserial-AAAA", "serial_port_2": "/dev/cu.usbserial-BBBB"}})
     cfg = load_config(cfg_dir / "game_config.json")
     assert (cfg.serial_port, cfg.serial_port_2) == ("/dev/cu.usbserial-AAAA", "/dev/cu.usbserial-BBBB")
+
+
+def test_study_review_switch(cfg_dir: Path) -> None:
+    """#338: 「見直しを有効にする」 (study_mode.answer_check.review_enabled): off by default, a bool only."""
+    base = load_config(cfg_dir / "game_config.json")
+    assert base.raw["study_mode"]["answer_check"]["review_enabled"] is False
+    write_local(cfg_dir, {"study_mode": {"answer_check": {"review_enabled": True}}})
+    cfg = load_config(cfg_dir / "game_config.json")
+    assert cfg.raw["study_mode"]["answer_check"]["review_enabled"] is True
+    assert cfg.raw["study_mode"]["answer_check"]["time_max_s"] == 30  # the rest of the section stays
+    write_local(cfg_dir, {"study_mode": {"answer_check": {"review_enabled": "yes", "perfect_bonus_s": 99}}})
+    overrides, warnings = local_overrides(cfg_dir, json.loads((cfg_dir / "game_config.json").read_text(encoding="utf-8")))
+    assert overrides == {} and len(warnings) == 2
