@@ -362,10 +362,11 @@
     "lights": true,
     "mist": {
       "enabled": true,
-      "capsule_s": 3,
+      "capsule_s": 0,
       "result_s": 8,
       "study_s": 6,
       "defer_max_s": 15,
+      "_capsule_note": "#316: capsule_s 0 for now: one mist floods the servos' reply line for about 15 s (measured 2026-11-26: the Illumination reported the mist off after 3 s, the servos answered again about 12 s later), longer than any wait; the next catch then stopped. Back to 3 once the mist's noise is fixed in hardware.",
       "_defer_note": "#316: the mist module's drive floods the servos' reply line (claw and drum share it; a move under the mist lost its feedback). A mist asked for while a servo moves (the easy mode's claw / Z steps, a manual claw or Z move) waits until none does; one that waited longer than defer_max_s is dropped.",
       "_note": "The Illumination's mist module: continuous mist for capsule_s when a capsule is taken in (the portal opens), for result_s when the result's score settles (FINAL SCORE, or the show skipped), and for study_s when the study mode's reward is shown (0 = none for that one). Sent and forgotten like the lights; the Illumination ends it by itself, and at STOP_ALL or a lost hub link."
     },

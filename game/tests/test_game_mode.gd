@@ -575,6 +575,7 @@ func _test_game_mode_dial_leds(rs: Node) -> void:
 func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	var game := _gm_game()
 	var ctl := _gm_playing(game)
+	ctl.mist_capsule_s = 3  # #316: the repo's config has the capsule's mist off for now; the code still sends it
 	var hub := ctl.mock_hub
 	var l: GameModeController.Lane = ctl.lanes["left"]
 	_ok(GameModeHud.clock_text(150.0) == "2:30" and GameModeHud.clock_text(29.2) == "0:30" and GameModeHud.clock_text(0.0) == "0:00",
