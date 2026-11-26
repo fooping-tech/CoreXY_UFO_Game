@@ -1418,8 +1418,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 		"final":
 			mist_burst(mist_result_s)  # the score is settled: the shelf fills with mist
 			if int(d.get("points", 0)) > 0:
-				sounds.play("final_hit")
-				sounds.play("result")  # the fanfare
+				sounds.play("result_jan")  # #328: 「ジャン！」 with the party poppers
 				_shake(1.0)
 				bounce(2.0)
 				hitstop(HITSTOP_MAX_S)
@@ -1442,7 +1441,7 @@ func _on_result_cue(name: String, d: Dictionary) -> void:
 		"settled":
 			# skipped, or shown without the show: the fanfare still marks the result, once
 			if str(d.get("how", "")) in ["skipped", "plain"] and not result_show.log.has("final"):
-				sounds.play("result")
+				sounds.play("result_jan")
 				mist_burst(mist_result_s)  # the score settled without its show: the mist all the same
 
 ## #323: the colours of the capsules on a bonus's line (each once), or `fallback`.
