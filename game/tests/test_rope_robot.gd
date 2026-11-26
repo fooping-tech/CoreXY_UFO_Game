@@ -391,19 +391,146 @@ func _test_motion_fx() -> void:
 		"kicks %s shaking %.2f settled %.2f" % [kicks, shaking, settled])
 	sh.free()
 
-	var sfx := Sfx.new()
-	add_child(sfx)  # files may be absent (not in the repo): must still work, silently
 	_ok(Sfx.load_mp3("res://assets/audio/does-not-exist.mp3") == null, "sfx: a missing file loads as null (silence)")
-	sfx.update_sfx(1.0, 0.0, 0.0, 0.1)
-	var on := sfx.level("move")
-	sfx.update_sfx(0.0, 0.0, 0.0, 0.1)
-	var fading := sfx.level("move")
-	sfx.enabled = false
-	sfx.update_sfx(1.0, 1.0, 1.0, 1.0)
-	_ok(is_equal_approx(on, 1.0) and fading > 0.5 and fading < 1.0 and sfx.level("up") == 0.0,
-		"sfx: fades in fast, out slowly; silent when off", "on %.2f fading %.2f" % [on, fading])
-	remove_child(sfx)
-	sfx.free()
+
+## #327: the motion sounds, one every second while the crane moves (sfx.gd).
+## Driven tick by tick at 60 Hz like main.gd::_store_tick.
+func _test_motion_sounds() -> void:
+	var dt := 1.0 / 60.0
+	var main_script: GDScript = load("res://scripts/game/main.gd")
+	# the files: Z = 効果音ラボ メニューを開く2, XY = メニューを開く3, played once (no loop)
+	var fx := _motion_sfx()
+	var pz: AudioStreamPlayer = fx._players.z
+	var pxy: AudioStreamPlayer = fx._players.xy
+	_ok(str(fx._files.z).ends_with("/menu2.mp3") and str(fx._files.xy).ends_with("/menu3.mp3")
+		and pz.stream != null and not pz.stream.loop and pxy.stream != null and not pxy.stream.loop,
+		"motion sounds: arm up/down = menu2.mp3, XY = menu3.mp3, each played once per beat (no loop)", "%s" % fx._files)
+	_free_sfx(fx)
+
+	# the arm going up (UFO sinks, rope longer) and down (UFO rises) are both Z
+	var up_arm: Vector3 = main_script.motion_intensities(Vector3.ZERO, 4.0)
+	var down_arm: Vector3 = main_script.motion_intensities(Vector3.ZERO, -4.0)
+	var dirs_ok := true
+	for i in [up_arm, down_arm]:
+		fx = _motion_sfx()
+		for k in range(10):
+			fx.tick_motion(maxf(i.y, i.z), i.x, dt)
+		dirs_ok = dirs_ok and fx.beat_log == ["z"]
+		_free_sfx(fx)
+	_ok(dirs_ok, "motion sounds: the arm going up and going down both play the Z sound")
+
+	# Z: the first beat right after the start (one confirm window), then every 1 s
+	fx = _motion_sfx()
+	for k in range(int(3.5 * 60)):
+		fx.tick_motion(0.5, 0.0, dt)
+	_ok(fx.beat_log == ["z", "z", "z", "z"] and _cadence_ok(fx.beat_times, 1.0, dt) and fx.beat_times[0] <= Sfx.START_CONFIRM_S + dt,
+		"motion sounds: Z moving 3.5 s plays the Z sound at once and then every 1 s (4 times)", "%s %s" % [fx.beat_log, fx.beat_times])
+	_free_sfx(fx)
+
+	# XY: the same rule with the XY sound
+	fx = _motion_sfx()
+	for k in range(int(3.5 * 60)):
+		fx.tick_motion(0.0, 0.3, dt)
+	_ok(fx.beat_log == ["xy", "xy", "xy", "xy"] and _cadence_ok(fx.beat_times, 1.0, dt),
+		"motion sounds: XY moving 3.5 s plays the XY sound every 1 s, same cadence as Z", "%s %s" % [fx.beat_log, fx.beat_times])
+	_free_sfx(fx)
+
+	# a stop in the middle of a sound: held through the debounce, then faded to silence
+	fx = _motion_sfx()
+	for k in range(30):
+		fx.tick_motion(0.0, 0.5, dt)
+	var held := true
+	for k in range(int(round(Sfx.STOP_DEBOUNCE_S * 60)) - 1):
+		fx.tick_motion(0.0, 0.0, dt)
+		held = held and is_equal_approx(fx.level("xy"), 1.0)
+	var curve: Array[float] = []
+	for k in range(int(round(Sfx.FADE_OUT_S * 60)) + 3):
+		fx.tick_motion(0.0, 0.0, dt)
+		curve.append(fx.level("xy"))
+	var falling := true
+	for k in range(1, curve.size()):
+		falling = falling and curve[k] <= curve[k - 1]
+	var mid: float = curve[int(curve.size() / 2.0) - 1]
+	var silent_db := is_equal_approx(fx._players.xy.volume_db, Sfx.SILENT_DB)
+	_ok(held and falling and mid > 0.2 and mid < 0.8 and curve[-1] == 0.0 and not fx.sounding("xy") and silent_db
+		and not fx._players.xy.playing and fx.beat_log == ["xy"],
+		"motion sounds: a stop mid-sound fades the volume down to silence over the fade, then stops it",
+		"held %s mid %.2f curve %s" % [held, mid, curve])
+	_free_sfx(fx)
+
+	# a flicker shorter than the debounce: no restart, no extra beat, no fade
+	fx = _motion_sfx()
+	for k in range(90):
+		fx.tick_motion(0.5, 0.0, dt)
+	for k in range(6):  # 0.1 s of nothing (< STOP_DEBOUNCE_S)
+		fx.tick_motion(0.0, 0.0, dt)
+	var kept: bool = fx.moving("z") and is_equal_approx(fx.level("z"), 1.0)
+	for k in range(84):
+		fx.tick_motion(0.5, 0.0, dt)
+	var spike := _motion_sfx()
+	spike.tick_motion(1.0, 1.0, dt)  # one tick of noise (a reconnect jump) while still
+	for k in range(60):
+		spike.tick_motion(0.0, 0.0, dt)
+	_ok(kept and fx.beat_log == ["z", "z", "z"] and _cadence_ok(fx.beat_times, 1.0, dt) and spike.beat_log.is_empty(),
+		"motion sounds: a dip shorter than the debounce keeps the 1 s cadence (no restart, no double beat); a one-tick spike plays nothing",
+		"%s %s spike %s" % [fx.beat_log, fx.beat_times, spike.beat_log])
+	_free_sfx(fx)
+	_free_sfx(spike)
+
+	# a real stop and a quick restart: never two beats closer than 1 s
+	fx = _motion_sfx()
+	for k in range(20):
+		fx.tick_motion(0.5, 0.0, dt)
+	for k in range(24):  # 0.4 s stop (> debounce): it counts as stopped
+		fx.tick_motion(0.0, 0.0, dt)
+	var stopped: bool = not fx.moving("z")
+	for k in range(60):
+		fx.tick_motion(0.5, 0.0, dt)
+	_ok(stopped and fx.beat_log == ["z", "z"] and _cadence_ok(fx.beat_times, 1.0, dt),
+		"motion sounds: a stop then a quick restart waits out the second (never two beats closer than 1 s)",
+		"%s %s" % [fx.beat_log, fx.beat_times])
+	_free_sfx(fx)
+
+	# Z and XY together: one shared clock, one sound per beat, Z first; the XY
+	# sound still ringing fades when Z takes the beat; XY again once Z stops
+	fx = _motion_sfx()
+	for k in range(30):
+		fx.tick_motion(0.0, 0.5, dt)  # XY alone: an XY beat
+	for k in range(int(2.2 * 60)):
+		fx.tick_motion(0.5, 0.5, dt)  # both: Z beats on the same 1 s grid
+	var xy_faded: bool = fx.level("xy") == 0.0
+	for k in range(int(1.2 * 60)):
+		fx.tick_motion(0.0, 0.5, dt)  # Z stopped: XY again
+	_ok(fx.beat_log == ["xy", "z", "z", "xy"] and _cadence_ok(fx.beat_times, 1.0, dt) and xy_faded,
+		"motion sounds: Z and XY together play one sound per beat (Z), on one 1 s clock; the XY tail fades; XY again when Z stops",
+		"%s %s" % [fx.beat_log, fx.beat_times])
+	_free_sfx(fx)
+
+	# sound off: nothing
+	fx = _motion_sfx()
+	fx.enabled = false
+	for k in range(120):
+		fx.tick_motion(1.0, 1.0, dt)
+	_ok(fx.beat_log.is_empty() and not fx.sounding("z"), "motion sounds: silent when the sound is off")
+	_free_sfx(fx)
+
+func _motion_sfx() -> Sfx:
+	var fx := Sfx.new()
+	add_child(fx)
+	return fx
+
+func _free_sfx(fx: Sfx) -> void:
+	for p in fx._players.values():
+		p.stop()
+	remove_child(fx)
+	fx.free()
+
+## Every gap between beats is the interval (to one physics tick).
+func _cadence_ok(times: Array[float], interval: float, dt: float) -> bool:
+	for k in range(1, times.size()):
+		if absf(times[k] - times[k - 1] - interval) > dt + 1e-4:
+			return false
+	return true
 
 func _test_z_inverse_mapping(rs: Node) -> void:
 	var r: Dictionary = GameConfig.robot()

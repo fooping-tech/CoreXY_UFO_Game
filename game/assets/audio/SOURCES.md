@@ -16,14 +16,19 @@
 
 | 用途（設定キー） | 効果音名 | ページ | ファイル名 |
 |---|---|---|---|
-| 横移動（`audio.move`） | 魔法使いが空を飛ぶ | 戦闘 https://soundeffect-lab.info/sound/battle/ | `wizard-flight1.mp3` |
-| UFO 上昇＝アーム下降（`audio.up`） | ステータス上昇魔法1 | 戦闘 https://soundeffect-lab.info/sound/battle/ | `magic-statusup1.mp3` |
-| UFO 下降＝アーム上昇（`audio.down`） | ヒューン | 演出・アニメ https://soundeffect-lab.info/sound/anime/ | `hyun1.mp3` |
+| アームの上下（Z。上げ・下げとも。`audio.motion_z`） | メニューを開く2（ブォン。重低音） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/menu2.mp3`） | `menu2.mp3` |
+| XY の移動（`audio.motion_xy`） | メニューを開く3（ブォン。サイバー感強め） | ボタン・システム音[1] https://soundeffect-lab.info/sound/button/ （配布ファイル `mp3/menu3.mp3`） | `menu3.mp3` |
 | 手のジョイスティック: パー（開いた手）が見えた（`audio.cue_hand`、#321） | 決定ボタンを押す1 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button1.mp3` |
 | 手のジョイスティック: つまんだ（`audio.cue_pinch`、#321） | 決定ボタンを押す3 | ボタン・システム音 https://soundeffect-lab.info/sound/button/ | `decide-button3.mp3` |
 
+#327: メニューを開く2 / 3 はページの配布ファイルとバイト単位で同じことを確認した（2026-11-26、SHA-1 一致）。
+
+鳴らし方（`game/scripts/ui/sfx.gd`）: 動き始めにすぐ 1 回、動いている間は 1 秒ごとに 1 回。Z と XY が同時に動くときは Z の音だけ。
+止まったら（0.2 秒続けて止まっていたら）鳴っている途中の音を 0.3 秒でフェードして消す。音量はそれぞれ `Sfx.VOICE_GAIN_DB`
+（`tools/audio_levels.py` で測って、1 秒ごとに繰り返すので普通の効果音より少し小さい約 -27 にそろえた）。
+
 別の音にするときは、同じサイトからダウンロードしてこのフォルダに置き、`config/game_config.json` の
-`audio.move` / `audio.up` / `audio.down` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
+`audio.motion_z` / `audio.motion_xy` をそのファイル名に変える（この表も更新する）。ファイルが無ければゲームは音なしで動く。
 音量は `audio.volume_db`、デバッグパネルの「Sound volume dB」。
 
 手のジョイスティックの音（`audio.cue_hand` / `audio.cue_pinch`）は `game/scripts/ui/sfx.gd` の `play_cue` で鳴る。同じ音は爪を閉じるとき（`pinch`）や
@@ -32,7 +37,7 @@
 
 ## 学習モードの効果音（`se/`）
 
-`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266。`magic-dark.mp3` = 暗黒魔法は #320）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。スコアゲームのカウントダウン（#325）の `electronic-countdown1.mp3`（演出・アニメ）と `info-girl1-countdown2.mp3`（アプリ・音声案内 https://soundeffect-lab.info/sound/voice/ ）も同じ。使っている場面と規約は `se/README.md`。
+`se/` の `don.mp3`・`pico.mp3`・`jan.mp3` も効果音ラボ（演出・アニメ https://soundeffect-lab.info/sound/anime/ ）のもの。スコアゲームのカプセルの登場音 `magic-*.mp3`（#266。`magic-dark.mp3` = 暗黒魔法は #320）も同じ `se/` にある効果音ラボ（戦闘 https://soundeffect-lab.info/sound/battle/ ）のもの。スコアゲームのカウントダウン（#325）の `electronic-countdown1.mp3`（演出・アニメ）と `info-girl1-countdown2.mp3`（アプリ・音声案内 https://soundeffect-lab.info/sound/voice/ ）も同じ。NEW RECORD! の歓声 `cheer-applause1.mp3`（効果音ラボ「歓声と拍手1」、人の声 https://soundeffect-lab.info/sound/voice/people.html 、#328）も `se/` にある。使っている場面と規約は `se/README.md`。
 
 ## スコアゲームの音（`sfx/`）は別
 

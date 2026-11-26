@@ -717,6 +717,9 @@ func _store_tick(dt: float) -> void:
 	fx_move = fx.x
 	fx_up = fx.y
 	fx_down = fx.z
+	# #327: the motion sounds are timed here, on the physics tick (not per render frame):
+	# the arm going up or down is one sound (Z), the travel another (XY)
+	sfx.tick_motion(maxf(fx_up, fx_down), fx_move, dt)
 
 ## Presentation intensities 0..1 from the physics: (sideways move, UFO rising,
 ## UFO sinking). A longer rope means the UFO sinks (arm up), a shorter one that it
@@ -773,7 +776,6 @@ func _process(dt: float) -> void:
 	# the saucer's body hangs below the rope end (attachment near the sprite top)
 	var body_px := r.screen + Vector2(0.0, 27.0 * ufo.pixel_scale * r.scale)
 	ufo_fx.update_fx(body_px, r.scale, _ufo_screen_vel, fx_move, fx_up, fx_down, dt)
-	sfx.update_sfx(fx_move, fx_up, fx_down, dt)
 	_update_scope(dt)
 	_update_gesture_presentation(dt)
 	dev.log_motion("R", dt, Vector3.ZERO)

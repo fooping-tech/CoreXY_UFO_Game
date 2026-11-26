@@ -81,8 +81,10 @@ func show_rank() -> void:
 	var c := GameModeRankingHud.CENTRE
 	var rp := ctl.ranking_hud.particles
 	var k := 1.0 - 0.06 * (ctl.ranking_rank - 1)  # the higher the place, the more of everything
-	ctl.sounds.play("new_record")
-	ctl.sounds.play("jackpot")  # the fanfare
+	# #328: 「ジャン！」 and a crowd cheering and clapping (they were the synthesised new_record
+	# and the jackpot fanfare)
+	ctl.sounds.play("result_jan")
+	ctl.sounds.play("cheer")
 	ctl._shake(0.6 + 0.4 * k)
 	ctl.bounce(1.2 + 0.8 * k)
 	ctl.hitstop(GameModeController.HITSTOP_MAX_S)
