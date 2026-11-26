@@ -93,6 +93,14 @@ const STEPS := {
 		"sub": "ひだりの ポータルに いれてね",
 		"sub_easy": "グーで キャッチ → じどうで ひだりの ポータルに はいるよ",
 		"say": ["カプセルを、ひとつ、いれてみよう！"]},
+	# #314: the easy practice's one real catch: aim, a fist, and the catch carries the capsule into
+	# the portal by itself; it is then explained on the practice board (PracticeShow), and the
+	# round starts once it is back
+	"easy_practice": {"kind": "practice", "art": "practice",
+		"title": "ねらいを さだめて グー！",
+		"sub": "UFOくんが おりて つかんで、ひだりの ポータルに いれるよ",
+		"sub_easy": "てを うごかして ねらって、グーで キャッチ！ じどうで ポータルに いれるよ",
+		"say": ["ねらいを さだめて、グーに してみよう！", "UFOくんが つかんで、ポータルに いれるよ！"]},
 }
 
 ## the extra shapes shown small beside the grab step: [art, words], by hand scheme
@@ -108,7 +116,8 @@ const MODES := {
 	},
 	"easy": {
 		# the easy mode is the pinch joystick's only (another hand scheme plays the hard mode)
-		"pinch_joystick": ["summon", "open", "pinch", "move", "easy_grab", "rules", "practice"],
+		# #314: no "グーで キャッチ" (the shape only) and no rules: the catch is the real one
+		"pinch_joystick": ["summon", "open", "pinch", "move", "easy_practice"],
 	},
 }
 

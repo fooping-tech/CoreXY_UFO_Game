@@ -196,5 +196,12 @@ run "START_SH_DEVICEHUB_DIR=$TMP/hub_none" -- --game-only
 run "START_SH_DEVICEHUB_DIR=$TMP/hub_ok" -- --mock
 [[ $CODE -eq 0 ]] && has "backend: corexy-ufo-backend --mock"; check "UFO-DeviceHub: cloned: the backend starts" $?
 
+# #312: the backend's sync never removes a package (mediapipe's opencv-contrib-python shares cv2's
+# folder with opencv-python: removing it took cv2 away) and a cv2 lost that way is put back
+n_sync=$(grep -c 'uv sync --quiet' "$ROOT/start.sh"); n_inexact=$(grep -c 'uv sync --quiet --inexact' "$ROOT/start.sh")
+[[ $n_sync -ge 2 && $n_sync -eq $n_inexact ]] && grep -q -- '--reinstall-package opencv-python' "$ROOT/start.sh" \
+  && grep -q "'--inexact'" "$ROOT/start.ps1" && grep -q 'reinstall-package opencv-python' "$ROOT/start.ps1"
+check "#312: uv sync --inexact (cv2 kept), a lost cv2 reinstalled (start.sh and start.ps1)" $?
+
 if [[ $fails -eq 0 ]]; then echo "start.sh: all passed"; else echo "start.sh: $fails failed"; fi
 exit $(( fails > 0 ))

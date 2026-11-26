@@ -298,6 +298,11 @@ var tutorial_speech: StudySpeech
 const TIME_UP_LINE := "ゲーム終了！！"
 ## config game_mode.tutorial.enabled: Enter on the title goes through the practice first
 var tutorial_auto := true
+## #314: the practice capsule's show on a plain board (the kinds by colour, the jackpot chance)
+## instead of the round's pinball; false (game_mode.tutorial.practice_show.enabled) = the pinball
+var practice_show: PracticeShow
+var practice_show_on := true
+var _practice_show_cfg: Dictionary = {}
 ## what the practice shows: the round's own difficulty as it is played (set when it starts)
 var tutorial_mode := GestureTutorialSteps.DEFAULT_MODE
 ## How the round is played (#169): "easy" = pinch for XY, a fist = catch by itself, one / two
@@ -380,6 +385,14 @@ func setup(m: Node) -> void:
 	field.capsule_exited.connect(_on_capsule_exited)
 	field.powerup_collected.connect(_on_powerup_collected)
 	field.process_mode = Node.PROCESS_MODE_DISABLED
+	practice_show = PracticeShow.new()
+	practice_show.name = "PracticeShow"
+	layer.add_child(practice_show)  # over the field's picture, under the HUD
+	practice_show.say = func(lines: Array): tutorial_voice.say(lines)
+	practice_show.speech_busy = func() -> bool: return tutorial_speech.busy() or not tutorial_voice.pending.is_empty()
+	practice_show.sound.connect(func(key: String): sounds.play(key))
+	practice_show.finished.connect(_on_practice_show_finished)
+	practice_show.configure(_practice_show_cfg)
 	field_art = PinballFieldArt.new()
 	field_art.name = "PinballFieldArt"
 	field_art.field = field
@@ -526,6 +539,12 @@ func _configure(cfg: Dictionary) -> void:
 	tutorial_auto = bool(_tutorial_cfg.get("enabled", tutorial_auto))
 	# #198: game_mode.difficulty / tutorial.mode of an older config are not read: always easy
 	tutorial.configure(_tutorial_cfg)
+	var ps = _tutorial_cfg.get("practice_show", {})
+	if ps is Dictionary:
+		practice_show_on = bool(ps.get("enabled", practice_show_on))
+		_practice_show_cfg = ps
+		if practice_show != null:
+			practice_show.configure(ps)
 	tutorial_voice.link_wait_s = clampf(float(_tutorial_cfg.get("voice_link_wait_s", tutorial_voice.link_wait_s)), 0.0, 10.0)
 	debug_panel = bool(cfg.get("debug_panel", debug_panel))
 
@@ -832,6 +851,7 @@ func start_tutorial() -> void:
 	_trace("tutorial_start", null, {"result": tutorial_mode})
 
 func _end_tutorial() -> void:
+	practice_show.stop()  # #314: gone at once with the practice (Space, Esc, the round)
 	tutorial.cancel()
 	tutorial_voice.pending = []
 	tutorial_speech.clear()
@@ -1172,6 +1192,7 @@ func tick(dt: float) -> void:
 						and lanes["left"].state == "READY":
 					_mock_ball("left")  # the rehearsal puts the practice capsule in by itself
 			tutorial_voice.tick(dt)
+			_tick_practice_show(dt)
 			_tick_gauge_sound(dt)
 			tutorial.tick(dt, _hand_snapshot(), {"speech_busy": tutorial_speech.busy() or not tutorial_voice.pending.is_empty(), "practice": practice,
 				"devices_ok": devices.available(), "capsule": practice_busy()})
@@ -1452,7 +1473,10 @@ func _tick_lane(l: Lane, dt: float) -> void:
 			l.t -= dt
 			if l.t <= 0.0:
 				var kind := str(l.capsule.get("kind", "normal"))
-				field.spawn_capsule(l.capsule.capsule_id, l.capsule.drop_x, capsule_color(l), kind, kinds.of(kind))
+				if showing_practice():
+					practice_show.begin(str(l.capsule.capsule_id), kind)  # #314: the plain board, not the pinball
+				else:
+					field.spawn_capsule(l.capsule.capsule_id, l.capsule.drop_x, capsule_color(l), kind, kinds.of(kind))
 				fx.play("capsule_portal_close", l.side)
 				_set_lane(l, "SIMULATING")
 		"RETURNING":
@@ -1816,6 +1840,35 @@ func _on_capsule_exited(capsule_id: String, goal: String, pos: Vector2) -> void:
 			return  # the real Dial still holds its one capsule
 		_end_multiball(root_id, l)
 	_begin_return(l, pos)
+
+## #314: the practice capsule goes to the practice show (not the pinball) now.
+func showing_practice() -> bool:
+	return practice_show_on and phase == "TUTORIAL" and practice != ""
+
+func _tick_practice_show(dt: float) -> void:
+	if not practice_show.active():
+		return
+	var c = capsules.get_capsule(practice_show.capsule_id)
+	var l: Lane = _lane_of(c.source_dial) if c != null else null
+	if l == null or l.state != "SIMULATING":
+		practice_show.stop()  # the capsule is no longer on the screen (a stop, a fault)
+		return
+	practice_show.tick(dt)
+
+## The show is over: the practice capsule goes back to its Dial, as after the pinball. Its
+## points (the jackpot it was shown) go on the practice's score (reset before the round).
+func _on_practice_show_finished(capsule_id: String) -> void:
+	var c = capsules.get_capsule(capsule_id)
+	if c == null:
+		return
+	var l: Lane = _lane_of(c.source_dial)
+	if l == null or l.state != "SIMULATING":
+		return
+	c.goal = "center"
+	c.score += PracticeShow.JACKPOT_POINTS
+	score.score += PracticeShow.JACKPOT_POINTS
+	_trace("practice_show", l, {"score_delta": PracticeShow.JACKPOT_POINTS})
+	_begin_return(l, Vector2(PracticeShow.GOAL_X[1], PracticeShow.GOAL_Y))
 
 ## The capsule's time on the field is over (its last ball left): back to its Dial.
 func _begin_return(l: Lane, pos: Vector2) -> void:

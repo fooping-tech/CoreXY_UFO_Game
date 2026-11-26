@@ -305,12 +305,19 @@ start_backend() {
   require_uv
   resolve_ws_endpoint "$@"
   ensure_port_free
-  # camera / hand tracking need the optional extras; a plain sync would remove them
+  # camera / hand tracking need the optional extras. --inexact (#312): a sync never removes a
+  # package: mediapipe's opencv-contrib-python shares the cv2 folder with opencv-python, and
+  # removing it (a run without the gesture after one with it) took cv2 away with it
   local extras=() a
   for a in "$@"; do
     case "$a" in --gesture|--gesture=*|--hands|--camera|--camera=*) extras=(--extra vision --extra hands) ;; esac
   done
-  (cd "$BACKEND_DIR" && uv sync --quiet ${extras[@]+"${extras[@]}"})
+  (cd "$BACKEND_DIR" && uv sync --quiet --inexact ${extras[@]+"${extras[@]}"})
+  # a cv2 already lost that way (installed on paper, its folder gone): put it back
+  if ! (cd "$BACKEND_DIR" && uv run --no-sync python -c "import cv2" >/dev/null 2>&1); then
+    echo "OpenCV（cv2）が読めないので入れ直します"
+    (cd "$BACKEND_DIR" && uv sync --quiet --inexact --reinstall-package opencv-python ${extras[@]+"${extras[@]}"})
+  fi
   (cd "$BACKEND_DIR" && exec uv run corexy-ufo-backend "$@") &
   BACKEND_PID=$!
   wait_for_port
