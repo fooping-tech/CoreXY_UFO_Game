@@ -390,9 +390,22 @@
     "trace": true,
     "result_bonus": {
       "capsule_each": 100,
+      "colour_each": 200,
       "combo_each": 50,
       "jackpot_each": 500,
-      "_note": "The round's end bonuses (#153; docs/game_mode_spec.md §3.2), added to the score on the result screen: capsule_each x the capsules a Dial took before the time ran out (a late one and the practice capsule do not count), combo_each x the longest chain, jackpot_each x the jackpots won. final score = the score while playing + these. They are end bonuses only: the switch bonus (score.table.switch_bonus) and the jackpot's own points (score.table.jackpot) are paid while playing and are not added again. 0 = that bonus is left out. Tuning values, not final."
+      "colour_sets": {
+        "pair": 300,
+        "triple": 1000,
+        "watermelon": 500,
+        "steam": 500,
+        "forest": 500,
+        "storm": 500,
+        "fireworks": 500,
+        "signal": 1500,
+        "colourful": 1000,
+        "complete": 2000
+      },
+      "_note": "The round's end bonuses (#153; docs/game_mode_spec.md §3.2), added to the score on the result screen: the capsules a Dial took before the time ran out, announced kind by kind (#323): capsule_each x the normal ones, colour_each x each coloured one (a late one and the practice capsule do not count); then the colour sets of the coloured ones (#323, colour_sets: pair = per colour with exactly 2, triple = per colour with 3 or more, watermelon = fire + green, steam = fire + water, forest = water + green, storm = water + thunder, fireworks = dark + fire, signal = fire + thunder + green (a set needing a kind the game does not have is never made), colourful = 3 or more coloured capsules all of different colours, complete = every colour of CapsuleKinds at least once); combo_each x the longest chain, jackpot_each x the jackpots won. final score = the score while playing + these. They are end bonuses only: the switch bonus (score.table.switch_bonus) and the jackpot's own points (score.table.jackpot) are paid while playing and are not added again. 0 = that bonus is left out. Tuning values, not final."
     },
     "result_show": {
       "intro_s": 0.5,
