@@ -684,6 +684,16 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_gm_step(ctl, 0.3)
 	_ok(mist_of.call().size() == n0 + 1 and ctl.mist_pending_s == 0,
 		"game mode #316: a mist that waited longer than mist_defer_max_s for the servos is dropped")
+	# review on #317: a stop drops the waiting mist (it must not start again after STOP_ALL)
+	RobotState.easy_mode = {"state": "DELIVER_DIAL_1", "step": "RELEASE"}
+	ctl.mist_burst(ctl.mist_capsule_s)
+	var waited := ctl.mist_pending_s > 0
+	ctl.on_stop_key()
+	RobotState.easy_mode = {"state": "MANUAL_XY", "step": "IDLE"}
+	ctl.lights_tick(0.1)
+	_gm_step(ctl, 0.3)
+	_ok(waited and ctl.mist_pending_s == 0 and mist_of.call().size() == n0 + 1,
+		"game mode #316: Space drops a mist that waited for the servos; nothing is sent after the stop")
 	RobotState.easy_mode = em0
 	RobotState.machine_state = ms0
 	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"

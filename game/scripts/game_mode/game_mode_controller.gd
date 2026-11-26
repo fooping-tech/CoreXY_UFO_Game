@@ -673,6 +673,7 @@ func robot_fault_latched() -> bool:
 ## Already latched: the cause is brought up to date, nothing stops twice. Returns true when
 ## this stopped the game.
 func robot_halt(f: Dictionary) -> bool:
+	cancel_mist()  # #316: a mist waiting for the servos never comes after a stop
 	if robot_fault_latched():
 		robot_fault.count = int(robot_fault.get("count", 1)) + 1
 		robot_fault.latest = f.duplicate(true)
@@ -2162,6 +2163,7 @@ func _link_lost(l: Lane, why: String) -> void:
 ## Space: everything of the game mode stops now. STOP_ALL goes to the devices whatever
 ## the state; nothing is released or re-armed afterwards.
 func on_stop_key() -> void:
+	cancel_mist()  # #316 (review): also with the mode closed (the study mode's reward waits here too)
 	if not _active:
 		return
 	if running():
@@ -2171,6 +2173,7 @@ func on_stop_key() -> void:
 		result_show.skip("stopped")  # a stop during the result's show: the show ends too, quietly (the score stands)
 
 func _halt(why: String) -> void:
+	cancel_mist()  # #316 (review): STOP_ALL below; the waiting mist must not start it again
 	_light_override_left = 0.0  # #277: a stop ends a capsule's light too
 	_demo_claw_closed = false  # a stop: nothing more is asked of the claw
 	devices.stop_all()
@@ -2345,6 +2348,12 @@ static func servos_moving() -> bool:
 			and not str(RobotState.easy_mode.get("state", "")) in ["OFF", "MANUAL_XY", "FAULT"]:
 		return true
 	return RobotState.machine_state in SERVO_MACHINE_STATES
+
+## #316 (review on #317): a stop drops the mist that waits for the servos (else it would be sent
+## once they stopped, right after the stop's STOP_ALL).
+func cancel_mist() -> void:
+	mist_pending_s = 0
+	_mist_wait = 0.0
 
 ## Every frame (lights_tick): the mist that waited for the servos goes out once they stopped.
 func _tick_mist(dt: float) -> void:
