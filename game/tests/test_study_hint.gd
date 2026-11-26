@@ -131,12 +131,24 @@ func _test_finger_hint_story(rs: Node) -> void:
 	var thumb_no := ctl.state == "HINT_ASK"
 	ctl.finger_tick(0, "fist", t + 2100.0)
 	ctl.finger_tick(0, "fist", t + 3200.0)
-	var back: bool = ctl.state == "REVIEW_SUMMARY" and ctl.adult_prompt.contains("R") and ctl.hint_text == ""
+	var back: bool = ctl.state == "REVIEW_SUMMARY" and ctl.review_waiting() and ctl.adult_prompt != "" and ctl.hint_text == ""
 	_study_pump(game, 15.0)
 	_ok(thumb_no and back and ctl.state == "REVIEW_SUMMARY" and said.count(prompt) == 1 and rs.source == "mock"
 		and not ctl.blocks_manual_control(),
 		"finger hint: a thumbs-up is not a number; a fist ends it, the summary comes back (asked only once, nothing moved)",
 		str([thumb_no, back, ctl.state, ctl.adult_prompt]))
+	# #333's hands at the summary again: an open hand already up when it comes back waits for a
+	# change; in HINT_ASK neither the thumbs-up nor the open hand did anything of #333's
+	ctl._hint_offered = false
+	ctl._offer_hint()
+	var in_ask := ctl.state == "HINT_ASK" and not ctl.review_waiting()
+	ctl.hand_tick("open", t + 5000.0)
+	ctl.hand_tick("open", t + 5000.0 + ctl.review_hold_s * 1000.0 + 100.0)
+	var open_ignored := ctl.state == "HINT_ASK"
+	ctl.handle_key(KEY_ENTER)  # (goes on: as the summary's Enter)
+	var reward_by_key := ctl.state in StudyModeController.REWARD_STATES
+	_ok(in_ask and open_ignored and reward_by_key,
+		"finger hint: #333's open hand (つぎへ) is not read while the number is asked; Enter there goes on", str([in_ask, open_ignored, ctl.state]))
 	# Enter goes on as at the summary (the reward)
 	ctl.advance()
 	var reward := _study_pump(game, 20.0, func(): return ctl.state in StudyModeController.REWARD_STATES)

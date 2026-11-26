@@ -732,6 +732,8 @@
       "enabled": true,
       "hold_ms": 600.0,
       "offer_s": 12.0,
+      "review_hold_s": 1.0,
+      "_review_note": "#333: at the answer check's summary (something to look at again) the box at the top takes the hand: a thumbs-up held review_hold_s reads the sheet again (as R), an open hand held review_hold_s goes on to the reward (as Enter). A shape held on fires once (the hand must change first); while the box is up the thumbs-up is not the dialogue mode's (#281). Not yet tried with the real hand camera.",
       "_note": "#136: while studying, a hand held to the overview camera with 1 / 2 / 3 fingers (point = index, peace = index + middle, three = index + middle + ring) for hold_ms makes UFOくん ask \"問題 N、教えてあげようか？\"; a thumbs-up held for hold_ms within offer_s starts the HELP for that problem (as Y does for help.problem: the overview camera finds it, the arm camera photographs it and the AI explains it; a problem already filled is explained too when asked by hand). The arm camera shows in the round view from the arm's first move, and its photo stays there while the explanation is spoken. Needs the hand tracking (./start.sh: on with the real robot / --mock). The hand never jogs the arm or moves the claw in the study mode. Not yet run on the real robot."
     },
     "height": {

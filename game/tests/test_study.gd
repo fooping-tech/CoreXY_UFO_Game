@@ -401,7 +401,7 @@ func _test_study_mode_mock_story(rs: Node) -> void:
 	var graded_ok: bool = ctl.state == "REVIEW_SUMMARY" and mid and order == [[1, "study_answer_correct"], [2, "study_answer_review"],
 		[3, "study_answer_correct"]] and chips == ["correct", "review", "correct"] and hud.sheet.mark_point(1) != Vector2.ZERO \
 		and ctl.energy() == 2 and hud._energy.text == "⚡ × 2" and hud._count.text == "せいかい 2 / 3" \
-		and ctl.adult_prompt.contains("R") and ctl.speech.current.contains("2ばんは")
+		and ctl.review_waiting() and ctl.speech.current.contains("2ばんは")
 	_ok(graded_ok, "study mock: the reading is shown from problem 1, one at a time; ○ for right, ？ (never a cross) and a hint to look at again",
 		str([ctl.state, mid, order, chips, ctl.energy(), ctl.speech.current]))
 	# rewritten: R reads again; only the one to look at is shown again; the reward is never given twice
@@ -1859,4 +1859,90 @@ func _test_study_check_on_found_and_dialog(rs: Node) -> void:
 	_ok(waiting_blocked and to_check and half and not_yet and on and studying and not_in_grading and at_summary,
 		"study #281: the print found goes straight to the answer check; talking needs the dialogue mode, a thumbs-up held 3 s while waiting for the print (then the homework time as before) or at the check's summary, never in the middle of the check",
 		"%s %s %s %s %s %s %s %s" % [waiting_blocked, to_check, half, not_yet, on, studying, not_in_grading, at_summary])
+	_gm_free(game, rs)
+
+## #333: the summary's box at the top, by hand: a thumbs-up held 1 s reads the sheet again (R),
+## an open hand held 1 s goes on (Enter); shorter holds do nothing, a held shape never repeats,
+## the thumb starts nothing else (the dialogue mode, the help offer); "ここへおいてね！" again.
+func _test_study_review_box_by_hand(rs: Node) -> void:
+	var game := _study_game()
+	var ctl: StudyModeController = game.study_mode
+	var hud: StudyHud = game.study_hud
+	ctl.dialog_needs_thumb = true  # the 3 s thumbs-up of #281 must not start as well
+	ctl.start()
+	var summary := func() -> void:
+		ctl.state = "GRADING_QUESTION"
+		ctl.grading.reset([])
+		ctl.reward = {}
+		ctl._summary()
+		hud.refresh()
+	summary.call()
+	var box_up: bool = ctl.state == "REVIEW_SUMMARY" and ctl.review_waiting() and hud._review.visible \
+		and not hud._adult.visible and not ctl.adult_prompt.contains("R ") and not ctl.adult_prompt.contains("Enter")
+	# at the top: under the title, above the sheet (the camera's picture)
+	var top: bool = hud._review.position.y < 140.0 and hud._review.position.y + hud._review.size.y <= hud.sheet.position.y \
+		and hud._review.position.x >= 0.0 and hud._review.position.x + hud._review.size.x <= 720.0
+	# "ここへおいてね！" while the rewritten sheet is awaited (as for the first read), gone while read
+	var guide_at_summary: bool = hud.sheet.guide and hud.sheet.visible and StudyHud.guide_shown("WAITING_FOR_WORKSHEET") \
+		and not StudyHud.guide_shown("RESCAN") and not StudyHud.guide_shown("GRADING_QUESTION") \
+		and not StudyHud.guide_shown("STUDYING")
+	# a short thumbs-up: nothing; the gauge fills while held
+	var t0 := 200000.0
+	ctl.hand_tick("thumb", t0)
+	ctl.hand_tick("thumb", t0 + 500.0)
+	hud.refresh()
+	var half: bool = ctl.review_pose == "thumb" and ctl.review_progress > 0.4 and ctl.review_progress < 0.6
+	ctl.hand_tick("", t0 + 600.0)  # let go before 1 s
+	var short_none: bool = ctl.state == "REVIEW_SUMMARY" and ctl.review_progress == 0.0 and not ctl.dialog_mode
+	ctl.hand_tick("open", t0 + 700.0)
+	ctl.hand_tick("open", t0 + 1500.0)
+	var short_open: bool = ctl.state == "REVIEW_SUMMARY" and ctl.review_waiting()
+	ctl.hand_tick("", t0 + 1600.0)
+	# thumbs-up held 1 s: read again (RESCAN), nothing else (no dialogue mode, no help offer)
+	ctl.hand_tick("thumb", t0 + 2000.0)
+	ctl.hand_tick("thumb", t0 + 3000.0)
+	var reread: bool = ctl.state == "RESCAN" and not ctl.review_waiting() and not ctl.dialog_mode \
+		and ctl.offer_problem == 0 and ctl.adult_prompt == ""
+	hud.refresh()
+	var guide_gone: bool = not hud.sheet.guide and not hud._review.visible
+	# still held when the box comes again: it does not fire until the hand changes
+	ctl.hand_tick("thumb", t0 + 3100.0)
+	summary.call()
+	ctl.hand_tick("thumb", t0 + 3200.0)
+	ctl.hand_tick("thumb", t0 + 6500.0)
+	var no_repeat: bool = ctl.state == "REVIEW_SUMMARY" and ctl.review_waiting() and ctl.review_progress == 0.0 and not ctl.dialog_mode
+	ctl.hand_tick("", t0 + 6600.0)
+	ctl.hand_tick("thumb", t0 + 6700.0)
+	ctl.hand_tick("thumb", t0 + 7750.0)
+	var again: bool = ctl.state == "RESCAN"
+	# an open hand held 1 s: on (as Enter: the reward)
+	summary.call()
+	ctl.hand_tick("", t0 + 8000.0)
+	ctl.hand_tick("open", t0 + 8100.0)
+	ctl.hand_tick("open", t0 + 9150.0)
+	var next_ok: bool = ctl.state == "REWARD_CALCULATING" and not ctl.review_waiting()
+	ctl.hand_tick("open", t0 + 9300.0)
+	var stays: bool = ctl.state == "REWARD_CALCULATING"
+	# the keys still work (the staff): R reads again, Enter goes on
+	ctl.stop()
+	ctl.start()
+	summary.call()
+	ctl.handle_key(KEY_R)
+	var key_r: bool = ctl.state == "RESCAN"
+	summary.call()
+	ctl.handle_key(KEY_ENTER)
+	var key_enter: bool = ctl.state == "REWARD_CALCULATING"
+	# the summary's key line: no "👍 3びょう おはなし" there any more (the thumb reads again)
+	var keys_ok: bool = not StudyHud.key_help("REVIEW_SUMMARY", "camera", "off").contains("👍") \
+		and StudyHud.key_help("REVIEW_SUMMARY", "camera", "off").contains("R もう一度読む")
+	ctl.stop()
+	_ok(box_up and top and guide_at_summary,
+		"study #333: the summary's box is at the top (above the sheet, not the old box at the bottom) and shows no keys; 「ここへおいてね！」 shows while the rewritten sheet is awaited",
+		"%s %s %s" % [box_up, top, guide_at_summary])
+	_ok(half and short_none and short_open and reread and guide_gone,
+		"study #333: a thumbs-up held 1 s reads again (as R; no dialogue mode, no help offer), shorter holds of either hand do nothing, the mark goes while it is read",
+		"%s %s %s %s %s" % [half, short_none, short_open, reread, guide_gone])
+	_ok(no_repeat and again and next_ok and stays and key_r and key_enter and keys_ok,
+		"study #333: a shape held on does not fire again until the hand changes; an open hand held 1 s goes on (as Enter); R / Enter still work",
+		"%s %s %s %s %s %s %s" % [no_repeat, again, next_ok, stays, key_r, key_enter, keys_ok])
 	_gm_free(game, rs)

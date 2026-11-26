@@ -9,12 +9,14 @@ extends Node
 ##   STUDYING --3 problems stably filled / grown-up's Enter--> the answer check (#236, #237):
 ##            ANSWER_CHECK_READY -> SHEET_SCANNING -> GRADING_QUESTION (one problem at a time, from 1)
 ##            -> REVIEW_SUMMARY (only when something is to be looked at again)
-##                 --R: rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
-##                 --Enter--> REWARD_CALCULATING
+##                 --R / a thumbs-up held 1 s (#333): rewritten--> RESCAN -> GRADING_QUESTION (the ones not yet right) -> ...
+##                 --Enter / an open hand held 1 s (#333)--> REWARD_CALCULATING
 ##            REVIEW_SUMMARY --its words said, once a story (#334)--> HINT_ASK ("わからない もんだいが
 ##                 あったら…ゆびで おしえてね！") --a finger count held 1 s--> HINT_THINKING (the tutor)
 ##                 -> HINT_GIVING (UFOくん says the hint) -> HINT_ASK (again: the same number = a stronger
 ##                 hint) --a fist (グー) held / no hand for finger_hint.ask_s / Enter / R--> REVIEW_SUMMARY
+##                 (the thumbs-up / open hand of #333 are read only in REVIEW_SUMMARY, the finger counts
+##                 only in HINT_ASK: they never meet)
 ##            -> REWARD_REVEAL -> POWERUP_SELECT (a power ticket: a roulette picks it) -> CLEANUP -> GAME_READY_WITH_REWARD
 ##            --"ゲームで遊ぶ"--> (off; the reward is handed over: StudyGrading.reward)
 ##   CLEANUP --fault--> CLEANUP_FAILED --Enter--> GAME_READY_WITH_REWARD (tidy-up left unchecked)
@@ -86,6 +88,15 @@ var _offer_until_ms := 0.0
 var _hand_pose := ""
 var _hand_since_ms := -1.0
 var _hand_used := ""  # a pose already acted on: nothing more until the hand changes
+## #333: the summary's box by hand: a thumbs-up held review_hold_s reads the sheet again (as R),
+## an open hand held review_hold_s goes on (as Enter). Once acted on (or already up when the box
+## came), a shape does nothing more until the hand changes. study_mode.hand_help.review_hold_s
+const REVIEW_POSES := {"thumb": "rescan", "open": "next"}
+var review_hold_s := 1.0
+var review_pose := ""  # the shape being held for the box now ("" = none)
+var review_progress := 0.0  # its hold, 0..1 (the box's gauge)
+var _review_since_ms := -1.0
+var _review_used := ""
 ## keys of the study mode (study_mode.keys); the game's own keys stay as they are
 var keys := {"advance": KEY_ENTER, "fill_1": KEY_1, "fill_2": KEY_2, "fill_3": KEY_3,
 	"skip": KEY_F6, "inject": KEY_F7, "reset": KEY_F8, "toggle": KEY_F5, "rescan": KEY_R}
@@ -219,6 +230,7 @@ func setup(m: Node, hw: HomeworkClient) -> void:
 		hand_help_enabled = bool(hh.get("enabled", hand_help_enabled))
 		hand_hold_ms = maxf(float(hh.get("hold_ms", hand_hold_ms)), 100.0)
 		hand_offer_s = maxf(float(hh.get("offer_s", hand_offer_s)), 2.0)
+		review_hold_s = clampf(float(hh.get("review_hold_s", review_hold_s)), 0.3, 5.0)
 	var k = GameConfig.get_value("study_mode", "keys", {})
 	if k is Dictionary:
 		for name in k:
@@ -306,6 +318,8 @@ func reset_story() -> void:
 	_hint_idle_ms = -1.0
 	_hand_used = ""
 	_hand_since_ms = -1.0
+	_review_reset()
+	_review_used = ""
 	_pending_nav = []
 	nav_tries = 0
 	_timers.clear()
@@ -552,7 +566,7 @@ func _summary() -> void:
 		_set_state("REVIEW_SUMMARY")
 		_say([{"text": "プリントが うまく よめなかったよ。", "face": "worried"},
 			{"text": "紙の 位置や 手で かくれていないかを 見て、もういちど 見せてね。", "face": "normal"}])
-		_ask_adult("review", "置きなおしたら R でもう一度読む ／ このまま Enter でつぎへ")
+		_ask_adult("review", "置きなおしたら もう一度読む ／ このまま つぎへ")
 		return
 	grading.checked = true
 	var look := grading.to_look_again()
@@ -567,7 +581,7 @@ func _summary() -> void:
 		lines.append({"text": "%dばんは、紙の位置や 手で かくれていないかを 見てね。" % n, "face": "worried"})
 	lines.append({"text": "書きなおしたら、もういちど 見るよ。あとで見直してもいいよ！", "face": "wink"})
 	_say(lines, _offer_hint)  # #334: then "わからない もんだいが あったら…"
-	_ask_adult("review", "書きなおしたら R でもう一度読む ／ このまま Enter でつぎへ（見直しはあとでも OK）")
+	_ask_adult("review", "書きなおしたら もう一度読む ／ このまま つぎへ（見直しはあとでも OK）")
 
 func _calc_reward() -> void:
 	if state not in ["GRADING_QUESTION", "REVIEW_SUMMARY"]:
@@ -680,6 +694,7 @@ func _offer_hint() -> void:
 	_hint_saved = [_pending_adult, adult_prompt]
 	_pending_adult = ""
 	adult_prompt = ""
+	_review_reset()  # #333's box is not up meanwhile: a half-held いいね / パー is dropped
 	services.trace("finger hint: asked")
 	_enter_hint_ask([{"text": "わからない もんだいが あったら、もんだいの ばんごうを ゆびで おしえてね！", "face": "happy"},
 		{"text": "だいじょうぶなら、グーを みせてね。", "face": "wink"}])
@@ -772,9 +787,8 @@ func _finish_hints(say := true) -> void:
 	hint_text = ""
 	hint_note = ""
 	_set_state("REVIEW_SUMMARY")
-	if _hint_saved.size() == 2:
-		_pending_adult = str(_hint_saved[0])
-		adult_prompt = str(_hint_saved[1])
+	if _hint_saved.size() == 2 and str(_hint_saved[0]) != "":
+		_ask_adult(str(_hint_saved[0]), str(_hint_saved[1]))  # #333: a shape already up waits for a change
 	_hint_saved = []
 	if say:
 		_say([{"text": "わかった！ 書きなおしたら、もういちど 見せてね。", "face": "wink"}])
@@ -809,6 +823,8 @@ static func cleanup_enabled() -> bool:
 ## while the study mode runs. A pose counts after hand_hold_ms; once acted on, the same
 ## pose does nothing more until the hand changes (a held thumb does not start twice).
 func hand_tick(pose: String, now_ms: float) -> void:
+	if _pending_adult == "review":
+		_review_hand(pose, now_ms)
 	_dialog_thumb(pose, now_ms)
 	if offer_problem > 0 and now_ms > _offer_until_ms:
 		offer_problem = 0
@@ -839,7 +855,9 @@ func hand_tick(pose: String, now_ms: float) -> void:
 ## #281: a thumbs-up held dialog_thumb_s before the print is found or at the check's summary:
 ## the dialogue mode (the voice dialogue may be used from then on, this story).
 func _dialog_thumb(pose: String, now_ms: float) -> void:
-	if not dialog_needs_thumb or dialog_mode or state not in DIALOG_ENTRY_STATES or pose != "thumb":
+	# #333: while the summary's box waits, the thumbs-up reads the sheet again (not the dialogue)
+	if not dialog_needs_thumb or dialog_mode or state not in DIALOG_ENTRY_STATES or pose != "thumb" \
+			or _pending_adult == "review":
 		_thumb_since_ms = -1.0
 		dialog_progress = 0.0
 		return
@@ -867,6 +885,48 @@ func enter_dialog() -> void:
 		_say([{"text": "いいね！ わからない ところを おはなし しよう！", "face": "excited"},
 			{"text": "V キーか マイクの ボタンで 話しかけてね。", "face": "happy"}])
 	changed.emit()
+
+## #333: the summary's box: a thumbs-up held review_hold_s = R (read again), an open hand = Enter.
+func _review_hand(pose: String, now_ms: float) -> void:
+	if pose != _review_used:
+		_review_used = ""  # the hand changed: the shape used before may count again
+	if not REVIEW_POSES.has(pose) or pose == _review_used:
+		if review_pose != "":
+			_review_reset()
+			changed.emit()
+		return
+	if pose != review_pose:
+		review_pose = pose
+		_review_since_ms = now_ms
+	review_progress = clampf((now_ms - _review_since_ms) / (review_hold_s * 1000.0), 0.0, 1.0)
+	changed.emit()
+	if review_progress < 1.0:
+		return
+	_review_used = pose
+	_review_reset()
+	services.trace("review box: %s held (%s)" % [pose, REVIEW_POSES[pose]])
+	if REVIEW_POSES[pose] == "rescan":
+		rescan()
+	else:
+		advance()
+
+func _review_reset() -> void:
+	review_pose = ""
+	review_progress = 0.0
+	_review_since_ms = -1.0
+
+## The summary's box waits for R / Enter or the hand (#333).
+func review_waiting() -> bool:
+	return _pending_adult == "review"
+
+## R / a thumbs-up at the summary (#333): the sheet rewritten, read it again.
+func rescan() -> void:
+	if state != "REVIEW_SUMMARY":
+		return
+	_pending_adult = ""
+	adult_prompt = ""
+	_review_reset()
+	_scan(true)
 
 ## "問題 n、教えてあげようか？" and wait hand_offer_s for a thumbs-up.
 ## The problem Y helps with (#237): on a real print (read by the camera) the one the child seems
@@ -1193,6 +1253,10 @@ func play_game() -> void:
 func _ask_adult(kind: String, text: String) -> void:
 	_pending_adult = kind
 	adult_prompt = text
+	if kind == "review":
+		# #333: a shape already up when the box comes counts only after the hand changes
+		_review_reset()
+		_review_used = _hand_pose if REVIEW_POSES.has(_hand_pose) else ""
 	sounds.play("tick")
 	changed.emit()
 
@@ -1291,9 +1355,7 @@ func handle_key(keycode: int) -> bool:
 	elif state == "POWERUP_SELECT" and keycode in [KEY_1, KEY_2, KEY_3]:
 		pass  # the roulette picks it (the fill keys do nothing here)
 	elif state == "REVIEW_SUMMARY" and keycode == keys.rescan:
-		_pending_adult = ""
-		adult_prompt = ""
-		_scan(true)
+		rescan()
 	elif keycode == voice.talk_keycode:
 		voice.press()  # #233: held = listening; the release ends it (handle_key_release)
 	elif keycode == keys.advance or keycode == KEY_KP_ENTER:
