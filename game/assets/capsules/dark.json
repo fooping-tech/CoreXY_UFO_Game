@@ -1,0 +1,16 @@
+{
+ "frame_w": 32,
+ "frame_h": 32,
+ "frames": 8,
+ "fps": 10,
+ "body_r": 11,
+ "centre": [
+  16,
+  18
+ ],
+ "rows": [
+  "capsule (turns with the ball)",
+  "the kind's own (kept upright)"
+ ],
+ "made_by": "tools/build_capsule_sprites.py"
+}

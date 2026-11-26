@@ -115,7 +115,8 @@ var devices: GameModeDevices
 var mock_hub: MockDialHub
 var backend_hub: BackendDialHub
 var score := ScoreManager.new()
-## #266: the capsule kinds (fire / water / green / normal) and the arm camera's colour votes
+## #266: the capsule kinds (fire / water / green / thunder / dark (#320) / normal) and the arm
+## camera's colour votes
 var kinds := CapsuleKinds.new()
 var colour_reader := CapsuleKinds.Reader.new()
 var kinds_enabled := true
@@ -135,6 +136,9 @@ var colour_events: Array = []
 var _sample_left := 0.0
 var _kind_trail_t := 0.0
 var _easy_was := ""
+## #320: the easy mode's step the colour reading saw last, and how long it has run (seconds)
+var _easy_step_was := ""
+var _easy_step_t := 0.0
 var _kind_rng := RandomNumberGenerator.new()
 var powerups := PowerUpManager.new()
 ## MULTI BALL (#188): one real capsule, up to three balls on the screen.
@@ -1544,7 +1548,7 @@ func decide_kind() -> String:
 	var k := colour_reader.decide(int(kinds.read.min_votes), float(kinds.read.min_ratio))
 	if k == "normal" and colour_reader.count() == 0 and not _camera_live() and devices.can_mock_ball():
 		if mock_kind == "random":
-			return ["fire", "water", "green"][_kind_rng.randi() % 3]
+			return CapsuleKinds.COLOURED[_kind_rng.randi() % CapsuleKinds.COLOURED.size()]
 		if CapsuleKinds.known(mock_kind):
 			return mock_kind
 	return k
@@ -1556,16 +1560,24 @@ func _camera_live() -> bool:
 	var cams = main.get("cameras") if main != null else null
 	return cams != null and (cams.has_feed("focus") or cams.external_live("focus"))
 
-## A capsule may hang in front of the arm camera now: the easy mode's catch coming up and
-## its carry (a new catch starts the votes over); by hand, all the time the Dials take one.
+## The capsule about to be caught is in front of the arm camera now. #320 (measured on the
+## real crane): the claw comes down on what is at the middle of the arm camera, and that
+## capsule is seen clearly only from up high. Low down the camera's exposure washes it out
+## (yellow turns white, the desk navy), and once it is held it covers the lens and the white
+## balance takes its colour away; over the portal the capsule waiting in the Dial shows. So
+## the easy mode reads while the claw opens above the capsule and for the first
+## read.lower_read_s seconds of the way down (a new catch starts the votes over); by hand,
+## all the time the Dials take one (the votes of memory_s seconds back).
 func _reading_colours() -> bool:
 	if not kinds_enabled or not _active or not _taking():
 		return false
 	var e = main.get("easy") if main != null else null
 	if easy_on() and e != null:
-		if e.state == "AUTO_GRAB":
-			return e.step in ["CLOSE_CLAW", "RAISE_WITH_ITEM"]
-		return e.state in ["WAIT_DESTINATION", "DELIVER_DIAL_1"]
+		if e.state != "AUTO_GRAB":
+			return false
+		if e.step == "OPEN_CLAW":
+			return true
+		return e.step == "LOWER_TO_CATCH" and _easy_step_t < float(kinds.read.get("lower_read_s", 2.0))
 	return true
 
 func _read_colours(dt: float) -> void:
@@ -1576,6 +1588,13 @@ func _read_colours(dt: float) -> void:
 		colour_reader.clear()  # a new catch: what was seen before is not this capsule
 		_colour_event("reset", "new_catch")
 	_easy_was = es
+	colour_reader.keep_all = easy_on() and e != null
+	var step: String = str(e.step) if e != null else ""
+	if step != _easy_step_was:
+		_easy_step_was = step
+		_easy_step_t = 0.0
+	else:
+		_easy_step_t += dt
 	if not _reading_colours():
 		_sample_left = 0.0
 		return
