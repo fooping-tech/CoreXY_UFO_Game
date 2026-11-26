@@ -178,6 +178,16 @@ var mist_enabled := true
 var mist_capsule_s := 3
 var mist_result_s := 8
 var mist_study_s := 6
+## #316: the mist module's drive floods the servos' reply line (the claw's and the drum's share
+## it): a servo move under the mist lost its feedback (CoreXY_UFO #28). A mist asked for while
+## a servo moves waits until none does (the capsule taken in at the Dial asks for it just as
+## the claw opens); one that waited longer than mist_defer_max_s is dropped (stale).
+const SERVO_STEPS := ["OPEN_CLAW", "LOWER_TO_CATCH", "CLOSE_CLAW", "RAISE_WITH_ITEM", "LOWER_TO_RELEASE",
+	"RELEASE", "RAISE_EMPTY", "CLAW_STANDBY"]
+const SERVO_MACHINE_STATES := ["Z_LOWERING", "Z_RAISING", "GRABBING", "RELEASING"]
+var mist_defer_max_s := 15.0
+var mist_pending_s := 0
+var _mist_wait := 0.0
 var capsules := CapsuleManager.new()
 var ufo := UfoDropController.new()
 var trace := GameModeTrace.new()
@@ -476,6 +486,7 @@ func _configure(cfg: Dictionary) -> void:
 	mist_capsule_s = clampi(int(mc.get("capsule_s", mist_capsule_s)), 0, 60)
 	mist_result_s = clampi(int(mc.get("result_s", mist_result_s)), 0, 60)
 	mist_study_s = clampi(int(mc.get("study_s", mist_study_s)), 0, 60)
+	mist_defer_max_s = clampf(float(mc.get("defer_max_s", mist_defer_max_s)), 0.0, 120.0)
 	dial_leds = bool(cfg.get("dial_leds", dial_leds))
 	visual_quality = str(cfg.get("visual_quality", visual_quality))
 	effects = bool(cfg.get("effects", effects))
@@ -2313,16 +2324,46 @@ static func light_scene_for(scene: String) -> Dictionary:
 
 ## The mist for `seconds` (the result here; main.gd: the study mode's reward). Decoration like
 ## the lights: sent and forgotten, never waited for. false = not sent (off, 0 s, no hub).
+## #316: while a servo moves it is kept (the longest asked for) and sent once none does: true.
 func mist_burst(seconds: int) -> bool:
 	if not mist_enabled or seconds <= 0:
 		return false
+	if servos_moving():
+		mist_pending_s = maxi(mist_pending_s, seconds)
+		return true
+	return _send_mist(seconds)
+
+func _send_mist(seconds: int) -> bool:
 	if not _active:
 		use_devices(devices_wanted)
 	return _illumination("SET_MIST", {"pattern": "CONTINUOUS", "duration_s": seconds})
 
+## #316: a servo (the claw or the drum: one line) is moving, as the backend tells: the easy
+## mode's step, or the machine state of a manual claw / Z move.
+static func servos_moving() -> bool:
+	if str(RobotState.easy_mode.get("step", "")) in SERVO_STEPS \
+			and not str(RobotState.easy_mode.get("state", "")) in ["OFF", "MANUAL_XY", "FAULT"]:
+		return true
+	return RobotState.machine_state in SERVO_MACHINE_STATES
+
+## Every frame (lights_tick): the mist that waited for the servos goes out once they stopped.
+func _tick_mist(dt: float) -> void:
+	if mist_pending_s <= 0:
+		_mist_wait = 0.0
+		return
+	_mist_wait += dt
+	if not servos_moving():
+		var seconds := mist_pending_s
+		mist_pending_s = 0
+		_send_mist(seconds)
+	elif _mist_wait > mist_defer_max_s:
+		print("[game_mode] mist dropped: the servos kept moving %.0f s" % _mist_wait)
+		mist_pending_s = 0
+
 ## While this mode is closed (main.gd, every frame): the title's and the study mode's light.
 ## Nothing else of the mode runs; the answers to the light commands still time out here.
 func lights_tick(dt: float) -> void:
+	_tick_mist(dt)  # #316: open or closed
 	if _active:
 		return
 	use_devices(devices_wanted)

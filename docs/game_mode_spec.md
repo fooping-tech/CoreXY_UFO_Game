@@ -292,6 +292,17 @@ OFFLINE → ARMING → READY → ABSORBING → DROPPING → SIMULATING → RETUR
 | 残り 30 秒 | `SET_LIGHT_MODE GAME_PLAY`（明るく・速く） |
 | 結果 | `SET_LIGHT_MODE RESULT`、`TRIGGER_EFFECT GAME_CLEAR` |
 
+### ミスト（#316）
+
+ミストは `SET_MIST CONTINUOUS`。カプセルの受取で `capsule_s`（3 秒）、結果の得点が決まったら `result_s`、学習モードのごほうびで `study_s` 出す（設定は `devicehub.mist`）。
+
+**サーボが動いている間は出さない**。ミストの駆動の雑音が、爪と Z のサーボ（同じ信号線）の返事を約 3〜4.5 秒かき消し、その間に動いたサーボはファームウェアが位置を見失う（`feedback_lost`、実機で確認。CoreXY_UFO #28 / #30）。カプセルが Dial に入るのは、ちょうど爪が開いている最中。
+- 頼まれた時点でサーボが動いていれば、止まるまで待ってから送る。待っている間に重ねて頼まれたら、長いほうを 1 回だけ送る
+  - 「動いている」= かんたんモードの手順が `OPEN_CLAW`・`LOWER_TO_CATCH`・`CLOSE_CLAW`・`RAISE_WITH_ITEM`・`LOWER_TO_RELEASE`・`RELEASE`・`RAISE_EMPTY`・`CLAW_STANDBY` のどれか、または手動の爪・Z の動き（`GRABBING`・`RELEASING`・`Z_LOWERING`・`Z_RAISING`）
+  - Dial で離した後は、`RAISE_EMPTY` でアームが上がり終わってから出る（受取から約 2〜3 秒遅れる）
+- `defer_max_s`（15 秒）より長く待ったら、そのミストは捨てる
+- ミストが出ている間に次のサーボの動きが始まることはある。そのときはファームウェアが通信が戻るのを最大 5 秒待って位置を取り戻す（CoreXY_UFO #30）。かんたんモードの爪の手順の時間制限（`game_mode.easy.real.timeouts_s` の `open_claw`・`close_claw`・`release`・`claw_standby`）は、それを待てるように 10 秒
+
 ### Dial の LED（転送の光）
 
 Dial 1 台に LED が 2 系統ある（前面 G1 と、G15。どちらもその Dial が駆動し、命令の `target: BOTH` で両方に出す）。ゲームは UFO-DeviceHub の契約（`docs/game-mode-interface.md` §5）の名前付きアニメーションを、その Dial の号機色で送る（`game_mode.dial_leds`）。

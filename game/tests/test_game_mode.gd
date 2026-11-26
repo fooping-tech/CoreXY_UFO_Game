@@ -654,6 +654,37 @@ func _test_game_mode_clock_and_stop(rs: Node) -> void:
 	_ok(not ctl.mist_burst(5), "mist off by config: nothing is sent")
 	ctl.mist_enabled = true
 	_ok(not ctl.mist_burst(0), "0 s: no mist")
+	# #316: no mist while a servo moves (it floods their reply line): it waits, then goes out
+	var em0: Dictionary = RobotState.easy_mode
+	var ms0: String = RobotState.machine_state
+	var n0: int = mist_of.call().size()
+	RobotState.easy_mode = {"state": "DELIVER_DIAL_1", "step": "RELEASE"}
+	var queued := ctl.mist_burst(ctl.mist_capsule_s)
+	ctl.lights_tick(0.5)
+	_gm_step(ctl, 0.3)
+	var held: bool = mist_of.call().size() == n0 and ctl.mist_pending_s == ctl.mist_capsule_s
+	RobotState.easy_mode = {"state": "DELIVER_DIAL_1", "step": "RAISE_EMPTY"}  # the drum: the same line
+	ctl.lights_tick(0.5)
+	_gm_step(ctl, 0.3)
+	var held_z: bool = mist_of.call().size() == n0
+	RobotState.easy_mode = {"state": "MANUAL_XY", "step": "IDLE"}
+	ctl.lights_tick(0.1)
+	_gm_step(ctl, 0.3)
+	var m2: Array = mist_of.call()
+	_ok(queued and held and held_z and m2.size() == n0 + 1 and int(m2[-1].duration_s) == ctl.mist_capsule_s
+		and ctl.mist_pending_s == 0,
+		"game mode #316: a mist asked for while the claw or the drum moves is sent once they stopped, once",
+		"%s %s %s %s" % [queued, held, held_z, str(m2.slice(n0))])
+	RobotState.machine_state = "Z_RAISING"  # a manual move; it never stops: the mist is dropped
+	ctl.mist_burst(5)
+	ctl.lights_tick(ctl.mist_defer_max_s + 1.0)
+	RobotState.machine_state = "IDLE"
+	ctl.lights_tick(0.1)
+	_gm_step(ctl, 0.3)
+	_ok(mist_of.call().size() == n0 + 1 and ctl.mist_pending_s == 0,
+		"game mode #316: a mist that waited longer than mist_defer_max_s for the servos is dropped")
+	RobotState.easy_mode = em0
+	RobotState.machine_state = ms0
 	_ok(ctl.phase == "RESULT" and ctl.score.score == 1500 and l.state == "CLOSED"
 		and hub.count(GM_L, "RELEASE_BALL") == 1 and _gm_sent(hub, GM_R) == 0 and hub.dials[GM_L].op_mode == "STANDBY"
 		and hub.dials[GM_L].cycle == 1 and ctl.hud.result_lines().contains("1500") and ctl.capsules.finished.size() == 1,
