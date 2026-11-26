@@ -56,6 +56,7 @@ func _ready() -> void:
 	_s.gesture._test_pose_thumb_and_claw()
 	_s.gesture._test_gesture_z_has_its_own_sound(rs)
 	_s.gesture._test_gesture_with_mock_robot(rs)
+	_s.gesture._test_hand_fx()
 	_s.gesture._test_error_clears_when_the_machine_recovers(rs)
 	_s.gesture._test_claw_steps_on_the_mock(rs)
 	_s.ui._test_vfx_manager()
