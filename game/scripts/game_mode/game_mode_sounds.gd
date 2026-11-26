@@ -71,6 +71,26 @@ const OWN_FILES := {"result_jan": "se/jan.mp3", "cheer": "se/cheer-applause1.mp3
 ## tools/audio_levels.py and brought to the same loudness as the other big effects
 const OWN_GAIN_DB := {"result_jan": 1.5, "cheer": -1.0, "reveal": -3.0, "reveal_fire": -1.0, "reveal_water": -3.0, "reveal_green": 1.0,
 	"reveal_thunder": -3.0, "reveal_dark": 5.5}
+## #325: the countdowns' own files (効果音ラボ; game/assets/audio/se/README.md): the start's
+## electronic beep (プッ、プッ、プッ、ピー) and the end's voice (「10、9、8、7、6、5、4、3、2、1、0」).
+## Not play()ed: each is started part-way on a player of its own so its numbers fall on the
+## numbers of the screen (follow_cue), and stopped with the round. A missing file: the old
+## count / go / warning sounds, one per number, as before.
+const CUE_FILES := {"countdown_start": "se/electronic-countdown1.mp3", "countdown_end": "se/info-girl1-countdown2.mp3"}
+## Where each number starts in the file (s), measured (#325: ffmpeg decode, 5 ms RMS, the first
+## frame 30 dB under the file's peak). The last one is the anchor: it is put on 0 (GO! / TIME UP),
+## the one before it on 1 and so on; every number is then within 16 ms (one frame) of the
+## screen's. countdown_start: プッ (3) プッ (2) プッ (1) ピー (GO!, 1.6 s long, ends 4.63 s).
+## countdown_end: 10 9 8 7 6 5 4 3 2 1 0 (the 0 ends 10.43 s; the file is 10.56 s).
+const CUE_ONSETS := {"countdown_start": [0.000, 1.003, 2.005, 2.993],
+	"countdown_end": [0.005, 1.023, 2.015, 3.003, 4.006, 5.004, 6.016, 7.014, 8.002, 9.000, 10.007]}
+## #325: their level (dB on volume_db), tools/audio_levels.py: the beep -10.3, the voice -18.7
+## momentary LUFS, both brought to the big effects' -22 (target + 8 - measured)
+const CUE_GAIN_DB := {"countdown_start": -4.0, "countdown_end": 5.0}
+## a cue further than this from where it should be is put back there (a long frame), at most
+## once per CUE_RESEEK_MS
+const CUE_SLACK_S := 0.12
+const CUE_RESEEK_MS := 500
 ## #304: the synthesised round tune is louder than the leveled music files
 const TUNE_GAIN_DB := -3.0
 ## the synthesised sounds of the result's show (#153): priority, and the least gap between
@@ -142,6 +162,15 @@ var _pickup_duck_db := 0.0
 var _last_ms: Dictionary = {}  # key -> when it last played
 var _side_of: Dictionary = {}  # lane state -> the side that entered it last
 var _rng := RandomNumberGenerator.new()
+## #325: the countdown cue: its key ("" = none this round), where it was started from (s in the
+## file, the output latency included), how often one was started / put back (tests)
+var cue := ""
+var cue_from := 0.0
+var cue_starts := 0
+var cue_seeks := 0
+var _cue_files: Dictionary = {}  # key -> the file's stream
+var _cue_player: AudioStreamPlayer
+var _cue_seek_ms := -100000
 
 func _ready() -> void:
 	enabled = bool(GameConfig.get_value("audio", "enabled", true))
@@ -234,6 +263,10 @@ func _ready() -> void:
 		"reveal_dark": StudySounds._sweep(440.0, 70.0, 0.6, 0.5),
 	}
 	load_manifest()
+	_cue_player = AudioStreamPlayer.new()
+	_cue_player.name = "Countdown"
+	_cue_player.bus = AudioBuses.SFX
+	add_child(_cue_player)
 	for i in PLAYERS:
 		var p := AudioStreamPlayer.new()
 		p.bus = AudioBuses.SFX
@@ -356,11 +389,16 @@ func has_music(track: String) -> bool:
 func load_manifest(path := MANIFEST) -> void:
 	_files = {}
 	_meta = {}
+	_cue_files = {}
 	if path == MANIFEST:  # the game's own files go with its own manifest (a test's other one: none)
 		for key in OWN_FILES:
 			var own := load_music_stream(AUDIO_DIR + str(OWN_FILES[key]), false)
 			if own != null:
 				_files[key] = own
+		for key in CUE_FILES:
+			var st := load_music_stream(AUDIO_DIR + str(CUE_FILES[key]), false)
+			if st != null:
+				_cue_files[key] = st
 	if not FileAccess.file_exists(path):
 		return
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))
@@ -502,6 +540,75 @@ func silence() -> void:
 	for i in _players.size():
 		_players[i].stop()
 		voices[i] = {}
+	stop_cue()
+
+# ------------------------------------------------------------------ #325: the countdowns
+## The countdown `key` is played from its file (false: the old sound of each number).
+func has_cue(key: String) -> bool:
+	return enabled and use_files and _cue_files.has(key)
+
+## The cue `key` says the number `n` (3/2/1/0 of the start, 10..0 of the end) itself, so the
+## old sound of that number is not played (a longer countdown keeps it for the numbers before).
+func cue_covers(key: String, n: int) -> bool:
+	return has_cue(key) and n >= 0 and n < (CUE_ONSETS[key] as Array).size()
+
+## Where in the cue the listener should be when `left` seconds are left before its last
+## number (GO! / TIME UP): the last onset is put on 0 s.
+static func cue_position(key: String, left: float) -> float:
+	return float((CUE_ONSETS[key] as Array).back()) - left
+
+## How far ahead of what is heard the mixer is (s): a sound started now is heard this late.
+static func output_latency() -> float:
+	return clampf(AudioServer.get_output_latency(), 0.0, 0.2)
+
+## Each tick of a countdown: the cue `key` should be heard `at` seconds into its file now.
+## Starts it there (output latency ahead, so it is heard on time) once it is due, puts it back
+## when it has drifted from the screen (a long frame), and never starts it twice in a round
+## (stop_cue ends the round's cue). Another cue playing is stopped for it.
+func follow_cue(key: String, at: float) -> void:
+	if not has_cue(key) or not is_inside_tree():
+		return
+	var want := at + output_latency()
+	if cue == key:
+		if _cue_player.playing and want < _cue_player.stream.get_length():
+			var heard := _cue_player.get_playback_position() + AudioServer.get_time_since_last_mix()
+			var now := Time.get_ticks_msec()
+			if absf(heard - want) > CUE_SLACK_S and now - _cue_seek_ms >= CUE_RESEEK_MS:
+				_cue_player.seek(maxf(want, 0.0))
+				_cue_seek_ms = now
+				cue_seeks += 1
+		return
+	var stream: AudioStream = _cue_files[key]
+	if want < 0.0 or want >= stream.get_length() - 0.05:
+		return  # not yet / too late to be heard
+	_cue_player.stop()
+	_cue_player.stream = stream
+	_cue_player.volume_db = volume_db + float(CUE_GAIN_DB.get(key, 0.0))
+	_cue_player.play(want)
+	cue = key
+	cue_from = want
+	cue_starts += 1
+	_cue_seek_ms = Time.get_ticks_msec()
+	last_played = key
+	log.append(key)
+	if log.size() > 64:
+		log.remove_at(0)
+
+## The countdown is over (time up, the result): only the cue `keep` plays on (the end's voice
+## is on its 0 at TIME UP and ends by itself 0.55 s later; follow_cue kept it in step); any
+## other cue stops.
+func end_cue(keep: String) -> void:
+	if cue != "" and cue != keep:
+		stop_cue()
+
+## The cue stops now (a stop, the title, a new round).
+func stop_cue() -> void:
+	if _cue_player != null:
+		_cue_player.stop()
+	cue = ""
+
+func cue_playing() -> bool:
+	return _cue_player != null and _cue_player.playing
 
 ## The tune: on while the clock runs, the faster take for the last stretch.
 func set_bgm(on: bool, fast := false) -> void:
