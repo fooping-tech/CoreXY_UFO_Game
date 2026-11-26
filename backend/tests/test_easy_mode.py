@@ -226,6 +226,29 @@ async def test_a_fault_in_any_part_ends_in_fault(fault, part, reason):
             await rig.seq.wait()
 
 
+async def test_a_servo_fault_is_told_only_with_its_servo_fault():
+    """#316: while the STOP after a servo failure is on its way, the status (the state broadcast
+    reads it at any time) does not say FAULT yet: FAULT comes with servo_fault, so the game
+    plays on (#302) instead of stopping for a fault without it."""
+    async with EasyRig(fast_params(timeouts_s={k: 0.4 for k in fast_params().timeouts_s})) as rig:
+        seen: list[dict] = []
+        real_soft_stop = rig.robot.soft_stop
+
+        async def soft_stop() -> None:
+            seen.append(rig.seq.status())
+            await asyncio.sleep(0.05)
+            seen.append(rig.seq.status())
+            await real_soft_stop()
+
+        rig.robot.soft_stop = soft_stop  # type: ignore[method-assign]
+        rig.robot.inject("claw_fail")
+        await rig.seq.start_grab()
+        await rig.seq.wait()
+        assert seen and all(st["state"] != "FAULT" for st in seen), seen
+        st = rig.seq.status()
+        assert st["state"] == "FAULT" and st["step"] == "FAULT" and st["servo_fault"] is True
+
+
 async def test_motors_off_or_homing_lost_while_waiting_faults():
     async with EasyRig() as rig:
         await rig.seq.start_grab()
@@ -760,6 +783,17 @@ def test_the_repo_config_carries_to_a_dial_slower_than_the_fast_feed():
     assert p.xy_feed_mm_min == p.xy_feed_max_mm_min == 9000.0 < cfg.fast_feed()
     # one motor's step rate on a diagonal at this feed is under an axis move's at the fast feed
     assert p.xy_feed_mm_min * 2 ** 0.5 < cfg.fast_feed()
+
+
+def test_the_claw_steps_wait_for_the_firmwares_recovery():
+    # #316: a claw move whose replies were drowned by noise is waited for by the firmware up to
+    # 5 s (CoreXY_UFO #30); 6 s timed out just after a recovered open on the machine
+    from corexy_ufo_backend.config import load_config
+    from corexy_ufo_backend.sequence.easy import REAL_TIMEOUTS, EasyParams, real_catch_params
+    cfg = load_config(local=False)
+    p = real_catch_params(cfg.raw, EasyParams(), cfg.limits, cfg)
+    for key in ("open_claw", "close_claw", "release", "claw_standby"):
+        assert REAL_TIMEOUTS[key] >= 10.0 and p.timeouts_s[key] >= 10.0, key
 
 
 async def test_no_catch_goes_down_near_the_portal():

@@ -103,7 +103,7 @@ var _retry_left := 0.0
 ## claw is opened and the arm brought up again (easy_reset) after this long, at most
 ## servo_recoveries_max times a round; then a fault as before
 var servo_recovery_s := 1.0
-var servo_recoveries_max := 3
+var servo_recoveries_max := 10  # #316: venue noise can hit more than once a round
 var servo_recoveries := 0
 var _servo_reset_left := 0.0
 

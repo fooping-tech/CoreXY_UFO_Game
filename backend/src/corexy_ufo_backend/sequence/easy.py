@@ -206,8 +206,11 @@ class EasyParams:
 # What is not a fact of the machine, when game_mode.easy.real leaves it out.
 REAL_DEFAULTS = {"xy_tolerance_mm": 1.0, "z_tolerance": 1.0, "claw_settle_s": 0.5, "claw_span_min_deg": 5.0,
                  "claw_span_max_deg": 355.0, "limit_home_zone_mm": 5.0, "total_timeout_s": 120.0}
-REAL_TIMEOUTS = {"open_claw": 6.0, "lower_to_catch": 20.0, "close_claw": 6.0, "raise_with_item": 20.0,
-                 "move_to_box": 45.0, "lower_to_release": 20.0, "release": 6.0, "raise_empty": 20.0, "claw_standby": 6.0}
+# #316: a claw step waits 10 s: the move (~1 s) plus the firmware's wait for a servo whose
+# replies were drowned by noise (CoreXY_UFO #30: up to 5 s, seen with the mist on at the Dial)
+REAL_TIMEOUTS = {"open_claw": 10.0, "lower_to_catch": 20.0, "close_claw": 10.0, "raise_with_item": 20.0,
+                 "move_to_box": 45.0, "lower_to_release": 20.0, "release": 10.0, "raise_empty": 20.0,
+                 "claw_standby": 10.0}
 
 
 def real_catch_params(raw: dict[str, Any] | None, easy: EasyParams, limits: RobotLimits,
@@ -289,6 +292,7 @@ class EasySequencer(AutoCatchSequencer):
         self.phase = EasyPhase.IDLE  # type: ignore[assignment]
         self.other_active = other_active
         self.state = "MANUAL_XY"
+        self._state_before_fault = "MANUAL_XY"  # #316: told while a FAULT's stop is on its way
         self.destination = 0
         self.grab_id = ""
         self._chosen = 0
@@ -338,7 +342,7 @@ class EasySequencer(AutoCatchSequencer):
         return {
             "blockers": self.blockers(),
             "active": self.active,
-            "state": self.state,
+            "state": self._reported_state(),
             "step": str(self.phase),
             "destination": self.destination,
             "grab_id": self.grab_id,
@@ -563,5 +567,15 @@ class EasySequencer(AutoCatchSequencer):
             raise SequenceFault(f"not at the safe height before the carry (Z {s.z:.1f}, safe_z {safe:g})")
 
     async def _fault(self, reason: str, *, servo_ended: bool = False) -> None:
+        self._state_before_fault = self.state
         self.state = "FAULT"
         await super()._fault(reason, servo_ended=servo_ended)
+
+    def _reported_state(self) -> str:
+        """#316: FAULT is told once its report is settled (the FAULT step, with servo_fault).
+        While the stop after a failure is still on its way, a status (the state broadcast's)
+        said FAULT without servo_fault, and the game stopped for a servo failure it would have
+        played on after (#302)."""
+        if self.state == "FAULT" and self.phase != EasyPhase.FAULT:
+            return self._state_before_fault
+        return self.state
