@@ -55,13 +55,12 @@
     "bgm_enabled": true,
     "bgm_volume_db": 0.0,
     "dir": "res://assets/audio",
-    "move": "wizard-flight1.mp3",
-    "up": "magic-statusup1.mp3",
-    "down": "hyun1.mp3",
+    "motion_z": "menu2.mp3",
+    "motion_xy": "menu3.mp3",
     "cue_hand": "decide-button1.mp3",
     "cue_pinch": "decide-button3.mp3",
     "cue_gain_db": {"hand": -5.0, "pinch": 3.0},
-    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). up/down = the UFO rising/sinking on screen (arm going down/up). cue_hand / cue_pinch (#321): the hand joystick's open hand seen / pinch caught (also the claw closing and the easy mode's catch, which share those cues); cue_gain_db = each file's level (tools/audio_levels.py: about -26 / -25 dB at volume_db -8). Without a file the synthesised blip plays."
+    "_note": "Sound effects from 効果音ラボ (soundeffect-lab.info). In game/assets/audio/ as part of the game; do not hand the files out on their own (see SOURCES.md there). motion_z = the arm going up or down (both ways), motion_xy = the XY travel: one sound per second while moving (#327, sfx.gd). cue_hand / cue_pinch (#321): the hand joystick's open hand seen / pinch caught (also the claw closing and the easy mode's catch, which share those cues); cue_gain_db = each file's level (tools/audio_levels.py: about -26 / -25 dB at volume_db -8). Without a file the synthesised blip plays."
   },
   "gesture": {
     "enabled": false,

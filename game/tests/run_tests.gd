@@ -39,6 +39,7 @@ func _ready() -> void:
 	_s.rope_robot._test_real_jog_velocity()
 	_s.rope_robot._test_fit_travel_to_screen(rs)
 	_s.rope_robot._test_motion_fx()
+	_s.rope_robot._test_motion_sounds()
 	_s.rope_robot._test_z_inverse_mapping(rs)
 	_s.rope_robot._test_projection_consistency()
 	_s.rope_robot._test_performance()
