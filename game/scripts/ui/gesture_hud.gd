@@ -43,6 +43,10 @@ var _cam: TextureRect
 var _overlay: GestureCameraOverlay
 var _cam_fx: Control
 var _hub: CameraHub
+## #321: pixel dots around the hand on the camera picture (a burst on a pinch, sparks
+## while steering), and the steering sparks from the stick's dot
+var hand_fx: HandFx
+var stick_fx: HandFx
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -60,6 +64,18 @@ func _ready() -> void:
 	_cam.add_child(_overlay)
 	_overlay.position = Vector2.ZERO
 	_overlay.size = CAM_RECT.size
+	hand_fx = HandFx.new()
+	hand_fx.name = "HandFx"
+	hand_fx.clip_contents = true  # the dots and the burst sheet stay in the picture
+	hand_fx.position = CAM_RECT.position
+	hand_fx.size = CAM_RECT.size
+	add_child(hand_fx)
+	stick_fx = HandFx.new()
+	stick_fx.name = "StickFx"
+	stick_fx.orbit = false
+	stick_fx.size = SIZE
+	add_child(stick_fx)
+	_size_fx()
 	# drawn after the camera image: the frame and the edge warnings
 	_cam_fx = Control.new()
 	_cam_fx.position = CAM_RECT.position
@@ -90,6 +106,19 @@ func place(play_w: float, h: float) -> void:
 		_overlay.size = cr.size
 		_cam_fx.position = cr.position
 		_cam_fx.size = cr.size
+		hand_fx.position = cr.position
+		hand_fx.size = cr.size
+		stick_fx.size = panel_size()
+		_size_fx()
+
+## The dots' sizes for the small picture / the big one in the score game's window.
+func _size_fx() -> void:
+	var big := column
+	hand_fx.radius = 26.0 if big else 13.0
+	hand_fx.dot = 3.0 if big else 2.0
+	hand_fx.sheet_scale = 0.9 if big else 0.45
+	stick_fx.radius = 9.0 if big else 11.0
+	stick_fx.dot = 2.0
 
 ## The camera picture in the panel: big in the score game's window.
 func cam_rect() -> Rect2:
@@ -132,6 +161,28 @@ func step(dt: float) -> void:
 		_cam.visible = _hub != null and _hub.has_feed("overview")
 		queue_redraw()
 		_cam_fx.queue_redraw()
+		_step_fx(dt)
+	elif hand_fx != null:
+		hand_fx.clear()
+		stick_fx.clear()
+
+## The hand's dots (#321) from what the GestureControl has already decided.
+func _step_fx(dt: float) -> void:
+	var g := gesture
+	hand_fx.enabled = VFXManager.enabled
+	stick_fx.enabled = VFXManager.enabled
+	var live := g.state in [GestureControl.State.ARMED, GestureControl.State.ACTIVE]
+	var dir := view_offset(g, _overlay.flip_h, _overlay.flip_v)
+	if not g.scheme.uses_stick():
+		dir = point_view_dir(g, _overlay.flip_h, _overlay.flip_v)
+	var move := 0.0
+	if g.state == GestureControl.State.ACTIVE and g.velocity.length() > 0.5:
+		move = clampf(g.velocity.length() / maxf(g.scheme.max_speed(g), 1e-6), 0.0, 1.0)
+	hand_fx.step(dt, g.detected, _overlay.to_px(g.hand_norm), g.detected and g.pinch, move, dir, live)
+	var c0: Vector2 = ring()[0]
+	var rr: float = ring()[1]
+	var off := dir if g.scheme.uses_stick() else dir * 0.55
+	stick_fx.step(dt, live, c0 + off.limit_length(1.15) * rr, false, move, dir)
 
 ## The hand's offset from the stick centre in stick radii, in the camera view's
 ## screen axes (x right, y down, after the view's flips); zero when not steering.
