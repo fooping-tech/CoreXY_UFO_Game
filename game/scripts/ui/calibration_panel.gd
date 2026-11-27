@@ -873,11 +873,21 @@ static func prepare_text(st: Dictionary) -> String:
 		return "止まった: " + text + "\n理由: " + reason_text(str(st.get("error", "")))
 	return text
 
+## #348: a reason that is the servo bus failing for a while (no answer, a read that failed, the
+## firmware's count of turns being taken back), not a servo that lost power. r: lower case.
+static func servo_bus_trouble(r: String) -> bool:
+	return r.contains("no_reply") or r.contains("reason=read_failed") or r.contains("servo bus error") \
+		or r.contains("feedback_lost") or r.contains("count of turns is being taken back") \
+		or r.contains("not a power cut")
+
 ## A refusal's reason as what to do next (the backend's own words when it is not known).
 static func reason_text(reason: String) -> String:
 	var r := reason.to_lower()
 	if r.contains("wind the arm up") or r.contains("not wound up"):
 		return "先に W でアームを一番上まで巻き上げる（Z の上を記録してから原点復帰）。" + reason
+	if servo_bus_trouble(r):
+		# #348: the servo bus (drum + claw) failed for a while: it comes back by itself
+		return "サーボの通信が不安定（返事がない・読めない）: 少し待ってもう一度。続くならサーボの信号線と GND を確かめる。" + reason
 	if r == "timeout":
 		return "バックエンドから返事がない"
 	if r.contains("no reply from the robot") or r.begins_with("timeout after") \

@@ -14,6 +14,8 @@ speed and acceleration, completion = the virtual axis reaches its target):
       claw_fail           the claw command fails (servo result=TIMEOUT)
       servo_no_reply      the servo bus does not answer (#344): the claw and Z commands are
                           refused before anything turns (SERVO_TURN REJECTED reason=no_reply)
+      servo_feedback_lost the servo bus fails during the claw and Z commands (#348): they end
+                          with FAILED reason=feedback_lost (nothing moves here)
       z_glitch            the Z reading jumps out of range (sensor anomaly)
       disconnect          the link to the robot is lost
 """
@@ -25,12 +27,12 @@ import math
 import time
 
 from ..config import RobotLimits
-from .interface import RobotCommandError, ServoFailed, ServoNoReply
+from .interface import RobotCommandError, ServoFailed, ServoNoReply, ServoPositionUnknown
 from .mock_robot import MockRobot
 from .state import MachineState, RobotSnapshot
 
-FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "servo_no_reply", "z_glitch", "disconnect",
-          "stop_unconfirmed")
+FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "servo_no_reply", "servo_feedback_lost", "z_glitch",
+          "disconnect", "stop_unconfirmed")
 
 
 class DebouncedInput:
@@ -109,6 +111,10 @@ class DryRunRobot(MockRobot):
         if "servo_no_reply" in self.faults:
             self._require(homed=False)
             raise ServoNoReply("SERVO_TURN id=1 value=0.00 result=REJECTED reason=no_reply (dry run)")
+        if "servo_feedback_lost" in self.faults:
+            self._require(homed=False)
+            raise ServoPositionUnknown("SERVO_TURN id=1 value=0.00 result=FAILED target=0 reason=feedback_lost "
+                                       "tracking=INVALID recover=no_reply (dry run)")
         await super().move_z(z)
 
     async def arm_goto(self, which: str) -> None:
@@ -118,6 +124,9 @@ class DryRunRobot(MockRobot):
         self._require(homed=False)
         if "servo_no_reply" in self.faults:
             raise ServoNoReply("SERVO_STATUS id=2 result=NO_REPLY tracking=YES (dry run)")
+        if "servo_feedback_lost" in self.faults:
+            raise ServoPositionUnknown("SERVO_TURN id=2 value=0.00 result=FAILED target=0 reason=feedback_lost "
+                                       "tracking=INVALID recover=no_reply (dry run)")
         if "claw_fail" in self.faults:
             await asyncio.sleep(self.claw_move_s)
             raise ServoFailed("SERVO_TURN id=2 result=TIMEOUT (dry run: claw_fail)")

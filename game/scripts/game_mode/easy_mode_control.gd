@@ -583,6 +583,8 @@ static func refusal_text(reason: String) -> String:
 
 static func fault_text(error: String) -> String:
 	var r := error.to_lower()
+	if CalibrationPanel.servo_bus_trouble(r):  # #348: tried again for a while already
+		return "サーボの つうしんが ふあんてい（もういちど ためすよ）"
 	if r.contains("emergency stop") or r.contains("soft_stop") or r.contains("stopped"):
 		return "ストップした"
 	if r.contains("disconnected"):

@@ -22,9 +22,10 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from ..robot.interface import RobotCommandError
+from ..robot.interface import RobotCommandError, ServoNoReply, servo_bus_error
 
 ABORT_WAIT_S = 2.0  # after ABORT, how long a still-running action may take to end
+SERVO_RETRY_INTERVAL_S = 0.5  # #344: between the tries of a step whose servo bus failed
 
 
 class AbortableSequence:
@@ -93,6 +94,51 @@ class AbortableSequence:
         self._stop_sent = True
         self.error += " (servo error: stopped with STOP, no alarm)"
         return True
+
+    # #344/#348: how long a step whose servo bus failed (ServoNoReply / ServoPositionUnknown) is
+    # tried again; None = the backend config's servo_no_reply_retry_s (0 without one)
+    servo_retry_s: float | None = None
+
+    def _servo_retry_window(self) -> float:
+        if self.servo_retry_s is not None:
+            return max(float(self.servo_retry_s), 0.0)
+        backend = getattr(self, "backend", None)
+        return max(float(getattr(backend, "servo_no_reply_retry_s", 0.0) or 0.0), 0.0)
+
+    async def _servo_try_again(self, step, exc: BaseException, since: float | None) -> float | None:
+        """#344/#348: a step's servo command failed on the servo bus (nothing turned, or the
+        firmware dropped its count, which the robot takes back at the next try). Within the
+        window: pause, then the caller starts the step again; the streak's start is returned.
+        None = not such an error, a stop was asked for, or the window is over (a fault then)."""
+        if not servo_bus_error(exc) or self._abort_reason:
+            return None
+        now = self.clock()
+        window = self._servo_retry_window()
+        if since is None:
+            since = now
+            if window > 0:
+                self._set_phase(step.phase, f"{step.describe()}: servo bus error, trying again for up to "
+                                            f"{window:g} s ({exc})")
+        if now - since >= window:
+            return None
+        if not self._abort_reason:
+            self._log.warning("%s: %s: servo bus error, trying again (%s)", self.label, step.phase, exc)
+        end = self.clock() + SERVO_RETRY_INTERVAL_S
+        while True:
+            before = self.clock()
+            await asyncio.sleep(self.poll_s)
+            t = self.clock()
+            self._t_start += t - before  # the pause is not the run's time (its total timeout)
+            self._check(step, t)  # a stop, an alarm, a lost link still end it at once
+            if t >= end:
+                return since
+
+    def _servo_why(self, exc: BaseException, since: float | None) -> str:
+        why = str(exc)
+        if since is not None and servo_bus_error(exc):
+            gone = "no answer" if isinstance(exc, ServoNoReply) else "servo bus error"
+            why += f" ({gone} for {self.clock() - since:.1f} s)"
+        return why
 
     # #302: the last FAULT was a servo command's own failure, stopped with STOP (no alarm, homing
     # kept, nothing moving): the game takes it as "try again", not as a fault of the crane

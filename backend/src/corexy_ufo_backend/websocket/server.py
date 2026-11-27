@@ -223,17 +223,23 @@ class GameServer(LogFeedMixin, StudyHeightMixin, EasyCalibrationMixin):
         # #110: the 校正 tab's measured values (calibration.json#study_height) over the config's
         self._height_path = getattr(backend_cfg, "study_height_path", None) if backend_cfg is not None else None
         self.study_open_claw = bool(((raw.get("study_mode") or {}).get("help") or {}).get("open_claw", False))
+        # #348: the study mode's sequences try a step whose servo bus failed again, as the catch does
+        if backend_cfg is not None:
+            self.approach.servo_retry_s = backend_cfg.servo_no_reply_retry_s
         self.cleanup = CleanupSequencer(
             robot, limits, CleanupProfile.from_raw(raw, self.study_profile), lock=self._motion_lock,
             is_jogging=lambda: self._jog_owner is not None,
             other_active=lambda: self.auto.active or self.approach.active or self.easy.active,
             on_change=lambda status: self._on_sequence_change("study_cleanup", status))
+        if backend_cfg is not None:
+            self.cleanup.servo_retry_s = backend_cfg.servo_no_reply_retry_s
         # #167: the 校正 tab's one-button preparation
         self.prepare = PrepareSequencer(
             robot, lock=self._motion_lock, is_jogging=lambda: self._jog_owner is not None,
             easy_check=lambda: self._easy_prepare_note(),
             center=lambda: self.backend_cfg.home_center() if self.backend_cfg is not None else None,
             center_feed=lambda: self.backend_cfg.fast_feed() if self.backend_cfg is not None else None,
+            servo_retry_s=backend_cfg.servo_no_reply_retry_s if backend_cfg is not None else 0.0,
             on_change=lambda status: self._on_sequence_change("calibration_prepare", status))
         # #169: the score game's easy mode (catch here, wait for the destination, carry to a Dial).
         # The catch uses the auto catch's profile; the Dials' drop points are the real crane's own

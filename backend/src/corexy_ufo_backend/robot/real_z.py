@@ -11,7 +11,8 @@ import time
 
 from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError
-from .interface import RobotCommandError, ServoFailed, ServoNoReply, is_servo_no_reply
+from .interface import (RobotCommandError, ServoFailed, ServoNoReply, ServoPositionUnknown, is_servo_no_reply,
+                        is_servo_position_unknown)
 from .real_constants import *  # noqa: F401,F403
 from .state import MachineState
 from .z_calibration import CLEAR as Z_CLEAR
@@ -24,6 +25,8 @@ log = logging.getLogger(__package__ + ".real_robot")
 class RealZMixin:
     def _apply_z_counts(self, counts: int) -> None:
         """Drum servo absolute counts -> Z (only meaningful once a Z point is set)."""
+        if getattr(self, "_z_resync_needed", False):
+            return  # #348: the firmware's count is the last one heard, not where the drum is
         self._z_counts = counts
         if self._z_reference() is not None:
             self._z_units_est = self._z_units_from_counts(counts)
@@ -87,6 +90,11 @@ class RealZMixin:
                 self.servo_power_cycle.add(js.servo_id)
         if js.event == "begin":
             self.servo_power_cycle.discard(js.servo_id)  # the firmware took it again
+            # #348: a jog's start checks the servo and takes its count back (enableTracking)
+            if js.servo_id == Z_SERVO_ID:
+                self._z_resync_needed = False
+            elif js.servo_id == ARM_SERVO_ID:
+                self._arm_resync_needed = False
 
     def _note_power_cycled(self, line: str) -> None:
         """#163: a refused servo's SERVO_STATUS says it was powered again (back to one
@@ -292,9 +300,12 @@ class RealZMixin:
             raise RobotCommandError(f"z_set: which must be one of {Z_WHICH + (Z_CLEAR,)}")
         if not self.serial.connected:
             raise RobotCommandError("not connected")
+        if self._z_resync_needed and not await self._resync_z():
+            raise ServoPositionUnknown(Z_RESYNC_MSG)  # #348: a stale count would be recorded
         st = await self.serial.servo_status(Z_SERVO_ID)
         if not st.ok or st.abs_counts is None:
-            raise RobotCommandError(f"SERVO_STATUS {Z_SERVO_ID} failed: {st.raw}")
+            msg = f"SERVO_STATUS {Z_SERVO_ID} failed: {st.raw}"
+            raise ServoNoReply(msg) if is_servo_no_reply(st.raw) else RobotCommandError(msg)
         self._note_z_status(st)
         if self.z_servo_reset:
             raise RobotCommandError(Z_SERVO_RESET_MSG)
@@ -318,6 +329,79 @@ class RealZMixin:
         self._save_z_points(counts)  # for z_restore after a power cycle (#106)
         log.info("Z %s set at %d counts", which, counts)
 
+    async def _z_limits_one_turn(self) -> bool | None:
+        """#348: True = the drum servo is back to one turn (its power was cut), False = still
+        multi-turn, None = not known (no answer, or the limits not read: -1)."""
+        try:
+            st = await self.serial.servo_status(Z_SERVO_ID)
+        except SerialError:
+            return None
+        if not st.ok or st.limits is None:
+            return None
+        return st.limits != (0, 0)
+
+    async def _resync_z(self) -> bool:
+        """#348: take the drum's count of turns back after a bus error dropped it. Only with
+        the servo seen multi-turn (limits 0/0) and at rest; then the smallest turn, away from the
+        nearer end of the range, has the firmware take the count back from the servo (its goal
+        and angle, checked as at start) and say it (actual=). False = not yet (ask again later).
+        Raises ServoFailed when the servo is found powered up again (the count is gone)."""
+        if not self._z_resync_needed:
+            return True
+        try:
+            st = await self.serial.servo_status(Z_SERVO_ID)
+        except SerialError:
+            return False
+        if not st.ok or st.limits is None:
+            return False
+        if st.limits != (0, 0):
+            self._z_resync_needed = False
+            self._forget_z_points()
+            self.error = Z_SERVO_RESET_MSG
+            raise ServoFailed(f"{self.error} ({st.raw})")
+        if str(st.extra.get("moving", "")) != "0":
+            return False  # still turning (to its goal), or not read: not yet
+        if st.tracking and not st.tracking_lost and st.abs_counts is not None:
+            self._z_resync_needed = False  # the firmware took it back already (a jog)
+            self._apply_z_counts(st.abs_counts)
+            return True
+        try:
+            await self._wait_jog_ended()
+            await self._ensure_test_mode()
+        except (CommandTimeout, CommandRejected, SerialError, RobotCommandError) as e:
+            log.warning("Z resync: %s", e)
+            return False
+        top, bottom = self._z_point_units("top"), self._z_point_units("bottom")
+        mid = (top + bottom) / 2.0
+        toward_mid = 1.0 if mid > self._z_units_est else -1.0  # in Z units
+        turns = toward_mid * self.cfg.z_sign * (1.0 if self.limits.z_up_is_positive else -1.0) * SERVO_NUDGE_TURNS
+        try:
+            r = await self.serial.send(P.cmd_servo_turn(Z_SERVO_ID, turns), timeout=10.0)
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            log.warning("Z resync: %s", e)
+            return False
+        return self._took_back(Z_SERVO_ID, r.completion or "")
+
+    def _took_back(self, sid: int, line: str) -> bool:
+        """The nudge's answer: the count back (PASS, or a stall that still says where it is),
+        not yet (a bus error again), or a servo whose count cannot be taken back."""
+        res = P.parse_servo_result(line)
+        if res is not None and res.actual is not None and (res.ok or (res.result == "TIMEOUT" and "torque=ON" in res.raw)):
+            log.info("servo %d count taken back: %d (%s)", sid, res.actual, line)
+            if is_servo_position_unknown(self.error) or "not a power cut" in self.error:
+                self.error = ""  # the bus error that dropped the count is over
+            if sid == Z_SERVO_ID:
+                self._z_resync_needed = False
+                self._apply_z_counts(res.actual)
+            else:
+                self._arm_resync_needed = False
+                self._arm_counts = res.actual
+            return True
+        if res is None or is_servo_no_reply(res.raw) or is_servo_position_unknown(res.raw) or "multi_turn_lost" in res.raw:
+            return False
+        # unknown_turn_count / goal_mismatch / hold_check_moved ...: the firmware says power-cycle
+        raise ServoFailed(f"servo {sid}: the count could not be taken back: {line}")
+
     async def move_z(self, z: float) -> None:
         # #126: with both Z points recorded this session the move stays inside the measured
         # range, like the unhomed Z jog: no XY homing needed (the calibration tab's 上げる /
@@ -327,7 +411,8 @@ class RealZMixin:
             raise RobotCommandError("Z reference not set (z_set top with the arm wound up, or bottom with it lowered)")
         z = self.limits.clamp_z(z)
         delta_units = z - self._z_units_est
-        if abs(delta_units) < 1e-3:
+        if abs(delta_units) < 1e-3 and not self._z_resync_needed:
+            # (review on #349: while the count is in doubt, the estimate is no reason to stay)
             return
         going_up = delta_units > 0 if self.limits.z_up_is_positive else delta_units < 0
         total_turns = delta_units * self.cfg.z_counts_per_unit / COUNTS_PER_TURN * self.cfg.z_sign
@@ -338,6 +423,16 @@ class RealZMixin:
         try:
             await self._wait_jog_ended()
             await self._ensure_test_mode()
+            if self._z_resync_needed:
+                # #348: the count first (the move is worked out from where the drum really is)
+                if not await self._resync_z():
+                    raise ServoPositionUnknown(Z_RESYNC_MSG)
+                delta_units = z - self._z_units_est
+                if abs(delta_units) < 1e-3:
+                    return
+                total_turns = delta_units * self.cfg.z_counts_per_unit / COUNTS_PER_TURN * self.cfg.z_sign
+                if not self.limits.z_up_is_positive:
+                    total_turns = -total_turns
             remaining = total_turns
             while abs(remaining) > 1e-3:
                 # #248: as few pieces as the firmware takes (the drum stops at each seam)
@@ -353,11 +448,21 @@ class RealZMixin:
                     self.z_max_turns = over
                     continue
                 if res is not None and "multi_turn_lost" in res.raw:
-                    # the drum servo's power was cut: refused unmoved; the next turn
-                    # goes through but its counts restart, so the Z points are gone
-                    self._forget_z_points()
-                    self.error = Z_SERVO_RESET_MSG
-                    raise ServoFailed(self.error)
+                    # refused unmoved: the drum servo's power was cut (one-turn limits), or the
+                    # firmware could not read its limits (the same answer, #348): look again
+                    if await self._z_limits_one_turn() is True:
+                        # the power was cut: the next turn goes through but its counts
+                        # restart, so the Z points are gone
+                        self._forget_z_points()
+                        self.error = Z_SERVO_RESET_MSG
+                        raise ServoFailed(self.error)
+                    self._z_resync_needed = True  # the firmware dropped its count: take it back
+                    self.error = (r.completion or "") + " (limits not one-turn: not a power cut, trying again)"
+                    raise ServoPositionUnknown(self.error)
+                if res is not None and not res.ok and is_servo_position_unknown(res.raw):
+                    self._z_resync_needed = True  # #348: where the drum is must be taken back first
+                    self.error = r.completion or "SERVO_TURN failed"
+                    raise ServoPositionUnknown(self.error)
                 if res is None or not res.ok:
                     self.error = r.completion or "SERVO_TURN failed"
                     if res and res.actual is not None:
