@@ -187,6 +187,10 @@
         {"key": "render.screen_shake", "apply": "now", "label": "画面の揺れ", "type": "bool"},
         {"key": "render.particles", "apply": "now", "label": "パーティクル", "type": "bool"}
       ]},
+      {"title": "スコアゲーム", "items": [
+        {"key": "game_mode.duration_s", "apply": "now", "label": "プレイ時間（秒）", "type": "number", "min": 30, "max": 300, "step": 30,
+         "note": "30 秒刻み（120 = 2 分）。保存すると次のラウンドから使う。残り 30 秒・10 秒の演出の時刻は変わらない"}
+      ]},
       {"title": "ハンドジェスチャー", "items": [
         {"key": "gesture.scheme", "apply": "now", "label": "手の読み方", "type": "enum", "options": [["pinch_joystick", "つまんで動かす（ピンチ・ジョイスティック）"], ["pose_direction", "手の形で方向を決める"]]},
         {"key": "game_mode.tutorial.enabled", "apply": "now", "label": "スコアゲームの前に練習（UFO 召喚と手の練習）", "type": "bool",
@@ -362,7 +366,8 @@
       "_note": "#188. enabled: the items appear at all. notice: the big name on the screen with its burst and shake (the small timers stay). sounds: the pickup's sound, and the music duck_db lower for duck_s under it. lights: the Dial's front LED (MULTI BALL) and the gold exhibition light (DOUBLE SCORE). debug_keys: while playing, F2 = SPEED UP, F3 = MULTI BALL (needs a ball on the field), F4 = DOUBLE SCORE now. An item appears first_spawn_s after GO, then every spawn_interval_s after the last one was taken or went away, with the chance spawn_chance (0..1); which one by weights (0 = never), at one of three spots, one at a time, for item_life_s. Speed and x2 run on timers (taking it again starts the time again, never stacks); MULTI BALL splits one ball into three but keeps one physical Dial cycle. Effects/lighting never hold robot motion or physics."
     },
     "enabled": true,
-    "duration_s": 150,
+    "duration_s": 120,
+    "_duration_note": "#354: the round's length in seconds (120 = 2 minutes; it was 150 until #354). The settings screen changes it in steps of 30 (30 .. 300), used from the next round; a round of the length set there is a full round (it is recorded in the ranking). hurry_s / warning_s stay as they are.",
     "countdown_s": 3,
     "hurry_s": 30,
     "warning_s": 10,

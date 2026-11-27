@@ -246,8 +246,8 @@ func _test_game_mode_round(rs: Node) -> void:
 	var l: GameModeController.Lane = ctl.lanes["left"]
 	_ok(counting and ctl.phase == "PLAYING" and l.state == "READY" and hub.dials[GM_L].state == "ARMED"
 		and hub.dials[GM_L].op_mode == "GAME" and absf(ctl.time_left - (ctl.duration_s - 0.2)) < 0.05
-		and ctl.duration_s == 150.0 and hub.count(GameModeDevices.ILLUMINATION, "SET_LIGHT_MODE") == 2,
-		"game mode: Enter, 3 s countdown, then 150 s; the Dial in GAME mode and armed only at GO",
+		and ctl.duration_s == 120.0 and hub.count(GameModeDevices.ILLUMINATION, "SET_LIGHT_MODE") == 2,
+		"game mode: Enter, 3 s countdown, then 120 s (#354); the Dial in GAME mode and armed only at GO",
 		"%s %s %.2f" % [ctl.phase, l.state, ctl.time_left])
 	_ok(GameModeController.SIDES == ["left"] and ctl.lanes.keys() == ["left"] and l.device == GM_L and GameModeLayout.PORTS.keys() == ["left"]
 		and ctl.fx.colors.keys() == ["left"] and ctl.backdrop.ports.keys() == ["left"] and _gm_sent(hub, GM_R) == 0
@@ -1585,3 +1585,45 @@ func _test_game_mode_countdown_cues(rs: Node) -> void:
 	_ok(snd.cue_starts == starts and snd.log.count("count") == 3 and snd.log.has("go") and snd.log.count("warning") == 4 and snd.cue == "",
 		"game mode countdown (#325): without the files: count x3, go, a warning per second (4, 3, 2, 1; as before)", str(snd.log))
 	_gm_free(game, rs)
+
+## #354: the round's length is a setting (30 s steps, 120 by default), used from the next
+## round; a round of that length is a full one, a rehearsal's shortened round is not touched.
+func _test_round_length_setting(rs: Node) -> void:
+	var items := GameConfig.schema_items(GameConfig.schema)
+	var item: Dictionary = items.get("game_mode.duration_s", {})
+	var listed: bool = str(item.get("type", "")) == "number" and float(item.get("step", 0)) == 30.0 and float(item.get("min", 0)) == 30.0 \
+		and float(item.get("max", 0)) == 300.0 and str(item.get("apply", "")) == "now" and float(GameConfig.base_value("game_mode.duration_s")) == 120.0
+	var warns: Array[String] = []
+	var allowed := GameConfig.filter_overrides({"game_mode.duration_s": 180.0}, items, warns)
+	var refused := GameConfig.filter_overrides({"game_mode.duration_s": 999.0}, items, warns)
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var st: SettingsScreen = game.settings
+	var texts: bool = TitleScreen.length_text(120.0) == "2 分" and TitleScreen.length_text(150.0) == "2 分 30 秒" and TitleScreen.length_text(30.0) == "30 秒" \
+		and game.title._score_body.text.begins_with("2 分！")
+	var before: bool = ctl.duration_s == 120.0 and st._rows.has("game_mode.duration_s")
+	# as 保存 does: the value in use changes, then the settings marked 今すぐ are applied
+	var old = GameConfig.data["game_mode"]["duration_s"]
+	GameConfig.data["game_mode"]["duration_s"] = 180.0
+	game.apply_live_settings()
+	var applied: bool = ctl.duration_s == 180.0 and game.title._score_body.text.begins_with("3 分！")
+	ctl.tutorial_auto = false  # (apply_live_settings read the config's: the practice has its own tests)
+	_gm_playing(game)
+	var runs: bool = ctl.phase == "PLAYING" and absf(ctl.time_left - (180.0 - 0.2)) < 0.05 and ctl.duration_s == ctl._full_duration_s
+	# not during a round
+	ctl.set_round_length(60.0)
+	var held: bool = ctl.duration_s == 180.0
+	game._unhandled_input(_key(KEY_ESCAPE))
+	# a rehearsal's shortened round (--game-mode-seconds) stays as it is
+	ctl.duration_s = 20.0
+	ctl.set_round_length(90.0)
+	var rehearsal: bool = ctl.duration_s == 20.0
+	ctl.duration_s = ctl._full_duration_s
+	ctl.set_round_length(5.0)
+	var clamped: bool = ctl.duration_s == 30.0
+	GameConfig.data["game_mode"]["duration_s"] = old
+	_ok(listed and allowed == {"game_mode.duration_s": 180.0} and refused.is_empty() and texts and before and applied and runs and held and rehearsal and clamped,
+		"game mode #354: the round is 120 s by default and a setting (30 .. 300 in steps of 30) used from the next round; the title's card says the length; never changed during a round or over a rehearsal's short round",
+		str([listed, allowed, refused, texts, before, applied, runs, held, rehearsal, clamped, ctl.duration_s]))
+	_gm_free(game, rs)
+

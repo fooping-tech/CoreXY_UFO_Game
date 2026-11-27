@@ -482,6 +482,9 @@ func apply_live_settings() -> void:
 		game_mode.sounds.volume_db = sfx.volume_db
 		game_mode.tutorial_auto = bool(GameConfig.value("game_mode.tutorial.enabled", game_mode.tutorial_auto))
 		game_mode.set_mist_enabled(bool(GameConfig.value("game_mode.mist.enabled", game_mode.mist_enabled)))  # #318
+		game_mode.set_round_length(float(GameConfig.value("game_mode.duration_s", game_mode.duration_s)))  # #354
+		if title != null:
+			title.set_score_seconds(game_mode.duration_s)
 	shake.enabled = bool(GameConfig.value("render.screen_shake", true))
 	apply_window_mode()
 	ufo_fx.enabled = bool(GameConfig.value("render.particles", true))

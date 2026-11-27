@@ -9,13 +9,13 @@
 - ロープは自前の 3D Verlet/PBD（60 Hz）。エンジンの RigidBody/Joint に置き換えない。
 - 安全機構（起動時モーター無効、アーミング、ホーミング、ソフトリミット、`request_id`、常に受け付ける `stop`）を弱めない。通信切断の検知は実機の停止を保証しない。
 - `z_sign` / `z_counts_per_unit` / `arm_open_turns` は実機で未確認。実機がつながっていなければ「実機未検証」と報告する。
-- 変更後のテスト: `godot --headless --path game res://tests/test_runner.tscn`（基準 721 件）と `cd backend && uv run pytest`（基準 649 件）。
+- 変更後のテスト: `godot --headless --path game res://tests/test_runner.tscn`（基準 722 件）と `cd backend && uv run pytest`（基準 649 件）。
 
 ピクセル VFX（pixelfx のスプライトシート）を足す・変えるときはスキル **`pixelfx-vfx`**（`.claude/skills/pixelfx-vfx/SKILL.md`）。
 
 バックエンドは UFO-DeviceHub の Python パッケージに依存する（#159）。新しいチェックアウトでは先に `tools/setup_devicehub.sh`。そのコードをこのリポジトリにコピーしない（`docs/devicehub_dependency.md`）。
 
-人向けの文書: `README.md`、`docs/HANDOFF.md`、`docs/firmware_protocol.md`、`docs/test_report.md`。150 秒のスコアゲーム（#138）の仕様の正本は `docs/game_mode_spec.md`。
+人向けの文書: `README.md`、`docs/HANDOFF.md`、`docs/firmware_protocol.md`、`docs/test_report.md`。スコアゲーム（#138。1 ラウンドは既定 120 秒、設定画面で 30 秒刻み。#354）の仕様の正本は `docs/game_mode_spec.md`。
 
 ## GitHub での開発（Issue・PR・マージ）
 

@@ -170,7 +170,7 @@ tools/setup_devicehub.sh --pinned    # このゲームで確認済みのコミ�
 | `--hide-debug` | デバッグパネルを隠して起動する |
 | `--title` / `--no-title` | タイトル画面を出す / 出さない（既定は出す。下の「タイトル画面」） |
 | `--study-mode` / `--study-demo simulated\|camera` | UFOくん 学習モードで開始する（ゲーム中はいつでも F5 で開始・終了。[docs/study_mode.md](docs/study_mode.md)） |
-| `--game-mode` | スコアゲーム（150 秒）をすぐ始める。`--game-mode-devices mock\|backend\|auto`（Dial をゲーム内の模擬にするかバックエンドのハブにするか）、`--game-mode-seconds <秒>`（ラウンドの長さ）、`--game-mode-demo`（模擬の Dial に自動でカプセルを入れる）、`--game-mode-title`（開始待ちのタイトル画面で止める）、`--game-mode-tutorial`（開始前の練習から始める。`--game-mode-demo` と一緒なら作った手の動きで最後まで自動で進む）。[docs/game_mode_spec.md](docs/game_mode_spec.md) |
+| `--game-mode` | スコアゲーム（2 分）をすぐ始める。`--game-mode-devices mock\|backend\|auto`（Dial をゲーム内の模擬にするかバックエンドのハブにするか）、`--game-mode-seconds <秒>`（ラウンドの長さ）、`--game-mode-demo`（模擬の Dial に自動でカプセルを入れる）、`--game-mode-title`（開始待ちのタイトル画面で止める）、`--game-mode-tutorial`（開始前の練習から始める。`--game-mode-demo` と一緒なら作った手の動きで最後まで自動で進む）。[docs/game_mode_spec.md](docs/game_mode_spec.md) |
 | `--capture <dir>` | 0.5 秒ごとに画面を PNG で保存し（8 秒間）、FPS を表示して終わる |
 | `--log-motion <csv>` | 物理 tick と描画フレームごとの動きを CSV に書く（揺れ・ガタつきの調査用） |
 | `--quit-after <秒>` | 指定した秒数で終わる |
@@ -246,12 +246,13 @@ cd CoreXY_UFO_Game/game
 - 右上の**歯車**（か **S** キー）で**設定画面**を開く（下の節）。
 - 出さないとき: `--no-title`、config の `title_screen.enabled: false`。`--study-mode` / `--scenario` / `--capture` など、または config の `study_mode.autostart` で始め方が決まっているときと、ヘッドレス（テスト・CI）では出さない。`--title` を付けると必ず出す。
 
-### スコアゲーム（SUMMON THE UFO、150 秒）
+### スコアゲーム（SUMMON THE UFO、2 分）
 
 タイトルの「2 ゲームモード」。開始待ちの画面では、**パーを 3 秒続ける**（か Enter）でスタート、遊び方はいつも**かんたんモード**（#198: むずかしいモードは選べない）。左上の枠には**本日のハイスコア**（TODAY BEST）が出る（#183）。クレーンで掴んだ実物のカプセルを、画面の左のポータル（1 号機 = M5Dial 1。#200: ポータルは左側だけ）に入れると、カプセルが画面の中に転送され、左右に往復する UFOくんから落ちてピンボールの盤面で得点になる。下まで落ちると、同じ Dial から実物が排出される。2 分 30 秒の得点を競う（#138）。**仕様は [docs/game_mode_spec.md](docs/game_mode_spec.md)**。
 
 - **画面は 9:16 の縦型**（#157。設計解像度 720 × 1280）: 32 インチの縦置きモニタ（1080 × 1920 / 2160 × 3840）に映す。上から SCORE / TIME、ハンド操作とアームカメラ、UFOくんのレール、縦長のピンボール盤面、左下に Dial 1 のポート（ポータルは左だけ）。モニタの回転は OS 側で行い、フルスクリーンは `-- --fullscreen`、設定画面の「フルスクリーン」、または F11。手順は `docs/display_setup.md`。学習モード・通常ゲーム・設定・デバッグパネルも同じ縦画面で動く。
-- 150 秒が終わると**リザルト演出**（#153）: 「TIME UP!」→ 中央の巨大なスコアがカウントアップ → カプセル・コンボ・ジャックポットのボーナスが 1 つずつ吸い込まれて加算 → 「FINAL SCORE!」。Enter は演出中なら最後まで飛ばし、終わっていればもう一回。T で練習から、Esc でタイトル。ボーナスの値は `game_mode.result_bonus`、演出の時間は `game_mode.result_show`（`docs/game_mode_spec.md` §3.2）。
+- プレイ時間は既定で 2 分（120 秒。#354）。設定画面（タイトルの歯車）の「スコアゲーム」→「プレイ時間（秒）」で 30 秒刻み（30〜300 秒）に変えられ、保存すると次のラウンドから使う。
+- プレイ時間が終わると**リザルト演出**（#153）: 「TIME UP!」→ 中央の巨大なスコアがカウントアップ → カプセル・コンボ・ジャックポットのボーナスが 1 つずつ吸い込まれて加算 → 「FINAL SCORE!」。Enter は演出中なら最後まで飛ばし、終わっていればもう一回。T で練習から、Esc でタイトル。ボーナスの値は `game_mode.result_bonus`、演出の時間は `game_mode.result_show`（`docs/game_mode_spec.md` §3.2）。
 - リザルト演出のあと**ハイスコアランキング**（#155）: 最終スコアを自動で登録し（名前の入力はない）、TOP10 に入ると「NEW RECORD!」「第 ○ 位！」、続けて HIGH SCORES の画面。スコアゲームのタイトルで **R** を押しても見られる。保存先は `user://game_mode/rankings.tsv`。空に戻すには設定画面（タイトルの歯車）の「設定」タブのいちばん下にある **ランキングを消す**（「本当に消しますか？」と聞き、「消す」を押したときだけ消える。#352）。練習・止めたラウンド・デモ・0 点は登録しない（`docs/game_mode_spec.md` §3.3）。
 - Enter で開始。**最初の 1 回は練習から**（#149）: UFOくんの呪文「ベントラベントラスペースピープル！」→ パー → 人差し指のピンチ → 手を動かす → グーでキャッチ → ルールの図解 → 実物のカプセルを 1 個入れる実践。1 画面に 1 つずつ、実際にできたら大きな「OK!」とピンポーンで進む。練習の得点・カプセル・時間は本番に残らない。練習中の Enter は何もしない。スタッフ用（#260、全画面共通の操作。[docs/staff_operations.md](docs/staff_operations.md)）: **F6** = 次のステップへ、**F7** = 練習を全部飛ばす、**Shift+F6** = そのステップをやり直す。設定画面「ハンドジェスチャー」で練習をオフにできる（`game_mode.tutorial.enabled`）。
 - 練習のあと 3 秒のカウントダウン。右上に残り時間、左上に得点。0 秒で新しいカプセルは受け付けず、プレイ中のカプセルの得点と排出が終わると結果を出す。Enter ですぐもう一回、**T** で練習からもう一回。
