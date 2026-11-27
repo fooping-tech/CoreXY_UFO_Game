@@ -54,6 +54,9 @@ var hand_index := -1
 var hand_progress := 0.0
 var _hand_armed := false
 
+## the score game's card's text (null = that card is not the score game's)
+var _score_body: Label
+
 func setup(score_game := false) -> void:
 	choices.assign(["study", "score"] if score_game else ["study", "game"])
 	layer = 20  # above the study HUD (5) and the debug panel
@@ -133,7 +136,8 @@ func setup(score_game := false) -> void:
 	box.add_child(row)
 	_add_card(row, 0, "1", "学習モード", "UFOくんと宿題をしよう\nゆびを 1ぽん みせて えらぶ")
 	if score_game:
-		_add_card(row, 1, "2", "ゲームモード", "150 秒！ カプセルを Dial に入れて 高得点をねらおう\nゆびを 2ほん みせて えらぶ")
+		_score_body = _add_card(row, 1, "2", "ゲームモード", "")
+		set_score_seconds(float(GameConfig.value("game_mode.duration_s", 120.0)))
 	else:
 		_add_card(row, 1, "2", "ゲームモード", "UFO キャッチャーで遊ぼう\nゆびを 2ほん みせて えらぶ")
 
@@ -210,7 +214,19 @@ static func logo_label(text: String, size: int) -> Label:
 	l.add_theme_constant_override("line_spacing", -10)
 	return l
 
-func _add_card(parent: Control, index: int, number: String, heading: String, text: String) -> void:
+## #354: the score game's card says how long a round is ("2 分！", "2 分 30 秒！", "30 秒！").
+func set_score_seconds(seconds: float) -> void:
+	if _score_body != null:
+		_score_body.text = "%s！ カプセルを Dial に入れて 高得点をねらおう\nゆびを 2ほん みせて えらぶ" % length_text(seconds)
+
+static func length_text(seconds: float) -> String:
+	var s := int(round(seconds))
+	if s < 60:
+		return "%d 秒" % s
+	return "%d 分" % (s / 60) if s % 60 == 0 else "%d 分 %d 秒" % [s / 60, s % 60]
+
+## Returns the card's text (the line under its heading).
+func _add_card(parent: Control, index: int, number: String, heading: String, text: String) -> Label:
 	var card := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.set_corner_radius_all(22)
@@ -255,6 +271,7 @@ func _add_card(parent: Control, index: int, number: String, heading: String, tex
 	parent.add_child(card)
 	_cards.append(card)
 	_card_styles.append(sb)
+	return body
 
 # ------------------------------------------------------------------ state
 func active() -> bool:

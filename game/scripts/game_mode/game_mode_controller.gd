@@ -239,7 +239,7 @@ var rank_hold_s := 1.2
 var rank_record_s := 3.2
 ## how the ranking comes up after a round, and today's best (the flow's own step and timer)
 var ranking_flow := GameModeRankingFlow.new(self)
-var _full_duration_s := 150.0
+var _full_duration_s := 120.0
 var _rng := RandomNumberGenerator.new()
 var layer: CanvasLayer
 var lanes: Dictionary = {}  # side -> Lane
@@ -257,7 +257,7 @@ var clock := 0.0
 var _guide_k := 1.0
 
 # ---- tuning (config game_mode; docs/game_mode_spec.md §5) ----
-var duration_s := 150.0
+var duration_s := 120.0
 var countdown_s := 3.0
 var hurry_s := 30.0
 var warning_s := 10.0
@@ -490,6 +490,17 @@ func setup(m: Node) -> void:
 		backdrop.ports[side] = fx.port(side)
 		field.wall_colors[0] = l.color  # the wall on the portal's side; the right one keeps its own neon
 		lanes[side] = l
+
+## #354: the round's length as the settings screen saved it (30 .. 300 s), from the next
+## round on. Not during a round, and not over a rehearsal's shortened round
+## (--game-mode-seconds: duration_s is then below the full length, and stays).
+func set_round_length(seconds: float) -> void:
+	if phase in ["COUNTDOWN", "PLAYING", "SETTLING"] or duration_s < _full_duration_s - 0.01:
+		return
+	duration_s = clampf(seconds, 30.0, 300.0)
+	_full_duration_s = duration_s
+	if phase in ["IDLE", "TUTORIAL"]:
+		time_left = duration_s
 
 func _configure(cfg: Dictionary) -> void:
 	duration_s = float(cfg.get("duration_s", duration_s))

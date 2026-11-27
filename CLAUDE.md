@@ -15,7 +15,7 @@
 
 バックエンドは UFO-DeviceHub の Python パッケージに依存する（#159）。新しいチェックアウトでは先に `tools/setup_devicehub.sh`。そのコードをこのリポジトリにコピーしない（`docs/devicehub_dependency.md`）。
 
-人向けの文書: `README.md`、`docs/HANDOFF.md`、`docs/firmware_protocol.md`、`docs/test_report.md`。150 秒のスコアゲーム（#138）の仕様の正本は `docs/game_mode_spec.md`。
+人向けの文書: `README.md`、`docs/HANDOFF.md`、`docs/firmware_protocol.md`、`docs/test_report.md`。スコアゲーム（#138。1 ラウンドは既定 120 秒、設定画面で 30 秒刻み。#354）の仕様の正本は `docs/game_mode_spec.md`。
 
 ## GitHub での開発（Issue・PR・マージ）
 

@@ -1290,7 +1290,7 @@ func _test_game_mode_ranking(rs: Node) -> void:
 	_gm_step(ctl, ctl.countdown_s + 0.2)
 	_gm_finish_round(ctl)
 	var short: bool = ctl.ranking_note == "short" and rk.entries.size() == 1
-	ctl.duration_s = 150.0
+	ctl.duration_s = ctl._full_duration_s
 	# T from the result: the practice (it has no result, so no record)
 	game._unhandled_input(_key(KEY_T))
 	_ok(stopped and demo and short and ctl.phase == "TUTORIAL" and ctl.ranking_view == "" and rk.entries.size() == 1,
