@@ -275,7 +275,8 @@ class ServoStatus:
     # servo is back to one turn; its next jog sets multi-turn again (JOG servo ... RESET)
     tracking_lost: bool = False
     # the servo's angle limit registers (min, max): (0, 0) = multi-turn, (0, 4095) =
-    # one turn (its power-up default); None when the line has no limits=
+    # one turn (its power-up default); None when the line has no limits= or the firmware
+    # could not read them (#346: `limits=-1/-1`, its mark for a failed register read)
     limits: tuple[int, int] | None = None
     voltage: float | None = None
     temp: int | None = None
@@ -315,8 +316,9 @@ def parse_servo_status(line: str) -> ServoStatus | None:
         st.tracking = tracking in ("YES", "LOST")
         st.tracking_lost = tracking == "LOST"
         if "limits" in rest and "/" in rest["limits"]:
-            lo, hi = rest["limits"].split("/", 1)
-            st.limits = (int(lo), int(hi))
+            lo, hi = int(rest["limits"].split("/", 1)[0]), int(rest["limits"].split("/", 1)[1])
+            # #346: -1 = not read (a reply garbled on the servo bus): it says nothing about one turn
+            st.limits = (lo, hi) if lo >= 0 and hi >= 0 else None
         if "voltage" in rest:
             st.voltage = float(rest["voltage"])
         if "temp" in rest:
