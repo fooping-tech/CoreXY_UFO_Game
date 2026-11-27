@@ -33,6 +33,17 @@ def test_status_line_tells_a_reset_servo():
     assert not before_first_jog.multi_turn_lost  # one turn is normal until a jog starts tracking
 
 
+# #346 (2026-11-27 12:25:07): a reply with some registers not read (-1); 0.36 s later limits=0/0
+GARBLED_LINE = ("SERVO_STATUS id=1 result=OK flags=0x00 mode=0 torque=-1 raw=-1 goal=23179 limits=-1/-1 "
+                "tracking=YES abs=23176 turns=5.66 voltage=7.6 temp=22 moving=-1 torque_limit=1000 max_torque=1000")
+
+
+def test_a_status_whose_limits_were_not_read_is_not_a_reset():
+    st = P.parse_servo_status(GARBLED_LINE)
+    assert st.ok and st.limits is None and not st.multi_turn_lost and st.abs_counts == 23176
+    assert P.parse_servo_status(GARBLED_LINE.replace("limits=-1/-1", "limits=0/-1")).limits is None
+
+
 LOST_LINE = ("SERVO_STATUS id=1 result=OK flags=0x00 mode=0 torque=0 raw=2048 goal=0 limits=0/4095 "
              "tracking=LOST abs=-8240 turns=-2.01 voltage=7.6 temp=24 moving=0")
 
@@ -91,6 +102,23 @@ async def test_a_cut_servo_is_reported_its_points_forgotten_and_z_jogs_refused()
         with pytest.raises(RobotCommandError, match="Z servo reset"):
             await robot.set_z_point("top")
         await robot.jog(0, 0, 0)  # a stop is always taken
+    finally:
+        await robot.disconnect()
+
+
+async def test_a_garbled_status_keeps_the_z_points():
+    """#346: limits=-1/-1 (not read) is not a cut servo: no reset, the Z points stay."""
+    robot = await make_robot()
+    fw = robot.serial.transport
+    try:
+        await robot.set_z_point("top")
+        fw.servo_limits[1] = "-1/-1"
+        await poll_z(robot)
+        s = robot.snapshot()
+        assert not s.z_servo_reset and "Z servo" not in s.error and s.z_top_set and s.z_reference_set
+        fw.servo_limits[1] = "0/0"
+        await poll_z(robot)
+        assert robot.snapshot().z_top_set
     finally:
         await robot.disconnect()
 
