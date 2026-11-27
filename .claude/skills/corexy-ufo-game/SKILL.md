@@ -150,13 +150,13 @@ description: >
 ## 6. 変更後のテスト
 
 ```bash
-# Godot 物理・マッピング・アセット・表情（基準 718 件、終了コードで合否）
+# Godot 物理・マッピング・アセット・表情（基準 719 件、終了コードで合否）
 godot --headless --path game res://tests/test_runner.tscn
 #   brew の godot が無ければ /Applications/Godot.app/Contents/MacOS/Godot（検証済み 4.7.2）
 #   クリーンなチェックアウトや、class_name を持つスクリプトが増えた pull / ブランチ切り替えの後は先に:
 #   godot --headless --path game --import（./start.sh と tools/verify.sh は tools/godot_refresh.sh で自動。#228）
 
-# Python バックエンド（基準 628 件）
+# Python バックエンド（基準 649 件）
 cd backend && unset VIRTUAL_ENV && uv run pytest
 ```
 

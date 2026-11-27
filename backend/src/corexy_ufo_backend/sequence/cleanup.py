@@ -145,6 +145,8 @@ class CleanupProfile:
         for x, y in pts:
             if not (math.isfinite(x) and math.isfinite(y) and limits.xy_inside(x, y)):
                 errs.append(f"point ({x:g},{y:g}) outside the soft limits")
+            elif limits.home_edge_refusal(x, y):
+                errs.append("point: " + limits.home_edge_refusal(x, y))
         for a, b in zip(pts, pts[1:]):
             for r in self.keep_out:
                 if segment_hits_rect(a, b, r):

@@ -32,6 +32,10 @@ class RobotLimits:
     z_min: float = 0.0
     z_max: float = 100.0
     z_up_is_positive: bool = True
+    # #339: X = x_min and Y = y_min are the home corner's limit switches (pressed within about
+    # 1 mm). No programmed XY target goes nearer them than this, and a jog stops this far
+    # inside (backend.xy_home_edge_margin_mm; 0 = the soft limits only, as a bare RobotLimits)
+    home_margin: float = 0.0
 
     def clamp_xy(self, x: float, y: float) -> tuple[float, float]:
         return (min(max(x, self.x_min), self.x_max), min(max(y, self.y_min), self.y_max))
@@ -41,6 +45,21 @@ class RobotLimits:
 
     def xy_inside(self, x: float, y: float) -> bool:
         return self.x_min <= x <= self.x_max and self.y_min <= y <= self.y_max
+
+    def home_edge_refusal(self, x: float, y: float) -> str:
+        """#339: "" or why an XY target is too near the home corner's limit switches."""
+        m = self.home_margin
+        if m <= 0 or (x >= self.x_min + m and y >= self.y_min + m):
+            return ""
+        return (f"XY ({x:.1f},{y:.1f}) is within {m:g} mm of the home limit switches "
+                f"(X {self.x_min:g} / Y {self.y_min:g}): keep X >= {self.x_min + m:g} and Y >= {self.y_min + m:g}")
+
+    def clamp_home_edge(self, x: float, y: float) -> tuple[float, float]:
+        """#339: a target moved out of the home edges' margin (only that side; a point outside
+        the soft limits stays outside and is refused as before)."""
+        m = max(self.home_margin, 0.0)
+        return (max(x, min(self.x_min + m, self.x_max)) if x >= self.x_min else x,
+                max(y, min(self.y_min + m, self.y_max)) if y >= self.y_min else y)
 
 
 @dataclass
@@ -63,12 +82,17 @@ class BackendConfig:
     # and the longest one request may last. None / not above jog_max_mm_s = no boost.
     jog_boost_mm_s: float | None = None
     jog_boost_max_s: float = 30.0
-    # #185: a jog (keys, the hand stick) stays this far inside the XY soft limits, and slows
-    # down towards that line (speed towards an edge <= distance / jog_edge_slow_s). The home
-    # corner's limit switches are pressed within about 1 mm of 0: a jog that reaches them is
-    # the firmware's ALARM. 0 = the firmware's own soft limit only (0.5 mm)
+    # #185 / #339: a jog (keys, the hand stick) stays jog_edge_margin_mm inside the far soft
+    # limits (x_max / y_max) and limits.home_margin (at least jog_edge_margin_mm) inside the
+    # home corner's limit switches (x_min / y_min), and slows down towards those lines from a
+    # predicted position (robot/jog_edges.py): the last known one plus what the speeds of the
+    # last jog_edge_lag_s add; then the speed v towards an edge keeps
+    # v * jog_edge_react_s + v^2 / (2 * jog_edge_brake_mm_s2) <= the distance to its line.
+    # Both margins 0 = the firmware's own soft limit only (0.5 mm)
     jog_edge_margin_mm: float = 5.0
-    jog_edge_slow_s: float = 0.25
+    jog_edge_lag_s: float = 0.25
+    jog_edge_react_s: float = 0.15
+    jog_edge_brake_mm_s2: float = 300.0
     # Z (drum servo) jog speed cap; the servo itself tops out at 2400 counts/s
     jog_z_max_counts_s: int = 2400
     # how often the drum servo position is polled while idle (picks up joystick moves)
@@ -119,10 +143,10 @@ class BackendConfig:
         left back corner (x_min, y_max: +Y is the back) park_margin_mm inside."""
         lim = self.limits
         p = self.park_mm
-        if p is not None and lim.xy_inside(p[0], p[1]):
+        if p is not None and lim.xy_inside(p[0], p[1]) and not lim.home_edge_refusal(p[0], p[1]):
             return p
         m = max(self.park_margin_mm, 0.0)
-        return (min(lim.x_min + m, lim.x_max), max(lim.y_max - m, lim.y_min))
+        return lim.clamp_home_edge(min(lim.x_min + m, lim.x_max), max(lim.y_max - m, lim.y_min))
 
     def home_center(self) -> tuple[float, float] | None:
         """Where the arm goes after homing (None = it stays at home). A configured point
@@ -131,9 +155,9 @@ class BackendConfig:
             return None
         lim = self.limits
         c = self.home_center_mm
-        if c is not None and lim.xy_inside(c[0], c[1]):
+        if c is not None and lim.xy_inside(c[0], c[1]) and not lim.home_edge_refusal(c[0], c[1]):
             return c
-        return ((lim.x_min + lim.x_max) / 2.0, (lim.y_min + lim.y_max) / 2.0)
+        return lim.clamp_home_edge((lim.x_min + lim.x_max) / 2.0, (lim.y_min + lim.y_max) / 2.0)
     # #161: a command sent and nothing at all read for this long = the link is dead even if
     # the port looks open (a USB hiccup can stop the reading side alone); 0 = never
     serial_rx_stall_s: float = 5.0
@@ -279,7 +303,11 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
                           and jb > cfg.jog_max_mm_s else None)
     cfg.jog_boost_max_s = min(max(float(b.get("jog_boost_max_s", 30.0)), 0.0), 60.0)
     cfg.jog_edge_margin_mm = max(float(b.get("jog_edge_margin_mm", 5.0)), 0.0)
-    cfg.jog_edge_slow_s = max(float(b.get("jog_edge_slow_s", 0.25)), 0.0)
+    cfg.jog_edge_lag_s = min(max(float(b.get("jog_edge_lag_s", 0.25)), 0.0), 1.0)
+    cfg.jog_edge_react_s = min(max(float(b.get("jog_edge_react_s", 0.15)), 0.0), 1.0)
+    cfg.jog_edge_brake_mm_s2 = max(float(b.get("jog_edge_brake_mm_s2", 300.0)), 0.0)
+    # #339: never below the jog's own margin (the switches are pressed within about 1 mm)
+    cfg.limits.home_margin = min(max(float(b.get("xy_home_edge_margin_mm", 15.0)), cfg.jog_edge_margin_mm), 50.0)
     cfg.jog_z_max_counts_s = int(b.get("jog_z_max_counts_s", 2400))
     cfg.z_poll_hz = float(b.get("z_poll_hz", 3.0))
     cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))

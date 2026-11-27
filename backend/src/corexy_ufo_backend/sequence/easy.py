@@ -172,6 +172,8 @@ class EasyParams:
                 errs.append(f"Dial {n} drop point is not recorded")
             elif not limits.xy_inside(*xy):
                 errs.append(f"Dial {n} drop point ({xy[0]:g},{xy[1]:g}) outside the XY soft limits")
+            elif limits.home_edge_refusal(*xy):
+                errs.append(f"Dial {n} drop point: {limits.home_edge_refusal(*xy)} (record it again further in)")
         if self.profile == "real" and self.catch_z is None:
             errs.append("the catch height (the Z bottom) is not recorded")
         if self.profile == "real" and self.stale_z:

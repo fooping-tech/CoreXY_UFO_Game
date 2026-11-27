@@ -152,6 +152,7 @@ func _ready() -> void:
 	_s.game_mode_show._test_game_mode_music_files(rs)
 	_s.ui._test_arm_recovery(rs)
 	_s.ui._test_robot_fault_watch()
+	_s.ui._test_robot_fault_watch_limit_edge()
 	_s.ui._test_robot_fault_stop(rs)
 	_s.ui._test_staff_control(rs)
 	_s.gesture._test_staff_remote_logic()

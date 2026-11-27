@@ -65,10 +65,14 @@ def test_repo_dry_run_values_are_usable_and_the_real_ones_are_refused():
     assert any("Dial 1" in e for e in errs) and not any("Dial 2" in e for e in errs) and any("release height" in e for e in errs)
     # #299: what is recorded is used (no confirmation); the catch height is not read from the file
     # (it is the Z bottom: the server sets it), an older file's "confirmed": false changes nothing
-    saved = {"dial_1": {"x": 10, "y": 50}, "release_z": 60, "catch_z": 30, "confirmed": False}
+    saved = {"dial_1": {"x": 20, "y": 50}, "release_z": 60, "catch_z": 30, "confirmed": False}
     read = EasyParams.from_raw(cfg.raw, "real", saved)
     assert read.catch_z is None and read.confirmed and any("Z bottom" in e for e in read.problems(ac.dry_run, cfg.limits))
     assert dataclasses.replace(read, catch_z=0.0).problems(ac.dry_run, cfg.limits) == []
+    # #339: a Dial recorded within 15 mm of the home limit switches is refused, with the reason
+    near = EasyParams.from_raw(cfg.raw, "real", {**saved, "dial_1": {"x": 10, "y": 50}})
+    errs = dataclasses.replace(near, catch_z=0.0).problems(ac.dry_run, cfg.limits)
+    assert len(errs) == 1 and "within 15 mm of the home limit switches" in errs[0]
     # #200: a Dial 2 saved by an older version is not read and changes nothing
     old = EasyParams.from_raw(cfg.raw, "real", {**saved, "dial_2": {"x": 9999, "y": 50}})
     assert dataclasses.replace(old, catch_z=0.0).problems(ac.dry_run, cfg.limits) == [] and list(old.dials) == [1]

@@ -79,6 +79,9 @@ class MockRobot(RobotInterface):
         self._require()
         if not self.limits.xy_inside(x, y):
             raise RobotCommandError(f"XY ({x},{y}) outside soft limits")
+        why = self.limits.home_edge_refusal(x, y)  # #339: as the real robot
+        if why:
+            raise RobotCommandError(why)
         self.target[0], self.target[1] = x, y
 
     async def move_z(self, z: float) -> None:

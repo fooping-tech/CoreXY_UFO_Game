@@ -140,6 +140,8 @@ class EasyCalibrationMixin:
                 return self._nack(name, f"the arm is moving ({s.state}): wait until it stops")
             if not (math.isfinite(s.x) and math.isfinite(s.y) and self.easy.limits.xy_inside(s.x, s.y)):
                 return self._nack(name, f"XY ({s.x:.1f},{s.y:.1f}) outside the soft limits")
+            if self.easy.limits.home_edge_refusal(s.x, s.y):  # #339: the carry could not go there
+                return self._nack(name, self.easy.limits.home_edge_refusal(s.x, s.y))
             saved[which] = {"x": round(float(s.x), 2), "y": round(float(s.y), 2)}
         elif which == "catch_z":
             return self._nack(name, "キャッチの高さは Z の下と同じ（「ここを下に記録」で決まる）")
