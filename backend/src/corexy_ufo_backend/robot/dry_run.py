@@ -12,6 +12,8 @@ speed and acceleration, completion = the virtual axis reaches its target):
       stall_xy / stall_z  an axis stops following its target (-> state timeout)
       claw_stall          the claw command never completes (-> timeout)
       claw_fail           the claw command fails (servo result=TIMEOUT)
+      servo_no_reply      the servo bus does not answer (#344): the claw and Z commands are
+                          refused before anything turns (SERVO_TURN REJECTED reason=no_reply)
       z_glitch            the Z reading jumps out of range (sensor anomaly)
       disconnect          the link to the robot is lost
 """
@@ -23,11 +25,12 @@ import math
 import time
 
 from ..config import RobotLimits
-from .interface import RobotCommandError, ServoFailed
+from .interface import RobotCommandError, ServoFailed, ServoNoReply
 from .mock_robot import MockRobot
 from .state import MachineState, RobotSnapshot
 
-FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "z_glitch", "disconnect", "stop_unconfirmed")
+FAULTS = ("stall_xy", "stall_z", "claw_stall", "claw_fail", "servo_no_reply", "z_glitch", "disconnect",
+          "stop_unconfirmed")
 
 
 class DebouncedInput:
@@ -103,6 +106,9 @@ class DryRunRobot(MockRobot):
 
     async def move_z(self, z: float) -> None:
         self.commands.append(f"Z -> {z:.2f}")
+        if "servo_no_reply" in self.faults:
+            self._require(homed=False)
+            raise ServoNoReply("SERVO_TURN id=1 value=0.00 result=REJECTED reason=no_reply (dry run)")
         await super().move_z(z)
 
     async def arm_goto(self, which: str) -> None:
@@ -110,6 +116,8 @@ class DryRunRobot(MockRobot):
         if which not in self.arm_marks:
             raise RobotCommandError("arm_goto: which must be closed or open")
         self._require(homed=False)
+        if "servo_no_reply" in self.faults:
+            raise ServoNoReply("SERVO_STATUS id=2 result=NO_REPLY tracking=YES (dry run)")
         if "claw_fail" in self.faults:
             await asyncio.sleep(self.claw_move_s)
             raise ServoFailed("SERVO_TURN id=2 result=TIMEOUT (dry run: claw_fail)")

@@ -661,6 +661,8 @@
     "home_z_tolerance": 5.0,
     "home_then_center": false,
     "home_center_mm": null,
+    "servo_no_reply_retry_s": 20,
+    "_servo_no_reply_note": "#344: a servo that does not answer on its bus (SERVO_STATUS result=NO_REPLY, SERVO_TURN REJECTED reason=no_reply: refused before anything turned; seen for 3-13 s after XY moves) is tried again by the automatic sequences (easy mode, auto catch) every 0.5 s for up to servo_no_reply_retry_s seconds (0 = never, max 120). The stop key, an alarm, a lost link still end it at once; the wait does not count toward the step or total timeouts. After that: FAULT as before (STOP, no alarm).",
     "park_mm": null,
     "park_margin_mm": 20,
     "park_feed_mm_min": 3000,

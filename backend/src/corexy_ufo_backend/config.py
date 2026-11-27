@@ -123,6 +123,9 @@ class BackendConfig:
     # #175: after XY homing the arm goes on to the middle of the stage (the soft limits'
     # centre, or home_center_mm [x, y]) instead of staying in the home corner
     home_then_center: bool = True
+    # #344: a servo that does not answer on its bus (NO_REPLY: nothing turned) is tried again
+    # by the automatic sequences for up to this many seconds before it is a fault (0 = never)
+    servo_no_reply_retry_s: float = 20.0
     home_center_mm: tuple[float, float] | None = None
     # #179: the feed (mm/min) of the automatic XY moves that are to be quick: to the middle
     # after homing, and the easy mode's carry to a Dial. None = xy_feed_mm_min. The firmware
@@ -313,6 +316,7 @@ def load_config(path: Path | None = None, *, local: bool = True) -> BackendConfi
     cfg.home_requires_z_top = bool(b.get("home_requires_z_top", True))
     cfg.home_z_tolerance = float(b.get("home_z_tolerance", 5.0))
     cfg.home_then_center = bool(b.get("home_then_center", True))
+    cfg.servo_no_reply_retry_s = min(max(float(b.get("servo_no_reply_retry_s", 20.0)), 0.0), 120.0)
     hc = b.get("home_center_mm")
     if (isinstance(hc, list) and len(hc) == 2
             and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in hc)):

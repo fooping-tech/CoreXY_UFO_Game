@@ -12,7 +12,7 @@ from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError
 from .claw import WHICH as CLAW_WHICH
 from .claw import deg_in_turn
-from .interface import RobotCommandError, ServoFailed
+from .interface import RobotCommandError, ServoFailed, ServoNoReply, is_servo_no_reply
 from .real_constants import *  # noqa: F401,F403
 from .state import MachineState
 
@@ -56,6 +56,8 @@ class RealClawMixin:
             raise ServoFailed(self.error)
         if res is None or not res.ok:
             self.error = r.completion or "arm servo failed"
+            if res is not None and is_servo_no_reply(res.raw):
+                raise ServoNoReply(self.error)  # #344: refused unmoved, the bus did not answer
             # a servo result: the command ended (#269); no result line: not known
             raise ServoFailed(self.error) if res is not None else RobotCommandError(self.error)
 
@@ -109,7 +111,9 @@ class RealClawMixin:
     async def _read_arm(self) -> None:
         st = await self.serial.servo_status(ARM_SERVO_ID)
         if not st.ok or st.abs_counts is None:
-            raise RobotCommandError(f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}")
+            msg = f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}"
+            # #344: nothing was sent to turn: a sequence may try again
+            raise ServoNoReply(msg) if is_servo_no_reply(st.raw) else RobotCommandError(msg)
         self._arm_counts = st.abs_counts
 
     def _claw_delta(self, which: str) -> float:
