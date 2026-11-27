@@ -214,15 +214,32 @@ async def test_a_jog_without_refresh_expires_on_the_host():
         await srv.stop()
 
 
-async def test_refused_jog_before_homing_is_not_tracked():
+async def test_refused_jog_is_not_tracked():
+    robot = MockRobot()
+    await robot.connect()  # motors off: refused
+    srv, port = await _server(robot)
+    try:
+        async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+            r = await _cmd(ws, "j1", "jog", vx=20, vy=0)
+            assert r["type"] == "nack" and "motors not enabled" in r["data"]["reason"] and srv._jog_owner is None
+    finally:
+        await srv.stop()
+
+
+async def test_xy_jog_before_homing_is_accepted_slowly():
+    """#350: the arrow keys move XY before homing, at most UNHOMED_JOG_MAX_MM_S."""
+    from corexy_ufo_backend.robot.interface import UNHOMED_JOG_MAX_MM_S
     robot = MockRobot()
     await robot.connect()
     await robot.enable_motors(True)  # not homed
     srv, port = await _server(robot)
     try:
         async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
-            r = await _cmd(ws, "j1", "jog", vx=20, vy=0)
-            assert r["type"] == "nack" and "not homed" in r["data"]["reason"] and srv._jog_owner is None
+            r = await _cmd(ws, "j1", "jog", vx=40, vy=30)
+            assert r["type"] == "ack" and not robot.homed
+            assert robot._jog_cap[0] == pytest.approx(40 * UNHOMED_JOG_MAX_MM_S / 50)
+            assert robot._jog_cap[1] == pytest.approx(30 * UNHOMED_JOG_MAX_MM_S / 50)
+            await _cmd(ws, "j2", "jog", vx=0, vy=0)
     finally:
         await srv.stop()
 

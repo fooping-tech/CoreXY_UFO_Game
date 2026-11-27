@@ -13,6 +13,12 @@ class RobotCommandError(Exception):
     pass
 
 
+# #350: an XY jog before homing (the arrow keys) is allowed, slowly: the position is not known,
+# so no soft limit or edge margin can stop it (only the home corner's limit switches do). The
+# firmware's own cap for its joystick before homing (JOY_UNHOMED_MAX_FEED_MM_MIN = 600 mm/min).
+UNHOMED_JOG_MAX_MM_S = 10.0
+
+
 class ServoFailed(RobotCommandError):
     """#269: the firmware answered a servo command (SERVO_TURN) with a result other than PASS
     (TIMEOUT, FAILED, REJECTED, multi_turn_lost, ...). The command is over: nothing of it runs
@@ -95,9 +101,11 @@ class RobotInterface(ABC):
     def jog_boost_left(self) -> float:
         return max(self._jog_boost_until - time.monotonic(), 0.0)
 
-    def jog_cap(self, base: float) -> float:
-        """The jog's XY cap now: `base`, or the boost's while one lasts (never lower)."""
-        return max(base, self.jog_boost_mm_s) if self.jog_boost_left() > 0 else base
+    def jog_cap(self, base: float, *, homed: bool = True) -> float:
+        """The jog's XY cap now: `base`, or the boost's while one lasts (never lower).
+        #350: not homed, at most UNHOMED_JOG_MAX_MM_S (no boost): the position is not known."""
+        cap = max(base, self.jog_boost_mm_s) if self.jog_boost_left() > 0 else base
+        return cap if homed else min(cap, UNHOMED_JOG_MAX_MM_S)
 
     @property
     def is_real(self) -> bool:

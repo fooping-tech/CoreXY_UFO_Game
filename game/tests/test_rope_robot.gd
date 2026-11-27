@@ -222,7 +222,7 @@ func _test_real_jog_velocity() -> void:
 	var cases := {
 		"motors not enabled (send enable_motors first)": "モーター有効",
 		"not homed": "home",
-		"not_homed": "home",
+		"not_homed": "ファームウェア",  # #350: the backend sends XY before homing; the firmware refuses
 		"alarm active: abort requested": "アラーム解除",
 		"busy: another motion command is running": "Space",
 		"not connected": "未接続",

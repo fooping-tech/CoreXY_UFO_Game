@@ -116,7 +116,8 @@ class BackendConfig:
     easy_dials_path: Any = None  # calibration.json#easy_dials (#169: the easy mode's drop points)
     # the real robot homes XY only with a Z reference and the arm wound up (within
     # home_z_tolerance of its top): a lowered arm would hit things on the way. On
-    # when loaded from the config file (backend.home_requires_z_top, default true);
+    # when loaded from the config file (backend.home_requires_z_top, default true; #350: the
+    # repository's config sets it false = home without winding the arm up);
     # off for a bare BackendConfig (tests)
     home_requires_z_top: bool = False
     home_z_tolerance: float = 5.0

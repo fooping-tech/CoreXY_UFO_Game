@@ -123,7 +123,7 @@ Python から直接叩く例は `websockets` で `{"type":"command","request_id"
 2. `uv run corexy-ufo-backend --list-ports` → `--port /dev/cu.usbserial-XXXX` で起動。
 3. Godot を `--source websocket` で起動。`enable motors`。
 4. **原点復帰の前に、アームを最上位にして巻き上げ点（上）を記録**（`z_set top`。ファームウェアに Z ホーミングは無い）。初回は最下位まで下げて下げ点（下）も記録し、`z_counts_per_unit` と `z_sign` を実測する（`config/calibration.json` の `z`）。測るまでは W/S が Z 0〜100 で止まらない。最後に最上位まで巻き上げる。
-5. `home`（実機は Z の基準があってアームが最上位付近のときだけ。`backend.home_requires_z_top`）。
+5. `home`（#350: 巻き上げていなくても受け付ける。下がったアームが原点の角へ動く途中で物に当たらないか確かめる。最上位付近のときだけにするなら `backend.home_requires_z_top` を true）。矢印キーの XY は原点復帰の前でも送る（10 mm/s まで、ソフトリミットなし）が、今のファームウェアは `NACK_JOG reason=not_homed` で拒否する。
 6. W/S で上下が逆に動くなら `config/game_config.json` の `backend.z_sign` を `-1` にして再起動（2 点を記録すれば `z_sign` は実測値に置き換わる）。
 7. アーム開閉量 `arm_open_turns` を合わせる。
 8. デバッグパネルで重力・減衰・揺れ誇張を実機の見た目に合わせ、値を `config/game_config.json` に書き戻す。

@@ -17,7 +17,10 @@ static func jog_hint_for(reason: String) -> String:
 		return "モーターが無効:「実機」タブの「モーター有効」を押す"
 	if r.contains("alarm"):
 		return "アラーム中:「アラーム解除」→「原点復帰 (home)」を押す"
-	if r.contains("not homed") or r.contains("not_homed"):
+	if r.contains("not_homed"):
+		# #350: the backend sends an XY jog before homing; the firmware may refuse it
+		return "このファームウェアは原点復帰の前の XY を受け付けない:「原点復帰 (home)」を押す"
+	if r.contains("not homed"):
 		return "原点復帰が必要:「原点復帰 (home)」を押す"
 	if r.contains("busy"):
 		return "ほかの移動を実行中: 終わるまで待つか Space で止める"

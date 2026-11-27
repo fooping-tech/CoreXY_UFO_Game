@@ -478,13 +478,17 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         if z_counts_s and self.z_servo_reset and not self.z_servo_jog_recovers:
             # older firmware: the jog would stop at the end of one turn, silently
             raise RobotCommandError(Z_SERVO_RESET_MSG)
-        # connected, motors enabled, no alarm, no move running; XY also needs homing
-        self._require(homed=bool(vx_mm_s or vy_mm_s))
+        # connected, motors enabled, no alarm, no move running. #350: XY no longer needs homing
+        # here: before it, slowly and without the edge margins (the position is not known).
+        # (The firmware may still refuse it: NACK_JOG reason=not_homed.)
+        self._require(homed=False)
+        homed = self.homed
         speed = math.hypot(vx_mm_s, vy_mm_s)
-        cap = self.jog_cap(max(self.cfg.jog_max_mm_s, 0.0))
+        cap = self.jog_cap(max(self.cfg.jog_max_mm_s, 0.0), homed=homed)
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
-        vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s, now)
+        if homed:
+            vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s, now)
         new_press = now - self._last_jog_t > P.JOG_TIMEOUT_S  # firmware's notion of a press
         self._last_jog_t = now
         if new_press and self.error.startswith(("jog rejected", "jog ended")):

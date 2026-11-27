@@ -55,13 +55,22 @@ async def settle():
     await asyncio.sleep(0.02)
 
 
-async def test_jog_needs_arming_and_homing(robot):
+async def test_jog_needs_arming(robot):
     with pytest.raises(RobotCommandError, match="motors not enabled"):
         await robot.jog(30, 0)
-    await robot.enable_motors(True)
-    with pytest.raises(RobotCommandError, match="not homed"):
-        await robot.jog(30, 0)
     assert not [l for l in fw(robot).sent if l.startswith("JOG ")]
+
+
+async def test_xy_jog_before_homing_is_slow_and_the_firmware_may_refuse_it(robot):
+    """#350: sent before homing, at 10 mm/s at most and without the edge margins (the
+    position is not known). The firmware here refuses it (NACK_JOG reason=not_homed), as the
+    real one does today: the reason reaches the game."""
+    await robot.enable_motors(True)
+    await robot.jog(30, 40)
+    assert fw(robot).sent[-1] == "JOG 6.0 8.0"
+    await settle()
+    assert robot.snapshot().error == "jog rejected: not_homed"
+    await robot.jog(0, 0)
 
 
 async def test_jog_session_updates_position_and_state(robot):
