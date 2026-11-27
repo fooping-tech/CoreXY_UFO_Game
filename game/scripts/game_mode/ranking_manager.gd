@@ -43,7 +43,8 @@ func clear() -> void:
 ## offered once is not offered again).
 func wipe() -> String:
 	if path != "":
-		for f in [path, path + ".tmp"]:
+		# the temporary file first: if it cannot be removed the saved records are still there
+		for f in [path + ".tmp", path]:
 			if FileAccess.file_exists(f):
 				var err := DirAccess.remove_absolute(f)
 				if err != OK:
