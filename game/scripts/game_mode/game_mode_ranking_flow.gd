@@ -136,6 +136,19 @@ func clear_view() -> void:
 	if ctl.ranking_hud != null:
 		ctl.ranking_hud.clear()
 
+## #352: the settings screen's ランキングを消す. The records, their file and today's best are
+## gone ("" = done; else why the file could not be removed, and nothing changed). A screen
+## and a file only: no device hears of it.
+func wipe() -> String:
+	var why := ctl.ranking.wipe()
+	if why != "":
+		return why
+	_today_date = ""
+	_today_best = 0
+	ctl.ranking_rank = 0
+	ctl.ranking_note = ""
+	return ""
+
 func today_best() -> int:
 	var d := Time.get_date_string_from_system()
 	var best := _today_best if _today_date == d else 0

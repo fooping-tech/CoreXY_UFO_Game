@@ -47,6 +47,12 @@ var _list: VBoxContainer
 ## #126: each schema section is a card (as on the 校正 tab); rows go in the current one
 var _box: VBoxContainer
 var cards: Array[PanelContainer] = []
+## #352: ランキングを消す, at the end of the 設定 tab. The score game's controller (null = the
+## score game is off: no card), the line with how many records there are, and the question.
+var _ranking_ctl: GameModeController
+var _ranking_count: Label
+var _ranking_b: Button
+var _wipe_confirm: Control
 
 func setup() -> void:
 	layer = 21  # over the title (20); main.gd moves the debug panel above both
@@ -144,40 +150,117 @@ func setup() -> void:
 
 ## #308: "まだ … の設定ができていません。閉じてよいですか？" over the screen (hidden).
 func _build_confirm() -> void:
-	_confirm = Control.new()
-	_confirm.name = "CloseConfirm"
-	_confirm.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_confirm.mouse_filter = Control.MOUSE_FILTER_STOP
-	_confirm.visible = false
-	root.add_child(_confirm)
+	_confirm = _question("CloseConfirm", "校正がまだ終わっていません", "",
+		"校正をつづける（Esc）", keep_calibrating, "閉じる（Enter）", confirm_close)
+	_confirm_text = _confirm.get_meta("text")
+
+## A question over the whole screen (hidden): a title, a text, the way back on the left and
+## the answer that goes on at the right. The text's Label is its meta "text".
+func _question(node_name: String, title: String, text: String, back: String, back_cb: Callable, go: String, go_cb: Callable) -> Control:
+	var q := Control.new()
+	q.name = node_name
+	q.set_anchors_preset(Control.PRESET_FULL_RECT)
+	q.mouse_filter = Control.MOUSE_FILTER_STOP
+	q.visible = false
+	root.add_child(q)
 	var shade := ColorRect.new()
 	shade.color = Color(0.0, 0.0, 0.0, 0.55)
 	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_confirm.add_child(shade)
+	q.add_child(shade)
 	var centre := CenterContainer.new()
 	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
 	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_confirm.add_child(centre)
+	q.add_child(centre)
 	var card := PanelContainer.new()
 	card.add_theme_stylebox_override("panel", CalibrationPanel.card_style())
 	centre.add_child(card)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
 	card.add_child(box)
-	box.add_child(StudyHud.label("校正がまだ終わっていません", 26, PanelKit.BAD, 4))
-	_confirm_text = PanelKit.wrapped(box, "", 20, Color.WHITE, 3, INNER_W - 60.0)
+	box.add_child(StudyHud.label(title, 26, PanelKit.BAD, 4))
+	q.set_meta("text", PanelKit.wrapped(box, text, 20, Color.WHITE, 3, INNER_W - 60.0))
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_END
 	row.add_theme_constant_override("separation", 14)
 	box.add_child(row)
-	row.add_child(_button("校正をつづける（Esc）", keep_calibrating))
-	var close_b := _button("閉じる（Enter）", confirm_close)
-	close_b.custom_minimum_size = Vector2(180, 0)
-	row.add_child(close_b)
+	row.add_child(_button(back, back_cb))
+	var go_b := _button(go, go_cb)
+	go_b.custom_minimum_size = Vector2(180, 0)
+	row.add_child(go_b)
+	return q
 
+## A question shows over the screen (closing with the calibration unfinished, #308; wiping
+## the ranking, #352): it takes the keys, and no key moves the arm meanwhile.
 func confirm_showing() -> bool:
-	return _confirm != null and _confirm.visible
+	return (_confirm != null and _confirm.visible) or wipe_confirm_showing()
+
+func wipe_confirm_showing() -> bool:
+	return _wipe_confirm != null and _wipe_confirm.visible
+
+## #352: the ランキング card at the end of the 設定 tab. A screen and a file only: nothing is
+## written to RobotState and no command is sent.
+func setup_ranking(ctl: GameModeController) -> void:
+	if ctl == null or _list == null:
+		return
+	_ranking_ctl = ctl
+	var card := PanelContainer.new()
+	card.name = "RankingCard"
+	card.add_theme_stylebox_override("panel", CalibrationPanel.card_style())
+	_list.add_child(card)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	card.add_child(box)
+	box.add_child(StudyHud.label("ハイスコアランキング", 24, CYAN, 4))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	box.add_child(row)
+	_ranking_count = StudyHud.label("", 20, Color.WHITE, 3)
+	_ranking_count.custom_minimum_size = Vector2(210, 0)
+	row.add_child(_ranking_count)
+	_ranking_b = _button("ランキングを消す", ask_wipe_ranking)
+	row.add_child(_ranking_b)
+	var note := StudyHud.label("    スコアゲームの TOP10 と TODAY BEST を空に戻します。消した記録は元に戻せません。", 15, MUTED, 2)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.custom_minimum_size = Vector2(INNER_W - 20.0, 0)
+	box.add_child(note)
+	_wipe_confirm = _question("WipeConfirm", "ランキングを消す", "",
+		"やめる（Esc）", cancel_wipe_ranking, "消す", wipe_ranking)
+	_refresh_ranking()
+
+func ranking_count() -> int:
+	return _ranking_ctl.ranking.entries.size() if _ranking_ctl != null else 0
+
+func _refresh_ranking() -> void:
+	if _ranking_count == null:
+		return
+	var n := ranking_count()
+	_ranking_count.text = "記録: %d 件" % n if n > 0 else "記録: なし"
+	_ranking_b.disabled = n == 0
+
+## ランキングを消す: asks first; nothing is removed here.
+func ask_wipe_ranking() -> void:
+	if _ranking_ctl == null or confirm_showing() or ranking_count() == 0:
+		return
+	confirm_message = "ハイスコアランキングの記録 %d 件を、本当に消しますか？\n\n消した記録は元に戻せません。" % ranking_count()
+	(_wipe_confirm.get_meta("text") as Label).text = confirm_message
+	_wipe_confirm.visible = true
+	get_viewport().gui_release_focus()
+
+## やめる: the question goes, the ranking is as it was.
+func cancel_wipe_ranking() -> void:
+	if _wipe_confirm != null:
+		_wipe_confirm.visible = false
+
+## 消す on the question: the records and their file are gone (the screen stays open).
+func wipe_ranking() -> void:
+	if not wipe_confirm_showing():
+		return
+	_wipe_confirm.visible = false
+	var why := _ranking_ctl.ranking_flow.wipe()
+	_status.add_theme_color_override("font_color", PanelKit.BAD if why != "" else YELLOW)
+	_status.text = "ランキングを消せません: " + why if why != "" else "ランキングを消しました"
+	_refresh_ranking()
 
 ## The question, when closing now should be asked about (true = shown, the screen stays open).
 func _ask_before_close(saved: bool) -> bool:
@@ -198,7 +281,7 @@ func _ask_before_close(saved: bool) -> bool:
 
 ## 閉じる on the question: closed as asked (saved: the settings were written already).
 func confirm_close() -> void:
-	if not confirm_showing():
+	if _confirm == null or not _confirm.visible:
 		return
 	_confirm.visible = false
 	_close(_confirm_saved)
@@ -268,6 +351,7 @@ func _on_tab_changed(i: int) -> void:
 	_cancel_b.text = "キャンセル（Esc）" if form else "閉じる（Esc）"
 	_status.text = ""
 	_status.add_theme_color_override("font_color", YELLOW)
+	_refresh_ranking()
 	if cal and calibration != null:
 		_calibration_seen = true
 		calibration.opened()
@@ -386,6 +470,10 @@ func open() -> void:
 		_status.text = "使わなかった設定があります: " + GameConfig.local_warnings[0]
 	if _confirm != null:
 		_confirm.visible = false
+	cancel_wipe_ranking()
+	if _ranking_ctl != null:
+		_ranking_ctl.ranking.load_file()  # as it is on the disk now
+		_refresh_ranking()
 	show_tab(0)  # the settings first; the arm moves only once 校正 is picked
 	_on_tab_changed(0)
 	_calibration_seen = tabs.current_tab == CALIBRATION_TAB
@@ -471,6 +559,10 @@ func _mark(key: String) -> void:
 
 ## Keys while it shows (main.gd keeps Space and F1 / Tab): Esc closes without saving.
 func handle_key(keycode: int) -> bool:
+	if wipe_confirm_showing():  # #352: only Esc; 消す is never a key (Enter does not wipe)
+		if keycode == KEY_ESCAPE:
+			cancel_wipe_ranking()
+		return true
 	if confirm_showing():  # #308: the question takes the keys while it shows
 		if keycode == KEY_ESCAPE:
 			keep_calibrating()
