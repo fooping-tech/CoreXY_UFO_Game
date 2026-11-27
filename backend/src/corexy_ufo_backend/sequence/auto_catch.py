@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from ..config import BackendConfig, RobotLimits
-from ..robot.interface import RobotCommandError, RobotInterface, ServoFailed
+from ..robot.interface import RobotCommandError, RobotInterface, ServoFailed, ServoNoReply
 from ..robot.state import MachineState, RobotSnapshot
 from .abortable import ABORT_WAIT_S, AbortableSequence  # noqa: F401 (ABORT_WAIT_S: as before)
 from .fault import SequenceFault
@@ -54,6 +54,9 @@ class Phase(StrEnum):
     RAISE_EMPTY = "RAISE_EMPTY"
     CLAW_STANDBY = "CLAW_STANDBY"
     FAULT = "FAULT"
+
+
+SERVO_RETRY_INTERVAL_S = 0.5  # #344: between the tries of a step whose servo did not answer
 
 
 @dataclass(frozen=True)
@@ -333,12 +336,29 @@ class AutoCatchSequencer(AbortableSequence):
                 raise SequenceFault("; ".join(errs))
         action = self._action = self._start_action(step)
         settled_since: float | None = None
+        no_reply_since: float | None = None  # #344: the servo has not answered since then
         while True:
             self._check(step, t0)
             if action.done():
                 exc = action.exception()
+                if isinstance(exc, ServoNoReply):
+                    now = self.clock()
+                    if no_reply_since is None:
+                        no_reply_since = now
+                        if self._servo_retry_s() > 0:
+                            self._set_phase(step.phase, f"{step.describe()}: the servo does not answer, trying again "
+                                                        f"for up to {self._servo_retry_s():g} s ({exc})")
+                    if now - no_reply_since < self._servo_retry_s():
+                        await self._wait_for_servo(step)
+                        t0 = self.clock()  # the step's own timeout counts per try
+                        action = self._action = self._start_action(step)
+                        settled_since = None
+                        continue
                 if exc is not None:
-                    raise SequenceFault(f"{step.phase} failed: {exc}", servo_ended=isinstance(exc, ServoFailed))
+                    why = str(exc)
+                    if no_reply_since is not None and isinstance(exc, ServoNoReply):
+                        why += f" (no answer for {self.clock() - no_reply_since:.1f} s)"
+                    raise SequenceFault(f"{step.phase} failed: {why}", servo_ended=isinstance(exc, ServoFailed))
                 if self._reached(step):
                     if step.kind == "xy":
                         await self._refresh_after_move()
@@ -351,6 +371,25 @@ class AutoCatchSequencer(AbortableSequence):
                     if now - settled_since >= float(self.params.claw_settle_s):  # type: ignore[arg-type]
                         return
             await asyncio.sleep(self.poll_s)
+
+    def _servo_retry_s(self) -> float:
+        return float(getattr(self.backend, "servo_no_reply_retry_s", 0.0) or 0.0) if self.backend is not None else 0.0
+
+    async def _wait_for_servo(self, step: Step) -> None:
+        """#344: the pause before the next try of a step whose servo did not answer (refused
+        before anything turned). A stop, an alarm, a lost link still end it at once (_check);
+        the pause is not the run's time (the total timeout is moved on by it)."""
+        if not self._abort_reason:
+            log.warning("%s: %s: the servo does not answer, trying again", self.label, step.phase)
+        end = self.clock() + SERVO_RETRY_INTERVAL_S
+        while True:
+            before = self.clock()
+            await asyncio.sleep(self.poll_s)
+            now = self.clock()
+            self._t_start += now - before
+            self._check(step, now)
+            if now >= end:
+                return
 
     async def _refresh_after_move(self) -> None:
         try:

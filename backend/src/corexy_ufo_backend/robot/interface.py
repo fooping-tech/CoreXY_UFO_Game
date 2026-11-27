@@ -20,6 +20,18 @@ class ServoFailed(RobotCommandError):
     of ABORT. No answer at all, a lost link, a NACK, ... stay plain RobotCommandError (ABORT)."""
 
 
+class ServoNoReply(ServoFailed):
+    """#344: the servo did not answer on its bus (`SERVO_STATUS ... result=NO_REPLY`, or
+    `SERVO_TURN ... result=REJECTED reason=no_reply`): the firmware gave up before anything
+    turned. The line comes back by itself after a few seconds (seen after XY moves), so a
+    sequence tries the same step again for a while (backend.servo_no_reply_retry_s)."""
+
+
+def is_servo_no_reply(text: str) -> bool:
+    """A firmware line that says the servo did not answer (and so nothing was turned)."""
+    return "result=NO_REPLY" in text or ("result=REJECTED" in text and "reason=no_reply" in text)
+
+
 class RobotInterface(ABC):
     name: str = "robot"
     # The soft limits this robot enforces; None when it has none of its own (the server

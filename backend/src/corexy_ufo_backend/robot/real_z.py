@@ -11,7 +11,7 @@ import time
 
 from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError
-from .interface import RobotCommandError, ServoFailed
+from .interface import RobotCommandError, ServoFailed, ServoNoReply, is_servo_no_reply
 from .real_constants import *  # noqa: F401,F403
 from .state import MachineState
 from .z_calibration import CLEAR as Z_CLEAR
@@ -363,6 +363,8 @@ class RealZMixin:
                     if res and res.actual is not None:
                         self._z_counts = res.actual
                         self._z_units_est = self._z_units_from_counts(res.actual)
+                    if res is not None and is_servo_no_reply(res.raw):
+                        raise ServoNoReply(self.error)  # #344: refused unmoved, the bus did not answer
                     # a reply that is a servo result: the command ended (#269); anything else
                     # (no result line at all) is not known to have ended
                     raise ServoFailed(self.error) if res is not None else RobotCommandError(self.error)

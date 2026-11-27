@@ -28,6 +28,8 @@ class FakeFirmware(SerialTransport):
         self.test_mode = False
         self.servo_abs = {1: 1000, 2: 0}
         self.servo_stop_short: dict[int, tuple[int, str]] = {}  # sid -> (counts short, "ON" / "OFF")
+        # #344: servos whose bus does not answer (SERVO_STATUS NO_REPLY, SERVO_TURN REJECTED no_reply)
+        self.servo_no_reply: set[int] = set()
         # multi-turn tracking per servo: the firmware's flag and the servo's limits
         self.servo_tracking = {1: True, 2: True}
         self.servo_limits = {1: "0/0", 2: "0/0"}
@@ -212,6 +214,8 @@ class FakeFirmware(SerialTransport):
             turns = float(turns)
             if self.jogging:
                 self._emit("NACK_SERVO_TURN reason=jog_active")
+            elif sid in self.servo_no_reply:
+                self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=no_reply")
             elif self.test_mode and self.servo_tracking[sid] and self.servo_limits[sid] != "0/0":
                 # like moveRelative: the servo lost its multi-turn limits, nothing moves
                 self.servo_tracking[sid] = False
@@ -239,6 +243,9 @@ class FakeFirmware(SerialTransport):
             self._emit("ACK QUEUED SERVO_STATUS")
             sid = int(line.split()[1])
             tracking = "YES" if self.servo_tracking[sid] else "NO"
+            if sid in self.servo_no_reply:
+                self._emit(f"SERVO_STATUS id={sid} result=NO_REPLY tracking={tracking}")
+                return
             if self.reports_lost and self._servo_lost(sid):
                 tracking = "LOST"
             self._emit(f"SERVO_STATUS id={sid} result=OK flags=0x00 mode=0 torque=1 raw=100 goal=100 limits={self.servo_limits[sid]} tracking={tracking} abs={self.servo_abs[sid]} turns={self.servo_abs[sid]/4096:.2f} voltage=7.4 temp=31 moving=0")
