@@ -305,6 +305,7 @@ func _ready() -> void:
 	settings.setup_tests(self)
 	settings.setup_sheet(self)  # #230: the プリント tab
 	settings.missing_check = crane_missing  # #308: asked about when the screen closes after 校正
+	settings.setup_ranking(game_mode)  # #352: ランキングを消す (no card when the score game is off)
 	settings.closed.connect(_on_settings_closed)
 	robot_guard = RobotFaultGuard.new()
 	robot_guard.name = "RobotFaultGuard"
