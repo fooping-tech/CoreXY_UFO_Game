@@ -130,7 +130,9 @@ def test_repo_config_and_the_points_in_use():
     assert cfg.limits.home_margin == 15.0 and cfg.jog_edge_margin_mm == 5.0
     park, center = cfg.park_point(), cfg.home_center()
     assert park == (20.0, 180.0) and not cfg.limits.home_edge_refusal(*park)
-    assert center == (195.0, 100.0)
+    assert center is None  # #342: homing stays in the home corner by default
+    cfg.home_then_center = True  # switched on: the middle, outside the home margin
+    assert cfg.home_center() == (195.0, 100.0)
     cfg.park_mm, cfg.home_center_mm = (5.0, 100.0), (100.0, 10.0)  # inside the margin: not used
     assert cfg.park_point() == (20.0, 180.0) and cfg.home_center() == (195.0, 100.0)
     cfg.park_margin_mm = 0.0
