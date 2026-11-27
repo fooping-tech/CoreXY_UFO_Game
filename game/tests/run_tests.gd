@@ -99,6 +99,7 @@ func _ready() -> void:
 	_s.ui._test_calibration_tab(rs)
 	_s.ui._test_calibration_summary()
 	_s.ui._test_calibration_close_confirm()
+	_s.ui._test_ranking_wipe()  # #352
 	_s.ui._test_focus_calibrator()
 	_s.ui._test_device_test_tab(rs)
 	_s.ui._test_sheet_check_tab(rs)

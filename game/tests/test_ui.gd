@@ -1637,3 +1637,70 @@ func _test_robot_fault_stop(rs: Node) -> void:
 	RobotState.motors_enabled = false
 	RobotState.homed = false
 	_gm_free(game, rs)
+
+## #352: the settings screen's ランキングを消す asks 本当に消しますか first; only 消す removes the
+## records, their file and today's best. A file that cannot be removed keeps the records.
+func _test_ranking_wipe() -> void:
+	var game := _gm_game()
+	var ctl: GameModeController = game.game_mode
+	var st: SettingsScreen = game.settings
+	var path := "user://test_rankings_wipe.tsv"
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(path)
+	ctl.ranking.clear()
+	ctl.ranking.path = path
+	ctl.ranking.submit(900, "a")
+	ctl.ranking.submit(700, "b")
+	ctl.ranking_flow.note_today(900)
+	var target_before: Vector3 = game.mock.target
+	var pos_before: Vector3 = game.mock.pos
+	st.open()
+	var shown: bool = st._ranking_count.text.contains("2") and not st._ranking_b.disabled and not st.confirm_showing()
+	# asked first: nothing is removed yet
+	st.ask_wipe_ranking()
+	var asked: bool = st.wipe_confirm_showing() and st.confirm_showing() and st.confirm_message.contains("本当に消しますか")
+	var asked_kept: bool = ctl.ranking.entries.size() == 2 and FileAccess.file_exists(path)
+	var no_arm_keys: bool = game._jog_input() == Vector3.ZERO
+	# Enter is not 消す; Esc takes the question away and the screen stays
+	st.handle_key(KEY_ENTER)
+	var enter_kept: bool = st.wipe_confirm_showing() and ctl.ranking.entries.size() == 2
+	st.handle_key(KEY_ESCAPE)
+	var backed: bool = st.visible and not st.confirm_showing() and ctl.ranking.entries.size() == 2 and FileAccess.file_exists(path) \
+		and ctl.today_best() == 900
+	st.wipe_ranking()  # without the question: nothing
+	var unasked: bool = ctl.ranking.entries.size() == 2
+	# 消す
+	st.ask_wipe_ranking()
+	st.wipe_ranking()
+	var wiped: bool = st.visible and not st.confirm_showing() and ctl.ranking.entries.is_empty() and not FileAccess.file_exists(path) \
+		and ctl.today_best() == 0 and st._status.text.contains("消しました") and st._ranking_b.disabled and st._ranking_count.text.contains("なし")
+	var again := RankingManager.new()
+	again.path = path
+	again.load_file()
+	st.ask_wipe_ranking()  # nothing to wipe: no question
+	var empty_free: bool = again.entries.is_empty() and not st.confirm_showing()
+	# the round whose id was already asked about is not taken a second time; a new one is
+	var afterwards: bool = ctl.ranking.submit(900, "a") == 0 and ctl.ranking.submit(500, "c") == 1 and FileAccess.file_exists(path)
+	var quiet: bool = game.mock.pos == pos_before and game.mock.target == target_before
+	st.cancel()
+	# a file that cannot be removed: the records stay and the screen says why
+	var stuck := StuckRanking.new()
+	stuck.path = path
+	stuck.load_file()
+	ctl.ranking = stuck
+	st.open()
+	st.ask_wipe_ranking()
+	st.wipe_ranking()
+	var kept: bool = stuck.entries.size() == 1 and st._status.text.contains("消せません") and FileAccess.file_exists(path) and not st._ranking_b.disabled
+	st.cancel()
+	DirAccess.remove_absolute(path)
+	_ok(shown and asked and asked_kept and no_arm_keys and enter_kept and backed and unasked and wiped and empty_free and afterwards and quiet and kept,
+		"settings #352: ランキングを消す asks 本当に消しますか first (Esc / Enter remove nothing); 消す removes the records, the file and today's best; a file that cannot be removed keeps them; nothing is sent",
+		str([shown, asked, asked_kept, no_arm_keys, enter_kept, backed, unasked, wiped, empty_free, afterwards, quiet, kept, st._status.text]))
+	remove_child(game)
+	game.free()
+
+## A ranking whose file cannot be removed (#352).
+class StuckRanking extends RankingManager:
+	func wipe() -> String:
+		return "消せないファイル"

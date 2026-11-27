@@ -37,6 +37,22 @@ func clear() -> void:
 	save_error = ""
 	_asked = {}
 
+## #352 (the settings screen's ランキングを消す): every record gone, and the file with it (no
+## file = an empty ranking). Returns "" when done; when the file cannot be removed nothing is
+## changed and the reason comes back. The ids already asked about stay (a round that was
+## offered once is not offered again).
+func wipe() -> String:
+	if path != "":
+		for f in [path, path + ".tmp"]:
+			if FileAccess.file_exists(f):
+				var err := DirAccess.remove_absolute(f)
+				if err != OK:
+					return error_string(err)
+	entries = []
+	load_error = ""
+	save_error = ""
+	return ""
+
 ## Reads the file. Always leaves a valid ranking (empty when there is nothing to read).
 ## Records the file does not have yet (the last save failed) are never thrown away by a
 ## reload: the save is tried again, and while it still fails what is in memory stays.
