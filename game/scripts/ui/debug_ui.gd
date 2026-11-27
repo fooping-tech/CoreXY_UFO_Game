@@ -433,9 +433,9 @@ func _build_robot_test() -> void:
 	_vbox.add_child(hb)
 	_button(hb, "モーター有効", func(): main.ws.send_command("enable_motors", {"enable": true}))
 	_button(hb, "アラーム解除", func(): main.ws.send_command("clear_alarm"))
-	_note("巻き上げと爪は「モーター有効」だけで動く。XY は 2 で巻き上げてから 3 の原点復帰の後。")
+	_note("巻き上げと爪は「モーター有効」だけで動く。矢印キーの XY は原点復帰の前でも 10 mm/s まで送る（位置が分からないので端で止まらない。今のファームウェアは原点復帰の前の XY を拒否する）。")
 
-	_header("2. 巻き上げ（Z・サーボ 1）← 原点復帰の前に")
+	_header("2. 巻き上げ（Z・サーボ 1）")
 	_z_label = Label.new()
 	_z_label.add_theme_font_size_override("font_size", 12)
 	_z_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -455,7 +455,9 @@ func _build_robot_test() -> void:
 
 	_header("3. 原点復帰（XY）")
 	_button(_vbox, "原点復帰 (home)", func(): main.ws.send_command("home"))
-	_note("アームが下がったまま XY を動かすとぶつかるので、実機は Z の基準があってアームが巻き上げ点（上）の近く（±%.0f）にあるときだけ原点復帰する（backend.home_requires_z_top）。" % float(GameConfig.get_value("backend", "home_z_tolerance", 5.0)))
+	_note(("実機は Z の基準があってアームが巻き上げ点（上）の近く（±%.0f）にあるときだけ原点復帰する（backend.home_requires_z_top）。" % float(GameConfig.get_value("backend", "home_z_tolerance", 5.0)))
+		if bool(GameConfig.get_value("backend", "home_requires_z_top", false)) else
+		"巻き上げていなくても原点復帰できる。アームが下がったまま原点の角へ動くので、途中で物に当たらないか確かめてから押す（backend.home_requires_z_top）。")
 
 	_header("アーム先端カメラ")
 	var hub: CameraHub = main.cameras

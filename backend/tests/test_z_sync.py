@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import pathlib
 
 import pytest
 import websockets
@@ -66,8 +67,8 @@ async def test_z_jog_works_unhomed_and_is_capped():
         assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 -1229 0"
         await robot.jog(0, 0, -100)  # 12288 counts/s requested, servo max 2400
         assert robot.serial.transport.sent[-1] == "JOG 0.0 0.0 -2400 0"
-        with pytest.raises(RobotCommandError, match="not homed"):
-            await robot.jog(10, 0, 0)  # XY still needs homing
+        await robot.jog(30, 0, 0)  # #350: XY before homing is sent, at 10 mm/s at most
+        assert robot.serial.transport.sent[-1].startswith("JOG 10.0 0.0 ")  # (Z ramps down)
         await robot.jog(0, 0, 0)
     finally:
         await robot.disconnect()
@@ -444,6 +445,26 @@ async def test_home_waits_for_the_arm_to_be_wound_up():
         assert robot.homed
     finally:
         await robot.disconnect()
+
+
+async def test_home_without_winding_up_when_the_check_is_off():
+    """#350: backend.home_requires_z_top false (the repository's config): home with no Z
+    reference and the arm anywhere."""
+    cfg = BackendConfig(limits=RobotLimits(z_max=100.0, z_up_is_positive=True), home_requires_z_top=False)
+    robot = RealRobot(cfg, SerialService("fake", transport_factory=FakeFirmware))
+    await robot.connect()
+    try:
+        await robot.enable_motors(True)
+        assert not robot.snapshot().z_reference_set
+        await robot.home()
+        assert robot.homed
+    finally:
+        await robot.disconnect()
+
+
+def test_the_repository_config_homes_without_winding_up():
+    from corexy_ufo_backend.config import load_config
+    assert not load_config(pathlib.Path(__file__).resolve().parents[2] / "config" / "game_config.json").home_requires_z_top
 
 
 def test_the_config_file_turns_the_home_check_on(tmp_path):

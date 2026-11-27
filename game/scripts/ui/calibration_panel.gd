@@ -199,7 +199,7 @@ func setup(m: Node) -> void:
 	_caution("W / S では前に測った範囲で止まらない。押している間だけ動くので、巻き過ぎ・下ろし過ぎに注意。"
 		+ "「上げる」「下げる」は記録した上・下で止まる（Space で止める）。")
 	_sub("最後に")
-	_step("④", "W か「上げる」で一番上まで巻き上げてから「原点復帰」（XY の原点を決める）")
+	_step("④", "「原点復帰」（XY の原点を決める。巻き上げていなくてもよいが、下がったアームが物に当たらないか確かめる）")
 	row = _row()
 	_ws_button(row, "原点復帰", func(): main.ws.send_command("home"), "primary")
 	# #299: the easy mode's portal and release height, recorded with the Z records (the catch
@@ -327,7 +327,7 @@ func section_states() -> Array[Dictionary]:
 				if RobotState.z_calibrated and ref:
 					var es := easy_state(easy_status)
 					if not RobotState.homed:
-						text = "上下は記録済み。一番上で「原点復帰」"
+						text = "上下は記録済み。次は「原点復帰」"
 					elif es.state in ["todo", "wait"]:
 						st = "todo" if es.state == "todo" else "wait"
 						text = "自動で動く場所: " + str(es.text)  # #299: the portal and the release height
