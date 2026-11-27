@@ -38,6 +38,7 @@ from ..serial_service import protocol as P
 from ..serial_service.service import SERIAL_SILENT_MSG, CommandRejected, CommandTimeout, SerialError, SerialService
 from .claw import ClawCalibration
 from .interface import RobotCommandError, RobotInterface
+from .jog_edges import JogEdgeGuard
 from .state import MachineState, RobotSnapshot
 from .z_calibration import ZCalibration
 
@@ -84,6 +85,8 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         self._jogging = False
         self._jog_requested = False  # a non-zero JOG was sent and not yet ended
         self._last_jog_t = 0.0  # when the last non-zero JOG was written
+        # #185 / #339: keeps a jog off the edges, from a position predicted ahead of JOG_POS
+        self.edge_guard = JogEdgeGuard()  # its values: the config's, at each jog
         self._z_rate = 0  # Z counts/s last sent
         self._z_ramp_from = 0  # Z rate being ramped down to 0 (0 = no ramp)
         self._z_ramp_t0 = 0.0
@@ -120,6 +123,7 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
     async def connect(self) -> None:
         self._claw_marks.clear()  # a new link may mean a restarted firmware count
         self._forget_z_points()
+        self.edge_guard.forget()  # no jog of the old link is moving now
         await self.serial.connect()
         try:
             pos = await self.serial.query_pos()
@@ -264,10 +268,18 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         elif kind == "jog_end":
             self._jogging = False
             self._jog_requested = False
+            self.edge_guard.note_sent(time.monotonic(), 0.0, 0.0)
             self.homed = kv.get("HOMED", "YES" if self.homed else "NO") == "YES"
             if not self._busy:
                 self._state = MachineState.IDLE
-            if kv.get("reason") in ("abort", "alarm", "limit_x", "limit_y"):
+            if kv.get("reason") in ("limit_x", "limit_y"):
+                # #339: the jog pressed a home limit switch and the firmware stopped it there:
+                # a stop, not an error (the jog's edge margin should not let it get there; if
+                # the firmware also raised an alarm, the POS that says so sets the error and
+                # the alarm, and the alarm stays the fault it was)
+                log.warning("jog stopped at a limit switch (%s) at X=%s Y=%s: not an error",
+                            kv["reason"], kv.get("X", "?"), kv.get("Y", "?"))
+            elif kv.get("reason") in ("abort", "alarm"):
                 self.error = "jog ended: " + kv["reason"]
         elif kind == "jog_rejected":
             self._jog_requested = False
@@ -275,6 +287,7 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         elif kind == "stop_done":
             self._jogging = False
             self._jog_requested = False
+            self.edge_guard.note_sent(time.monotonic(), 0.0, 0.0)
             self.homed = kv.get("HOMED", "YES" if self.homed else "NO") == "YES"
 
     def _apply_pos(self, pos: P.PosReport) -> None:
@@ -374,6 +387,9 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         self._require()
         if not self.limits.xy_inside(x, y):
             raise RobotCommandError(f"XY ({x:.1f},{y:.1f}) outside soft limits")
+        why = self.limits.home_edge_refusal(x, y)  # #339: the last check of every programmed move
+        if why:
+            raise RobotCommandError(why)
         feed = feed or self.cfg.xy_feed_mm_min
         dist = math.hypot(x - self._pos_xy[0], y - self._pos_xy[1])
         self._busy = True
@@ -394,6 +410,17 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
                     self._pos_xy = [xy[0], xy[1]]
                     self._xy_measured = True
                 raise RobotCommandError("stopped: " + r.completion)
+            elif r.completion and P.xy_limit_stop(r.completion):
+                # #339 (CoreXY_UFO #33): the move pressed a home limit switch near the home edge
+                # and the firmware stopped it there, homed, without an alarm. The target was not
+                # reached (the move fails), but it is a stop at the edge, not the crane's error
+                # (no self.error); an older firmware's alarm comes with the POS that says so.
+                xy = P.xy_from(r.completion)
+                if xy:
+                    self._pos_xy = [xy[0], xy[1]]
+                    self._xy_measured = True
+                log.warning("XY move stopped at a limit switch: %s", r.completion)
+                raise RobotCommandError("stopped at the limit switch: " + r.completion)
             else:
                 self.error = r.completion or "XY failed"
                 raise RobotCommandError(self.error)
@@ -408,6 +435,7 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
     def _end_jog_session(self) -> None:
         if self.serial.connected:
             self.serial.write_raw(P.cmd_jog(0.0, 0.0))
+        self.edge_guard.note_sent(time.monotonic(), 0.0, 0.0)
         self._z_rate = 0
         self._z_ramp_from = 0
         self._jog_requested = False
@@ -436,6 +464,7 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
             # always allowed: ends the session (and re-arms after a rejected press)
             if z_send and self.serial.connected and self.motors_enabled:
                 self.serial.write_raw(P.cmd_jog(0.0, 0.0, z_send))
+                self.edge_guard.note_sent(now, 0.0, 0.0)
                 self._z_rate = z_send
                 self._z_ramp_task = asyncio.get_running_loop().create_task(self._ramp_z_to_stop())
             else:
@@ -450,37 +479,29 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         cap = self.jog_cap(max(self.cfg.jog_max_mm_s, 0.0))
         if speed > cap > 0:
             vx_mm_s, vy_mm_s = vx_mm_s * cap / speed, vy_mm_s * cap / speed
-        vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s)
+        vx_mm_s, vy_mm_s = self._jog_inside_edges(vx_mm_s, vy_mm_s, now)
         new_press = now - self._last_jog_t > P.JOG_TIMEOUT_S  # firmware's notion of a press
         self._last_jog_t = now
         if new_press and self.error.startswith(("jog rejected", "jog ended")):
             self.error = ""  # the firmware reports again if it still refuses this press
         self.serial.write_raw(P.cmd_jog(vx_mm_s, vy_mm_s, z_send))
+        self.edge_guard.note_sent(now, round(vx_mm_s, 1), round(vy_mm_s, 1))  # as written (cmd_jog: 0.1)
         self._z_rate = z_send
         self._jog_requested = True
 
-    def _jog_inside_edges(self, vx: float, vy: float) -> tuple[float, float]:
-        """#185: the jog's XY velocity kept jog_edge_margin_mm inside the soft limits: the part
-        that heads for an edge is slowed with the distance left to that line and is zero on
-        it (or beyond it: only the way back is allowed). The firmware's own soft limit stays
-        behind this one; the home corner's limit switches are never reached by a jog."""
-        margin = self.cfg.jog_edge_margin_mm
-        if margin <= 0:
-            return vx, vy
-        slow = self.cfg.jog_edge_slow_s
-        lim = self.limits
+    def _jog_inside_edges(self, vx: float, vy: float, now: float | None = None) -> tuple[float, float]:
+        """#185 / #339: the jog's XY velocity kept inside the edges' margins (jog_edges.py): the
+        part that heads for an edge is slowed from a position predicted ahead of the last
+        JOG_POS by what the speeds already written add, and is zero on the margin's line (or
+        beyond it: only the way back is allowed). The firmware's own soft limit stays behind
+        this one; the home corner's limit switches are not reached by a jog."""
+        lim, cfg, g = self.limits, self.cfg, self.edge_guard
+        # the config as it is now (a test or a reload may change it after the start)
+        g.margin_min, g.margin_max = max(cfg.jog_edge_margin_mm, lim.home_margin), cfg.jog_edge_margin_mm
+        g.lag_s, g.react_s, g.brake_mm_s2 = cfg.jog_edge_lag_s, cfg.jog_edge_react_s, cfg.jog_edge_brake_mm_s2
         s = self.snapshot()
-
-        def one(v: float, at: float, lo: float, hi: float) -> float:
-            if v == 0:
-                return 0.0
-            left = (hi - margin - at) if v > 0 else (at - lo - margin)
-            if left <= 0:
-                return 0.0
-            cap = left / slow if slow > 0 else abs(v)
-            return math.copysign(min(abs(v), cap), v)
-
-        return one(vx, s.x, lim.x_min, lim.x_max), one(vy, s.y, lim.y_min, lim.y_max)
+        return g.limit(vx, vy, s.x, s.y, time.monotonic() if now is None else now,
+                       lim.x_min, lim.x_max, lim.y_min, lim.y_max)
 
     async def soft_stop(self) -> None:
         if not self.serial.connected:

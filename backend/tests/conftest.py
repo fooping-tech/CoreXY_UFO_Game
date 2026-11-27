@@ -43,6 +43,10 @@ class FakeFirmware(SerialTransport):
         self.move_delay = 0.01
         self.queue_full_once = False
         self.reject_next_xy = False
+        # #339 (CoreXY_UFO #33): the home switches as POS reports them, and the next XY move
+        # stopped at one ("limit_x" / "limit_y": NACK_XY ... reason=limit_y X= Y=, no alarm)
+        self.limit_on = {"X": False, "Y": False}
+        self.limit_next_xy = ""
         self.jogging = False
         self.jog_rejected = False  # firmware stays silent for the rest of a rejected press
         self._xy_move: tuple[tuple[float, float], tuple[float, float]] | None = None
@@ -111,11 +115,14 @@ class FakeFirmware(SerialTransport):
     def _homed_s(self) -> str:
         return "YES" if self.homed else "NO"
 
+    def _lim(self, axis: str) -> str:
+        return "ON" if self.limit_on[axis] else "OPEN"
+
     def pos_line(self) -> str:
         return (f"POS X={self.x:.3f} Y={self.y:.3f} A=0 B=0 F=900.000 EN=HARDWIRED_ACTIVE "
                 f"HOMED={'YES' if self.homed else 'NO'} X_HOMED=YES Y_HOMED=YES HOMING=Idle MOTION=NO JOB=IDLE PEN=UP "
-                f"ALARM={'YES' if self.alarm else 'NO'} ALARM_REASON=\"{self.alarm_reason}\" TMC=READY LIMIT_X=OPEN LIMIT_Y=OPEN "
-                f"LIMIT_X_RAW=OPEN LIMIT_Y_RAW=OPEN TEST_MODE={'ON' if self.test_mode else 'OFF'} JOY=NONE")
+                f"ALARM={'YES' if self.alarm else 'NO'} ALARM_REASON=\"{self.alarm_reason}\" TMC=READY LIMIT_X={self._lim('X')} LIMIT_Y={self._lim('Y')} "
+                f"LIMIT_X_RAW={self._lim('X')} LIMIT_Y_RAW={self._lim('Y')} TEST_MODE={'ON' if self.test_mode else 'OFF'} JOY=NONE")
 
     def write_line(self, line: str) -> None:
         if not self._open:
@@ -149,6 +156,15 @@ class FakeFirmware(SerialTransport):
             elif self.reject_next_xy or not (0 <= x <= 390 and 0 <= y <= 200):
                 self.reject_next_xy = False
                 self._later(0.0, f"REJECT: X {x:.3f} outside [0.000, 390.000]", f"NACK_XY target=({x:.3f},{y:.3f}) reason=rejected")
+            elif self.limit_next_xy:
+                axis, self.limit_next_xy = self.limit_next_xy[-1].upper(), ""
+                if axis == "X":
+                    self.x = 0.7
+                else:
+                    self.y = 0.7
+                self.limit_on[axis] = True
+                self._later(self.move_delay, f"LIMIT edge axis={axis} {axis}=0.700 (no alarm)",
+                            f"NACK_XY target=({x:.3f},{y:.3f}) reason=limit_{axis.lower()} X={self.x:.3f} Y={self.y:.3f}")
             else:
                 self._xy_move = ((self.x, self.y), (x, y))
                 self.x, self.y = x, y

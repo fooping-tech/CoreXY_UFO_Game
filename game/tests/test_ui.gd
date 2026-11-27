@@ -1153,9 +1153,19 @@ func _test_focus_calibrator() -> void:
 	RobotState.homed = true
 	RobotState.x_mm = 5.0
 	var at_edge := fc.start("10cm")
+	# #339: X = 20 is 10 mm off the edge, but its -X sample (X = 10) is inside the home switches'
+	# 15 mm margin (the backend would move it to 15): not enough room
+	RobotState.x_mm = 20.0
+	var at_home_edge := fc.start("10cm")
 	RobotState.x_mm = 150.0
-	_ok(not_homed.contains("原点復帰") and at_edge.contains("端") and sent.is_empty() and not fc.active(),
-		"focus calibration: needs homing and room to move; nothing is sent then", "%s / %s" % [not_homed, at_edge])
+	RobotState.y_mm = 24.0
+	var at_front := fc.start("10cm")
+	RobotState.y_mm = 100.0
+	var room: bool = FocusCalibrator.blocker({}, Vector2(25.0, 25.0), true, true, "IDLE", true, 15.0) == ""
+	_ok(not_homed.contains("原点復帰") and at_edge.contains("端") and at_home_edge.contains("端") and at_front.contains("端")
+		and room and sent.is_empty() and not fc.active(),
+		"focus calibration: needs homing and room to move (25 mm from the home switches' side); nothing is sent then",
+		"%s / %s / %s / %s" % [not_homed, at_edge, at_home_edge, at_front])
 	var started := fc.start("10cm")
 	var before_still := sent.size()
 	for k in 30:
@@ -1269,6 +1279,29 @@ static func _fine_state() -> Dictionary:
 	return {"link": true, "connected": true, "state": "IDLE", "homed": true, "motors_enabled": true, "error": "",
 		"z_servo_reset": false, "z_servo_power_cycle": false, "arm_servo_power_cycle": false, "easy_mode": {"state": "MANUAL_XY"},
 		"calibration_prepare": {}, "auto_catch": {}}
+
+## #339: a jog (or an XY move) stopped by a home limit switch at the stage's edge, as the
+## backend reports it with the firmware of CoreXY_UFO #33: the arm moved and stopped, still
+## homed, no alarm, no error (POS LIMIT_Y=ON is not in robot_state's judged keys). Not a fault,
+## and nothing keeps a new game. The older firmware's alarm for the same switch stays one.
+func _test_robot_fault_watch_limit_edge() -> void:
+	var w := RobotFaultWatch.new()
+	var s := _fine_state()
+	s.state = "MOVING_XY"
+	w.arm(s)
+	s.state = "IDLE"
+	s["limit_y"] = true
+	var quiet: bool = w.update(s).is_empty()
+	var free: bool = RobotFaultWatch.problems(s, true).is_empty() and RobotFaultWatch.still(s)
+	var old := RobotFaultWatch.new()
+	var o := _fine_state()
+	old.arm(o)
+	o.state = "ALARM"
+	o.error = "hard limit active away from home x=OFF y=ON x_raw=OFF y_raw=ON"
+	var alarm: Array = old.update(o).map(func(f): return "%s/%s" % [f.category, f.code])
+	_ok(quiet and free and alarm == ["corexy/alarm"],
+		"robot fault #339: a stop at a home limit switch without an alarm is not a fault (nor a blocker); the older firmware's hard-limit alarm still is",
+		"%s %s %s" % [quiet, free, alarm])
 
 ## #292: what is a new fault of the crane (only changes), and what keeps it from a new game.
 func _test_robot_fault_watch() -> void:

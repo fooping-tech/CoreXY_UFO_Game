@@ -66,6 +66,16 @@ def is_failure_line(line: str) -> bool:
     return any(m in line for m in _FAILURE_MARKERS)
 
 
+def xy_limit_stop(line: str) -> str:
+    """#339 (CoreXY_UFO #33): "limit_x" / "limit_y" when an XY move stopped at a home limit
+    switch near the home edge (`NACK_XY target=(x,y) reason=limit_y X=.. Y=..`, no alarm),
+    else ""."""
+    if not line.startswith("NACK_XY"):
+        return ""
+    m = re.search(r"\breason=(limit_[xy])\b", line)
+    return m.group(1) if m else ""
+
+
 def classify_line(line: str) -> str:
     """Coarse category for logging/state updates."""
     if line.startswith("POS "):
