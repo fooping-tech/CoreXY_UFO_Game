@@ -6,7 +6,7 @@ Messages (all JSON objects with "type" and "timestamp" in ms):
 
 Command names and safety rules:
   enable_motors {enable}  must be sent (true) before any motion command.
-  home (XY homing, then on to the middle of the stage: backend.home_then_center, #175), move_xy {x,y,feed?}, move_z {z},
+  home (XY homing; on to the middle of the stage only with backend.home_then_center, #175, off since #342), move_xy {x,y,feed?}, move_z {z},
   park (#276: the arm to its waiting point, the left back corner by default, at backend.park_feed_mm_min;
   refused while another motion runs, a jog is on, or the arm is not wound up),
   z_set {which: top|bottom|clear} (record the arm's height as its top / bottom; both =
