@@ -411,7 +411,8 @@ class RealZMixin:
             raise RobotCommandError("Z reference not set (z_set top with the arm wound up, or bottom with it lowered)")
         z = self.limits.clamp_z(z)
         delta_units = z - self._z_units_est
-        if abs(delta_units) < 1e-3:
+        if abs(delta_units) < 1e-3 and not self._z_resync_needed:
+            # (review on #349: while the count is in doubt, the estimate is no reason to stay)
             return
         going_up = delta_units > 0 if self.limits.z_up_is_positive else delta_units < 0
         total_turns = delta_units * self.cfg.z_counts_per_unit / COUNTS_PER_TURN * self.cfg.z_sign

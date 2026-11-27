@@ -165,6 +165,21 @@ async def test_a_drum_that_turned_unheard_is_counted_from_where_it_really_is(kin
         await robot.disconnect()
 
 
+async def test_back_to_the_old_height_after_turning_unheard_is_not_taken_as_there():
+    """Review on #349: Z 100 -> 50 turned unheard, then "back to 100": the stale estimate says
+    100 already, but the count is taken back first and the drum goes up."""
+    robot, fw = await _drum()
+    try:
+        fw.servo_turn_fault[1].append("feedback_lost")
+        with pytest.raises(ServoPositionUnknown):
+            await robot.move_z(50.0)
+        await robot.move_z(100.0)
+        assert fw.servo_abs[1] == pytest.approx(_counts(100.0), abs=2)
+        assert robot.snapshot().z == pytest.approx(100.0, abs=0.05) and not robot._z_resync_needed
+    finally:
+        await robot.disconnect()
+
+
 async def test_the_count_is_taken_back_only_at_rest_and_with_the_limits_read():
     robot, fw = await _drum()
     try:
