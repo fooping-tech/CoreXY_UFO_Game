@@ -662,7 +662,7 @@
     "home_then_center": false,
     "home_center_mm": null,
     "servo_no_reply_retry_s": 20,
-    "_servo_no_reply_note": "#344: a servo that does not answer on its bus (SERVO_STATUS result=NO_REPLY, SERVO_TURN REJECTED reason=no_reply: refused before anything turned; seen for 3-13 s after XY moves) is tried again by the automatic sequences (easy mode, auto catch) every 0.5 s for up to servo_no_reply_retry_s seconds (0 = never, max 120). The stop key, an alarm, a lost link still end it at once; the wait does not count toward the step or total timeouts. After that: FAULT as before (STOP, no alarm).",
+    "_servo_no_reply_note": "#344/#348: the servo bus (drum + claw) fails for a few seconds now and then (seen after XY moves) and comes back by itself. A Z / claw step of the automatic sequences (easy mode, auto catch, homework approach, tidy-up, the 校正 tab preparation) whose servo command failed on the bus is tried again every 0.5 s for up to servo_no_reply_retry_s seconds (0 = never, max 120): refused before anything turned (NO_REPLY, reason=no_reply / read_failed / not_position_mode mode=-1), or the firmware dropped its count of turns (feedback_lost, goal_write_failed, hold_write_failed, idle_drift, multi_turn_lost with the limits still multi-turn): then the count is first taken back from the servo (only multi-turn and at rest; the smallest turn, about 1 deg). A real power cut (one-turn limits) or a count the firmware cannot take back is a fault as before. The stop key, an alarm, a lost link still end it at once; the wait does not count toward the step or total timeouts. After that: FAULT as before (STOP, no alarm)",
     "park_mm": null,
     "park_margin_mm": 20,
     "park_feed_mm_min": 3000,

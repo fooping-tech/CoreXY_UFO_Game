@@ -12,7 +12,8 @@ from ..serial_service import protocol as P
 from ..serial_service.service import CommandRejected, CommandTimeout, SerialError
 from .claw import WHICH as CLAW_WHICH
 from .claw import deg_in_turn
-from .interface import RobotCommandError, ServoFailed, ServoNoReply, is_servo_no_reply
+from .interface import (RobotCommandError, ServoFailed, ServoNoReply, ServoPositionUnknown, is_servo_no_reply,
+                        is_servo_position_unknown)
 from .real_constants import *  # noqa: F401,F403
 from .state import MachineState
 
@@ -40,7 +41,7 @@ class RealClawMixin:
             return False
         return abs(res.target - res.actual) * 360.0 / COUNTS_PER_TURN <= tol
 
-    def _claw_turn_result(self, r, closing: bool = False) -> None:
+    async def _claw_turn_result(self, r, closing: bool = False) -> None:
         """Check a SERVO_TURN 2 reply; raise RobotCommandError when it failed. closing: the
         turn goes to the recorded closed angle (a grip that stops just short of it is fine)."""
         res = P.parse_servo_result(r.completion or "")
@@ -49,11 +50,20 @@ class RealClawMixin:
                      abs(res.target - res.actual), res.raw)
             return
         if res is not None and "multi_turn_lost" in res.raw:
-            # the servo's power was cut: refused unmoved; the next turn goes through
-            # but its counts restart from the angle in the turn
-            self._forget_arm_counts()
-            self.error = CLAW_SERVO_RESET_MSG
-            raise ServoFailed(self.error)
+            # refused unmoved: the servo's power was cut, or its limits were not read (#348)
+            if await self._claw_limits_one_turn() is True:
+                # the power was cut: the next turn goes through but its counts restart
+                # from the angle in the turn
+                self._forget_arm_counts()
+                self.error = CLAW_SERVO_RESET_MSG
+                raise ServoFailed(self.error)
+            self._arm_resync_needed = True
+            self.error = (r.completion or "") + " (limits not one-turn: not a power cut, trying again)"
+            raise ServoPositionUnknown(self.error)
+        if res is not None and not res.ok and is_servo_position_unknown(res.raw):
+            self._arm_resync_needed = True  # #348: where the claw is must be taken back first
+            self.error = r.completion or "arm servo failed"
+            raise ServoPositionUnknown(self.error)
         if res is None or not res.ok:
             self.error = r.completion or "arm servo failed"
             if res is not None and is_servo_no_reply(res.raw):
@@ -75,7 +85,7 @@ class RealClawMixin:
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, turns), timeout=15.0)
-            self._claw_turn_result(r, closing=close and self.claw.complete())
+            await self._claw_turn_result(r, closing=close and self.claw.complete())
             await self._refresh_arm()  # the same servo as arm_step: keep its angle current
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -100,7 +110,7 @@ class RealClawMixin:
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
-            self._claw_turn_result(r)
+            await self._claw_turn_result(r)
             await self._read_arm()
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)
@@ -108,7 +118,50 @@ class RealClawMixin:
         finally:
             self._busy = False
 
+    async def _claw_limits_one_turn(self) -> bool | None:
+        """#348: True = the claw servo is back to one turn, False = multi-turn, None = not known."""
+        try:
+            st = await self.serial.servo_status(ARM_SERVO_ID)
+        except SerialError:
+            return None
+        if not st.ok or st.limits is None:
+            return None
+        return st.limits != (0, 0)
+
+    async def _resync_claw(self) -> bool:
+        """#348: as RealZMixin._resync_z, for the claw (the nudge: the smallest turn, either way;
+        pressing on a capsule it stalls and still says where it is)."""
+        if not self._arm_resync_needed:
+            return True
+        try:
+            st = await self.serial.servo_status(ARM_SERVO_ID)
+        except SerialError:
+            return False
+        if not st.ok or st.limits is None:
+            return False
+        if st.limits != (0, 0):
+            self._arm_resync_needed = False
+            self._forget_arm_counts()
+            self.error = CLAW_SERVO_RESET_MSG
+            raise ServoFailed(f"{self.error} ({st.raw})")
+        if str(st.extra.get("moving", "")) != "0":
+            return False
+        if st.tracking and not st.tracking_lost and st.abs_counts is not None:
+            self._arm_resync_needed = False
+            self._arm_counts = st.abs_counts
+            return True
+        try:
+            await self._wait_jog_ended()
+            await self._ensure_test_mode()
+            r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, SERVO_NUDGE_TURNS), timeout=10.0)
+        except (CommandTimeout, CommandRejected, SerialError) as e:
+            log.warning("claw resync: %s", e)
+            return False
+        return self._took_back(ARM_SERVO_ID, r.completion or "")
+
     async def _read_arm(self) -> None:
+        if self._arm_resync_needed and not await self._resync_claw():
+            raise ServoPositionUnknown(CLAW_RESYNC_MSG)  # #348: the count would be a stale one
         st = await self.serial.servo_status(ARM_SERVO_ID)
         if not st.ok or st.abs_counts is None:
             msg = f"SERVO_STATUS {ARM_SERVO_ID} failed: {st.raw}"
@@ -149,7 +202,7 @@ class RealClawMixin:
             await self._wait_jog_ended()
             await self._ensure_test_mode()
             r = await self.serial.send(P.cmd_servo_turn(ARM_SERVO_ID, deg / 360.0), timeout=15.0)
-            self._claw_turn_result(r, closing=which == "closed")
+            await self._claw_turn_result(r, closing=which == "closed")
             await self._refresh_arm()
         except (CommandTimeout, CommandRejected, SerialError) as e:
             self.error = str(e)

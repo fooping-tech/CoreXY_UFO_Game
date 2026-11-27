@@ -21,15 +21,52 @@ class ServoFailed(RobotCommandError):
 
 
 class ServoNoReply(ServoFailed):
-    """#344: the servo did not answer on its bus (`SERVO_STATUS ... result=NO_REPLY`, or
-    `SERVO_TURN ... result=REJECTED reason=no_reply`): the firmware gave up before anything
-    turned. The line comes back by itself after a few seconds (seen after XY moves), so a
-    sequence tries the same step again for a while (backend.servo_no_reply_retry_s)."""
+    """#344: the servo bus did not carry the answer, and the firmware gave up before anything
+    turned (see is_servo_no_reply). The line comes back by itself after a few seconds (seen
+    after XY moves), so a sequence tries the same step again for a while
+    (backend.servo_no_reply_retry_s)."""
+
+
+class ServoPositionUnknown(ServoFailed):
+    """#348: a servo command ended on a bus error, and the firmware no longer trusts its count
+    of where the servo is (see is_servo_position_unknown), although nothing says the servo
+    lost power. The servo may have turned (to its goal) meanwhile. Before the step is tried
+    again, the firmware is to take the count back from the servo itself (the same
+    check as at start: multi-turn limits, at rest, near its goal); a real power cut found there
+    is a plain ServoFailed. The real robot does that itself at the start of the next Z / claw
+    command (RealZMixin._resync_z, RealClawMixin._resync_claw): a caller only tries again."""
+
+
+# #348: the firmware's reasons for a servo command refused before anything turned because a
+# read on the servo bus failed (CoreXY_UFO StsServoBus: checkReady / enableTracking /
+# moveRelative). A value of -1 is the firmware's mark for "not read".
+_UNMOVED_BUS_REASONS = ("reason=no_reply", "reason=read_failed", "reason=not_position_mode mode=-1",
+                        "reason=eeprom_unlocked lock=-1")
+# ... and a command that ended on a bus error with the count of turns no longer trusted
+_POSITION_UNKNOWN_REASONS = ("reason=feedback_lost", "reason=goal_write_failed", "reason=hold_write_failed",
+                             "reason=idle_drift")
 
 
 def is_servo_no_reply(text: str) -> bool:
-    """A firmware line that says the servo did not answer (and so nothing was turned)."""
-    return "result=NO_REPLY" in text or ("result=REJECTED" in text and "reason=no_reply" in text)
+    """A firmware line that says the servo bus failed and nothing was turned."""
+    if "result=NO_REPLY" in text:
+        return True
+    return "result=REJECTED" in text and any(r in text for r in _UNMOVED_BUS_REASONS)
+
+
+def is_servo_position_unknown(text: str) -> bool:
+    """A SERVO_TURN that ended on a bus error with the firmware's count of turns dropped
+    (feedback lost, a write not acknowledged, a drift while idle). Not when the firmware's own
+    look found the servo powered up again (recover=multi_turn_lost): that is a power cut."""
+    if "recover=multi_turn_lost" in text:
+        return False
+    return ("result=FAILED" in text or "result=REJECTED" in text) and any(
+        r in text for r in _POSITION_UNKNOWN_REASONS)
+
+
+def servo_bus_error(exc: BaseException) -> bool:
+    """A servo error that may only be the bus (the step may be tried again for a while)."""
+    return isinstance(exc, (ServoNoReply, ServoPositionUnknown))
 
 
 class RobotInterface(ABC):

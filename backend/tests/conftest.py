@@ -30,6 +30,15 @@ class FakeFirmware(SerialTransport):
         self.servo_stop_short: dict[int, tuple[int, str]] = {}  # sid -> (counts short, "ON" / "OFF")
         # #344: servos whose bus does not answer (SERVO_STATUS NO_REPLY, SERVO_TURN REJECTED no_reply)
         self.servo_no_reply: set[int] = set()
+        # #348: the next SERVO_TURN of a servo fails on the bus, as the firmware says it (one entry
+        # per turn): "read_failed" / "not_position_mode" (refused unmoved), "limits_unread" (the
+        # limits not read: multi_turn_lost while still multi-turn, count dropped), "feedback_lost" /
+        # "goal_write_failed" (it turns to its goal unheard: count dropped, the firmware's abs stale),
+        # "unknown_turn_count" (the nudge is refused: power-cycle)
+        self.servo_turn_fault: dict[int, list[str]] = {1: [], 2: []}
+        self.servo_stale: dict[int, int] = {}  # where a servo really is while its count is dropped
+        self.servo_moving: set[int] = set()  # SERVO_STATUS says moving=1
+        self.servo_limits_unread: set[int] = set()  # SERVO_STATUS says limits=-1/-1
         # multi-turn tracking per servo: the firmware's flag and the servo's limits
         self.servo_tracking = {1: True, 2: True}
         self.servo_limits = {1: "0/0", 2: "0/0"}
@@ -55,6 +64,31 @@ class FakeFirmware(SerialTransport):
         self._tasks: list[asyncio.Task] = []
         # #161: the USB link's reading side died: writes still arrive, nothing comes back
         self.rx_dead = False
+
+    def _servo_turn_fault(self, sid: int, turns: float, kind: str) -> None:
+        """#348: a SERVO_TURN that fails on the servo bus, worded as the firmware words it."""
+        head = f"SERVO_TURN id={sid} value={turns:.2f}"
+        target = self.servo_abs[sid] + int(turns * 4096)
+        if kind == "read_failed":
+            self._emit(f"{head} result=REJECTED reason=read_failed")
+        elif kind == "not_position_mode":
+            self._emit(f"{head} result=REJECTED reason=not_position_mode mode=-1")
+        elif kind == "limits_unread":
+            self.servo_tracking[sid] = False
+            self._emit(f"{head} result=REJECTED reason=multi_turn_lost (retry)")
+        elif kind in ("feedback_lost", "goal_write_failed"):
+            self.servo_tracking[sid] = False
+            self.servo_stale[sid] = target  # it went on to its goal, unheard
+            if kind == "feedback_lost":
+                self._later(self.move_delay, f"{head} result=FAILED target={target} reason=feedback_lost "
+                                             "tracking=INVALID recover=no_reply raw=-1 goal=0 moving=-1")
+            else:
+                self._emit(f"{head} result=FAILED reason=goal_write_failed")
+        elif kind == "unknown_turn_count":
+            self._emit(f"{head} result=REJECTED reason=unknown_turn_count torque=1 moving=0 goal=0 raw=9 "
+                       "(power-cycle servo)")
+        else:
+            raise AssertionError(kind)
 
     def cut_servo_power(self, sid: int = 1) -> None:
         """The servo alone lost power: back to one turn. The older firmware does not
@@ -232,6 +266,8 @@ class FakeFirmware(SerialTransport):
                 self._emit("NACK_SERVO_TURN reason=jog_active")
             elif sid in self.servo_no_reply:
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=no_reply")
+            elif self.test_mode and self.servo_turn_fault[sid]:
+                self._servo_turn_fault(sid, turns, self.servo_turn_fault[sid].pop(0))
             elif self.test_mode and self.servo_tracking[sid] and self.servo_limits[sid] != "0/0":
                 # like moveRelative: the servo lost its multi-turn limits, nothing moves
                 self.servo_tracking[sid] = False
@@ -242,6 +278,10 @@ class FakeFirmware(SerialTransport):
                 self._emit(f"SERVO_TURN id={sid} value={turns:.2f} result=REJECTED reason=turns_over "
                            f"max={self.max_turns[sid]:.1f}")
             else:
+                if not self.servo_tracking[sid]:
+                    # enableTracking (multi-turn limits): the count back from the servo itself
+                    self.servo_abs[sid] = self.servo_stale.pop(sid, self.servo_abs[sid])
+                    self.servo_tracking[sid] = True
                 target = self.servo_abs[sid] + int(turns * 4096)
                 short = self.servo_stop_short.get(sid)
                 if short:
@@ -259,6 +299,12 @@ class FakeFirmware(SerialTransport):
             self._emit("ACK QUEUED SERVO_STATUS")
             sid = int(line.split()[1])
             tracking = "YES" if self.servo_tracking[sid] else "NO"
+            if sid in self.servo_moving or sid in self.servo_limits_unread:
+                limits = "-1/-1" if sid in self.servo_limits_unread else self.servo_limits[sid]
+                self._emit(f"SERVO_STATUS id={sid} result=OK flags=0x00 mode=0 torque=1 raw=-1 goal=100 "
+                           f"limits={limits} tracking={tracking} abs={self.servo_abs[sid]} turns=0.00 "
+                           f"voltage=7.4 temp=31 moving={1 if sid in self.servo_moving else -1}")
+                return
             if sid in self.servo_no_reply:
                 self._emit(f"SERVO_STATUS id={sid} result=NO_REPLY tracking={tracking}")
                 return

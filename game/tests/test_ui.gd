@@ -548,6 +548,18 @@ func _test_calibration_summary() -> void:
 		and CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("USB")
 		and CalibrationPanel.reason_text("timeout") == "バックエンドから返事がない",
 		"calibration link: a silent link and a refusal for a firmware timeout point at the USB hub / cable", z_refused)
+	# #348: the servo bus failing for a while is said as such (not as a power cut, not as the USB link)
+	var bus_lines := ["SERVO_STATUS 2 failed: SERVO_STATUS id=2 result=NO_REPLY tracking=YES",
+		"SERVO_TURN id=1 value=-0.65 result=REJECTED reason=no_reply",
+		"OPEN_CLAW failed: SERVO_TURN id=2 result=FAILED reason=feedback_lost (servo bus error for 20.1 s)",
+		"the drum servo's count of turns is being taken back after a servo bus error"]
+	var bus_ok := true
+	for line in bus_lines:
+		bus_ok = bus_ok and CalibrationPanel.reason_text(line).contains("サーボの通信が不安定") \
+			and EasyModeControl.fault_text(line).contains("つうしん")
+	_ok(bus_ok and not CalibrationPanel.reason_text("no reply from the robot (serial link silent)").contains("サーボ")
+		and not CalibrationPanel.servo_bus_trouble("z servo reset (its power was cut)"),
+		"servo bus trouble: no answer / feedback lost / count taken back are said as a flaky servo line", str(bus_lines))
 	# #167: the one-button preparation's progress, its end and why it stopped
 	var prep_steps := [{"key": "motors", "label": "モーター有効", "state": "done", "note": ""},
 		{"key": "z_restore", "label": "前回の Z の上下を呼び出す", "state": "fail", "note": ""},

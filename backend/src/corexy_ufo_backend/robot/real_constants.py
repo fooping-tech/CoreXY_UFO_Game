@@ -38,6 +38,13 @@ CLAW_SERVO_RESET_MSG = ("claw servo reset (its power was cut): its recorded coun
                         "press again (the firmware refused this one before moving)")
 # z_servo_recover: a SERVO_TURN this small (up), refused unmoved while the servo is reset
 Z_RECOVER_TURNS = 0.01
+# #348: a bus error made the firmware drop its count of a servo's turns (the servo did not lose
+# power): the smallest turn has it take the count back from the servo (about 12 counts, 1 deg)
+SERVO_NUDGE_TURNS = 0.003
+Z_RESYNC_MSG = ("the drum servo's count of turns is being taken back after a servo bus error "
+                "(it does not answer, or still moves): trying again")
+CLAW_RESYNC_MSG = ("the claw servo's count of turns is being taken back after a servo bus error "
+                   "(it does not answer, or still moves): trying again")
 # #163: `JOG servo id=N disabled reason=...` that only a power cycle of that servo clears
 # (CoreXY_UFO StsServoBus::enableTracking: the firmware cannot tell its turn count)
 POWER_CYCLE_REASONS = ("unknown_turn_count", "goal_mismatch")

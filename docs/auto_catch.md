@@ -86,7 +86,19 @@ FAULT ─(アラーム解除・原点復帰の後に auto_catch・条件OK)→ O
 
 **サーボの命令が失敗しただけのとき（#269）**: 爪・巻き上げの `SERVO_TURN` にファームウェアが PASS 以外の結果（TIMEOUT / FAILED / REJECTED / multi_turn_lost など）を返したときは、その命令はもう終わっていて何も動いていない。このときだけ `ABORT` の代わりに `STOP`（減速停止。アラームにならず HOMED を保つ）で止めて FAULT にする（自動キャッチ・かんたんモード・宿題への移動。エラーの末尾に「servo error: stopped with STOP, no alarm」）。停止の要求が先に来ていたとき、`STOP` が送れない・確かめられないときは今までどおり `ABORT`。応答がない（タイムアウト）・切断・アラーム・ソフトリミットなど、ほかの異常も今までどおり `ABORT`。FAULT から自動で再開しないのは同じ。実機未検証。
 
-**サーボが返事をしないとき（#344）**: サーボのバス（巻き上げと爪で共有）が数秒だけ返事をしなくなることがある（実機で XY の動きの直後に 3〜13 秒、回転数・電圧はそのまま）。`SERVO_STATUS ... result=NO_REPLY` と `SERVO_TURN ... result=REJECTED reason=no_reply` は、何も回す前に断られたもの（`ServoNoReply`）なので、自動のシーケンス（自動キャッチ・かんたんモード）はその段を 0.5 秒おきに最大 `backend.servo_no_reply_retry_s`（既定 20 秒、0 = やり直さない）までやり直す。待っている間も停止・アラーム・切断の監視は続け（Space はすぐ FAULT + ABORT）、待ち時間は段・全体のタイムアウトに数えない。超えたら #269 のとおり STOP で FAULT（`servo_fault`、#302 のやり直しの対象）。TIMEOUT など命令が途中で終わったもの（回ったかもしれない）はやり直さない。実機未検証。
+**サーボのバスが一時的に不安定なとき（#344、#348）**: 巻き上げ（id=1）と爪（id=2）のサーボは 1 本のバスを共有していて、数秒だけ返事をしない・読み取りが乱れることがある（実機で XY の動きの直後に 3〜13 秒。回転数・電圧はそのまま）。ファームウェア（CoreXY_UFO `StsServoBus`）の答えごとの扱い:
+
+| ファームウェアの答え | 何が起きたか | バックエンド |
+|---|---|---|
+| `SERVO_STATUS ... result=NO_REPLY`、`SERVO_TURN ... REJECTED reason=no_reply / read_failed / not_position_mode mode=-1 / eeprom_unlocked lock=-1` | 読み取りに失敗して、回す前に断った | `ServoNoReply`: その段をやり直す |
+| `SERVO_TURN ... REJECTED reason=multi_turn_lost (retry)` | 電源が切れた **または** 角度の範囲を読めなかった（同じ答え）。ファームウェアは回転数の追跡をやめる | `SERVO_STATUS` で確かめる: 1 回転の範囲（例 `0/4095`）なら電源断で今までどおり（Z の記録を消す）、`0/0`・読めないなら `ServoPositionUnknown` |
+| `SERVO_TURN ... FAILED reason=feedback_lost / goal_write_failed / hold_write_failed`、`REJECTED reason=idle_drift` | 途中で返事が途切れた・書き込みの返事がない。目標まで回ったかもしれず、ファームウェアの回転数（`abs`）は最後に聞いた値のまま | `ServoPositionUnknown`: 次の命令の前に回転数を取り直す（下） |
+| `SERVO_STATUS ... limits=-1/-1`（ほかの値も -1） | いくつかのレジスタを読めなかった | 電源断とみなさない（#346） |
+| `feedback_lost ... recover=multi_turn_lost`、`runaway`、`hold_check_moved`、`unknown_turn_count`、`goal_mismatch`、`servo_error`、`TIMEOUT torque=ON` など | サーボそのものの異常・電源断・ひっかかり | 今までどおり（`ServoFailed` → STOP で FAULT、#302 のやり直しの対象） |
+
+回転数の取り直し: サーボが多回転（`limits=0/0`）で止まっている（`moving=0`）ことを確かめてから、いちばん小さい回転（約 1°、Z は範囲の中ほどへ向けて）を 1 回送る。ファームウェアは起動時と同じ確かめ方（目標と角度）で回転数をサーボから取り直し、`actual=` で返すので、それを現在地にして段をやり直す。取り直すまでは、古い `abs` を Z の位置として使わない（ポーリング・Z の記録も）。見ている間に 1 回転の範囲になっていたら電源断（Z の記録を消す）。ファームウェアが取り直せない（`unknown_turn_count` など）ときは今までどおりの異常。
+
+自動のシーケンス（自動キャッチ・かんたんモード・宿題への移動・お片付け・校正タブの準備）は、この 2 種類の失敗の段を 0.5 秒おきに最大 `backend.servo_no_reply_retry_s`（既定 20 秒、0 = やり直さない）までやり直す。待っている間も停止・アラーム・切断の監視は続け（Space はすぐ FAULT + ABORT）、待ち時間は段・全体のタイムアウトに数えない。超えたら #269 のとおり STOP で FAULT（`servo_fault`、#302 のやり直しの対象）。手動のジョグ（W / S）は、ファームウェアが `JOG servo ... disabled reason=no_reply` で断ったら、その押し込みの間は動かない（押し直すとまた試す。ゲームは止まらない）。実機未検証。
 
 | 入力 | 動き |
 |---|---|

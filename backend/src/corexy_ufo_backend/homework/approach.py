@@ -473,12 +473,19 @@ class ApproachSequencer(AbortableSequence):
                 await asyncio.sleep(self.poll_s)
             return
         action = self._action = asyncio.get_running_loop().create_task(self._action_body(step))
+        bus_since: float | None = None  # #348: the servo bus has failed this step since then
         while True:
             self._check(step, t0)
             if action.done():
                 exc = action.exception()
                 if exc is not None:
-                    raise SequenceFault(f"{step.phase} failed: {exc}", servo_ended=isinstance(exc, ServoFailed))
+                    again = await self._servo_try_again(step, exc, bus_since)
+                    if again is not None:
+                        bus_since, t0 = again, self.clock()  # the step's own timeout counts per try
+                        action = self._action = asyncio.get_running_loop().create_task(self._action_body(step))
+                        continue
+                    raise SequenceFault(f"{step.phase} failed: {self._servo_why(exc, bus_since)}",
+                                        servo_ended=isinstance(exc, ServoFailed))
                 if step.kind == "claw":
                     # the servo command reported PASS: let the claws settle, still checking
                     t_done = self.clock()

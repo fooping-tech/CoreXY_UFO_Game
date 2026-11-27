@@ -67,7 +67,7 @@ async def test_a_short_silence_of_the_claw_is_waited_out():
         assert rig.seq.error == "" and rig.seq.last_result == ""
         assert "ABORT" not in rig.robot.commands and "STOP" not in rig.robot.commands
         assert rig.robot.commands.count("CLAW -> open") >= 2  # tried again, the same step
-        assert any("does not answer" in h["note"] for h in rig.seq.history)
+        assert any("servo bus error" in h["note"] for h in rig.seq.history)
         await rig.seq.abort("test over")
         await rig.seq.wait()
 

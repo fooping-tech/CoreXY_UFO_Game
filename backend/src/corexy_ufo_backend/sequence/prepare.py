@@ -34,7 +34,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from ..robot.interface import RobotCommandError, RobotInterface
+from ..robot.interface import RobotCommandError, RobotInterface, servo_bus_error
 from .fault import SequenceFault
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ TRACK_JOG_UNITS_S = 5.0  # slow; upwards (the sign follows z_up_is_positive)
 # home waits up to 90 s for the firmware (RealRobot.home): its step may take longer than the others
 STEP_TIMEOUT_S = {"home": 120.0}
 TRACK_JOG_S = 0.3
+SERVO_RETRY_S = 0.5  # #348: between the tries of a servo command whose bus failed
 TRACK_SETTLE_S = 1.0  # the jog's end (and the firmware's hold check) before asking again
 NOT_TRACKING = "追跡がまだ始まっていない"
 
@@ -70,7 +71,7 @@ class PrepareSequencer:
                  center: Callable[[], tuple[float, float] | None] | None = None,
                  center_feed: Callable[[], float | None] | None = None,
                  step_timeout_s: float = 60.0, settle_s: float = TRACK_SETTLE_S,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 servo_retry_s: float = 0.0, clock: Callable[[], float] = time.monotonic) -> None:
         self.robot = robot
         self.lock = lock
         self.is_jogging = is_jogging
@@ -80,6 +81,7 @@ class PrepareSequencer:
         self.center_feed = center_feed
         self.step_timeout_s = step_timeout_s
         self.settle_s = settle_s
+        self.servo_retry_s = servo_retry_s  # #348: a step whose servo bus failed is tried again
         self.clock = clock
         self.active = False
         self.step = ""
@@ -145,6 +147,23 @@ class PrepareSequencer:
     def _check_abort(self) -> None:
         if self._abort_reason:
             raise SequenceFault(self._abort_reason)
+
+    async def _servo(self, command: Callable[[], object]) -> None:
+        """#348: a Z / claw command, tried again every SERVO_RETRY_S for up to servo_retry_s
+        while it fails on the servo bus (nothing turned, or the count is being taken back)."""
+        since: float | None = None
+        while True:
+            try:
+                await command()  # type: ignore[misc]
+                return
+            except RobotCommandError as e:
+                now = self.clock()
+                since = now if since is None else since
+                if not servo_bus_error(e) or self._abort_reason or now - since >= self.servo_retry_s:
+                    raise
+                log.warning("preparation: %s: servo bus error, trying again (%s)", self.step, e)
+            await asyncio.sleep(SERVO_RETRY_S)
+            self._check_abort()
 
     async def _run(self) -> None:
         try:
@@ -248,7 +267,7 @@ class PrepareSequencer:
             return "skip: Z の下の記録がない（上だけ: 原点復帰の前に W で一番上へ）"
         lim = self.robot.limits
         top = lim.z_max if lim.z_up_is_positive else lim.z_min
-        await self.robot.move_z(top)
+        await self._servo(lambda: self.robot.move_z(top))
         return ""
 
     def _claw_recorded(self) -> bool:
@@ -258,13 +277,13 @@ class PrepareSequencer:
     async def _do_claw_open(self) -> str:
         if not self._claw_recorded():
             return "skip: 爪の開き・閉じが未記録"
-        await self.robot.arm_goto("open")
+        await self._servo(lambda: self.robot.arm_goto("open"))
         return ""
 
     async def _do_claw_close(self) -> str:
         if not self._claw_recorded():
             return "skip: 爪の開き・閉じが未記録"
-        await self.robot.arm_goto("closed")
+        await self._servo(lambda: self.robot.arm_goto("closed"))
         return ""
 
     async def _do_home(self) -> str:
@@ -281,7 +300,7 @@ class PrepareSequencer:
     async def _do_claw_ready(self) -> str:
         if not self._claw_recorded():
             return "skip: 爪の開き・閉じが未記録"
-        await self.robot.arm_goto("open")
+        await self._servo(lambda: self.robot.arm_goto("open"))
         return ""
 
     async def _do_easy(self) -> str:

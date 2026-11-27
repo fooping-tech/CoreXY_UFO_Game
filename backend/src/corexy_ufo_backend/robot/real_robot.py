@@ -106,6 +106,10 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
         self.z_servo_reset = False  # see Z_SERVO_RESET_MSG
         # the firmware said LOST: its next Z jog sets multi-turn again by itself
         self.z_servo_jog_recovers = False
+        # #348: a servo bus error made the firmware drop its count of a servo's turns: take it
+        # back (RealZMixin._resync_z / RealClawMixin._resync_claw) before anything works from it
+        self._z_resync_needed = False
+        self._arm_resync_needed = False
         # #163: servos whose jog the firmware refused until their power is cut and restored
         # (`JOG servo id=N disabled reason=unknown_turn_count ... (power-cycle servo)`)
         self.servo_power_cycle: set[int] = set()
@@ -122,6 +126,7 @@ class RealRobot(RealZMixin, RealClawMixin, RobotInterface):
     # ---------------------------------------------------------------- lifecycle
     async def connect(self) -> None:
         self._claw_marks.clear()  # a new link may mean a restarted firmware count
+        self._z_resync_needed = self._arm_resync_needed = False  # #348: counted afresh on this link
         self._forget_z_points()
         self.edge_guard.forget()  # no jog of the old link is moving now
         await self.serial.connect()
