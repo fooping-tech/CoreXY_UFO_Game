@@ -433,8 +433,8 @@ async def test_server_runs_catch_and_delivery_and_locks_manual_control(server):
         st = (await _cmd(ws, "s1", "easy_status"))["data"]
         assert st["last_result"] == "done" and st["destination"] == dest and st["state"] == "MANUAL_XY"
         assert st["problems"] == [] and st["dials"]["dial_1"] == [20.0, 100.0]
-        # the move to the middle after homing (#175), _ready's own move and one carry
-        assert sum(c.startswith("XY") for c in robot.commands) == 3
+        # _ready's own move and one carry (#342: homing stays in the home corner)
+        assert sum(c.startswith("XY") for c in robot.commands) == 2
         assert abs(robot.pos[0] - DIALS[dest][0]) < 0.5
         assert (await _cmd(ws, "m2", "move_xy", x=100, y=100))["type"] == "ack"  # manual again
 
@@ -450,8 +450,8 @@ async def test_server_emergency_stop_while_waiting_for_the_destination_aborts(se
         assert srv.easy.state == "FAULT" and robot.commands.count("ABORT") == 1 and robot.alarm
         r = await _cmd(ws, "d1", "easy_deliver", destination=1, grab_id=gid)
         assert r["type"] == "nack"  # a sign that was on its way: nothing is carried after a stop
-        # (the move to the middle after homing and _ready's own: no carry)
-        assert sum(c.startswith("XY") for c in robot.commands) == 2
+        # (_ready's own move only: no carry; #342: homing stays in the home corner)
+        assert sum(c.startswith("XY") for c in robot.commands) == 1
         r = await _cmd(ws, "g2", "easy_grab")
         assert r["type"] == "nack" and "alarm active" in r["data"]["reason"]
 
